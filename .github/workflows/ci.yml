@@ -13,7 +13,7 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Qt runtime libraries
         # PySide6's QtGui/QtWidgets link against libEGL/libGL, which pytest-qt
         # loads at pytest_configure time even under the offscreen platform.
