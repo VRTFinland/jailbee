@@ -1,23 +1,13 @@
-# JailBee
-
-[![CI](https://github.com/VRTFinland/jailbee/actions/workflows/ci.yml/badge.svg)](https://github.com/VRTFinland/jailbee/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-
 <p align="center">
-  <img src="docs/images/jailbee-logo-dark.jpg" width="220" alt="JailBee logo">
+  <img src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/docs/images/jailbee-logo-dark.jpg"
+       width="220" alt="JailBee">
 </p>
 
 <p align="center">
-  <img src="docs/images/hive-entrance.jpg" width="460"
-       alt="Isometric illustration: a hand slides an entrance reducer into the
-            front of a beehive brood box that doubles as a server chassis,
-            narrowing the opening the bees pass through.">
-</p>
-
-<p align="center">
-  <em>An agent needs the network to work, so the question is never whether it
-  gets out — it is how wide you leave the entrance. That is what
-  <code>jailbee net strict|loose</code> sets.</em>
+  <a href="https://github.com/VRTFinland/jailbee/actions/workflows/ci.yml"><img
+    src="https://github.com/VRTFinland/jailbee/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/VRTFinland/jailbee/blob/main/LICENSE"><img
+    src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
 </p>
 
 **JailBee** runs isolated, per-branch development environments in
