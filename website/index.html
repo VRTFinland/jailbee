@@ -183,6 +183,87 @@
       </div>
     </section>
 
+    <section id="compare">
+      <div class="wrap">
+        <h2>Not the only way to do this.</h2>
+        <p>
+          Four other tools solve neighbouring problems, and one of them draws a stronger boundary
+          than JailBee does. Here is where each of them fits.
+        </p>
+        <!-- A real table, but rows stack into cards below 720px: the site's
+             own rule is that nothing forces a horizontal scrollbar. Each cell
+             carries data-label so the stacked version keeps its headings. -->
+        <table class="compare">
+          <thead>
+            <tr>
+              <th scope="col">Tool</th>
+              <th scope="col">What it is</th>
+              <th scope="col">Pick it instead when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Dev Containers</th>
+              <td data-label="What it is">
+                The standard <code>devcontainer.json</code>, implemented by VS Code, Codespaces
+                and JetBrains.
+              </td>
+              <td data-label="Pick it instead when">
+                a shared toolchain is all you need — and it has to work on Windows and macOS too.
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">BranchBox</th>
+              <td data-label="What it is">
+                A git worktree plus a Docker Compose project and a devcontainer, per feature.
+              </td>
+              <td data-label="Pick it instead when">
+                you want parallel branches cheaply and you trust what runs inside them.
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">nono</th>
+              <td data-label="What it is">
+                A fence around one agent process, with a separate policy per tool it calls.
+              </td>
+              <td data-label="Pick it instead when">
+                one agent needs fine-grained rules rather than a machine of its own. It also runs
+                inside a JailBee container.
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Docker Sandboxes</th>
+              <td data-label="What it is">
+                A microVM per agent run, with its own kernel and a deny-by-default network proxy.
+              </td>
+              <td data-label="Pick it instead when">
+                you want a hypervisor between the agent and your laptop. That is a stronger wall
+                than JailBee's.
+              </td>
+            </tr>
+            <tr class="compare__self">
+              <th scope="row">JailBee</th>
+              <td data-label="What it is">
+                A Linux machine per branch — services, Docker, IDE and browser, all inside the
+                boundary.
+              </td>
+              <td data-label="Pick it instead when">
+                the runtime is the hard part: a stack that boots, listens and renders, several of
+                them at once.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="compare__more">
+          <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md"
+            >Read the full comparison</a
+          >
+          — what each tool does with your working tree, your credentials and the network, and what
+          JailBee costs you.
+        </p>
+      </div>
+    </section>
+
     <section id="install">
       <div class="wrap">
         <h2>Requirements.</h2>
