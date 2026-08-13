@@ -1,0 +1,7 @@
+{
+  "number": 1234,
+  "headRefName": "feat/foo",
+  "headRefOid": "abc123def456abc123def456abc123def456abcd",
+  "state": "CLOSED",
+  "baseRefName": "main"
+}

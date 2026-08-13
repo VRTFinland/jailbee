@@ -1,0 +1,28 @@
+container_user:
+  uid: 53023
+  gid: 53023
+
+gpg:
+  enabled: true
+
+ssh:
+  enabled: true
+  seed_from_host: true
+
+jetbrains:
+  enabled: true
+  ide: idea
+  autostart: true
+  userprefs_from_host: true
+
+chrome:
+  enabled: true
+  url: https://example.com
+
+claude:
+  enabled: true
+
+github:
+  enabled: true
+  api_tokens:
+    myrepo: github_pat_TEST_FIXTURE_VALUE

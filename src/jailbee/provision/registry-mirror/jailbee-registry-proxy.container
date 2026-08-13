@@ -1,0 +1,18 @@
+[Unit]
+Description=jailbee Docker registry MITM caching proxy (rpardini)
+
+[Container]
+Image=docker.io/rpardini/docker-registry-proxy:0.6.5
+PublishPort=3128:3128
+Volume=/docker_mirror_cache:/docker_mirror_cache
+Volume=/ca:/ca
+# Lets `apply_mirror_registries` extend rpardini's REGISTRIES at runtime
+# (writes /etc/jailbee-registry-proxy.env on the mirror host, then restarts
+# this service). Quadlet lowers this to `podman run --env-file=...`,
+# which has no "optional file" form — a `-` prefix would be parsed as a
+# relative path. install.sh therefore creates an empty placeholder
+# before the first start.
+EnvironmentFile=/etc/jailbee-registry-proxy.env
+
+[Install]
+WantedBy=default.target

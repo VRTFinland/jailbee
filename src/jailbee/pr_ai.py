@@ -1,0 +1,267 @@
+"""In-container Claude bridge for generating PR title, body & branch name.
+
+`jailbee pr` calls `generate_pr_text` after pushing the branch and
+before `gh pr create`, when `claude.enabled` and `claude.ai_pr_description`
+are on. It runs the container's own Claude CLI over the branch's commits and
+diff to produce a concise PR title, body, and a convention-following head
+branch name.
+
+Design rules this module obeys:
+  - It NEVER calls `gh` — that stays in `pr.py`.
+  - It NEVER calls `subprocess` directly — it goes through `Incus.exec`, so
+    it stays unit-testable (the architecture rule for non-incus modules).
+  - It is strictly best-effort: every expected failure (Claude missing,
+    timeout, unparseable output) returns None so the caller falls back to a
+    placeholder. It does not raise for those cases.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from jailbee.incus import IncusError
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
+    from jailbee.incus import Incus
+
+_MAX_TITLE_LEN = 120
+
+_PROMPT_TEMPLATE = """\
+You are generating a GitHub pull-request title and description for the work on \
+the current branch, which targets the base branch `{base}`.
+The branch is named `{branch}`.
+
+Inspect the change yourself using your shell tools:
+  - `git log {base}..HEAD` for the commits on this branch
+  - `git diff {base}...HEAD` for the cumulative diff
+  - any obviously relevant spec, plan, or README file in this repository
+
+Write a concise, technical pull request in clear English:
+  - Title: imperative, <= 72 characters, matching the repository's
+    conventional-commit style if you can see one (e.g. `feat(scope): ...`).
+  - Body: GitHub-flavored Markdown — short background, then what changed with
+    concrete file/symbol references, then how it was tested.
+{fixed_clause}
+Also choose the branch name to use as this PR's head on the remote. Infer the
+repository's branch-naming convention from `git branch -r`, the names of
+recently merged pull requests, and any CONTRIBUTING.md / CLAUDE.md guidance. If
+the current branch name `{branch}` already follows that convention, return it
+unchanged.
+
+Respond with ONLY a JSON object, no prose and no code fences:
+{{"title": "<title>", "body": "<body>", "branch": "<branch>"}}
+"""
+
+
+@dataclass(frozen=True)
+class PrText:
+    """A generated PR title, body, and proposed head branch name."""
+
+    title: str
+    body: str
+    branch: str
+
+
+def generate_pr_text(
+    cfg: Config,
+    incus: Incus,
+    full_name: str,
+    *,
+    branch: str,
+    base: str,
+    fixed_title: str | None = None,
+    fixed_body: str | None = None,
+    timeout: int = 180,
+) -> PrText | None:
+    """Ask the in-container Claude CLI for a PR title and body.
+
+    Returns a PrText on success, or None on any expected failure (Claude
+    missing/non-zero exit, timeout, or output that can't be parsed into a
+    valid title+body). The caller logs a warning and falls back. Both `branch`
+    and `base` are interpolated into the prompt.
+    """
+    from jailbee.config import CONTAINER_USERNAME
+    from jailbee.lifecycle import container_repo_dir
+
+    repo_dir = container_repo_dir(cfg, incus, full_name)
+    prompt = _build_prompt(branch, base, fixed_title, fixed_body)
+    # `claude` lives at ~/.local/bin/claude, which is not on the default
+    # `incus exec --user` PATH. Run it through a login shell (`bash -lc`) so
+    # ~/.profile puts ~/.local/bin on PATH — the same pattern tmux/autostart
+    # use. The prompt is passed via an env var (not interpolated into the
+    # shell string) so its content can never be parsed as shell.
+    shell_cmd = 'claude -p "$JAILBEE_PR_PROMPT" --output-format json --dangerously-skip-permissions'
+    env = {
+        "HOME": f"/home/{CONTAINER_USERNAME}",
+        "USER": CONTAINER_USERNAME,
+        "LOGNAME": CONTAINER_USERNAME,
+        "JAILBEE_PR_PROMPT": prompt,
+    }
+    try:
+        stdout = incus.exec(
+            full_name,
+            ["bash", "-lc", shell_cmd],
+            uid=cfg.container_user.uid,
+            gid=cfg.container_user.gid,
+            cwd=repo_dir,
+            env=env,
+            timeout=timeout,
+        )
+    except IncusError:
+        return None
+    return _parse_pr_text(stdout, fixed_title, fixed_body, current_branch=branch)
+
+
+def _build_prompt(branch: str, base: str, fixed_title: str | None, fixed_body: str | None) -> str:
+    fixed_lines: list[str] = []
+    if fixed_title is not None:
+        fixed_lines.append(
+            f"The title is already chosen — use exactly this and do not change "
+            f'it: "{fixed_title}". Generate only the body.'
+        )
+    if fixed_body is not None:
+        fixed_lines.append(
+            "The body is already written — echo it back unchanged and generate only the title."
+        )
+    fixed_clause = ("\n" + "\n".join(fixed_lines) + "\n") if fixed_lines else ""
+    return _PROMPT_TEMPLATE.format(branch=branch, base=base, fixed_clause=fixed_clause)
+
+
+def _parse_pr_text(
+    stdout: str,
+    fixed_title: str | None,
+    fixed_body: str | None,
+    *,
+    current_branch: str,
+) -> PrText | None:
+    """Parse `claude --output-format json` stdout into a PrText, or None.
+
+    Peels the outer envelope (`{"result": "<text>"}`), then extracts the inner
+    JSON object from the model text (tolerating ```json fences and surrounding
+    prose). Validates non-empty title/body and a sane title length. Explicit
+    fixed_title/fixed_body always win over whatever the model produced. The
+    model's proposed `branch` is used only if it passes
+    `git.check_ref_format`; otherwise it falls back to `current_branch`.
+    """
+    from jailbee import git
+
+    candidate = _unwrap_envelope(stdout)
+    obj = _extract_json_object(candidate)
+    if obj is None:
+        return None
+
+    title = fixed_title if fixed_title is not None else _as_str(obj.get("title"))
+    body = fixed_body if fixed_body is not None else _as_str(obj.get("body"))
+    if not title or not title.strip():
+        return None
+    if not body or not body.strip():
+        return None
+    if len(title) > _MAX_TITLE_LEN:
+        return None
+
+    proposed = _as_str(obj.get("branch"))
+    if proposed and proposed.strip() and git.check_ref_format(proposed.strip()):
+        branch = proposed.strip()
+    else:
+        branch = current_branch
+    return PrText(title=title.strip(), body=body.strip(), branch=branch)
+
+
+def _unwrap_envelope(stdout: str) -> str:
+    """Return the model text from Claude's JSON envelope, or stdout itself."""
+    try:
+        outer = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        return stdout
+    if isinstance(outer, dict):
+        result = outer.get("result")
+        if isinstance(result, str):
+            return result
+    return stdout
+
+
+def _extract_json_object(text: str) -> dict[str, object] | None:
+    """Parse a JSON object out of model text (strip fences, then brace-slice).
+
+    First tries the stripped text directly, then repeatedly calls
+    ``_brace_slice`` (advancing past each failing candidate) so that a stray
+    balanced ``{…}`` fragment before the real JSON object does not defeat
+    extraction.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        # Drop the opening fence line (``` or ```json) and the trailing fence.
+        inner = stripped.split("\n", 1)[1] if "\n" in stripped else ""
+        if inner.rstrip().endswith("```"):
+            inner = inner.rstrip()[: -len("```")]
+        stripped = inner.strip()
+
+    # Fast path: the stripped text *is* the JSON object.
+    try:
+        obj = json.loads(stripped)
+        if isinstance(obj, dict):
+            return obj
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Slow path: scan for balanced brace substrings, trying each in order.
+    offset = 0
+    while True:
+        candidate = _brace_slice(stripped, offset)
+        if candidate is None:
+            return None
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Advance past the opening brace of the candidate just tried.
+        next_start = stripped.find("{", offset)
+        if next_start == -1:
+            return None
+        offset = next_start + 1
+
+
+def _brace_slice(text: str, offset: int = 0) -> str | None:
+    """Return the first balanced top-level JSON object substring in *text*.
+
+    Scans from *offset* (default 0) to find the first ``{``, then walks
+    character-by-character tracking brace depth while honouring JSON string
+    boundaries (``"…"`` with ``\\`` escapes).  Returns the slice from that
+    opening ``{`` to its matching ``}`` (inclusive), or None if no balanced
+    object is found from *offset* onwards.
+    """
+    start = text.find("{", offset)
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == "\\":
+                i += 2  # skip the escaped character
+                continue
+            if ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        i += 1
+    return None
+
+
+def _as_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None

@@ -1,0 +1,404 @@
+"""QApplication bootstrap and wiring for the Qt dashboard.
+
+``run`` has the same signature as ``dashboard.run`` so ``cli.py`` can dispatch
+to either. The GUI opens no new Incus paths — it reuses the dashboard data
+layer and executes actions as ``jailbee`` subprocesses.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QObject, QThread, Slot
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+
+from jailbee.dashboard import collect_config_paths, resolve_dashboard_columns
+from jailbee.qtui.actions import (
+    TerminalNotFoundError,
+    build_action,
+    resolve_launch,
+)
+from jailbee.qtui.refresh import RefreshWorker
+from jailbee.qtui.terminal import detect_terminal
+from jailbee.qtui.window import MainWindow
+from jailbee.tui import error
+
+if TYPE_CHECKING:
+    from jailbee.config import ColumnConfig
+    from jailbee.dashboard import RepoGroup
+    from jailbee.incus import Incus
+
+log = logging.getLogger(__name__)
+
+
+def preflight(cwd_config: Path | None) -> list[Path] | None:
+    """Resolve the config paths the dashboard will show, or None if there are none."""
+    config_paths = collect_config_paths(cwd_config)
+    return config_paths or None
+
+
+def _group_for(groups: list[RepoGroup], container_name: str) -> RepoGroup | None:
+    for g in groups:
+        for c in g.containers:
+            if c.name == container_name:
+                return g
+    return None
+
+
+def _env() -> dict[str, str]:
+    return dict(os.environ)
+
+
+class AppController(QObject):
+    """Routes worker/window signals to GUI-thread slots.
+
+    Constructed with default (main-thread) affinity and never moved to
+    another thread. Because its handlers are ``@Slot``-decorated bound
+    methods of a ``QObject`` living on the GUI thread, Qt resolves
+    cross-thread signal connections (e.g. from the background
+    ``RefreshWorker``) as *queued* rather than direct — so the handlers
+    always run on the GUI thread, never on the worker thread.
+    """
+
+    def __init__(
+        self,
+        window: MainWindow,
+        worker: RefreshWorker,
+        *,
+        interval: float,
+        engine: object | None = None,
+        paused: bool = False,
+        columns: ColumnConfig | None = None,
+    ) -> None:
+        super().__init__()
+        self._window = window
+        self._worker = worker
+        self._interval = interval
+        self._engine = engine
+        self._paused = paused
+        # Resolved once by `run()` at startup — never re-merged per refresh tick.
+        self._columns = columns
+        # Timestamp of the last successful refresh, so a cadence change (a
+        # menu action, not a refresh) can still update the status line
+        # immediately instead of waiting for the next gather.
+        self._last_refresh_at: datetime | None = None
+        # Latest snapshot, kept for resolving a clicked action's config path.
+        self._latest: list[RepoGroup] = []
+
+    @Slot(object)
+    def on_groups(self, groups: list[RepoGroup]) -> None:
+        self._latest = groups
+        now = datetime.now().astimezone()
+        self._last_refresh_at = now
+        self._window.set_groups(groups, now=now, columns=self._columns)
+        self._window.set_refresh_ok(at=now, interval=self._interval, paused=self._paused)
+
+    @Slot(str)
+    def on_failed(self, msg: str) -> None:
+        # Non-modal: FIX 1 makes the worker keep retrying on failure, so a
+        # QMessageBox here would pop up once per interval and spam the user.
+        self._window.set_refresh_failed(msg)
+
+    @Slot(float)
+    def on_interval_changed(self, value: float) -> None:
+        """A numeric cadence preset was picked in the Refresh menu."""
+        self._interval = value
+        self._paused = False
+        self._worker.set_interval(value)
+        self._update_cadence_status()
+        self._persist()
+
+    @Slot()
+    def on_auto_refresh_disabled(self) -> None:
+        """The "Off (manual)" option was picked in the Refresh menu."""
+        self._paused = True
+        self._worker.set_paused(True)
+        self._update_cadence_status()
+        self._persist()
+
+    @Slot()
+    def on_refresh_requested(self) -> None:
+        """The "Refresh now" menu action was triggered."""
+        self._worker.force()
+
+    def _update_cadence_status(self) -> None:
+        """Reflect the current cadence/pause state in the status bar right
+        away, rather than waiting for the next scheduled refresh."""
+        if self._last_refresh_at is not None:
+            self._window.set_refresh_ok(
+                at=self._last_refresh_at, interval=self._interval, paused=self._paused
+            )
+
+    def _persist(self) -> None:
+        if self._engine is None:
+            return
+        from jailbee.db.gui_state import save_gui_state
+        from jailbee.db.models import GuiState
+
+        save_gui_state(
+            self._engine,  # type: ignore[arg-type]  # Engine at runtime; typed as object to keep app.py PySide-only imports
+            GuiState(
+                id=1,
+                layout=self._window.current_layout(),
+                table_header_state=self._window.table_header_state(),
+                refresh_interval=self._interval,
+                refresh_paused=self._paused,
+                card_style=self._window.current_card_style(),
+                collapsed_repos=json.dumps(sorted(self._window.collapsed_repos())),
+            ),
+        )
+
+    @Slot(str)
+    def on_layout_changed(self, name: str) -> None:
+        """The View menu switched layout — persist the new choice."""
+        self._persist()
+
+    @Slot(str)
+    def on_card_style_changed(self, name: str) -> None:
+        """The View menu switched card style — persist the new choice."""
+        self._persist()
+
+    @Slot()
+    def on_collapsed_changed(self) -> None:
+        """A card group was expanded/collapsed — persist the new set."""
+        self._persist()
+
+    def persist_on_close(self) -> None:
+        """Save the full GUI-state snapshot (incl. table column widths/order)
+        when the window is closing."""
+        self._persist()
+
+    def _ask_loose_ttl(self, name: str, default_after: str) -> str | None:
+        """Ask how long ``name`` stays in loose. None means cancelled.
+
+        Mirrors the CLI's questionary prompt: the repo's configured
+        ``loose_auto_revert.after`` is pre-selected (and inserted into the
+        list when it is not one of the presets), and a typed value is checked
+        with the same parser the CLI uses — the action is launched as a
+        detached ``Popen`` with no terminal, so an unparseable duration would
+        make `jailbee net loose` exit 2 where nobody can see it.
+        """
+        from jailbee.config import LOOSE_TTL_PRESETS, parse_loose_ttl
+
+        items = list(LOOSE_TTL_PRESETS)
+        if default_after not in items:
+            items.insert(0, default_after)
+        items.append("never")
+        current = items.index(default_after)
+
+        while True:
+            choice, ok = QInputDialog.getItem(
+                self._window,
+                "Loose network",
+                f"Keep {name} in loose for how long?",
+                items,
+                current,
+                True,  # editable — the user can type e.g. `90m`
+            )
+            if not ok:
+                return None
+            value = choice.strip()
+            if not value:
+                return None
+            try:
+                parse_loose_ttl(value)
+            except ValueError as exc:
+                QMessageBox.warning(self._window, "Invalid duration", str(exc))
+                continue
+            return value
+
+    def _confirm_destroy(self, group: RepoGroup, name: str, verb: str) -> bool:
+        """Confirm a destroy, naming what it would discard. True to proceed.
+
+        The launched argv carries ``--force`` (a detached Popen cannot answer
+        the CLI's own prompt), so this dialog is the *only* guard in the GUI
+        — the CLI-side one from `_warn_before_destroy` is bypassed here by
+        construction. "No" (decline) is the default button.
+        """
+        from jailbee.config import load_config
+        from jailbee.destroy_guard import (
+            assess,
+            status_is_unknown,
+            unknown_status_warning,
+        )
+
+        ci = next((c for c in group.containers if c.name == name), None)
+        if ci is None or group.config_path is None:
+            return False
+
+        detail = ""
+        if status_is_unknown(ci):
+            # Same sentence the CLI prints (`tui.confirm_destroy_risk`): one
+            # container must not be described two ways depending on which
+            # front-end asked. A mount-mode container is deliberately not
+            # "unknown" — see `status_is_unknown`.
+            detail = f"\n\n{unknown_status_warning([ci.display_name])}."
+        elif ci.git_status is not None:
+            try:
+                summary = assess(load_config(group.config_path), ci)
+            except Exception:
+                # An unreadable repo config must not block the GUI — the
+                # guard degrades to "no risk shown", same as an unprobed
+                # container — but the failure should still be discoverable
+                # rather than vanishing silently.
+                log.debug("destroy guard: could not assess %s", group.config_path, exc_info=True)
+                summary = None
+            if summary is not None:
+                detail = f"\n\n⚠  {summary.line}\nDestroying loses this."
+
+        reply = QMessageBox.question(
+            self._window,
+            "Confirm",
+            f"{verb} {name}?{detail}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    @Slot(str, str)
+    def on_action(self, verb: str, name: str) -> None:
+        group = _group_for(self._latest, name)
+        if group is None or group.config_path is None:
+            return
+        config_path = group.config_path
+        action = build_action(verb, name, config_path)
+        # A None `loose_ttl_default` means the repo's auto-revert policy is
+        # disabled: there is no TTL to schedule, so skip the dialog and let
+        # `jailbee net loose` run flagless — the same choice the CLI prompt makes.
+        if action.duration_prompt and group.loose_ttl_default is not None:
+            duration = self._ask_loose_ttl(name, group.loose_ttl_default)
+            if duration is None:
+                return
+            action = build_action(verb, name, config_path, duration=duration)
+        if action.confirm:
+            if not self._confirm_destroy(group, name, verb):
+                return
+        terminal = detect_terminal(env=_env(), which=shutil.which)
+        try:
+            argv = resolve_launch(action, terminal)
+        except TerminalNotFoundError as exc:
+            QMessageBox.warning(self._window, "No terminal", str(exc))
+            return
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+        except OSError as exc:
+            QMessageBox.warning(self._window, "Launch failed", str(exc))
+            return
+        self._worker.force()  # an action likely changed state — refresh ASAP
+
+
+def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) -> None:
+    """Connect window/worker signals to the controller.
+
+    All worker *control* (force/set_interval/set_paused) is routed through
+    an ``AppController`` slot that calls the worker method directly, the
+    same pattern as ``on_action``'s ``self._worker.force()`` call — never
+    connected straight from a window signal to a worker bound method.
+    ``RefreshWorker.run_loop`` is a blocking loop, not a Qt event loop, so a
+    signal connected directly to a worker method resolves to a *queued*
+    connection the worker thread never processes; it would silently never
+    fire. The worker -> controller connections below are the mirror image
+    and are correct as direct signal/slot connections: they cross from the
+    worker thread to a controller living on the GUI thread, which *does*
+    run a real event loop, so Qt correctly delivers them as queued.
+    """
+    worker.groupsReady.connect(controller.on_groups)
+    worker.failed.connect(controller.on_failed)
+    window.actionRequested.connect(controller.on_action)
+    window.refreshRequested.connect(controller.on_refresh_requested)
+    window.intervalChanged.connect(controller.on_interval_changed)
+    window.autoRefreshDisabled.connect(controller.on_auto_refresh_disabled)
+    window.layoutChanged.connect(controller.on_layout_changed)
+    window.cardStyleChanged.connect(controller.on_card_style_changed)
+    window.card_view.collapsedChanged.connect(controller.on_collapsed_changed)
+
+
+def run(
+    incus: Incus,
+    cwd_config: Path | None,
+    *,
+    interval: float | None,
+    git_interval: float,
+    no_git: bool,
+) -> int:
+    """Launch the Qt dashboard. Returns the process exit code."""
+    config_paths = preflight(cwd_config)
+    if config_paths is None:
+        error("No repos registered and no .jailbee/config.yaml in the current directory.")
+        return 1
+
+    # Resolved once for the whole run — a live-refreshing dashboard must not
+    # re-merge config on every refresh tick.
+    columns = resolve_dashboard_columns(cwd_config)
+
+    from jailbee.db import get_engine
+    from jailbee.db.gui_state import load_gui_state
+
+    engine = get_engine()
+    state = load_gui_state(engine)
+
+    resolved = interval if interval is not None else state.refresh_interval
+    resolved = max(0.5, resolved if resolved is not None else 3.0)
+    git_interval = max(git_interval, resolved)
+    paused = state.refresh_paused
+    git_enabled = not no_git
+
+    def _decode_collapsed(raw: str | None) -> set[str]:
+        if not raw:
+            return set()
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return set()
+        return {str(x) for x in data} if isinstance(data, list) else set()
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        git_enabled=git_enabled,
+        interval=resolved,
+        paused=paused,
+        layout=state.layout,
+        header_state=state.table_header_state,
+        card_style=state.card_style,
+    )
+    window.card_view.set_collapsed(_decode_collapsed(state.collapsed_repos))
+
+    thread = QThread()
+    worker = RefreshWorker(
+        incus,
+        config_paths,
+        cwd_config,
+        interval=resolved,
+        git_interval=git_interval,
+        git_enabled=git_enabled,
+    )
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run_loop)
+
+    # Kept on the GUI thread (never moveToThread'd) so cross-thread worker
+    # signals resolve to queued connections; held in a local so it isn't
+    # garbage-collected while `app.exec()` runs.
+    controller = AppController(
+        window, worker, interval=resolved, engine=engine, paused=paused, columns=columns
+    )
+    _wire(window, worker, controller)
+    if paused:
+        worker.set_paused(True)
+
+    thread.start()
+    window.show()
+    try:
+        return int(app.exec())
+    finally:
+        controller.persist_on_close()
+        worker.request_stop()
+        worker.force()
+        thread.quit()
+        thread.wait(2000)

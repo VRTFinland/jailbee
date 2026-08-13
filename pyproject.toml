@@ -1,0 +1,88 @@
+[project]
+name = "jailbee"
+version = "1.0.0"
+description = "Manage isolated per-branch development environments using Incus system containers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Tuomas Airaksinen", email = "tuomas.airaksinen@gisgro.com" }]
+maintainers = [{ name = "Tuomas Airaksinen", email = "tuomas.airaksinen@gisgro.com" }]
+keywords = ["incus", "lxc", "containers", "dev-environment", "cli", "sandbox"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "questionary>=2.0",
+    "sqlmodel>=0.0.16",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.7"]
+
+[project.scripts]
+jailbee = "jailbee.entry:main"
+jb = "jailbee.entry:main"
+gie = "jailbee.entry:main"   # pre-1.0 alias; removed in 1.1.0
+
+[project.urls]
+Homepage = "https://jailbee.gisgro.io"
+Documentation = "https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md"
+Repository = "https://github.com/VRTFinland/jailbee"
+Issues = "https://github.com/VRTFinland/jailbee/issues"
+Changelog = "https://github.com/VRTFinland/jailbee/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML>=6.0",
+    "pytest-qt>=4.4",
+    "PySide6>=6.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[tool.hatch.build.targets.sdist]
+# The sdist is a build input, not a mirror of the repo. It carries the package
+# source plus whatever the wheel force-includes; prose docs, the website and
+# the test suite live in git. `docs/skills` must stay — `uv build` builds the
+# wheel from the sdist, so dropping it would silently ship a skill-less wheel.
+include = [
+    "/src/jailbee",
+    "/docs/skills",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jailbee"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"docs/skills" = "jailbee/skills"

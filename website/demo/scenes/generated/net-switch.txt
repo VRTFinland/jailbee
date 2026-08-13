@@ -1,0 +1,2 @@
+[32m✓[0m Container [32m'feat-invoice-pdf'[0m is now on network: strict
+[32m✓[0m Container [32m'fix-login-race'[0m is now on network: loose

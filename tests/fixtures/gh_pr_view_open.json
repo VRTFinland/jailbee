@@ -1,0 +1,10 @@
+{
+  "number": 1234,
+  "headRefName": "feat/foo",
+  "headRefOid": "abc123def456abc123def456abc123def456abcd",
+  "state": "OPEN",
+  "baseRefName": "main",
+  "author": { "login": "octocat" },
+  "isCrossRepository": false,
+  "headRepositoryOwner": { "login": "acme" }
+}

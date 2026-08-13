@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussion
+    url: https://github.com/VRTFinland/jailbee/discussions
+    about: Ask usage questions or start a broader discussion here rather than filing an issue.
+  - name: Read the docs first
+    url: https://github.com/VRTFinland/jailbee/blob/main/README.md
+    about: Check the README for setup, configuration, and usage before filing an issue.

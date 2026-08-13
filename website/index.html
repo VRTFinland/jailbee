@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JailBee — one container per branch</title>
+    <meta
+      name="description"
+      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser."
+    />
+    <meta property="og:title" content="JailBee — one container per branch" />
+    <meta
+      property="og:description"
+      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser."
+    />
+    <meta property="og:url" content="https://jailbee.gisgro.io/" />
+    <meta
+      property="og:image"
+      content="https://jailbee.gisgro.io/assets/img/jailbee-logo-dark.jpg"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="assets/img/jailbee-logo.png" />
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <section class="hero">
+      <div class="wrap">
+        <div class="lockup">
+          <img
+            class="lockup__mark"
+            src="assets/img/jailbee-mark.png"
+            alt="JailBee logo: a bee behind bars"
+            width="340"
+            height="345"
+          />
+          <div class="lockup__text">
+            <!-- "ai" is set apart on purpose: jAIlbee. Still one word to a
+                 screen reader, and still one word when selected and copied. -->
+            <span class="lockup__word">J<em>ai</em>lBee</span>
+            <a class="lockup__by" href="https://gisgro.com" rel="noopener">
+              by
+              <img src="assets/img/gisgro-logo.svg" width="72" height="13" alt="GISGRO" />
+            </a>
+          </div>
+        </div>
+        <h1>One container per branch. All of them at once.</h1>
+        <p class="hero__lead">
+          JailBee gives every git branch a full system container of its own: its own services,
+          its own Docker daemon, its own IDE and browser, cloned copy-on-write from one golden
+          image. Several stacks run in parallel on one host without a single port collision,
+          Docker-name clash, or shared-database accident.
+        </p>
+
+        <div class="install">
+          <div class="install__row">
+            <code>uv tool install jailbee</code>
+            <button class="copy" data-copy="uv tool install jailbee">Copy</button>
+          </div>
+          <p class="install__hint">
+            Linux host required — see <a href="#install">Requirements</a>.
+          </p>
+        </div>
+
+        <div class="actions">
+          <a class="button button--primary" href="https://github.com/VRTFinland/jailbee"
+            >View on GitHub</a
+          >
+          <a
+            class="button button--secondary"
+            href="https://github.com/VRTFinland/jailbee#documentation"
+            >Read the docs</a
+          >
+        </div>
+      </div>
+    </section>
+
+    <section id="problem">
+      <div class="wrap">
+        <h2>Two branches, one host, one of everything.</h2>
+        <div class="cards">
+          <div class="card">
+            <p>
+              <strong>Port 8080 is taken.</strong> The second branch's dev server, database and
+              Docker Compose project all want names the first branch already holds.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>The database is shared.</strong> A migration written on one branch quietly
+              changes what the other branch is testing against.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Switching costs twenty minutes.</strong> Stash, rebuild, reinstall, re-seed
+              — and then do it again when you switch back.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="network">
+      <div class="wrap network__grid">
+        <img
+          class="network__img"
+          src="assets/img/hive-entrance.jpg"
+          alt="Isometric illustration: a hand slides an entrance reducer into the front of a beehive brood box that doubles as a server chassis, narrowing the opening the bees pass through."
+        />
+        <div class="network__body">
+          <h2>A guarded entrance, not a sealed box.</h2>
+          <p>
+            An agent that cannot reach the network cannot do its job, so the question was never
+            whether it gets out — it is how wide you leave the opening. <code>jailbee net strict</code>
+            allows the hosts your build actually needs. <code>jailbee net loose</code> widens it for a set time and
+            reverts on its own, so nobody leaves it open by forgetting. JailBee shields the host
+            from what runs inside a container; it does not pretend to shield the code inside from
+            the world.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="desktop">
+      <div class="wrap">
+        <h2>Your IDE and your browser, from inside the container.</h2>
+        <p>
+          <code>jb ide</code> launches the JetBrains IDE that lives in the container onto your own
+          Wayland session. <code>jb chrome</code> does the same for a browser with its own
+          profile and its own localhost. <code>jb gui</code> opens a Qt dashboard that spans every
+          repo on the host.
+        </p>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="wrap">
+        <h2>What you get.</h2>
+        <div class="cards">
+          <div class="card">
+            <p>
+              <strong>Isolation, per branch.</strong> Every branch you're working on gets a full
+              environment of its own — services, database and all — so two branches never fight
+              over the same port or the same data.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A shortcut for git.</strong> Commits move straight between your computer
+              and a branch's container, so you don't have to push to GitHub and pull again just
+              to get code from one place to the other.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Docker, unchanged.</strong> Docker and Docker Compose run normally inside
+              each container, so whatever you already use for local development keeps working
+              as-is.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A leash on the network.</strong> Each container can only reach the internet
+              addresses your build actually needs, and you can widen that temporarily when you
+              need to — it closes back up on its own.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Your tools, not a copy.</strong> The IDE and browser that live inside a
+              container open on your own screen, so working in one feels the same as working
+              locally.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Fast to spin up, easy to watch.</strong> New containers start in about a
+              minute because they're cheap copies of one shared image, and a live dashboard shows
+              every one of them across every project.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap">
+        <h2>Requirements.</h2>
+        <p>
+          JailBee needs a Linux host running Incus, and uv to install the CLI. Ubuntu 26.04 gives
+          nested Docker out of the box. Host setup — Incus, firewall, UID mapping, kernel keyring
+          limits — is a one-time job with a few moving parts, and the
+          <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
+            >installation guide</a
+          >
+          walks it end to end. Running from an Apple Silicon Mac through a Linux VM is supported,
+          experimentally.
+        </p>
+
+        <div class="install">
+          <div class="install__row">
+            <code>uv tool install jailbee</code>
+            <button class="copy" data-copy="uv tool install jailbee">Copy</button>
+          </div>
+          <div class="install__row">
+            <code>uv tool install 'jailbee[gui]'</code>
+            <button class="copy" data-copy="uv tool install 'jailbee[gui]'">Copy</button>
+          </div>
+          <p class="install__hint">The <code>gui</code> extra adds the Qt dashboard.</p>
+        </div>
+
+        <ol class="steps">
+          <li><code>jailbee config init</code></li>
+          <li><code>jailbee doctor</code></li>
+          <li><code>jailbee init</code></li>
+          <li><code>jailbee base build</code></li>
+          <li><code>jailbee new feat/my-branch</code></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="docs">
+      <div class="wrap">
+        <h2>Documentation.</h2>
+        <ul class="docs__list">
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
+              >Installation</a
+            >
+            <span
+              >One-time host setup, from installing the container runtime to getting the CLI on
+              your PATH.</span
+            >
+          </li>
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md"
+              >Getting started</a
+            >
+            <span
+              >The core concepts, then a full walkthrough from configuring a repo to your first
+              container.</span
+            >
+          </li>
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md"
+              >Commands</a
+            >
+            <span>Every command and flag, in one reference table.</span>
+          </li>
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md"
+              >Git bridge and branch workflows</a
+            >
+            <span
+              >How commits travel between the host and a container, and the workflows built on
+              top of it.</span
+            >
+          </li>
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md"
+              >Setting up JailBee in your own project</a
+            >
+            <span>A tutorial for wiring JailBee into your own repo and stack.</span>
+          </li>
+          <li>
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md"
+              >Who JailBee is for</a
+            >
+            <span
+              >What JailBee is good at, what it costs, and how it compares to similar tools.</span
+            >
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <!-- The hero lockup again, quietly: the page is long enough that the
+             bottom is its own first impression. alt="" on the mark because
+             the wordmark beside it already carries the name. -->
+        <div class="footer__brand">
+          <img class="footer__mark" src="assets/img/jailbee-mark.png" alt="" width="340"
+            height="345" />
+          <span class="footer__word">J<em>ai</em>lBee</span>
+        </div>
+        <p>
+          JailBee is free software under the GNU General Public License v3.0 or later. ·
+          <a href="https://github.com/VRTFinland/jailbee">GitHub</a>
+        </p>
+        <a class="footer__gisgro" href="https://gisgro.com" rel="noopener">
+          <img src="assets/img/gisgro-logo.svg" width="140" height="25" alt="GISGRO" />
+        </a>
+        <!-- Last line, and on its own: sharing a wrapped line with the licence
+             sentence broke "© 2026 / GISGRO Oy" across the wrap. -->
+        <p class="footer__copyright">© 2026 GISGRO Oy</p>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        document.querySelectorAll("button.copy[data-copy]").forEach(function (button) {
+          button.addEventListener("click", function () {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+              return;
+            }
+            navigator.clipboard.writeText(button.getAttribute("data-copy")).then(function () {
+              var original = button.textContent;
+              button.textContent = "Copied";
+              button.setAttribute("data-state", "copied");
+              setTimeout(function () {
+                button.textContent = original;
+                button.removeAttribute("data-state");
+              }, 1500);
+            });
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>

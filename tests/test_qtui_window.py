@@ -1,0 +1,317 @@
+import pytest
+
+pytest.importorskip("PySide6")
+
+from datetime import datetime
+from pathlib import Path
+
+from jailbee.dashboard import RepoGroup
+from jailbee.lifecycle import ContainerInfo
+from jailbee.qtui.window import MainWindow
+
+
+def _groups():
+    running = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    stopped = ContainerInfo(
+        name="p-bar", state="Stopped", network=None, ip=None, memory_limit=None, repo="p"
+    )
+    return [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [running, stopped])]
+
+
+def test_set_groups_populates_tree_with_group_and_containers(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    # One top-level group row with two child container rows.
+    root = win.tree.invisibleRootItem()
+    assert root.childCount() == 1
+    assert root.child(0).childCount() == 2
+
+
+def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
+    from jailbee.config import ColumnConfig
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(
+        _groups(),
+        now=datetime.now().astimezone(),
+        columns=ColumnConfig(fields=["name", "created"]),
+    )
+    headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
+    assert headers == ["NAME", "CREATED"]
+
+
+def test_menu_labels_match_menu_actions_for_running(qtbot):
+    from jailbee.dashboard import RepoGroup, menu_actions
+
+    running = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    stopped = ContainerInfo(
+        name="p-bar", state="Stopped", network=None, ip=None, memory_limit=None, repo="p"
+    )
+    # ide_enabled/chrome_enabled differ deliberately so this test proves the
+    # window actually threads the group's flags through to menu_actions
+    # rather than merely matching two hardcoded defaults.
+    groups = [
+        RepoGroup(
+            "p",
+            "/repo",
+            Path("/repo/.gie/config.yaml"),
+            [running, stopped],
+            ide_enabled=True,
+            chrome_enabled=False,
+        )
+    ]
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(groups, now=datetime.now().astimezone())
+    expected = [
+        label
+        for label, _ in menu_actions(
+            "Running",
+            has_config=True,
+            ide_enabled=True,
+            chrome_enabled=False,
+            current_network="strict",
+        )
+    ]
+    assert win.menu_labels_for("p-foo") == expected
+    assert "Launch IDE" in expected
+    assert "Launch Chrome" not in expected
+    assert "Network: loose" in expected
+    assert "Network: strict" not in expected
+
+
+def test_menu_labels_empty_for_unknown_container(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    assert win.menu_labels_for("does-not-exist") == []
+
+
+def test_set_groups_colors_state_column_not_name_column(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    root = win.tree.invisibleRootItem()
+    running_row = root.child(0).child(0)
+    fields_headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
+    state_col = fields_headers.index("STATE")
+    # The NAME column (0) must be left uncoloured; the STATE column carries
+    # the state-derived foreground colour.
+    assert running_row.foreground(0).color().name() == "#000000"
+    assert running_row.foreground(state_col).color().name() != "#000000"
+
+
+def test_set_refresh_ok_shows_time_and_interval_without_no_git_marker(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    at = datetime(2026, 7, 16, 12, 34, 56).astimezone()
+    win.set_refresh_ok(at=at, interval=3.0)
+    msg = win.statusBar().currentMessage()
+    assert "12:34:56" in msg
+    assert "3s" in msg
+    assert "no-git" not in msg
+
+
+def test_set_refresh_ok_shows_no_git_marker_when_git_disabled(qtbot):
+    win = MainWindow(git_enabled=False, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_refresh_ok(at=datetime.now().astimezone(), interval=3.0)
+    assert "no-git" in win.statusBar().currentMessage()
+
+
+def test_set_refresh_ok_shows_manual_when_paused(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    at = datetime(2026, 7, 16, 12, 34, 56).astimezone()
+    win.set_refresh_ok(at=at, interval=3.0, paused=True)
+    msg = win.statusBar().currentMessage()
+    assert "12:34:56" in msg
+    assert "manual" in msg
+    assert "3s" not in msg
+
+
+def test_set_refresh_failed_shows_non_modal_status(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_refresh_failed("boom")
+    msg = win.statusBar().currentMessage()
+    assert "boom" in msg
+    assert "failed" in msg.lower()
+
+
+def test_window_title_stays_constant(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    assert win.windowTitle() == "jailbee dashboard"
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.set_refresh_ok(at=datetime.now().astimezone(), interval=3.0)
+    win.set_refresh_failed("boom")
+    assert win.windowTitle() == "jailbee dashboard"
+
+
+def test_refresh_menu_has_expected_actions(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    labels = [a.text().replace("&", "") for a in win.refresh_menu.actions() if not a.isSeparator()]
+    assert labels == ["Refresh now", "1s", "2s", "3s", "5s", "10s", "30s", "Off (manual)"]
+
+
+def test_refresh_menu_checks_matching_launch_interval(qtbot):
+    win = MainWindow(git_enabled=True, interval=5.0)
+    qtbot.addWidget(win)
+    checked = [a.text() for a in win.refresh_menu.actions() if a.isCheckable() and a.isChecked()]
+    assert checked == ["5s"]
+
+
+def test_refresh_now_action_emits_refresh_requested(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    action = next(a for a in win.refresh_menu.actions() if a.text() == "Refresh now")
+    assert action.shortcut().toString() == "F5"
+    with qtbot.waitSignal(win.refreshRequested, timeout=1000):
+        action.trigger()
+
+
+def test_preset_action_emits_interval_changed(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    action = next(a for a in win.refresh_menu.actions() if a.text() == "10s")
+    with qtbot.waitSignal(win.intervalChanged, timeout=1000) as blocker:
+        action.trigger()
+    assert blocker.args == [10.0]
+
+
+def test_off_manual_action_emits_auto_refresh_disabled(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    action = next(a for a in win.refresh_menu.actions() if a.text() == "Off (manual)")
+    with qtbot.waitSignal(win.autoRefreshDisabled, timeout=1000):
+        action.trigger()
+
+
+def test_default_layout_is_cards_and_stack_shows_card_view(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    assert win.current_layout() == "cards"
+    assert win.stack.currentWidget() is win.card_view
+
+
+def test_initial_layout_table_selected(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    assert win.current_layout() == "table"
+    assert win.stack.currentWidget() is win.tree
+
+
+def test_view_menu_switch_emits_and_changes_stack(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, layout="cards")
+    qtbot.addWidget(win)
+    table_action = next(a for a in win.view_menu.actions() if a.text() == "Table")
+    with qtbot.waitSignal(win.layoutChanged, timeout=1000) as blocker:
+        table_action.trigger()
+    assert blocker.args == ["table"]
+    assert win.current_layout() == "table"
+    assert win.stack.currentWidget() is win.tree
+
+
+def test_card_style_lives_in_its_own_menu_not_the_view_menu(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+
+    view_labels = {a.text() for a in win.view_menu.actions()}
+    assert "Compact" not in view_labels and "Grid" not in view_labels
+
+    style_labels = {a.text() for a in win.card_style_menu.actions()}
+    assert "Compact" in style_labels and "Grid" in style_labels
+
+
+def test_card_style_menu_emits_and_switches(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+
+    acts = {a.text(): a for a in win.card_style_menu.actions()}
+    with qtbot.waitSignal(win.cardStyleChanged, timeout=1000) as blocker:
+        acts["Grid"].trigger()
+    assert blocker.args == ["grid"]
+    assert win.current_card_style() == "grid"
+    assert win.card_view.card_style() == "grid"
+
+
+def test_card_style_menu_is_hidden_in_table_view(qtbot):
+    # Starts hidden when the initial layout is the table.
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    assert not win.card_style_menu.menuAction().isVisible()
+
+    # Becomes visible when switching to cards, hidden again on switch back.
+    cards_action = next(a for a in win.view_menu.actions() if a.text() == "Cards")
+    cards_action.trigger()
+    assert win.card_style_menu.menuAction().isVisible()
+
+    table_action = next(a for a in win.view_menu.actions() if a.text() == "Table")
+    table_action.trigger()
+    assert not win.card_style_menu.menuAction().isVisible()
+
+
+def test_card_style_menu_visible_when_initial_layout_is_cards(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, layout="cards")
+    qtbot.addWidget(win)
+    assert win.card_style_menu.menuAction().isVisible()
+
+
+def test_set_groups_populates_both_views(qtbot):
+    from jailbee.qtui.cards import _Card
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    # Tree still populated (group + 2 children) ...
+    root = win.tree.invisibleRootItem()
+    assert root.child(0).childCount() == 2
+    # ... and the card view has one card per container.
+    assert len(win.card_view.findChildren(_Card)) == 2
+
+
+def test_header_state_round_trips(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    saved = win.table_header_state()
+    assert isinstance(saved, str) and saved
+
+    # A fresh window given that state restores it after its first set_groups.
+    win2 = MainWindow(git_enabled=True, interval=3.0, header_state=saved)
+    qtbot.addWidget(win2)
+    win2.set_groups(_groups(), now=datetime.now().astimezone())
+    assert win2.table_header_state() == saved
+
+
+def test_table_header_state_returns_pending_before_first_set_groups(qtbot):
+    """If _persist() runs before the first set_groups (e.g. the user
+    switches to Cards or closes the window immediately after launch), a
+    restored header_state must not be clobbered by the tree's live
+    (still-default) header state."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    saved = win.table_header_state()
+
+    win2 = MainWindow(git_enabled=True, interval=3.0, header_state=saved)
+    qtbot.addWidget(win2)
+    # No set_groups yet: table_header_state() must return the pending
+    # (restored-but-not-yet-applied) value, not the tree's live default.
+    assert win2.table_header_state() == saved
+
+
+def test_paused_checks_off_manual_in_refresh_menu(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, paused=True)
+    qtbot.addWidget(win)
+    checked = [a.text() for a in win.refresh_menu.actions() if a.isCheckable() and a.isChecked()]
+    assert checked == ["Off (manual)"]

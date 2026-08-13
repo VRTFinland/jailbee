@@ -1,0 +1,10 @@
+[Unit]
+Description=jailbee egress pool refresh (all registered repos)
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart={jailbee_bin} net refresh
+StandardOutput=journal
+StandardError=journal

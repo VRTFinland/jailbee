@@ -1,0 +1,88 @@
+container_user:
+  uid: 53023
+  gid: 53023
+
+gpg:
+  enabled: true
+
+ssh:
+  enabled: true
+  seed_from_host: true
+
+jetbrains:
+  enabled: true
+  ide: idea
+  autostart: true
+  userprefs_from_host: true
+
+chrome:
+  enabled: true
+  url: https://example.com
+  autostart: true
+  dark_mode: false
+
+claude:
+  enabled: true
+
+terminal:
+  kitty:
+    enabled: auto
+
+shared_dir: ~/gie-shared
+
+host_mounts:
+  - host: ~/.gnupg
+    container: /home/dev/.gnupg
+    readonly: true
+  - host: ~/.gitconfig
+    container: /home/dev/.gitconfig
+    readonly: true
+
+optional_mounts:
+  aws:
+    host: ~/.aws
+    container: /home/dev/.aws
+    readonly: true
+    description: "AWS creds for ECR pulls"
+
+egress_allow:
+  - github.com
+
+docker_registry_mirror:
+  extra_registries:
+    - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
+
+defaults:
+  memory: 16GiB
+  cpu: 8
+  network: strict
+  storage_pool: default
+
+golden:
+  ubuntu_version: "26.04"
+  java: amazon-corretto-17
+  node: 24
+  python: "3.13"
+
+autostart:
+  step_timeout: 600
+  env:
+    SPRING_PROFILES_ACTIVE: dev
+  on_create:
+    - name: dev_env
+      run: "make dev-env"
+    - name: backend
+      run: "local/scripts/backend/start"
+      mounts: [aws]
+    - name: frontend
+      run: "pnpm dev"
+      working_dir: frontend
+      background: true
+  on_start:
+    - name: backend
+      run: "local/scripts/backend/start"
+      mounts: [aws]
+    - name: frontend
+      run: "pnpm dev"
+      working_dir: frontend
+      background: true

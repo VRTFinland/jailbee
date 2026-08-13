@@ -1,0 +1,1400 @@
+"""Tests for the gie dashboard module (pure logic; no real Incus/TTY)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from rich.console import Console, RenderableType
+
+from jailbee import dashboard
+from jailbee.lifecycle import ContainerInfo
+
+
+def test_collect_config_paths_puts_cwd_first_and_dedupes(mocker):
+    a = Path("/repos/a/.jailbee/config.yaml")
+    b = Path("/repos/b/.jailbee/config.yaml")
+    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[a, b])
+    # cwd config equals an already-registered one -> no duplicate, cwd wins order
+    result = dashboard.collect_config_paths(b)
+    assert result == [b, a]
+
+
+def test_collect_config_paths_no_cwd(mocker):
+    a = Path("/repos/a/.jailbee/config.yaml")
+    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[a])
+    assert dashboard.collect_config_paths(None) == [a]
+
+
+def test_collect_config_paths_empty(mocker):
+    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[])
+    assert dashboard.collect_config_paths(None) == []
+
+
+def test_registered_repo_configs_skips_missing_and_keeps_present(db_session, tmp_path, mocker):
+    from jailbee.db.models import RegisteredRepo
+
+    # One repo with a real config.yaml on disk, one stale (no file).
+    present = tmp_path / "present"
+    (present / ".jailbee").mkdir(parents=True)
+    (present / ".jailbee" / "config.yaml").write_text("source_repo:\n  path: .\n")
+
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="present",
+            repo_root=str(present),
+            registered_at=datetime.now(UTC),
+        )
+    )
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="stale",
+            repo_root=str(tmp_path / "nonexistent"),
+            registered_at=datetime.now(UTC),
+        )
+    )
+    db_session.commit()
+
+    mocker.patch(
+        "jailbee.db.get_engine",
+        return_value=db_session.get_bind(),
+    )
+    result = dashboard.registered_repo_configs()
+    assert result == [present / ".jailbee" / "config.yaml"]
+
+
+def _ci(name: str, repo: str, state: str = "Running") -> ContainerInfo:
+    return ContainerInfo(
+        name=name,
+        state=state,
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo=repo,
+    )
+
+
+def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_cfg):
+    cwd_cfg = make_cfg(tmp_path / "alpha")  # container_prefix == "alpha"
+    other_cfg = make_cfg(tmp_path / "beta")  # container_prefix == "beta"
+    cwd_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    other_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
+
+    def fake_load(p):
+        return cwd_cfg if p == cwd_path else other_cfg
+
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            return []  # no orphans
+        if cfg is cwd_cfg:
+            return [_ci("alpha-one", "alpha")]
+        return [_ci("beta-one", "beta")]
+
+    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(
+        mocker.MagicMock(), [other_path, cwd_path], cwd_config=cwd_path, with_git=False
+    )
+    # cwd group ("alpha") pinned first despite being passed second
+    assert [g.prefix for g in groups] == ["alpha", "beta"]
+    assert groups[0].config_path == cwd_path
+    assert [c.name for c in groups[0].containers] == ["alpha-one"]
+
+
+def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_cfg):
+    """The Qt duration dialog pre-selects this, so it must be the repo's own
+    configured `loose_auto_revert.after`, not the first preset."""
+    cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"after": "45m"})
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].loose_ttl_default == "45m"
+
+
+def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mocker, make_cfg):
+    """None tells the GUI not to ask: a disabled policy schedules no TTL."""
+    cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"enabled": False})
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].loose_ttl_default is None
+
+
+def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"after": 20})
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].loose_ttl_default == "20m"
+
+
+def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha")
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
+        return [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    orphan = next(g for g in groups if g.prefix == "gamma")
+    assert orphan.loose_ttl_default is None
+
+
+def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha")
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
+        return [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    orphan = next(g for g in groups if g.prefix == "gamma")
+    assert orphan.config_path is None
+    assert orphan.repo_root is None
+    assert [c.name for c in orphan.containers] == ["gamma-x"]
+    # no container appears twice
+    names = [c.name for g in groups for c in g.containers]
+    assert sorted(names) == ["alpha-one", "gamma-x"]
+
+
+def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
+    beta = make_cfg(tmp_path / "beta")
+    alpha = make_cfg(tmp_path / "alpha")
+    beta_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
+    alpha_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+
+    def fake_load(p):
+        return alpha if p == alpha_path else beta
+
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            # one orphan ('zeta') plus the two covered repos
+            return [_ci("alpha-1", "alpha"), _ci("beta-1", "beta"), _ci("zeta-x", "zeta")]
+        return [_ci(f"{cfg.container_prefix}-1", cfg.container_prefix)]
+
+    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(
+        mocker.MagicMock(), [beta_path, alpha_path], cwd_config=None, with_git=False
+    )
+    # named repos alpha-sorted first, orphan group ('zeta') last
+    assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]
+    assert groups[-1].config_path is None  # orphan group trails
+
+
+def test_gather_rows_hides_repo_with_no_containers(tmp_path, mocker, make_cfg):
+    empty_cfg = make_cfg(tmp_path / "alpha")  # container_prefix == "alpha"
+    populated_cfg = make_cfg(tmp_path / "beta")  # container_prefix == "beta"
+    empty_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    populated_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
+
+    def fake_load(p):
+        return empty_cfg if p == empty_path else populated_cfg
+
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            return []  # no orphans
+        if cfg is empty_cfg:
+            return []
+        return [_ci("beta-one", "beta")]
+
+    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(
+        mocker.MagicMock(), [empty_path, populated_path], cwd_config=None, with_git=False
+    )
+    # The empty repo produces no group at all; the populated one still appears.
+    assert [g.prefix for g in groups] == ["beta"]
+
+
+def test_gather_rows_empty_config_paths_returns_empty(mocker):
+    # No configs -> no base_cfg -> no orphan scan -> empty result, no calls.
+    lc = mocker.patch.object(dashboard, "list_containers")
+    result = dashboard.gather_rows(mocker.MagicMock(), [], cwd_config=None, with_git=False)
+    assert result == []
+    lc.assert_not_called()
+
+
+def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make_cfg):
+    good = make_cfg(tmp_path / "alpha")
+    good_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    bad_path = tmp_path / "broken" / ".jailbee" / "config.yaml"
+
+    def fake_load(p):
+        if p == bad_path:
+            raise OSError("gone")
+        return good
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+    groups = dashboard.gather_rows(
+        mocker.MagicMock(), [good_path, bad_path], cwd_config=good_path, with_git=False
+    )
+    assert [g.prefix for g in groups] == ["alpha"]
+
+
+def test_carry_forward_git_status_fills_in_from_previous_snapshot():
+    from jailbee.git_status import GitStatus
+
+    status = GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="1", conflict="ok")
+    prev = [
+        dashboard.RepoGroup(
+            "a",
+            "/a",
+            Path("/a/.jailbee/config.yaml"),
+            [_ci("a-1", "a")],
+        )
+    ]
+    prev[0].containers[0].git_status = status
+
+    new = [
+        dashboard.RepoGroup(
+            "a",
+            "/a",
+            Path("/a/.jailbee/config.yaml"),
+            [_ci("a-1", "a")],
+        )
+    ]
+    assert new[0].containers[0].git_status is None
+
+    dashboard.carry_forward_git_status(new, prev)
+
+    assert new[0].containers[0].git_status is status
+
+
+def test_carry_forward_git_status_leaves_unmatched_name_none():
+    from jailbee.git_status import GitStatus
+
+    status = GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="1", conflict="ok")
+    prev = [dashboard.RepoGroup("a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a")])]
+    prev[0].containers[0].git_status = status
+
+    new = [dashboard.RepoGroup("a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-2", "a")])]
+
+    dashboard.carry_forward_git_status(new, prev)
+
+    assert new[0].containers[0].git_status is None
+
+
+def test_carry_forward_git_status_does_not_overwrite_existing():
+    from jailbee.git_status import GitStatus
+
+    old_status = GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="1", conflict="ok")
+    new_status = GitStatus(wt="+2 -0", ahead_diff="clean", ahead_count="2", conflict="ok")
+    prev = [dashboard.RepoGroup("a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a")])]
+    prev[0].containers[0].git_status = old_status
+
+    new = [dashboard.RepoGroup("a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a")])]
+    new[0].containers[0].git_status = new_status
+
+    dashboard.carry_forward_git_status(new, prev)
+
+    assert new[0].containers[0].git_status is new_status
+
+
+def test_carry_forward_git_status_empty_prev_is_noop():
+    new = [dashboard.RepoGroup("a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a")])]
+
+    dashboard.carry_forward_git_status(new, [])
+
+    assert new[0].containers[0].git_status is None
+
+
+def test_selectable_names_flattens_in_group_order():
+    groups = [
+        dashboard.RepoGroup(
+            "a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a"), _ci("a-2", "a")]
+        ),
+        dashboard.RepoGroup("b", None, None, [_ci("b-1", "b")]),
+    ]
+    assert dashboard.selectable_names(groups) == ["a-1", "a-2", "b-1"]
+
+
+def test_move_selection_clamps_at_edges():
+    names = ["x", "y", "z"]
+    assert dashboard.move_selection(names, None, 1) == "x"
+    assert dashboard.move_selection(names, "x", -1) == "x"  # clamp at top
+    assert dashboard.move_selection(names, "z", 1) == "z"  # clamp at bottom
+    assert dashboard.move_selection(names, "y", 1) == "z"
+    assert dashboard.move_selection([], "y", 1) is None
+
+
+def test_reconcile_selection_keeps_or_clamps():
+    assert dashboard.reconcile_selection(["a", "b"], "b", 0) == "b"
+    # 'b' vanished, last_index 1 clamps into the new shorter list
+    assert dashboard.reconcile_selection(["a"], "b", 1) == "a"
+    assert dashboard.reconcile_selection([], "b", 0) is None
+    # nothing selected yet -> first
+    assert dashboard.reconcile_selection(["a", "b"], None, 0) == "a"
+
+
+def test_menu_actions_running_default_hides_ide_and_chrome():
+    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    verbs = [a for _, a in actions]
+    assert verbs == ["tmux", "shell", "net loose", "restart", "stop", "destroy"]
+    assert "ide" not in verbs
+    assert "chrome" not in verbs
+
+
+def test_menu_actions_running_ide_enabled_only():
+    actions = dashboard.menu_actions(
+        "Running", has_config=True, ide_enabled=True, current_network="strict"
+    )
+    verbs = [a for _, a in actions]
+    assert verbs == [
+        "tmux",
+        "shell",
+        "ide",
+        "net loose",
+        "restart",
+        "stop",
+        "destroy",
+    ]
+    assert "chrome" not in verbs
+
+
+def test_menu_actions_running_chrome_enabled_only():
+    actions = dashboard.menu_actions(
+        "Running", has_config=True, chrome_enabled=True, current_network="strict"
+    )
+    verbs = [a for _, a in actions]
+    assert verbs == [
+        "tmux",
+        "shell",
+        "chrome",
+        "net loose",
+        "restart",
+        "stop",
+        "destroy",
+    ]
+    assert "ide" not in verbs
+
+
+def test_menu_actions_running_both_enabled():
+    actions = dashboard.menu_actions(
+        "Running",
+        has_config=True,
+        ide_enabled=True,
+        chrome_enabled=True,
+        current_network="strict",
+    )
+    verbs = [a for _, a in actions]
+    assert verbs == [
+        "tmux",
+        "shell",
+        "ide",
+        "chrome",
+        "net loose",
+        "restart",
+        "stop",
+        "destroy",
+    ]
+
+
+def test_menu_actions_stopped():
+    actions = dashboard.menu_actions("Stopped", has_config=True)
+    assert [a for _, a in actions] == ["start", "destroy"]
+
+
+def test_menu_actions_orphan_disabled():
+    assert dashboard.menu_actions("Running", has_config=False) == []
+
+
+def test_menu_actions_orphan_disabled_regardless_of_flags():
+    assert (
+        dashboard.menu_actions("Running", has_config=False, ide_enabled=True, chrome_enabled=True)
+        == []
+    )
+
+
+def test_menu_actions_unknown_state_only_destroy():
+    assert [a for _, a in dashboard.menu_actions("Frozen", has_config=True)] == ["destroy"]
+
+
+def test_menu_actions_running_network_strict_offers_loose():
+    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    verbs = [a for _, a in actions]
+    assert "net loose" in verbs
+    assert "net strict" not in verbs
+
+
+def test_menu_actions_running_network_loose_offers_strict():
+    actions = dashboard.menu_actions("Running", has_config=True, current_network="loose")
+    verbs = [a for _, a in actions]
+    assert "net strict" in verbs
+    assert "net loose" not in verbs
+
+
+def test_menu_actions_running_network_unknown_offers_both():
+    actions = dashboard.menu_actions("Running", has_config=True, current_network=None)
+    verbs = [a for _, a in actions]
+    assert "net strict" in verbs
+    assert "net loose" in verbs
+
+
+def test_menu_actions_stopped_has_no_network_entries():
+    actions = dashboard.menu_actions("Stopped", has_config=True, current_network="strict")
+    verbs = [a for _, a in actions]
+    assert not any(v.startswith("net ") for v in verbs)
+
+
+def test_menu_actions_orphan_disabled_even_with_network():
+    assert dashboard.menu_actions("Running", has_config=False, current_network="strict") == []
+
+
+def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
+    actions = dashboard.menu_actions(
+        "Running",
+        has_config=True,
+        ide_enabled=True,
+        chrome_enabled=True,
+        current_network="strict",
+    )
+    verbs = [a for _, a in actions]
+    assert verbs == [
+        "tmux",
+        "shell",
+        "ide",
+        "chrome",
+        "net loose",
+        "restart",
+        "stop",
+        "destroy",
+    ]
+    verb_to_label = {verb: label for label, verb in actions}
+    assert verb_to_label["net loose"] == "Network: loose"
+
+
+def test_menu_actions_running_includes_open_pr_when_pr_known():
+    actions = dashboard.menu_actions(
+        "Running", has_config=True, current_network="strict", pr_number=123
+    )
+    assert actions[0] == ("Open PR", "pr --open")
+
+
+def test_menu_actions_stopped_includes_open_pr_when_pr_known():
+    actions = dashboard.menu_actions("Stopped", has_config=True, pr_number=7)
+    assert ("Open PR", "pr --open") in actions
+    # still offers the stopped-state actions
+    assert [a for _, a in actions if a != "pr --open"] == ["start", "destroy"]
+
+
+def test_menu_actions_omits_open_pr_when_no_pr():
+    running = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    stopped = dashboard.menu_actions("Stopped", has_config=True)
+    assert ("Open PR", "pr --open") not in running
+    assert ("Open PR", "pr --open") not in stopped
+
+
+def test_menu_actions_orphan_stays_empty_even_with_pr():
+    assert dashboard.menu_actions("Running", has_config=False, pr_number=123) == []
+
+
+def test_open_action_menu_dispatches_the_chosen_verb(mocker, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    group = dashboard.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    select_mock = mocker.patch("questionary.select")
+    select_mock.return_value.ask.return_value = "net loose"
+
+    dashboard._open_action_menu([group], "alpha-x")
+
+    run.assert_called_once_with(
+        ["jailbee", "net", "loose", "alpha-x", "--config", str(config_path)], check=False
+    )
+
+
+def test_open_action_menu_cancel_entry_dispatches_nothing(mocker, tmp_path):
+    """Picking "cancel" must dispatch no command.
+
+    The answer is taken from the real choice list by title, because
+    `questionary.Choice` substitutes the title when `value` is None — a cancel
+    entry built that way answers the string "cancel" and would be dispatched as
+    `gie cancel <name>`.
+    """
+    config_path = tmp_path / "config.yaml"
+    group = dashboard.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    select_mock = mocker.patch("questionary.select")
+
+    def fake_select(_message, choices):
+        cancel_choice = next(c for c in choices if c.title == "cancel")
+        select_mock.return_value.ask.return_value = cancel_choice.value
+        return select_mock.return_value
+
+    select_mock.side_effect = fake_select
+
+    dashboard._open_action_menu([group], "alpha-x")
+
+    run.assert_not_called()
+
+
+def test_actions_for_container_matches_menu_actions():
+    from pathlib import Path
+
+    from jailbee.dashboard import (
+        RepoGroup,
+        actions_for_container,
+        menu_actions,
+    )
+    from jailbee.lifecycle import ContainerInfo
+
+    running = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip="1.2.3.4",
+        memory_limit="2GB",
+        repo="p",
+    )
+    groups = [
+        RepoGroup(
+            "p",
+            "/repo",
+            Path("/repo/.jailbee/config.yaml"),
+            [running],
+            ide_enabled=True,
+            chrome_enabled=False,
+        )
+    ]
+    expected = menu_actions(
+        "Running",
+        has_config=True,
+        ide_enabled=True,
+        chrome_enabled=False,
+        current_network="strict",
+    )
+    assert actions_for_container(groups, "p-foo") == expected
+    assert actions_for_container(groups, "nope") == []
+    assert actions_for_container(groups, None) == []
+
+
+def test_gather_rows_sets_ide_and_chrome_flags_from_config(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha", jetbrains={"enabled": True}, chrome={"enabled": False})
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    group = next(g for g in groups if g.prefix == "alpha")
+    assert group.ide_enabled is True
+    assert group.chrome_enabled is False
+
+
+def test_gather_rows_orphan_groups_default_ide_chrome_disabled(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha")
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        if all_repos:
+            return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
+        return [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    orphan = next(g for g in groups if g.prefix == "gamma")
+    assert orphan.ide_enabled is False
+    assert orphan.chrome_enabled is False
+
+
+def test_visible_fields_excludes_hidden_and_respects_default_table():
+    from datetime import datetime
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
+    )
+    names = [f.name for f in dashboard.visible_fields(datetime.now().astimezone(), [c])]
+
+    # Hidden columns never appear.
+    assert "repo" not in names
+    assert "full_name" not in names
+    assert "git_status" not in names
+    assert "created" not in names
+    assert "ttl" not in names  # folded into the NETWORK cell instead
+    # Core columns do.
+    assert "name" in names
+    assert "state" in names
+    assert "network" in names
+
+
+def test_dashboard_keeps_ip_and_mem_that_ls_drops_by_default():
+    """The two views have different defaults, and the dashboard's are wider.
+
+    IP and MEM are off in `jailbee ls` (a one-shot listing pays their width
+    for a stale sample) but on here, where the view refreshes. Guards the
+    coupling that used to make one flag serve both: dropping them from `ls`
+    must not silently strip them from the live dashboards.
+    """
+    from datetime import UTC, datetime
+
+    from jailbee.lifecycle import ls_field_specs
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    dashboard_names = [f.name for f in dashboard.visible_fields(now, [c])]
+    ls_names = [f.name for f in ls_field_specs(now=now, all_repos=False) if f.default_table]
+
+    assert "ip" in dashboard_names and "ip" not in ls_names
+    assert "mem" in dashboard_names and "mem" not in ls_names
+
+
+def test_dashboard_hide_still_removes_a_dashboard_only_column():
+    """`hide` stays authoritative over the dashboard-only default.
+
+    `mem` is on by default in the dashboards via `default_dashboard`; a user
+    who hides it must still get it gone, or the new flag would have quietly
+    made a documented config key unenforceable.
+    """
+    from datetime import UTC, datetime
+
+    from jailbee.config import ColumnConfig
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [
+        f.name for f in dashboard.visible_fields(now, [c], columns=ColumnConfig(hide=["mem", "ip"]))
+    ]
+    assert "mem" not in names and "ip" not in names
+
+
+def test_dashboard_explicit_fields_reach_a_table_only_default():
+    """An explicit `dashboard.fields` list beats every default, in both
+    directions: it surfaces `memory_limit` (off by default everywhere) and
+    drops the core columns it does not name."""
+    from datetime import UTC, datetime
+
+    from jailbee.config import ColumnConfig
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [
+        f.name
+        for f in dashboard.visible_fields(
+            now, [c], columns=ColumnConfig(fields=["name", "memory_limit"])
+        )
+    ]
+    assert names == ["name", "memory_limit"]
+
+
+def test_visible_fields_network_cell_folds_loose_ttl():
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    loose = ContainerInfo(
+        name="p-loose",
+        state="Running",
+        network="loose",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        loose_until=now + timedelta(minutes=12, seconds=30),
+    )
+    strict = ContainerInfo(
+        name="p-strict", state="Running", network="strict", ip=None, memory_limit=None, repo="p"
+    )
+    fields = dashboard.visible_fields(now, [loose, strict])
+    network_field = next(f for f in fields if f.name == "network")
+    assert network_field.cell(loose) == "loose (12m)"
+    assert network_field.cell(strict) == "strict"
+
+
+def test_network_cell_renders_hours_for_a_long_ttl():
+    from datetime import UTC, datetime, timedelta
+
+    from jailbee.lifecycle import ContainerInfo
+
+    now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+    loose = ContainerInfo(
+        name="myrepo-feat-x",
+        state="Running",
+        network="loose",
+        ip=None,
+        memory_limit=None,
+        loose_until=now + timedelta(hours=2, minutes=5),
+    )
+    network_field = next(f for f in dashboard.visible_fields(now, [loose]) if f.name == "network")
+    assert network_field.cell(loose) == "loose (2h 5m)"
+
+
+def test_visible_fields_network_cell_unknown_loose_until():
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    c = ContainerInfo(
+        name="p-loose",
+        state="Running",
+        network="loose",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        loose_until=None,
+    )
+    fields = dashboard.visible_fields(now, [c])
+    network_field = next(f for f in fields if f.name == "network")
+    assert network_field.cell(c) == "loose (—)"
+
+
+def test_visible_fields_includes_pr_when_a_container_has_one():
+    from datetime import datetime
+
+    now = datetime.now().astimezone()
+    with_pr = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        pr_number=7,
+        pr_author=True,
+    )
+    names = [f.name for f in dashboard.visible_fields(now, [with_pr])]
+    assert "pr" in names
+
+
+def test_visible_fields_omits_pr_when_no_container_has_one():
+    from datetime import datetime
+
+    now = datetime.now().astimezone()
+    no_pr = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit=None, repo="p"
+    )
+    names = [f.name for f in dashboard.visible_fields(now, [no_pr])]
+    assert "pr" not in names
+
+
+def test_visible_fields_defaults_to_todays_hidden_set():
+    """Omitting `columns` must render exactly what the dashboard renders now."""
+    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+    from jailbee.lifecycle import ContainerInfo
+
+    c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+    names = [f.name for f in dashboard.visible_fields(datetime.now().astimezone(), [c])]
+
+    assert not set(names) & set(DASHBOARD_DEFAULT_HIDE)
+    assert "name" in names
+
+
+def test_visible_fields_honours_an_explicit_field_list():
+    from jailbee.config import ColumnConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+
+    fields = dashboard.visible_fields(
+        datetime.now().astimezone(), [c], ColumnConfig(fields=["name", "created"])
+    )
+
+    # `created` is in the default hidden set; naming it explicitly brings it back.
+    assert [f.name for f in fields] == ["name", "created"]
+
+
+def test_visible_fields_honours_show_if_for_an_explicit_field_list():
+    """An explicitly named column renders even when its `show_if` is false —
+    matching table_format.apply_column_config()'s treatment of an explicit
+    `fields` list (see that function's docstring). Naming a column is an
+    explicit request."""
+    from jailbee.config import ColumnConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    no_pr = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit=None
+    )
+
+    names = [
+        f.name
+        for f in dashboard.visible_fields(
+            datetime.now().astimezone(), [no_pr], ColumnConfig(fields=["name", "pr"])
+        )
+    ]
+
+    assert names == ["name", "pr"]
+
+
+def test_visible_fields_honours_a_custom_hide_list():
+    from jailbee.config import ColumnConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+
+    names = [
+        f.name
+        for f in dashboard.visible_fields(
+            datetime.now().astimezone(), [c], ColumnConfig(hide=["state"])
+        )
+    ]
+
+    assert "state" not in names
+    # `hide` replaces the default set rather than adding to it, so a column
+    # the built-in default hid is back unless the user hid it too.
+    assert "created" in names
+
+
+def test_visible_fields_still_folds_the_loose_ttl_into_network():
+    """The network-cell swap must survive an explicit field list."""
+    from datetime import timedelta
+
+    from jailbee.config import ColumnConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    now = datetime.now().astimezone()
+    loose = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="loose",
+        ip=None,
+        memory_limit=None,
+        loose_until=now + timedelta(hours=2),
+    )
+
+    fields = dashboard.visible_fields(now, [loose], ColumnConfig(fields=["name", "network"]))
+    network = next(f for f in fields if f.name == "network")
+
+    assert network.cell(loose) == "loose (2h)"
+
+
+def test_resolve_dashboard_columns_falls_back_to_global_without_a_cwd_repo(mocker):
+    from jailbee.global_config import GlobalConfig
+
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+
+    columns = dashboard.resolve_dashboard_columns(None)
+
+    assert columns.fields == ["name", "state"]
+
+
+def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
+    """A typo in the global `dashboard:` block must not lose the whole block —
+    the dashboard used to swallow `load_global_config`'s `ConfigError` and
+    degrade to `GlobalConfig()` entirely. Now `load_global_config` recovers
+    from the typo itself, so the dashboard sees the sanitized block (valid
+    names kept) rather than the built-in default."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, nosuchfield]\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    gcfg = dashboard._global_config_or_defaults()
+
+    assert gcfg.dashboard.fields == ["name"]
+
+
+def test_resolve_dashboard_columns_reads_a_global_only_block_from_disk(tmp_path, monkeypatch):
+    """`gie gui` outside a repo is ordinary, and `global.yaml` is the
+    documented normal home for this setting — so the real load path (no
+    mocked loader) must deliver it. It did not: the `dashboard:` key was
+    stripped by `_split_host_keys` before `GlobalConfig` validation, so
+    `gcfg.dashboard` was always the built-in default."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, local_diff]\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    columns = dashboard.resolve_dashboard_columns(None)
+
+    assert columns.fields == ["name", "local_diff"]
+
+
+def test_resolve_dashboard_columns_global_hide_replaces_the_default_hide(tmp_path, monkeypatch):
+    """`hide` is a replacement, not an extension: naming only `ip` brings
+    REPO / FULL NAME / GIT STATUS / CREATED / TTL back into the table."""
+    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  hide: [ip]\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    columns = dashboard.resolve_dashboard_columns(None)
+
+    assert columns.hide == ["ip"]
+    assert not set(DASHBOARD_DEFAULT_HIDE) & set(columns.hide)
+
+
+def test_resolve_dashboard_columns_layers_the_cwd_repos_config_over_global(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee.global_config import GlobalConfig
+
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    cfg = make_cfg(tmp_path, dashboard={"fields": ["name", "ip"]})
+    path = tmp_path / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    columns = dashboard.resolve_dashboard_columns(path)
+
+    assert columns.fields == ["name", "ip"]
+
+
+def test_resolve_dashboard_columns_falls_back_when_cwd_config_fails_to_load(tmp_path, mocker):
+    from jailbee.global_config import GlobalConfig
+
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    mocker.patch.object(dashboard, "load_config", side_effect=Exception("boom"))
+
+    columns = dashboard.resolve_dashboard_columns(tmp_path / ".jailbee" / "config.yaml")
+
+    assert columns.fields == ["name", "state"]
+
+
+def test_resolve_dashboard_columns_with_no_dashboard_block_yields_the_default_hide(
+    tmp_path, mocker, make_cfg
+):
+    """A cwd repo with no `dashboard:` block must still resolve to
+    `DASHBOARD_DEFAULT_HIDE` — the safety net for the whole feature — by
+    falling through to the (real, unoverridden) global default rather than
+    an empty hide list."""
+    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    path = tmp_path / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    columns = dashboard.resolve_dashboard_columns(path)
+
+    assert sorted(columns.hide) == sorted(DASHBOARD_DEFAULT_HIDE)
+
+
+def _render_text(renderable: RenderableType) -> str:
+    console = Console(record=True, width=200)
+    console.print(renderable)
+    return console.export_text()
+
+
+def test_render_hides_job_column_until_a_job_exists(tmp_path):
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    # No containers have an in-flight job -> JOB column hidden.
+    # We check that the JOB header is absent from the rendered table headers.
+    g_noop = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g_noop], selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True
+        )
+    )
+    # The header row must not contain the JOB column header.
+    # We check the header line specifically (second line of the output).
+    header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
+    assert " JOB " not in header_line and not header_line.startswith("JOB ")
+    # The cell value "cloning" must also be absent when no job is in flight.
+    assert "cloning" not in out
+
+    # A container with an in-flight job -> JOB column present, phase value visible.
+    c = _ci("alpha-two", "alpha")
+    c.job_phase = "cloning"
+    g_op = dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
+    out2 = _render_text(
+        dashboard.render(
+            [g_op], selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True
+        )
+    )
+    assert "cloning" in out2
+    header_line2 = next(ln for ln in out2.splitlines() if "NAME" in ln)
+    assert " JOB " in header_line2 or header_line2.startswith("JOB ")
+
+
+def test_render_shows_repo_headers_and_rows(tmp_path):
+    groups = [
+        dashboard.RepoGroup(
+            "alpha",
+            "/repos/alpha",
+            tmp_path / "alpha/.jailbee/config.yaml",
+            [_ci("alpha-one", "alpha")],
+        ),
+        dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
+    ]
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected="alpha-one",
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+        )
+    )
+    assert "alpha" in out
+    assert "gamma" in out and "orphan" in out
+    assert "one" in out  # display_name with prefix stripped
+    assert "gamma-x" in out
+    # footer keybindings present
+    assert "Enter" in out and "quit" in out
+    # selected row marked with arrow
+    assert "▸" in out
+
+
+def test_render_empty_groups_shows_placeholder():
+    out = _render_text(
+        dashboard.render(
+            [],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=0.0,
+            interval=3.0,
+            git_enabled=False,
+        )
+    )
+    assert "no containers" in out.lower()
+    assert "no-git" in out
+
+
+def test_render_forwards_columns_to_visible_fields(tmp_path):
+    from jailbee.config import ColumnConfig
+
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            columns=ColumnConfig(fields=["name", "created"]),
+        )
+    )
+    header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
+    assert "CREATED" in header_line
+    assert "STATE" not in header_line
+
+
+def test_render_shows_refreshing_indicator(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    out_on = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            refreshing=True,
+        )
+    )
+    out_off = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            refreshing=False,
+        )
+    )
+    assert "⟳" in out_on
+    assert "⟳" not in out_off
+
+
+def test_parse_key_maps_arrows_and_letters():
+    assert dashboard.parse_key(b"\x1b[A") == "up"
+    assert dashboard.parse_key(b"\x1b[B") == "down"
+    assert dashboard.parse_key(b"k") == "up"
+    assert dashboard.parse_key(b"j") == "down"
+    assert dashboard.parse_key(b"\r") == "enter"
+    assert dashboard.parse_key(b"\n") == "enter"
+    assert dashboard.parse_key(b"r") == "refresh"
+    assert dashboard.parse_key(b"q") == "quit"
+    assert dashboard.parse_key(b"\x03") == "quit"  # Ctrl-C
+    assert dashboard.parse_key(b"") == "quit"  # EOF (stdin closed)
+    assert dashboard.parse_key(b"Z") == ""  # unmapped
+
+
+# ---------------------------------------------------------------------------
+# CLI wiring test
+# ---------------------------------------------------------------------------
+
+from typer.testing import CliRunner  # noqa: E402
+
+from jailbee.cli import app  # noqa: E402
+
+
+def test_refresh_due_schedule():
+    # first tick: always gather, git included when enabled
+    assert dashboard._refresh_due(
+        now=0.0,
+        last_base=0.0,
+        last_full=0.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=True,
+        first=True,
+        forced=False,
+    ) == (True, True)
+    # forced: gather + git
+    assert dashboard._refresh_due(
+        now=1.0,
+        last_base=1.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=True,
+        first=False,
+        forced=True,
+    ) == (True, True)
+    # nothing due
+    assert dashboard._refresh_due(
+        now=2.0,
+        last_base=1.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=True,
+        first=False,
+        forced=False,
+    ) == (False, False)
+    # base due, git not due
+    assert dashboard._refresh_due(
+        now=5.0,
+        last_base=1.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=True,
+        first=False,
+        forced=False,
+    ) == (True, False)
+    # git due -> base also true
+    assert dashboard._refresh_due(
+        now=12.0,
+        last_base=11.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=True,
+        first=False,
+        forced=False,
+    ) == (True, True)
+    # git disabled: base due -> (True, False), never git
+    assert dashboard._refresh_due(
+        now=100.0,
+        last_base=1.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=False,
+        first=False,
+        forced=False,
+    ) == (True, False)
+    assert dashboard._refresh_due(
+        now=100.0,
+        last_base=1.0,
+        last_full=1.0,
+        interval=3.0,
+        git_interval=10.0,
+        git_enabled=False,
+        first=True,
+        forced=False,
+    ) == (True, False)
+
+
+def test_render_shows_memory_used_and_limit(tmp_path):
+    c = _ci("alpha-one", "alpha")
+    c.memory_usage = 4_000_000_000
+    c.memory_limit = "8GiB"
+    g = dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+        )
+    )
+    assert "3.7G" in out  # used
+    assert "8GiB" in out  # limit
+    assert "MEM" in out  # the new column header
+    assert "MEMORY LIMIT" not in out  # bare-limit column was swapped out
+
+
+def test_dashboard_command_delegates_to_run(mocker):
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli.find_repo_config",
+        side_effect=__import__(
+            "jailbee.config", fromlist=["ConfigNotFoundError"]
+        ).ConfigNotFoundError("none"),
+    )
+    result = CliRunner().invoke(app, ["dashboard", "-i", "5", "--no-git"])
+    assert result.exit_code == 0
+    _, kwargs = run.call_args
+    assert kwargs["interval"] == 5.0
+    assert kwargs["no_git"] is True
+    assert kwargs["cwd_config"] is None
+
+
+def test_menu_actions_clear_job_entry_is_first_when_clearable():
+    actions = dashboard.menu_actions(
+        "Running", has_config=True, current_network="strict", job_clearable=True
+    )
+    assert actions[0] == ("Clear failed job", "job clear")
+
+
+def test_menu_actions_no_clear_entry_when_not_clearable():
+    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    assert "job clear" not in [verb for _, verb in actions]
+
+
+def test_menu_actions_clear_job_precedes_open_pr():
+    actions = dashboard.menu_actions(
+        "Running", has_config=True, current_network="strict", pr_number=7, job_clearable=True
+    )
+    verbs = [verb for _, verb in actions]
+    assert verbs.index("job clear") < verbs.index("pr --open")
+
+
+def test_menu_actions_clear_job_offered_for_a_container_with_no_state():
+    # A job row whose container never existed is rendered with state "—".
+    actions = dashboard.menu_actions("—", has_config=True, job_clearable=True)
+    assert actions[0] == ("Clear failed job", "job clear")
+
+
+def test_actions_for_container_offers_clear_for_a_failed_job(mocker):
+    from jailbee import background
+    from jailbee.lifecycle import ContainerInfo
+
+    mocker.patch.object(background, "worker_alive", return_value=True)
+    c = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        job_phase=background.PHASE_FAILED,
+        job_pid=4242,
+        job_kind="create",
+    )
+    groups = [dashboard.RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [c])]
+
+    verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
+
+    assert verbs[0] == "job clear"
+
+
+def test_actions_for_container_offers_clear_for_a_dead_worker(mocker):
+    from jailbee import background
+    from jailbee.lifecycle import ContainerInfo
+
+    mocker.patch.object(background, "worker_alive", return_value=False)
+    c = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        job_phase=background.PHASE_CLONING,
+        job_pid=999,
+        job_kind="create",
+    )
+    groups = [dashboard.RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [c])]
+
+    verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
+
+    assert verbs[0] == "job clear"
+
+
+def test_actions_for_container_no_clear_for_a_live_job(mocker):
+    from jailbee import background
+    from jailbee.lifecycle import ContainerInfo
+
+    mocker.patch.object(background, "worker_alive", return_value=True)
+    c = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        job_phase=background.PHASE_CLONING,
+        job_pid=4242,
+        job_kind="create",
+    )
+    groups = [dashboard.RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [c])]
+
+    verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
+
+    assert "job clear" not in verbs
+
+
+def test_actions_for_container_no_clear_without_a_job():
+    from jailbee.lifecycle import ContainerInfo
+
+    c = ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+    )
+    groups = [dashboard.RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [c])]
+
+    verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
+
+    assert "job clear" not in verbs

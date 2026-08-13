@@ -1,0 +1,536 @@
+/* ==========================================================================
+   JailBee marketing site — stylesheet
+
+   Structure (Task 3 appends new sections below the seam marker at the end):
+     1. Design tokens (:root custom properties)
+     2. @font-face declarations
+     3. Base elements (html, body, headings, prose, links)
+     4. Layout primitives (.wrap, sections)
+     5. Components (hero, install box, copy button, buttons)
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------
+   1. Design tokens — the only colours the whole site is allowed to use.
+   ----------------------------------------------------------------------- */
+:root {
+  --ground: #0b0c0e;
+  --surface: #14161a;
+  --surface-2: #1b1e24;
+  --border: #262a32;
+  --text: #e8e6e3;
+  --muted: #a2a7b0;
+  --amber: #f0a92b;
+  --amber-dim: #c07f12;
+  --green: #74c47c;
+  --red: #e06c6c;
+
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --measure: 64ch;
+  --page: 1120px;
+  --gap: clamp(1rem, 2.5vw, 2rem);
+  --section-y: clamp(3rem, 5.5vw, 5rem);
+  --radius: 10px;
+}
+
+/* -----------------------------------------------------------------------
+   2. @font-face — exactly the three weights shipped in assets/fonts/.
+      Never reference a weight/style that isn't in that directory: the
+      request just falls back to a synthesised bold, silently.
+   ----------------------------------------------------------------------- */
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* -----------------------------------------------------------------------
+   3. Base elements
+   ----------------------------------------------------------------------- */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--sans);
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0 0 0.6em;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 6vw, 3.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: clamp(1.7rem, 3.4vw, 2.4rem);
+  line-height: 1.15;
+}
+
+p {
+  margin: 0 0 1em;
+  max-width: var(--measure);
+}
+
+a {
+  color: var(--amber);
+  text-decoration: none;
+}
+
+a:hover,
+a:focus-visible {
+  text-decoration: underline;
+}
+
+code,
+pre {
+  font-family: var(--mono);
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+/* -----------------------------------------------------------------------
+   4. Layout primitives
+   ----------------------------------------------------------------------- */
+.wrap {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gap);
+}
+
+section {
+  padding: var(--section-y) 0;
+}
+
+/* -----------------------------------------------------------------------
+   5. Components
+   ----------------------------------------------------------------------- */
+.hero {
+  padding-top: clamp(3rem, 7vw, 5.5rem);
+}
+
+/* The wordmark is text, not pixels: the mark image carries only the caged
+   bee, and "JailBee" is set in the page's own IBM Plex. It stays sharp at
+   any size and matches the rest of the type instead of being a small,
+   softened bitmap of it. */
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  margin-bottom: 1.75rem;
+}
+
+.lockup__mark {
+  width: auto;
+  /* Sized against h1's clamp so the brand reads as the headline's peer
+     rather than as a caption above it. */
+  height: clamp(82px, 11vw, 110px);
+}
+
+.lockup__text {
+  display: flex;
+  flex-direction: column;
+  /* The attribution hangs off the wordmark's right edge, like a signature
+     under a title — the reason it needs its own column. */
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.lockup__word {
+  color: var(--amber);
+  font-weight: 600;
+  font-size: clamp(2.1rem, 4.2vw, 3.2rem);
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+
+.lockup__by {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1;
+  text-decoration: none;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.lockup__by img {
+  display: block;
+  width: 72px;
+  height: auto;
+}
+
+.lockup__by:hover,
+.lockup__by:focus-visible {
+  opacity: 1;
+}
+
+/* jAIlbee — the two letters the name was chosen for. <em> for the semantic
+   emphasis; the italic is turned off because the point is the colour. */
+.lockup__word em {
+  color: var(--text);
+  font-style: normal;
+}
+
+.hero__lead {
+  color: var(--muted);
+  font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+}
+
+.install {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1.75rem 0;
+}
+
+.install__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+}
+
+.install__row code {
+  color: var(--text);
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.install__hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+button.copy {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 0.4rem 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+button.copy:hover {
+  border-color: var(--amber-dim);
+}
+
+button.copy[data-state="copied"] {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.button {
+  display: inline-block;
+  border-radius: var(--radius);
+  padding: 0.7rem 1.4rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button:hover,
+.button:focus-visible {
+  text-decoration: none;
+}
+
+.button--primary {
+  background: var(--amber);
+  color: var(--ground);
+}
+
+.button--primary:hover,
+.button--primary:focus-visible {
+  background: var(--amber-dim);
+}
+
+.button--secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.button--secondary:hover,
+.button--secondary:focus-visible {
+  border-color: var(--amber-dim);
+}
+
+/* == Task 3 appends new sections below this line == */
+
+/* -----------------------------------------------------------------------
+   Cards — shared by #problem and #features. One column on narrow
+   screens, growing to three on wider ones; no fixed pixel width, so
+   nothing here can force a horizontal scrollbar.
+   ----------------------------------------------------------------------- */
+.cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--gap);
+  margin-top: 2rem;
+}
+
+@media (min-width: 640px) {
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  max-width: none;
+}
+
+.card strong {
+  color: var(--text);
+}
+
+/* -----------------------------------------------------------------------
+   Network — #network. Image and copy stack on narrow screens, sit side
+   by side from 800px up.
+   ----------------------------------------------------------------------- */
+.network__grid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap);
+}
+
+.network__img {
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 360px;
+}
+
+@media (min-width: 800px) {
+  .network__grid {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .network__img {
+    flex: 0 0 320px;
+  }
+
+  .network__body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Install steps — #install first-run sequence.
+   ----------------------------------------------------------------------- */
+.steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: var(--measure);
+}
+
+.steps li {
+  counter-increment: step;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 1rem;
+}
+
+.steps li::before {
+  content: counter(step);
+  flex-shrink: 0;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.steps code {
+  overflow-wrap: break-word;
+}
+
+/* -----------------------------------------------------------------------
+   Docs — #docs link list.
+   ----------------------------------------------------------------------- */
+.docs__list {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: var(--measure);
+}
+
+.docs__list li {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+}
+
+.docs__list li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.docs__list a {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.docs__list span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* -----------------------------------------------------------------------
+   Footer
+   ----------------------------------------------------------------------- */
+footer {
+  padding: var(--section-y) 0 3rem;
+  border-top: 1px solid var(--border);
+}
+
+footer p {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* -----------------------------------------------------------------------
+   Reduced motion — covers every transition/animation on the page. There
+   happen to be none declared elsewhere yet, but a future hover/focus
+   transition must not have to remember this rule exists. (It also covered
+   the demo clips' playback before that section was pulled.)
+   ----------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Footer — the GISGRO wordmark. The SVG is a white-fill mark, which sits
+   correctly on the dark ground; it is dimmed so it reads as provenance
+   rather than as a second brand competing with JailBee's own.
+   ----------------------------------------------------------------------- */
+.footer__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 1.1rem;
+}
+
+.footer__mark {
+  width: auto;
+  /* Below ~40px the bars stop reading as bars and the mark turns into a
+     smudge — the floor for this artwork, not a spacing choice. */
+  height: 42px;
+}
+
+.footer__word {
+  color: var(--amber);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+
+.footer__word em {
+  color: var(--text);
+  font-style: normal;
+}
+
+.footer__gisgro {
+  display: inline-block;
+  margin-top: 1.25rem;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.footer__copyright {
+  /* `display: block` on the logo link above would still leave the two on
+     one line at wide widths; this keeps the notice last and alone. */
+  margin-top: 1.25rem;
+}
+
+.footer__gisgro:hover,
+.footer__gisgro:focus-visible {
+  opacity: 1;
+}

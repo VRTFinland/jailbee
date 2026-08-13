@@ -1,0 +1,178 @@
+"""Global (host-level) configuration.
+
+Stored at $XDG_CONFIG_HOME/jailbee/global.yaml (default
+~/.config/jailbee/global.yaml). Optional file — if absent, defaults are used.
+Carries `docker_registry_mirror`, `loose_auto_revert`, and the `ls` /
+`dashboard` column preferences.
+
+Per-repo configuration lives in <repo>/.jailbee/config.yaml — see config.py.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Annotated
+
+import yaml
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
+
+from jailbee.config import (
+    DASHBOARD_DEFAULT_HIDE,
+    ColumnConfig,
+    ConfigError,
+    LooseAutoRevert,
+    _columns_already_sanitized,
+)
+from jailbee.paths import expand_path, xdg_data_home
+
+
+def _expand(value: str | Path) -> Path:
+    return expand_path(value)
+
+
+PathExpanded = Annotated[Path, BeforeValidator(_expand)]
+
+
+def default_global_config_path() -> Path:
+    """Return ~/.config/jailbee/global.yaml (or $XDG_CONFIG_HOME/jailbee/global.yaml)."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "jailbee" / "global.yaml"
+
+
+def _default_registry_data_dir() -> Path:
+    return xdg_data_home() / "jailbee" / "registry"
+
+
+class DockerRegistryMirror(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    port: int = 3128
+    data_dir: PathExpanded = None  # type: ignore[assignment]
+    image: str = "rpardini/docker-registry-proxy:0.6.5"
+    enabled: bool = True
+
+    def model_post_init(self, __context: object) -> None:
+        # Default is computed (uses Path.home()), so we set it post-init.
+        if self.data_dir is None:
+            object.__setattr__(self, "data_dir", _default_registry_data_dir())
+
+
+class GlobalConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # default_factory ensures DockerRegistryMirror's model_post_init re-runs
+    # per GlobalConfig instance, picking up current $XDG_DATA_HOME each time.
+    docker_registry_mirror: DockerRegistryMirror = Field(
+        default_factory=DockerRegistryMirror,
+    )
+    loose_auto_revert: LooseAutoRevert = Field(
+        default_factory=LooseAutoRevert,
+    )
+    ls: ColumnConfig = Field(default_factory=ColumnConfig)
+    dashboard: ColumnConfig = Field(
+        default_factory=lambda: ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE)),
+    )
+
+
+_LS_DEFAULT = ColumnConfig()
+_DASHBOARD_DEFAULT = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
+
+
+def _load_unsanitized(path: Path) -> GlobalConfig:
+    """Load global config with schema validation but no column-block recovery.
+
+    `global.yaml` is also the source for Config-layer overlay keys (gpg,
+    ssh, chrome, jetbrains, host_mounts, ...). Those are split out by
+    `_split_host_keys()` at `load_config()` time; here we discard them
+    and validate only the host-level subset.
+
+    Genuine schema problems (bad YAML, a non-mapping top level, or a
+    ``docker_registry_mirror``/``ls``/``dashboard`` block shaped wrong —
+    e.g. ``fields`` not a list) raise ``ConfigError``: those are host-level
+    keys, and unlike a column *name* typo (see ``load_global_config``) there
+    is nothing sensible to recover to.
+
+    Shared by ``load_global_config`` (which sanitizes the result before
+    returning it) and ``global_config_issues`` (which inspects it as-is, so
+    `jailbee config validate` still sees exactly what's wrong).
+    """
+    if not path.exists():
+        return GlobalConfig()
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f"Top level of {path} must be a mapping; got {type(raw).__name__}.")
+    # Local import: config.py imports ConfigError from this module, so a
+    # module-level import would form a cycle.
+    from jailbee.config import _split_host_keys
+
+    host_raw, _ = _split_host_keys(raw)
+    try:
+        return GlobalConfig.model_validate(host_raw)
+    except ValidationError as e:
+        raise ConfigError(f"Global config validation failed in {path}:\n{e}") from e
+
+
+def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
+    """Load global config; return (config, warnings).
+
+    ``warnings`` lists column-name problems in the ``ls`` / ``dashboard``
+    blocks that were fixed up rather than rejected — an unknown name
+    dropped, a duplicate collapsed, an empty ``fields`` reset to the
+    built-in default set (see ``config.sanitize_column_blocks``). Those
+    blocks are host-level (``config._HOST_LEVEL_KEYS``) and read on every
+    path that renders a table, so a typo there must never be fatal: it is a
+    personal display preference, and breaking an unrelated command over a
+    cosmetic typo is the wrong trade — the same principle that keeps a
+    column preference from narrowing `--format json`. `cli._load_global()`
+    is the one place ``warnings`` gets surfaced (via `tui.warn`); the
+    dashboards (`dashboard._global_config_or_defaults`) get the sanitized
+    config and otherwise ignore the list.
+
+    Genuine host-level schema problems (bad YAML, a malformed
+    ``docker_registry_mirror``, ...) are a different matter and still raise
+    ``ConfigError`` — see ``_load_unsanitized``. `jailbee config validate`
+    reports column-name problems as errors instead of recovering from them
+    — see ``global_config_issues``.
+    """
+    gcfg = _load_unsanitized(path)
+
+    # Early return: both blocks already look exactly like their defaults
+    # (the common case — most repos never touch column config), so skip
+    # building `lifecycle.ls_field_specs`'s full field list just to confirm
+    # nothing needs fixing. This loader runs on the dashboard's refresh
+    # cadence (`dashboard.gather_rows` calls it once per tick), so the
+    # saved work is not one-time — the global-layer twin of `load_config`'s
+    # short-circuit for the repo layer; see `_columns_already_sanitized` for
+    # why comparing by value here is safe.
+    if _columns_already_sanitized([(gcfg.ls, _LS_DEFAULT), (gcfg.dashboard, _DASHBOARD_DEFAULT)]):
+        return gcfg, []
+
+    # Local import: config.py imports names from this module, so a
+    # module-level import would form a cycle.
+    from jailbee.config import sanitize_column_blocks
+
+    fixed, warnings = sanitize_column_blocks([("ls", gcfg.ls), ("dashboard", gcfg.dashboard)])
+    if warnings:
+        gcfg = gcfg.model_copy(update=fixed)
+    return gcfg, warnings
+
+
+def global_config_issues(path: Path) -> list[str]:
+    """Column-block problems in `global.yaml`, reported rather than fixed up.
+
+    For `jailbee config validate`: unlike ordinary loading (`load_global_config`,
+    which recovers from these so no other command breaks over a typo), the
+    one command whose job is validating config should still fail on one,
+    with the allowed names listed — the same treatment `Config.validate_runtime`
+    gives the equivalent repo-level blocks.
+
+    Raises ``ConfigError`` for a genuine host-level schema problem, same as
+    `load_global_config` — those stay fatal everywhere, including here.
+    """
+    from jailbee.config import validate_column_blocks
+
+    gcfg = _load_unsanitized(path)
+    return validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
