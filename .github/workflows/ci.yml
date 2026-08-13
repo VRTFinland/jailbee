@@ -23,7 +23,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1 libgl1
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev
