@@ -484,13 +484,22 @@ def test_elapsed_status_hides_the_counter_until_it_means_something(mocker):
     """A step that finishes in a second should not flash "0s" at anyone."""
     from jailbee.tui import ElapsedStatus
 
+    # A synthetic clock, patched before construction, rather than deriving the
+    # fake "now" from the real one as `handle._started + 42`. monotonic()
+    # returns seconds since boot, and for many real values (T + 42) - T lands
+    # just under 42 in float64 — 31.416816438270224 gives 41.99999999999999 —
+    # which format_elapsed renders as "41s", truncating by design. How often
+    # depends on the magnitude of T, so the old arithmetic failed ~13% of runs
+    # on a freshly booted CI runner and effectively never on a dev box with
+    # days of uptime. 1000.0 and 1042.0 subtract exactly.
+    monotonic = mocker.patch("jailbee.tui.time.monotonic", return_value=1000.0)
     status = mocker.MagicMock()
     handle = ElapsedStatus(status, "provisioning")
 
     handle.refresh()
     assert status.update.call_args[0][0] == "⏳ provisioning…"
 
-    mocker.patch("jailbee.tui.time.monotonic", return_value=handle._started + 42)
+    monotonic.return_value = 1042.0
     handle.refresh()
     assert status.update.call_args[0][0] == "⏳ provisioning… — 42s"
 
