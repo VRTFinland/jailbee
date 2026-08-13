@@ -235,38 +235,59 @@ real GnuPG and SSH-agent sockets read-only and trusts the container boundary
 to hold. If your requirement is a hypervisor between the agent and your
 laptop, jailbee does not meet it and `sbx` does.
 
-What it is not is an environment for a branch. The differences that matter:
+What it is not is an environment for a branch. That is the whole of jailbee's
+side of the trade, and it is worth listing as capabilities rather than as
+gaps:
 
-- **It sandboxes a session, not a machine.** The unit is "run this agent in a
-  box" (`sbx run claude`), and by default your workspace is mounted
-  read-write at the same absolute path inside — so the agent is editing your
-  host tree, and a wrecked checkout is a wrecked checkout. `--clone` flips
-  that to a read-only mount plus a private in-VM clone, but there is no
-  branch model on top: no base-branch tracking, no `push`/`pull`/`diff`
-  bridge, no PR flow, no snapshot/restore.
-- **HTTP or nothing.** Non-HTTP traffic — raw TCP, UDP, ICMP — is blocked
-  outright, so an outbound `ssh`, `git+ssh`, or a database client pointed at
-  a staging host has no allowlist entry to add. jailbee's ACL is
-  protocol-agnostic; it allows or denies hosts, not schemes.
-- **No desktop.** No Chrome and no IDE inside the boundary, which is the
-  point of jailbee's GUI passthrough.
-- **A Docker account, and a closed CLI.** `sbx login` is mandatory,
-  the binaries are Docker's, and centrally managed policy is a paid
-  add-on. jailbee is GPL-3.0 and runs entirely on your machine with no
-  account and no service to sign into.
-- **Cost of the stronger boundary.** Sandboxes need hardware
-  virtualisation (Ubuntu 24.04+, Windows 11, or Apple-silicon macOS), and
-  Docker notes that they "don't share images or layers" — every sandbox
-  pays for its own VM image and image cache. jailbee's containers are
-  copy-on-write clones of one golden image.
-- **The spec is per-agent, not per-repo.** Kits (still marked experimental)
-  layer install commands, files, network and credential rules onto a
-  template image — closer to nono's agent profiles than to a committed
-  environment your colleague inherits by cloning the repo.
+- **A machine you keep, not a session you launch.** `jailbee new` leaves a
+  booted stack behind — autostart services, a tmux session — and you shell
+  back into the same container for days, snapshotting before an agent run and
+  restoring when it goes wrong. `sbx`'s unit is "run this agent in a box"
+  (`sbx run claude`), against a list of supported agents, and it doesn't
+  import your full user-level agent config. **Nothing about a jailbee
+  container is agent-shaped**: the same environment serves you, an agent, a
+  CI reproduction, or an emulator.
+- **Your checkout stays yours.** The container holds its own clone, and
+  commits move over the git bridge (`jailbee git push/pull/diff`,
+  base-branch tracking, `jailbee pr`), with `jailbee destroy` refusing to take
+  work that exists nowhere else. `sbx` mounts your workspace read-write at
+  the same absolute path by default, so the agent edits your real checkout;
+  `--clone` gives it a private in-VM copy instead, but there is no branch
+  model on top of either — no base tracking, no bridge, no PR flow, no
+  snapshot and restore.
+- **Any protocol, not just HTTP.** jailbee's ACL allows and denies *hosts*;
+  what you speak to them is your business. `sbx` proxies HTTP(S) and drops
+  raw TCP, UDP and ICMP outright, so an outbound `ssh`, a `git+ssh` remote or
+  a `psql` against staging has no allowlist entry to add.
+- **A desktop, and real devices.** Chrome and a JetBrains IDE run *inside*
+  the boundary and render on your Wayland session, and `host_devices` hands
+  the container `/dev/kvm`, a USB device or a GPU when the repo needs one.
+  The sandbox documentation describes neither GUI applications nor device
+  passthrough.
+- **The repo owns the spec.** `.jailbee/config.yaml` is committed, so a
+  colleague clones and runs `jailbee new`. Kits (still experimental) layer
+  install commands, files, network and credential rules onto a template
+  image, per agent or per team — closer to nono's profiles than to an
+  environment the repository carries.
+- **No account, and no vendor in the loop.** jailbee is GPL-3.0 and runs
+  entirely on your machine. `sbx login` is mandatory, the binaries are
+  Docker's, and centrally managed policy is a paid add-on.
+- **Cheaper per environment.** jailbee's containers are copy-on-write clones
+  of one golden image; Docker notes that sandboxes "don't share images or
+  layers", so each one pays for its own VM image and image cache — on top of
+  requiring hardware virtualisation (Ubuntu 24.04+, Windows 11, or
+  Apple-silicon macOS).
+
+Read the trade this way: `sbx` puts a stronger wall around **one agent run**,
+and jailbee gives you **a whole machine per branch** with a weaker — though
+still kernel-enforced — wall around it. If the agent's job is `npm test`
+against a repo you'd rather it didn't touch, take the stronger wall. If the
+stack boots, listens, renders, and occasionally wants `/dev/kvm`, jailbee is
+the one that can host it.
 
 ### Where that leaves jailbee
 
-Nothing above does these three things together, and they are the whole
+Nothing above does these four things together, and they are the whole
 argument for the heavier boundary:
 
 1. A **long-lived environment per branch that the repo declares** — devices,
@@ -276,11 +297,14 @@ argument for the heavier boundary:
    container's own `localhost`, five of them at once, no port allocation.
 3. The container as a **git remote** with base-branch tracking, PR flow,
    snapshots, and dashboards that span every repo on the host.
+4. **A boundary you can widen deliberately, per repo** — a `host_devices`
+   line for `/dev/kvm`, an optional mount you attach for one command — and
+   which doesn't care whether an agent, a human or CI is working behind it.
 
 Pick Dev Containers if you want the standard, BranchBox if you want parallel
 workstreams cheaply, nono if you want fine-grained policy around one agent,
-and `sbx` if you want a hypervisor. jailbee is for when the runtime is the
-hard part *and* you want the whole runtime fenced.
+and `sbx` if you want a hypervisor around one agent run. jailbee is for when
+the runtime is the hard part *and* you want the whole runtime fenced.
 
 ## What jailbee costs you
 
