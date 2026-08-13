@@ -424,6 +424,158 @@ button.copy[data-state="copied"] {
 }
 
 /* -----------------------------------------------------------------------
+   Compare — #compare landscape table. Below 720px the header row is
+   hidden and every row becomes a card, with each cell labelled from its
+   data-label; from 720px up it is an ordinary three-column table. Either
+   way it lays out in the page width, never in a scroll container.
+   ----------------------------------------------------------------------- */
+.compare {
+  width: 100%;
+  margin-top: 2rem;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.95rem;
+}
+
+.compare thead {
+  /* Hidden, not removed: the row headings still name the columns for
+     screen readers in the stacked layout. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.compare tr {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: var(--gap);
+}
+
+.compare th[scope="row"] {
+  display: block;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.compare td {
+  display: block;
+  color: var(--muted);
+}
+
+.compare td + td {
+  margin-top: 0.75rem;
+}
+
+.compare td::before {
+  content: attr(data-label);
+  display: block;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.2rem;
+}
+
+/* JailBee's own row, marked but not shouted: the amber edge is the same
+   accent the rest of the page uses for "this is us". */
+.compare__self {
+  border-color: var(--amber-dim);
+}
+
+.compare__self th[scope="row"] {
+  color: var(--amber);
+}
+
+@media (min-width: 720px) {
+  .compare thead {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+
+  .compare thead th {
+    padding: 0 1rem 0.6rem;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare tr {
+    display: table-row;
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  .compare tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  /* Fixed layout so the two prose columns are equally wide instead of
+     being sized by whichever cell happens to hold the longest word. Under
+     table-layout: fixed only the first row's widths count, so the name
+     column is sized on the header cell, not on the row headings below it. */
+  .compare {
+    table-layout: fixed;
+  }
+
+  .compare thead th:first-child {
+    width: 11rem;
+  }
+
+  .compare th[scope="row"],
+  .compare td {
+    display: table-cell;
+    padding: 1rem;
+    vertical-align: top;
+    margin: 0;
+  }
+
+  .compare th[scope="row"] {
+    width: 9rem;
+  }
+
+  .compare td::before {
+    display: none;
+  }
+
+  .compare__self th[scope="row"],
+  .compare__self td {
+    background: var(--surface);
+  }
+
+  .compare__self th[scope="row"] {
+    border-radius: var(--radius) 0 0 var(--radius);
+  }
+
+  .compare__self td:last-child {
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+}
+
+.compare__more {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* -----------------------------------------------------------------------
    Docs — #docs link list.
    ----------------------------------------------------------------------- */
 .docs__list {

@@ -119,7 +119,7 @@ directory's* containers, not the repo the flag points at.
 | [Configuration reference](docs/config.md) | Every `.jailbee/config.yaml` and `global.yaml` key |
 | [Security and limitations](docs/security.md) | Isolation model, git-remote handling, known limits |
 | [Architecture](docs/architecture.md) | How the pieces fit together |
-| [Who JailBee is for](docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from BranchBox and nono |
+| [Who JailBee is for](docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from Dev Containers, BranchBox, nono and Docker Sandboxes |
 
 **Meta** — project internals:
 
