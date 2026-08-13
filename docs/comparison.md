@@ -146,18 +146,69 @@ window with table and card layouts. Both list containers with their git
 status and offer the same per-container actions — shell, tmux, IDE, Chrome,
 destroy — from a menu.
 
-## How this differs from BranchBox and nono
+## How this differs from the alternatives
 
-Two adjacent projects come up often. Both are good; both answer a different
-question.
+Four projects come up often. They are all good, and they sort into two
+families that answer two different questions: *"how do I get the right
+toolchain, per branch?"* and *"how do I stop the agent from wrecking my
+laptop?"* jailbee is trying to answer both at once, which is why it is
+heavier than either.
 
-| | **nono** | **BranchBox** | **jailbee** |
-|---|---|---|---|
-| Isolates | a process tree | an application container | a full userland |
-| Mechanism | Landlock + seccomp (Linux), Seatbelt (macOS) | Docker Compose project on the host daemon | unprivileged Incus system container |
-| Can run a nested Docker daemon, emulator, desktop browser | no | not in its model | yes |
-| Environment spec | agent profile (JSON, shareable via registry) | generated `.devcontainer/` + `.env`, stack auto-detected | committed `.jailbee/config.yaml` per repo |
-| Platforms | Linux, macOS, WSL2 | Linux, macOS | Linux |
+| | **Dev Containers** | **BranchBox** | **nono** | **Docker Sandboxes** | **jailbee** |
+|---|---|---|---|---|---|
+| Isolates | a toolchain | a per-feature app stack | a process tree | an agent session | a full userland |
+| Boundary | host Docker daemon | host Docker daemon | Landlock + seccomp, Seatbelt | hypervisor, own kernel | unprivileged Incus container, shared kernel |
+| Your working tree | bind-mounted read-write (or cloned into a volume) | worktree on the host, read-write | the host tree itself | mounted read-write at the same path; `--clone` for a private copy | the container's own clone; commits move over a git bridge |
+| Nested Docker daemon | privileged `docker-in-docker`, or the host socket | no — shares the host daemon | no | yes, one per sandbox | yes (`security.nesting`) |
+| Desktop browser / IDE **inside** the boundary | no | no | n/a — they run on the host | no | yes, on your Wayland session |
+| Egress control | none | none | per-tool L7 credential proxy | deny-by-default HTTP(S) proxy; other protocols dropped | kernel ACL, any protocol, `strict`/`loose` + TTL |
+| Environment spec | committed `.devcontainer/` | generated from stack detection | agent profile (JSON, registry) | template image + kit YAML | committed `.jailbee/config.yaml` |
+| Platforms | Linux, macOS, Windows | Linux, macOS | Linux, macOS, WSL2 | macOS (Apple silicon), Windows 11, Ubuntu 24.04+ — hardware virtualisation required | Linux |
+| Licence | open spec (MIT); VS Code's extension is Microsoft's | MIT | Apache-2.0 | free CLI, Docker sign-in required, governance is paid | GPL-3.0-or-later |
+
+### Toolchain per branch: Dev Containers and BranchBox
+
+**[Dev Containers](https://containers.dev/)** is the default answer in this
+space and the one most teams should try first: a committed
+`.devcontainer/devcontainer.json`, a Features marketplace, prebuilt images,
+three host OSes, and implementations beyond VS Code (GitHub Codespaces,
+JetBrains, DevPod). If what you need is "everyone gets the same Node and the
+same `psql`", it wins on adoption cost and jailbee has nothing to add.
+
+It is a *toolchain* boundary, not a containment one, and its defaults all
+point away from the latter. Your folder is bind-mounted read-write, so an
+agent inside is editing your real tree — "Clone Repository in Container
+Volume" is the isolated alternative, and it's a deliberate choice, not the
+default. Git credential helpers and your SSH agent are forwarded
+automatically, by design. Services are reached by forwarding ports onto host
+localhost, so parallel containers share one port space and the docs' own
+example is a container's 3000 arriving as `localhost:4123`. There is no
+egress policy of any kind. And the two supported ways to get Docker inside
+are the `docker-in-docker` feature, which sets `"privileged": true`, or
+bind-mounting the host's Docker socket — the second is host root by another
+name. Desktop apps aren't
+in the model at all; the nearest thing is a community `desktop-lite` feature
+serving fluxbox over noVNC.
+
+So the overlap with jailbee is smaller than the surface similarity suggests:
+`devcontainer.json` declares the *tools* a repo needs, `.jailbee/config.yaml`
+declares the *machine* it needs — devices, egress, what may be mounted, what
+boots on create.
+
+**[BranchBox](https://github.com/branchbox/branchbox)** (MIT, Rust) is the
+closest thing to jailbee's shape: a git worktree plus a Docker Compose
+project plus a generated devcontainer per feature, with a database and
+optional Cloudflare tunnel. It is much lighter to adopt — Docker is already
+installed, stacks are auto-detected, images come prebuilt — and it runs on
+macOS and integrates with VS Code and Cursor, which jailbee does not. It
+inherits the devcontainer posture above and then goes further in the same
+direction: tool credentials (`~/.gh`, `~/.claude`, `~/.codex`) are mounted
+read-write into every feature by design. Its per-feature setup is generated
+from stack detection rather than declared in a spec the team reviews — less
+to write up front, less to pin down. It solves collisions between your own
+parallel workstreams. It is not built to contain something you don't trust.
+
+### Fenced agents: nono and Docker Sandboxes
 
 **[nono](https://github.com/nolabs-ai/nono)** (Apache-2.0, Rust) is a fence
 around the agent process — no container, no VM, no disk. Its per-tool
@@ -168,24 +219,68 @@ anything jailbee does, and its profiles are composable JSON shared through a
 registry — though they describe an agent's policy, not a repo's environment.
 It is also the allowlist model, with the cost curve described above, and it
 can't give you a second Postgres or a second port 3000, because it isn't an
-environment. nono's own security-model page says
-its boundary is agent containment, "not guest/host isolation", and recommends
-running it inside a container or microVM when you need that. **Running nono
-inside a jailbee container is a sensible combination**, not a contradiction.
+environment. nono's own security-model page says its boundary is agent
+containment, "not guest/host isolation", and recommends running it inside a
+container or microVM when you need that. **Running nono inside a jailbee
+container is a sensible combination**, not a contradiction.
 
-**[BranchBox](https://github.com/branchbox/branchbox)** (MIT, Rust) is the
-closest in spirit: a git worktree plus a Docker Compose project plus a
-devcontainer per feature, with a database and optional Cloudflare tunnel. It
-is lighter to adopt than jailbee — Docker is already installed, stacks are
-auto-detected, images come prebuilt — and it works on macOS and integrates
-with VS Code and Cursor, which jailbee does not. What it doesn't offer is the
-boundary: the worktree sits on the host filesystem, features share the host's
-Docker daemon, and tool credentials (`~/.gh`, `~/.claude`, `~/.codex`) are
-mounted read-write into every feature by design. Its per-feature setup is
-generated from stack auto-detection rather than declared in a committed
-environment spec — less to write up front, less for a team to pin down. It
-solves collisions between your own parallel workstreams. It is not built to
-contain something you don't trust.
+**[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)** (`docker sbx`)
+is the one tool here with a *stronger* boundary than jailbee's, and it should
+be said plainly: each sandbox is a microVM with its own kernel, no shared
+memory or processes with the host, and its own Docker daemon inside. Egress
+is deny-by-default through a host-side HTTP(S) proxy, and that proxy injects
+API keys into request headers so that, in Docker's words, "credential values
+never enter the VM" — strictly better than jailbee, which bind-mounts your
+real GnuPG and SSH-agent sockets read-only and trusts the container boundary
+to hold. If your requirement is a hypervisor between the agent and your
+laptop, jailbee does not meet it and `sbx` does.
+
+What it is not is an environment for a branch. The differences that matter:
+
+- **It sandboxes a session, not a machine.** The unit is "run this agent in a
+  box" (`sbx run claude`), and by default your workspace is mounted
+  read-write at the same absolute path inside — so the agent is editing your
+  host tree, and a wrecked checkout is a wrecked checkout. `--clone` flips
+  that to a read-only mount plus a private in-VM clone, but there is no
+  branch model on top: no base-branch tracking, no `push`/`pull`/`diff`
+  bridge, no PR flow, no snapshot/restore.
+- **HTTP or nothing.** Non-HTTP traffic — raw TCP, UDP, ICMP — is blocked
+  outright, so an outbound `ssh`, `git+ssh`, or a database client pointed at
+  a staging host has no allowlist entry to add. jailbee's ACL is
+  protocol-agnostic; it allows or denies hosts, not schemes.
+- **No desktop.** No Chrome and no IDE inside the boundary, which is the
+  point of jailbee's GUI passthrough.
+- **A Docker account, and a closed CLI.** `sbx login` is mandatory,
+  the binaries are Docker's, and centrally managed policy is a paid
+  add-on. jailbee is GPL-3.0 and runs entirely on your machine with no
+  account and no service to sign into.
+- **Cost of the stronger boundary.** Sandboxes need hardware
+  virtualisation (Ubuntu 24.04+, Windows 11, or Apple-silicon macOS), and
+  Docker notes that they "don't share images or layers" — every sandbox
+  pays for its own VM image and image cache. jailbee's containers are
+  copy-on-write clones of one golden image.
+- **The spec is per-agent, not per-repo.** Kits (still marked experimental)
+  layer install commands, files, network and credential rules onto a
+  template image — closer to nono's agent profiles than to a committed
+  environment your colleague inherits by cloning the repo.
+
+### Where that leaves jailbee
+
+Nothing above does these three things together, and they are the whole
+argument for the heavier boundary:
+
+1. A **long-lived environment per branch that the repo declares** — devices,
+   egress, mounts, caches, and services already running when `jailbee new`
+   returns.
+2. A **desktop inside** it: Chrome and a JetBrains IDE against the
+   container's own `localhost`, five of them at once, no port allocation.
+3. The container as a **git remote** with base-branch tracking, PR flow,
+   snapshots, and dashboards that span every repo on the host.
+
+Pick Dev Containers if you want the standard, BranchBox if you want parallel
+workstreams cheaply, nono if you want fine-grained policy around one agent,
+and `sbx` if you want a hypervisor. jailbee is for when the runtime is the
+hard part *and* you want the whole runtime fenced.
 
 ## What jailbee costs you
 
@@ -202,7 +297,14 @@ contain something you don't trust.
 - **A shared kernel.** A system container is the right boundary for code you
   are supervising loosely; it is not a multi-tenant boundary against a
   determined attacker, and a kernel bug is an escape path. Incus can run real
-  VMs — jailbee does not use them.
+  VMs — jailbee does not use them. If a hypervisor boundary is a hard
+  requirement, [Docker Sandboxes](#fenced-agents-nono-and-docker-sandboxes)
+  gives you one today and jailbee does not.
+- **Secrets are mounted, not brokered.** GnuPG and the SSH agent reach the
+  container as read-only binds, so anything that runs inside can use your
+  keys while it runs. A credential proxy that keeps the token out of the
+  environment entirely (nono, `sbx`) is the stronger design; jailbee relies on
+  the egress ACL to limit where those keys can be used.
 - **Every `host_devices` entry widens that surface further** — `/dev/kvm` in
   particular hands the container a host-kernel interface. List only what the
   repo needs.
@@ -217,7 +319,10 @@ runtime is the hard part.
 ---
 
 *Written by the jailbee maintainers, so read the comparison with that in mind.
-Claims about BranchBox and nono were checked against their repositories and
-documentation on 2026-08-06 (BranchBox 0.10.1, last commit 2026-03-20; nono
-pre-1.0, actively developed) by reading source and docs rather than by
-running them. Corrections are welcome — please open an issue.*
+Claims about the other four tools were checked by reading their source and
+documentation rather than by running them: BranchBox and nono on 2026-08-06
+(BranchBox 0.10.1, last commit 2026-03-20; nono pre-1.0, actively developed),
+and Dev Containers and Docker Sandboxes on 2026-08-13 (`docs.docker.com/ai/sandboxes`
+— architecture, security, customize and FAQ pages; kits documented as
+experimental). All four move quickly. Corrections are welcome — please open an
+issue.*
