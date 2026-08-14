@@ -1,6 +1,6 @@
-# Who jailbee is for
+# Who JailBee is for
 
-jailbee gives each git branch a **system container**: an unprivileged Incus
+JailBee gives each git branch a **system container**: an unprivileged Incus
 container with its own init, its own Docker daemon, its own IP, and — if you
 want it — its own browser and IDE on your desktop. From userspace up it
 behaves like a separate Linux machine, and several of them run in parallel on
@@ -47,13 +47,13 @@ every one of those is a policy change, and each one widens the policy for
 everything else.** The isolation degrades exactly as the work gets
 interesting.
 
-jailbee moves the boundary instead of enumerating through it. The container *is*
+JailBee moves the boundary instead of enumerating through it. The container *is*
 the boundary; what happens inside is your business. Adding a tool costs
 nothing, because nothing was enumerated in the first place.
 
 Concretely, that means the container behaves like a Linux box you own:
 
-| You want to… | Inside a jailbee container |
+| You want to… | Inside a JailBee container |
 |---|---|
 | Run the repo's existing `docker-compose.yml` | Works unmodified — the container runs **its own Docker daemon** (`security.nesting`). No project renaming, no port remapping, no adapter for your stack. |
 | Run an Android emulator or a KVM VM | Declare `host_devices: [{ path: /dev/kvm }]` and it's there. Same for `/dev/net/tun`, a USB device, whatever the repo needs. |
@@ -69,7 +69,7 @@ choice becomes visible. Five containers can each serve port 3000 and each
 have their own Chrome pointed at it. Nothing is forwarded to the host,
 nothing collides, and no configuration decided in advance which ports were
 interesting. Tools that expose services *to the host* have to allocate ports;
-jailbee doesn't have the problem.
+JailBee doesn't have the problem.
 
 ### And the agent is still fenced in
 
@@ -77,7 +77,7 @@ Genericity inside the container doesn't mean the container is open:
 
 - **Per-container egress allowlist** (`jailbee net strict|loose`), enforced by a
   kernel-level ACL. You write hostnames and ports — `api.example.com:443`,
-  not an IP range — and jailbee resolves them, accumulates the addresses a
+  not an IP range — and JailBee resolves them, accumulates the addresses a
   rotating CDN hands out, and pins each container's `/etc/hosts` to the
   same set so its resolver can't drift onto an address the ACL drops. It
   filters at the network layer rather than in an HTTP proxy, so `ssh`,
@@ -94,7 +94,7 @@ Genericity inside the container doesn't mean the container is open:
   commits you want to keep.
 
 This is why running an agent with its own in-process sandbox *disabled* is
-reasonable inside a strict-mode jailbee container — see
+reasonable inside a strict-mode JailBee container — see
 [Security and limitations](security.md).
 
 ## The repo decides how its containers run
@@ -126,7 +126,7 @@ under running containers.
 ## Getting code in and out
 
 The container holds its own clone, which is what makes it disposable. The
-cost of that is transport, so jailbee makes the container a git remote:
+cost of that is transport, so JailBee makes the container a git remote:
 
 - `jailbee git push` / `pull` / `fetch` / `checkout` / `diff` move commits between
   host and container without a round trip through GitHub. Container branches
@@ -134,7 +134,7 @@ cost of that is transport, so jailbee makes the container a git remote:
 - Each container knows its **base branch**, so `jailbee ls` can show how far ahead
   it is, and `jailbee git retarget` re-points it when a stacked PR's base moves.
 - **Submodules travel with the superproject.** A separate clone per branch is
-  exactly what makes sub-repos painful, so jailbee initialises them offline
+  exactly what makes sub-repos painful, so JailBee initialises them offline
   from the read-only host mount on `jailbee new` and moves their objects over the
   same transport on every push and pull — see
   [Git bridge](git-bridge.md#submodules).
@@ -164,14 +164,14 @@ destroy — from a menu.
 Four projects come up often. They are all good, and they sort into two
 families that answer two different questions: *"how do I get the right
 toolchain, per branch?"* and *"how do I stop the agent from wrecking my
-laptop?"* jailbee is trying to answer both at once, which is why it is
+laptop?"* JailBee is trying to answer both at once, which is why it is
 heavier than either.
 
 The table below is about what each one *lets you do*. **✅** yes, **❌** no,
 **🟡** yes with the caveat named in the cell, **n/a** the question doesn't
-apply to that model. Note the two rows where jailbee is the one with the ❌.
+apply to that model. Note the two rows where JailBee is the one with the ❌.
 
-| | **Dev Containers** | **BranchBox** | **nono** | **Docker Sandboxes** | **jailbee** |
+| | **Dev Containers** | **BranchBox** | **nono** | **Docker Sandboxes** | **JailBee** |
 |---|---|---|---|---|---|
 | **What it is** | a toolchain in a container | a worktree + Compose per feature | a fence around one process | a microVM per agent run | a Linux machine per branch |
 | **Boundary** | host Docker daemon | host Docker daemon | Landlock + seccomp, Seatbelt | hypervisor, own kernel | Incus container, shared kernel |
@@ -196,7 +196,7 @@ space and the one most teams should try first: a committed
 `.devcontainer/devcontainer.json`, a Features marketplace, prebuilt images,
 three host OSes, and implementations beyond VS Code (GitHub Codespaces,
 JetBrains, DevPod). If what you need is "everyone gets the same Node and the
-same `psql`", it wins on adoption cost and jailbee has nothing to add.
+same `psql`", it wins on adoption cost and JailBee has nothing to add.
 
 It is a *toolchain* boundary, not a containment one, and its defaults all
 point away from the latter. Your folder is bind-mounted read-write, so an
@@ -213,17 +213,17 @@ name. Desktop apps aren't
 in the model at all; the nearest thing is a community `desktop-lite` feature
 serving fluxbox over noVNC.
 
-So the overlap with jailbee is smaller than the surface similarity suggests:
+So the overlap with JailBee is smaller than the surface similarity suggests:
 `devcontainer.json` declares the *tools* a repo needs, `.jailbee/config.yaml`
 declares the *machine* it needs — devices, egress, what may be mounted, what
 boots on create.
 
 **[BranchBox](https://github.com/branchbox/branchbox)** (MIT, Rust) is the
-closest thing to jailbee's shape: a git worktree plus a Docker Compose
+closest thing to JailBee's shape: a git worktree plus a Docker Compose
 project plus a generated devcontainer per feature, with a database and
 optional Cloudflare tunnel. It is much lighter to adopt — Docker is already
 installed, stacks are auto-detected, images come prebuilt — and it runs on
-macOS and integrates with VS Code and Cursor, which jailbee does not. It
+macOS and integrates with VS Code and Cursor, which JailBee does not. It
 inherits the devcontainer posture above and then goes further in the same
 direction: tool credentials (`~/.gh`, `~/.claude`, `~/.codex`) are mounted
 read-write into every feature by design. Its per-feature setup is generated
@@ -238,27 +238,27 @@ around the agent process — no container, no VM, no disk. Its per-tool
 policies are genuinely clever: the agent may call `gh`, but `gh` gets its own
 filesystem grants and receives its GitHub token through a proxy that can
 restrict it to `GET /repos/org/repo/issues/**`. That's finer-grained than
-anything jailbee does, and its profiles are composable JSON shared through a
+anything JailBee does, and its profiles are composable JSON shared through a
 registry — though they describe an agent's policy, not a repo's environment.
 It is also the allowlist model, with the cost curve described above, and it
 can't give you a second Postgres or a second port 3000, because it isn't an
 environment. nono's own security-model page says its boundary is agent
 containment, "not guest/host isolation", and recommends running it inside a
-container or microVM when you need that. **Running nono inside a jailbee
+container or microVM when you need that. **Running nono inside a JailBee
 container is a sensible combination**, not a contradiction.
 
 **[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)** (`docker sbx`)
-is the one tool here with a *stronger* boundary than jailbee's, and it should
+is the one tool here with a *stronger* boundary than JailBee's, and it should
 be said plainly: each sandbox is a microVM with its own kernel, no shared
 memory or processes with the host, and its own Docker daemon inside. Egress
 is deny-by-default through a host-side HTTP(S) proxy, and that proxy injects
 API keys into request headers so that, in Docker's words, "credential values
-never enter the VM" — strictly better than jailbee, which bind-mounts your
+never enter the VM" — strictly better than JailBee, which bind-mounts your
 real GnuPG and SSH-agent sockets read-only and trusts the container boundary
 to hold. If your requirement is a hypervisor between the agent and your
-laptop, jailbee does not meet it and `sbx` does.
+laptop, JailBee does not meet it and `sbx` does.
 
-What it is not is an environment for a branch. That is the whole of jailbee's
+What it is not is an environment for a branch. That is the whole of JailBee's
 side of the trade, and it is worth listing as capabilities rather than as
 gaps:
 
@@ -267,7 +267,7 @@ gaps:
   back into the same container for days, snapshotting before an agent run and
   restoring when it goes wrong. `sbx`'s unit is "run this agent in a box"
   (`sbx run claude`), against a list of supported agents, and it doesn't
-  import your full user-level agent config. **Nothing about a jailbee
+  import your full user-level agent config. **Nothing about a JailBee
   container is agent-shaped**: the same environment serves you, an agent, a
   CI reproduction, or an emulator.
 - **Your checkout stays yours.** The container holds its own clone, and
@@ -278,7 +278,7 @@ gaps:
   `--clone` gives it a private in-VM copy instead, but there is no branch
   model on top of either — no base tracking, no bridge, no PR flow, no
   snapshot and restore.
-- **Any protocol, not just HTTP.** jailbee's ACL allows and denies *hosts*;
+- **Any protocol, not just HTTP.** JailBee's ACL allows and denies *hosts*;
   what you speak to them is your business. `sbx` proxies HTTP(S) and drops
   raw TCP, UDP and ICMP outright, so an outbound `ssh`, a `git+ssh` remote or
   a `psql` against staging has no allowlist entry to add.
@@ -296,23 +296,23 @@ gaps:
   install commands, files, network and credential rules onto a template
   image, per agent or per team — closer to nono's profiles than to an
   environment the repository carries.
-- **No account, and no vendor in the loop.** jailbee is GPL-3.0 and runs
+- **No account, and no vendor in the loop.** JailBee is GPL-3.0 and runs
   entirely on your machine. `sbx login` is mandatory, the binaries are
   Docker's, and centrally managed policy is a paid add-on.
-- **Cheaper per environment.** jailbee's containers are copy-on-write clones
+- **Cheaper per environment.** JailBee's containers are copy-on-write clones
   of one golden image; Docker notes that sandboxes "don't share images or
   layers", so each one pays for its own VM image and image cache — on top of
   requiring hardware virtualisation (Ubuntu 24.04+, Windows 11, or
   Apple-silicon macOS).
 
 Read the trade this way: `sbx` puts a stronger wall around **one agent run**,
-and jailbee gives you **a whole machine per branch** with a weaker — though
+and JailBee gives you **a whole machine per branch** with a weaker — though
 still kernel-enforced — wall around it. If the agent's job is `npm test`
 against a repo you'd rather it didn't touch, take the stronger wall. If the
-stack boots, listens, renders, and occasionally wants `/dev/kvm`, jailbee is
+stack boots, listens, renders, and occasionally wants `/dev/kvm`, JailBee is
 the one that can host it.
 
-### Where that leaves jailbee
+### Where that leaves JailBee
 
 Nothing above does these four things together, and they are the whole
 argument for the heavier boundary:
@@ -330,27 +330,27 @@ argument for the heavier boundary:
 
 Pick Dev Containers if you want the standard, BranchBox if you want parallel
 workstreams cheaply, nono if you want fine-grained policy around one agent,
-and `sbx` if you want a hypervisor around one agent run. jailbee is for when
+and `sbx` if you want a hypervisor around one agent run. JailBee is for when
 the runtime is the hard part *and* you want the whole runtime fenced.
 
-## What jailbee costs you
+## What JailBee costs you
 
-- **Linux only.** The macOS path runs jailbee inside a Linux VM and is
+- **Linux only.** The macOS path runs JailBee inside a Linux VM and is
   experimental.
 - **Host setup is real work.** Incus, UID delegation, firewall, kernel keyring
   limits — [Installation](installation.md) is an afternoon, once.
 - **A golden image build**, ~10–15 minutes, once per repo stack. After that
   containers are copy-on-write clones and creation is fast.
 - **Disk.** Cheap per container, not free.
-- **JetBrains and Chrome, not VS Code.** jailbee's GUI passthrough targets the
+- **JetBrains and Chrome, not VS Code.** JailBee's GUI passthrough targets the
   JetBrains IDEs; there is no devcontainer integration. Only one IDEA-family
   IDE at a time across containers (shared profile).
 - **A shared kernel.** A system container is the right boundary for code you
   are supervising loosely; it is not a multi-tenant boundary against a
   determined attacker, and a kernel bug is an escape path. Incus can run real
-  VMs — jailbee does not use them. If a hypervisor boundary is a hard
+  VMs — JailBee does not use them. If a hypervisor boundary is a hard
   requirement, [Docker Sandboxes](#fenced-agents-nono-and-docker-sandboxes)
-  gives you one today and jailbee does not.
+  gives you one today and JailBee does not.
 - **Tokens are mounted, not brokered.** Key *material* is not: GnuPG and SSH
   reach the container as the host agent's **socket**, so signing and
   authentication happen on the host and the private key never enters the
@@ -359,21 +359,21 @@ the runtime is the hard part *and* you want the whole runtime fenced.
   container like any other, and anything running inside can read it for as
   long as it runs. A credential proxy that keeps the token out of the
   environment entirely (nono, `sbx`) is the stronger design for those;
-  jailbee relies on the egress ACL to limit where they can be spent.
+  JailBee relies on the egress ACL to limit where they can be spent.
 - **Every `host_devices` entry widens that surface further** — `/dev/kvm` in
   particular hands the container a host-kernel interface. List only what the
   repo needs.
-- **It's young.** jailbee is developed at GISGRO for its own use. No public
+- **It's young.** JailBee is developed at GISGRO for its own use. No public
   community, no package-manager release, a small maintainer team. Price that
   in.
 
 If your stack is one process and one database, `git worktree` plus
-`docker compose -p` is free and already installed. jailbee earns its cost when the
+`docker compose -p` is free and already installed. JailBee earns its cost when the
 runtime is the hard part.
 
 ---
 
-*Written by the jailbee maintainers, so read the comparison with that in mind.
+*Written by the JailBee maintainers, so read the comparison with that in mind.
 Claims about the other four tools were checked by reading their source and
 documentation rather than by running them: BranchBox and nono on 2026-08-06
 (BranchBox 0.10.1, last commit 2026-03-20; nono pre-1.0, actively developed),
