@@ -40,6 +40,34 @@
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
     <link rel="stylesheet" href="assets/style.css?v=31b80f50" />
+    <!-- Search engines and LLM crawlers read this structurally; the prose
+         above it they only read as prose. softwareVersion is pinned to
+         pyproject.toml by test_website, so a release can't leave it stale. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "JailBee",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux",
+        "softwareVersion": "1.0.0",
+        "url": "https://jailbee.gisgro.io/",
+        "codeRepository": "https://github.com/VRTFinland/jailbee",
+        "downloadUrl": "https://pypi.org/project/jailbee/",
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "description": "JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser, and a sandbox for coding agents behind a kernel-level egress allowlist.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "EUR"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": "GISGRO Oy",
+          "url": "https://gisgro.com"
+        }
+      }
+    </script>
   </head>
   <body>
     <section class="hero">

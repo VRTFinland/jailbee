@@ -1,0 +1,75 @@
+# JailBee
+
+> JailBee runs isolated, per-branch development environments in Incus system
+> containers. Every git branch gets a full container of its own — its own
+> services, its own Docker daemon, its own IP, and optionally its own IDE and
+> browser on your desktop — so several stacks run in parallel on one Linux
+> host without port conflicts, Docker name clashes or shared-database
+> collisions. It is also a sandbox for coding agents: the container is the
+> boundary, so an agent can run unattended with permission prompts turned off.
+
+JailBee is a Python CLI (`jailbee`, short form `jb`) that wraps the `incus`
+command. It is project-agnostic: every repository supplies its own committed
+`.jailbee/config.yaml` declaring what its containers need — bind mounts,
+devices, egress allowlist, shared caches, and what boots on create. Install
+with `uv tool install jailbee` or `pipx install jailbee`.
+
+Licence: GPL-3.0-or-later. Built at GISGRO Oy, which is its origin, not its
+scope.
+
+## What makes it different
+
+- **Isolation by boundary, not by allowlist.** Most agent sandboxes enumerate
+  which paths, hosts and syscalls are permitted, so every new tool the agent
+  reaches for is a policy change. JailBee moves the boundary instead: the
+  container is the fence, and what happens inside it is unconstrained.
+- **A system container, not an application container.** It runs its own init,
+  its own Docker daemon (nested, `security.nesting`), its own systemd
+  services. The repo's existing `docker-compose.yml` runs unmodified.
+- **Per-container egress allowlist** enforced by a kernel-level ACL, written
+  as hostnames and ports (`api.example.com:443`) rather than IP ranges, and
+  covering any protocol — `ssh`, `git+ssh` and database clients included, not
+  just HTTP. `github.com` is deliberately absent from the strict default so an
+  unattended agent cannot surprise-push.
+- **The container is a git remote.** `jailbee git push/pull/fetch/checkout/diff`
+  move commits between host and container without a round trip through GitHub.
+  Submodules travel with the superproject.
+- **GUI passthrough.** A JetBrains IDE and Chrome run *inside* the container
+  and render on the host's Wayland session, reaching the container's own
+  `localhost:3000`. Five containers can each serve port 3000 with no
+  forwarding and no collisions.
+- **Snapshots** before an agent run, restore after.
+
+## When not to use it
+
+- **Not on macOS or Windows.** Linux only; the macOS path runs JailBee inside
+  a Linux VM and is experimental.
+- **Not if you need a hypervisor boundary.** A system container shares the
+  host kernel, so a kernel bug is an escape path. Docker Sandboxes (`docker
+  sbx`) gives a microVM with its own kernel and is the stronger boundary.
+- **Not if your stack is one process and one database.** `git worktree` plus
+  `docker compose -p` is free and already installed.
+- **Not free to adopt.** Host setup (Incus, UID delegation, firewall, kernel
+  keyring limits) is a one-time afternoon, and the golden image takes 10–15
+  minutes to build once per repo stack.
+- **Not VS Code.** GUI passthrough targets the JetBrains IDEs; there is no
+  Dev Containers integration.
+
+## Documentation
+
+- [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md): one-time host setup — Incus, UID delegation, installing the CLI
+- [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md): concepts, configuring a repo, building the image, a typical day
+- [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md): full command and flag reference
+- [Git bridge](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md): host↔container git bridge, stacked PRs, PR review
+- [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md): every `.jailbee/config.yaml` and `global.yaml` key
+- [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md): isolation model and known limits, including what running an agent without prompts does and does not cover
+- [Who JailBee is for](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, and what it costs
+- [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md): how the pieces fit together
+
+## Optional
+
+- [Setting up JailBee in your own project](https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md): adapting it to your own repo and stack
+- [Running on macOS](https://github.com/VRTFinland/jailbee/blob/main/docs/macos.md): via a Linux VM, experimental
+- [Troubleshooting](https://github.com/VRTFinland/jailbee/blob/main/docs/troubleshooting.md): common failures by symptom
+- [Source repository](https://github.com/VRTFinland/jailbee)
+- [PyPI package](https://pypi.org/project/jailbee/)

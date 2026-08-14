@@ -346,3 +346,83 @@ def test_render_script_is_executable() -> None:
 
     script = SITE / "demo" / "render.sh"
     assert os.access(script, os.X_OK)
+
+
+def test_robots_allows_crawling_and_points_at_the_sitemap() -> None:
+    """A stray ``Disallow: /`` here would delist the site silently."""
+    robots = (SITE / "robots.txt").read_text()
+    assert "Sitemap: https://jailbee.gisgro.io/sitemap.xml" in robots
+    disallows = [
+        line.split(":", 1)[1].strip()
+        for line in robots.splitlines()
+        if line.lower().startswith("disallow:")
+    ]
+    assert "/" not in disallows, "robots.txt disallows the whole site"
+
+
+def test_the_sitemap_lists_every_page_the_site_publishes() -> None:
+    """Add a page under website/ and the sitemap has to learn about it.
+
+    Without this, a second page ships unlisted and the sitemap quietly
+    describes a site that no longer exists.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring((SITE / "sitemap.xml").read_bytes())
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    listed = {loc.text for loc in root.findall(".//sm:url/sm:loc", ns)}
+
+    published = {p.name for p in SITE.glob("*.html")}
+    expected = {
+        CANONICAL_URL if name == "index.html" else f"{CANONICAL_URL}{name}" for name in published
+    }
+    assert listed == expected, (
+        f"sitemap lists {sorted(listed)}, but website/ publishes {sorted(published)}"
+    )
+
+
+def test_llms_txt_follows_the_format_and_links_only_to_real_docs() -> None:
+    """The file LLM crawlers read. A dead link here is a wrong answer later."""
+    import re
+
+    text = (SITE / "llms.txt").read_text()
+    assert text.startswith("# JailBee\n"), "llms.txt must open with an H1 naming the project"
+    assert "\n> " in text, "llms.txt must carry a blockquote summary after the H1"
+
+    for link in re.findall(rf"\]\({re.escape(DOC_LINK_PREFIX)}([^)]+)\)", text):
+        assert (REPO_ROOT / link).is_file(), f"llms.txt links a missing document: {link}"
+
+
+def _structured_data() -> dict[str, object]:
+    import json
+    import re
+
+    html = INDEX.read_text()
+    block = re.search(
+        r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>', html, re.DOTALL
+    )
+    assert block, "the page ships no JSON-LD block"
+    parsed = json.loads(block.group(1))
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def test_the_structured_data_describes_this_software() -> None:
+    data = _structured_data()
+    assert data["@type"] == "SoftwareApplication"
+    assert data["name"] == "JailBee"
+    assert data["url"] == CANONICAL_URL
+    # The positioning rule of test_the_page_never_calls_a_container_a_machine
+    # applies to the description a search engine quotes, too.
+    assert "machine" not in str(data["description"]).lower()
+
+
+def test_the_structured_data_version_tracks_pyproject() -> None:
+    """Bump the version and forget this, and the page advertises the old one."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert _structured_data()["softwareVersion"] == version, (
+        f"JSON-LD softwareVersion is stale — set it to {version!r}"
+    )
