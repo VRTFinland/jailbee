@@ -265,6 +265,20 @@ def test_every_page_declares_its_own_canonical_url() -> None:
         )
 
 
+def test_every_subpage_links_back_to_the_front_page() -> None:
+    """A subpage here is not reached from the front page — comparison.html
+    is what ranks for the competitors' names, so a reader can arrive on it
+    cold. Without a way in, the site is one page deep and a dead end.
+    """
+    for page in PAGES:
+        if page.name == "index.html":
+            continue
+        hrefs = {v for attr, v in collect_references(page.read_text()) if attr == "href"}
+        assert hrefs & {"./", "/", "index.html"}, (
+            f"{page.name} offers no link back to the front page"
+        )
+
+
 VERDICTS = frozenset({"mx--yes", "mx--no", "mx--partial", "mx--na"})
 
 
