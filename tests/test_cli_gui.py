@@ -102,6 +102,9 @@ def test_gui_missing_pyside_shows_install_hint(mocker):
     result = runner.invoke(app, ["gui"])
     assert result.exit_code == 1
     assert "PySide6" in result.output
+    # The reader hitting this is usually a PyPI install, not a repo
+    # checkout, so the command they can actually run comes first.
+    assert "uv tool install 'jailbee[gui]'" in result.output
     popen.assert_not_called()
 
 
