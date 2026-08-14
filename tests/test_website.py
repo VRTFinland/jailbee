@@ -106,6 +106,60 @@ def test_the_hero_illustrations_are_present() -> None:
     assert (img / "hive-observation.jpg").is_file()
 
 
+def test_the_authored_installer_state_agrees_with_itself() -> None:
+    """Four hand-written places have to name the same installer.
+
+    The toggle script rewrites the command and the copy payload only when
+    someone clicks, so the HTML as authored is what every first visitor
+    sees. Swap which installer leads and miss one of the four — the block's
+    `data-installer`, which tab is `aria-pressed`, the visible command, the
+    copy button's payload — and the page ships a pressed `pipx` tab above a
+    `uv tool install` line.
+    """
+    import re
+
+    html = INDEX.read_text()
+
+    class _Tabs(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pressed: list[str] = []
+            self.choices: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            a = dict(attrs)
+            if tag == "button" and "install__tab" in (a.get("class") or ""):
+                choice = a.get("data-installer-choice") or ""
+                self.choices.append(choice)
+                if a.get("aria-pressed") == "true":
+                    self.pressed.append(choice)
+
+    default = re.search(r'class="install" data-installer="([a-z]+)"', html)
+    assert default, "the hero install block declares no default installer"
+    choice = default.group(1)
+
+    tabs = _Tabs()
+    tabs.feed(html)
+    assert sorted(tabs.choices) == ["pipx", "uv"], f"unexpected installer tabs: {tabs.choices}"
+    assert tabs.pressed == [choice], (
+        f"data-installer is {choice!r} but the pressed tab(s) are {tabs.pressed}"
+    )
+
+    command = re.search(rf'data-cmd-{choice}="([^"]+)"', html)
+    assert command, f"no data-cmd-{choice} to render as the default command"
+    expected = command.group(1)
+
+    shown = re.search(r"<code data-cmd-[^>]*>\s*([^<>]+?)\s*</code", html)
+    assert shown and shown.group(1) == expected, (
+        f"the visible command is {shown and shown.group(1)!r}, expected {expected!r}"
+    )
+
+    copy = re.search(r'<button class="copy" data-copy="([^"]+)"', html)
+    assert copy and copy.group(1) == expected, (
+        f"the copy button carries {copy and copy.group(1)!r}, expected {expected!r}"
+    )
+
+
 def test_the_stylesheet_link_carries_its_current_content_hash() -> None:
     """Cache-bust the stylesheet, and make forgetting to bump it a failure.
 

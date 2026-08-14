@@ -66,25 +66,30 @@
              install, which is why plain `pip` is not offered here — on the
              Ubuntu hosts jailbee targets it refuses to touch the system
              Python (PEP 668). -->
-        <div class="install" data-installer="uv">
+        <!-- The authored state must agree with itself: data-installer, the
+             pressed tab, the visible command and the copy payload all say
+             pipx until the reader clicks. The script only rewrites them on
+             a click, so a mismatch here ships a button that looks selected
+             next to a command from the other tool. -->
+        <div class="install" data-installer="pipx">
           <div class="install__switch" role="group" aria-label="Installer">
-            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="true">
-              uv
-            </button>
             <button
               type="button"
               class="install__tab"
               data-installer-choice="pipx"
-              aria-pressed="false"
+              aria-pressed="true"
             >
               pipx
+            </button>
+            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="false">
+              uv
             </button>
           </div>
           <div class="install__row">
             <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
-              >uv tool install jailbee</code
+              >pipx install jailbee</code
             >
-            <button class="copy" data-copy="uv tool install jailbee">Copy</button>
+            <button class="copy" data-copy="pipx install jailbee">Copy</button>
           </div>
           <p class="install__hint">
             Linux host required — see <a href="#install">Requirements</a>.
@@ -336,7 +341,7 @@
             <span>Ubuntu 26.04 gives nested Docker out of the box.</span>
           </li>
           <li>
-            <strong>uv or pipx.</strong>
+            <strong>pipx or uv.</strong>
             <span>Either one installs the CLI.</span>
           </li>
           <li>
