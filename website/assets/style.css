@@ -388,33 +388,36 @@ button.copy[data-state="copied"] {
 }
 
 /* -----------------------------------------------------------------------
-   Network — #network. Image and copy stack on narrow screens, sit side
-   by side from 800px up.
+   Split — an illustration beside its copy (#network, #agents). Stacks on
+   narrow screens, sits side by side from 800px up. Which side the image
+   lands on is DOM order, not a modifier: #network puts the image first
+   and gets it on the left, #agents puts the copy first and gets it on the
+   right. Stacked, that also means #agents leads with its heading.
    ----------------------------------------------------------------------- */
-.network__grid {
+.split {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--gap);
 }
 
-.network__img {
+.split__img {
   border-radius: var(--radius);
   width: 100%;
   max-width: 360px;
 }
 
 @media (min-width: 800px) {
-  .network__grid {
+  .split {
     flex-direction: row;
     align-items: center;
   }
 
-  .network__img {
+  .split__img {
     flex: 0 0 320px;
   }
 
-  .network__body {
+  .split__body {
     flex: 1 1 auto;
     min-width: 0;
   }

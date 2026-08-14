@@ -103,6 +103,7 @@ def test_the_hero_illustrations_are_present() -> None:
     assert (img / "jailbee-logo.png").is_file()
     assert (img / "jailbee-logo-dark.jpg").is_file()
     assert (img / "hive-entrance.jpg").is_file()
+    assert (img / "hive-observation.jpg").is_file()
 
 
 def test_every_local_reference_resolves_on_disk() -> None:
