@@ -41,6 +41,22 @@ def _render_args(args: list[str]) -> str:
     return " ".join(out)
 
 
+def _missing_binary_error(binary: str) -> IncusError:
+    """The `incus` binary is not on PATH — as an IncusError, not an OSError.
+
+    Every caller in the codebase catches ``IncusError`` and nothing else,
+    because incus.py is the sole subprocess boundary. An unwrapped
+    ``FileNotFoundError`` therefore escapes as a raw traceback out of
+    whichever command the user ran — including `jailbee doctor`, whose whole
+    job is to *report* a host that isn't set up yet. Normalised here for the
+    same reason timeouts are.
+    """
+    return IncusError(
+        f"`{binary}` not found in PATH — Incus does not appear to be installed. "
+        f"Install it and re-run."
+    )
+
+
 def _partial_output(exc: subprocess.TimeoutExpired) -> str:
     """Whatever the timed-out command managed to write, as text.
 
@@ -112,6 +128,8 @@ class Incus:
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
             )
+        except FileNotFoundError as e:
+            raise _missing_binary_error(self.binary) from e
         except subprocess.TimeoutExpired as e:
             # Normalize into IncusError so callers — which only ever catch
             # IncusError (incus.py is the sole subprocess boundary) — handle
@@ -347,7 +365,10 @@ class Incus:
         full = [self.binary, *args]
         if self.dry_run:
             return 0
-        return subprocess.run(full, check=False).returncode
+        try:
+            return subprocess.run(full, check=False).returncode
+        except FileNotFoundError as e:
+            raise _missing_binary_error(self.binary) from e
 
     # ---- Profiles -----------------------------------------------------------
 
@@ -367,13 +388,16 @@ class Incus:
         cmd = [self.binary, "profile", "edit", name]
         if self.dry_run:
             return
-        result = subprocess.run(
-            cmd,
-            input=yaml_content,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                input=yaml_content,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as e:
+            raise _missing_binary_error(self.binary) from e
         if result.returncode != 0:
             raise IncusError(f"`incus profile edit {name}` failed: {result.stderr.strip()}")
 
@@ -452,13 +476,16 @@ class Incus:
         cmd = [self.binary, "network", "acl", "edit", name]
         if self.dry_run:
             return
-        result = subprocess.run(
-            cmd,
-            input=yaml_content,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                input=yaml_content,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as e:
+            raise _missing_binary_error(self.binary) from e
         if result.returncode != 0:
             raise IncusError(f"`incus network acl edit {name}` failed: {result.stderr.strip()}")
 

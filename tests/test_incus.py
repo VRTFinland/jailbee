@@ -630,3 +630,69 @@ def test_error_messages_summarise_a_long_script_argument(mocker):
     assert "-byte script" in message and "81 lines" in message
     assert "jailbee-registry-mirror" in message  # ...but the container is still named
     assert "podman: command not found" in message  # ...and so is the reason
+
+
+# ---- Missing `incus` binary --------------------------------------------------
+#
+# A host without Incus installed (or with it outside PATH) makes every
+# subprocess call raise FileNotFoundError. Left unwrapped it escapes as a raw
+# traceback out of whatever jailbee command the user ran — including `doctor`,
+# which is the one command whose entire job is to *report* that state. Every
+# caller in the codebase catches IncusError and nothing else, so the wrapper
+# has to normalise it here, the same way it already normalises timeouts.
+
+
+def _mock_binary_missing(mocker):
+    return mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=FileNotFoundError(2, "No such file or directory", "incus"),
+    )
+
+
+def test_run_raises_incus_error_when_binary_is_missing(incus, mocker):
+    _mock_binary_missing(mocker)
+
+    with pytest.raises(IncusError) as excinfo:
+        incus.list_containers()
+
+    message = str(excinfo.value)
+    assert "incus" in message
+    assert "not found" in message.lower()
+    assert "PATH" in message
+
+
+def test_exec_interactive_raises_incus_error_when_binary_is_missing(incus, mocker):
+    _mock_binary_missing(mocker)
+
+    with pytest.raises(IncusError) as excinfo:
+        incus.exec_interactive("feat-foo", ["bash"])
+
+    assert "not found" in str(excinfo.value).lower()
+
+
+def test_profile_set_yaml_raises_incus_error_when_binary_is_missing(incus, mocker):
+    _mock_binary_missing(mocker)
+
+    with pytest.raises(IncusError) as excinfo:
+        incus.profile_set_yaml("jailbee-base", "config: {}\n")
+
+    assert "not found" in str(excinfo.value).lower()
+
+
+def test_network_acl_set_yaml_raises_incus_error_when_binary_is_missing(incus, mocker):
+    _mock_binary_missing(mocker)
+
+    with pytest.raises(IncusError) as excinfo:
+        incus.network_acl_set_yaml("jailbee-egress", "egress: []\n")
+
+    assert "not found" in str(excinfo.value).lower()
+
+
+def test_missing_binary_error_names_the_configured_binary(mocker):
+    """A custom `binary=` must appear in the message, not a hardcoded `incus`."""
+    _mock_binary_missing(mocker)
+
+    with pytest.raises(IncusError) as excinfo:
+        Incus(binary="/opt/incus/bin/incus").list_containers()
+
+    assert "/opt/incus/bin/incus" in str(excinfo.value)
