@@ -51,7 +51,26 @@ never auto-created). Disable with `share_local: false` in `.jailbee/config.yaml`
 auto-mount is skipped there. Existing containers pick it up on the next
 `jailbee new`.
 
-### Talking to Android devices over `adb`
+### Sharing host sockets
+
+A container shares the host's kernel, so a **unix socket on the host can be
+used from inside it** — the container connects to the host process on the
+other end instead of running its own copy. jailbee already does this for you:
+the Wayland, PulseAudio, D-Bus and GnuPG sockets under `/run/user/<uid>` are
+attached to each container at the same path, which is what makes
+`jailbee chrome` render on your desktop, and what makes `git commit -S` and
+`ssh` work inside a container while the key stays on the host. With
+`gpg.enabled`, `SSH_AUTH_SOCK` points at the host gpg-agent's SSH socket, so
+a smartcard-backed key authenticates from inside the container without any
+private key being copied into it — the agent signs, the container only asks.
+
+The same trick is yours to use for anything else the host has a socket for.
+An `adb` example follows; a host database socket, a media daemon or a
+license server work the same way. Note that this is a container-only
+capability: a VM-based sandbox has no host kernel to share, so it cannot
+mount a host socket at all.
+
+#### Talking to Android devices over `adb`
 
 `adb` inside a container can drive a device or emulator attached to the
 **host** — no USB passthrough, no second adb server. Bind-mount the host adb

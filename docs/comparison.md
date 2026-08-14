@@ -57,7 +57,8 @@ Concretely, that means the container behaves like a Linux box you own:
 |---|---|
 | Run the repo's existing `docker-compose.yml` | Works unmodified — the container runs **its own Docker daemon** (`security.nesting`). No project renaming, no port remapping, no adapter for your stack. |
 | Run an Android emulator or a KVM VM | Declare `host_devices: [{ path: /dev/kvm }]` and it's there. Same for `/dev/net/tun`, a USB device, whatever the repo needs. |
-| Drive a phone plugged into your laptop | Bind-mount the host adb server's socket and set `ADB_SERVER_SOCKET`; `adb` inside the container then sees the host's devices. [Recipe](project-config.md#talking-to-android-devices-over-adb). |
+| Sign a commit with the key on your YubiKey | The host **gpg-agent's socket** is shared into the container and `SSH_AUTH_SOCK` points at it, so `git commit -S` and `ssh` work inside while the private key stays on the host — and the touch is still yours to give. |
+| Drive a phone plugged into your laptop | Bind-mount the host adb server's socket and set `ADB_SERVER_SOCKET`; `adb` inside the container then sees the host's devices. [Recipe](project-config.md#sharing-host-sockets). |
 | Run systemd services | It has systemd. |
 | Test your stack in a real browser | `jailbee chrome <name>` launches Chrome **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
 | Use a JetBrains IDE against the code | `jailbee ide <name>`, same passthrough. |
@@ -281,11 +282,15 @@ gaps:
   what you speak to them is your business. `sbx` proxies HTTP(S) and drops
   raw TCP, UDP and ICMP outright, so an outbound `ssh`, a `git+ssh` remote or
   a `psql` against staging has no allowlist entry to add.
-- **A desktop, and real devices.** Chrome and a JetBrains IDE run *inside*
-  the boundary and render on your Wayland session, and `host_devices` hands
-  the container `/dev/kvm`, a USB device or a GPU when the repo needs one.
-  The sandbox documentation describes neither GUI applications nor device
-  passthrough.
+- **A desktop, real devices, and the host's sockets.** Chrome and a JetBrains
+  IDE run *inside* the boundary and render on your Wayland session;
+  `host_devices` hands the container `/dev/kvm`, a USB device or a GPU; and
+  any unix socket the host offers — the gpg-agent, an adb server, a database
+  — can be attached and used from inside. These are one capability, not
+  three: sharing the host kernel is what makes a host socket connectable at
+  all. A microVM has no host kernel to share, which is why `sbx` brokers
+  credentials by injecting headers into HTTP requests and has no story for
+  an ssh-agent, a smartcard, `adb`, or a compositor.
 - **The repo owns the spec.** `.jailbee/config.yaml` is committed, so a
   colleague clones and runs `jailbee new`. Kits (still experimental) layer
   install commands, files, network and credential rules onto a template
@@ -346,11 +351,15 @@ the runtime is the hard part *and* you want the whole runtime fenced.
   VMs — jailbee does not use them. If a hypervisor boundary is a hard
   requirement, [Docker Sandboxes](#fenced-agents-nono-and-docker-sandboxes)
   gives you one today and jailbee does not.
-- **Secrets are mounted, not brokered.** GnuPG and the SSH agent reach the
-  container as read-only binds, so anything that runs inside can use your
-  keys while it runs. A credential proxy that keeps the token out of the
-  environment entirely (nono, `sbx`) is the stronger design; jailbee relies on
-  the egress ACL to limit where those keys can be used.
+- **Tokens are mounted, not brokered.** Key *material* is not: GnuPG and SSH
+  reach the container as the host agent's **socket**, so signing and
+  authentication happen on the host and the private key never enters the
+  container — with a hardware key, every use can still demand a touch. But an
+  API token that a repo mounts or an autostart step writes is a file in the
+  container like any other, and anything running inside can read it for as
+  long as it runs. A credential proxy that keeps the token out of the
+  environment entirely (nono, `sbx`) is the stronger design for those;
+  jailbee relies on the egress ACL to limit where they can be spent.
 - **Every `host_devices` entry widens that surface further** — `/dev/kvm` in
   particular hands the container a host-kernel interface. List only what the
   repo needs.

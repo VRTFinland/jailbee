@@ -37,6 +37,11 @@ its origin, not its scope.
 - **Nested Docker** — `security.nesting=true` out of the box on Ubuntu 26.04.
 - **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`) and Chrome
   (`jailbee chrome`) from inside a container onto your Wayland session.
+- **Host sockets, shared** — Wayland, PulseAudio, D-Bus and the gpg-agent are
+  attached to every container, so `git commit -S` and `ssh` work inside while
+  the private key never leaves the host (a smartcard still asks for its
+  touch). Mount any other host socket the same way — an adb server, a
+  database — and use it from inside.
 - **Network modes** — per-container egress allowlist with `strict` and
   `loose` policies (`jailbee net`), safe for unattended agent runs. Entries are
   hostnames and ports (`api.example.com:443`), not IP addresses: jailbee
