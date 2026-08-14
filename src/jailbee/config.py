@@ -4,9 +4,10 @@ Loads YAML config from <repo>/.jailbee/config.yaml. Validates with Pydantic.
 Most blocks are optional with sensible defaults; an empty `{}` config is
 valid and produces a fully-defaulted Config.
 
-`Config` carries three computed (non-YAML) attributes set at load time:
+`Config` carries four computed (non-YAML) attributes set at load time:
   * repo_root        — directory containing `.jailbee/`
-  * default_branch   — auto-detected via `git symbolic-ref`
+  * upstream_remote  — auto-detected via `git.detect_upstream_remote`
+  * default_branch   — `refs/remotes/<upstream_remote>/HEAD`
   * container_prefix — repo_root.name (used for container naming)
 """
 
@@ -34,7 +35,7 @@ from pydantic import (
     model_validator,
 )
 
-from jailbee.git import detect_default_branch
+from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import expand_path, xdg_data_home
 
 if TYPE_CHECKING:
@@ -1634,6 +1635,11 @@ class Config(BaseModel):
     # load_config() always overwrites them.
     repo_root: Path = Path()
     default_branch: str = "main"
+    # The host remote jailbee treats as the upstream. Detected rather than
+    # configured, for the same reason `default_branch` is: git already knows,
+    # and a submodule may answer differently from its superproject. See
+    # `git.detect_upstream_remote`.
+    upstream_remote: str = DEFAULT_REMOTE
 
     # Set once by `load_config()`: the `sanitize_column_blocks` fixes it made
     # to `ls`/`dashboard`, if any (empty otherwise — including for a `Config`
@@ -1978,7 +1984,11 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
 
     repo_root = _derive_repo_root(config_path)
     object.__setattr__(cfg, "repo_root", repo_root)
-    object.__setattr__(cfg, "default_branch", detect_default_branch(repo_root))
+    # Resolve the upstream remote before the default branch: the latter is
+    # `refs/remotes/<remote>/HEAD`, so it depends on the former.
+    upstream_remote = detect_upstream_remote(repo_root) or DEFAULT_REMOTE
+    object.__setattr__(cfg, "upstream_remote", upstream_remote)
+    object.__setattr__(cfg, "default_branch", detect_default_branch(repo_root, upstream_remote))
     if not cfg.container_prefix:
         object.__setattr__(cfg, "container_prefix", repo_root.name)
     if not _PREFIX_RE.match(cfg.container_prefix):

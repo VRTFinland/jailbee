@@ -418,12 +418,13 @@ def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
     # fail load_config's prefix validation — the destroy guard loads this
     # file for real (destroy_guard.assess needs a Config), so it must parse.
     config_path.write_text("container_prefix: p\n")
-    # load_config() also shells out to `git symbolic-ref` to detect the
-    # default branch. tmp_path isn't a git repo, so that call would fail
-    # harmlessly on its own — but destroy tests mock `subprocess.Popen`
-    # (to assert the destroy launch didn't happen), which intercepts this
-    # unrelated internal call too. Stub it so load_config stays a pure
-    # in-memory parse in tests.
+    # load_config() also shells out to git — `git remote` to resolve the
+    # upstream remote, then `git symbolic-ref` for the default branch. tmp_path
+    # isn't a git repo, so those calls would fail harmlessly on their own — but
+    # destroy tests mock `subprocess.Popen` (to assert the destroy launch didn't
+    # happen), which intercepts these unrelated internal calls too. Stub both so
+    # load_config stays a pure in-memory parse in tests.
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     # RepoGroup.repo_root is `str | None`, not a Path.
     controller._latest = [

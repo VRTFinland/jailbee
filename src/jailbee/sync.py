@@ -499,8 +499,8 @@ def _resolve_host_source_ref(cfg: Config, source: str, *, prefer: SourcePref) ->
     """
     local = f"refs/heads/{source}" if git.local_branch_exists(cfg.repo_root, source) else None
     origin = (
-        f"refs/remotes/origin/{source}"
-        if git.remote_ref_exists(cfg.repo_root, "origin", source)
+        f"refs/remotes/{cfg.upstream_remote}/{source}"
+        if git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, source)
         else None
     )
     if prefer == "origin":
@@ -560,7 +560,7 @@ def prefetch_push_source(
     if prefer != "origin" or not do_fetch:
         return (False, None)
     try:
-        git.fetch_origin_ref(cfg.repo_root, source)
+        git.fetch_remote_ref(cfg.repo_root, cfg.upstream_remote, source)
     except git.GitFetchError as exc:
         return (False, exc.stderr.strip() or str(exc))
     return (True, None)
@@ -1105,7 +1105,8 @@ def publish_branch_from_container(
     dirty = _container_status_dirty(incus, full_name, repo_dir, uid=cfg.container_user.uid)
 
     dest = publish_name or fetch.branch
-    lease = git.remote_branch_sha(cfg.repo_root, "origin", dest) if force else None
+    remote = cfg.upstream_remote
+    lease = git.remote_branch_sha(cfg.repo_root, remote, dest) if force else None
 
     src_ref = f"refs/jailbee/{short}/{fetch.branch}"
     try:
@@ -1113,8 +1114,10 @@ def publish_branch_from_container(
         # --force-with-lease anchor would be wrong: the lease must stay pinned to
         # the remote state the user was shown before the first attempt.
         with_remote_retry(
-            lambda: git.push_to_origin(cfg.repo_root, src_ref, dest, force_with_lease=lease),
-            label=f"pushing '{dest}' to origin",
+            lambda: git.push_to_remote(
+                cfg.repo_root, remote, src_ref, dest, force_with_lease=lease
+            ),
+            label=f"pushing '{dest}' to {remote}",
             catch=git.GitError,
             # git's output is inherited, so its error is already on the terminal
             # above the prompt and the SyncError below repeats it on a decline.
@@ -1126,13 +1129,13 @@ def publish_branch_from_container(
                 f"If you rebased or amended this branch, re-run with --force to "
                 f"update the PR head (uses --force-with-lease).\n"
                 f"If '{dest}' is an unrelated branch that already exists on "
-                f"origin, pick a different name with --as instead of forcing."
+                f"{remote}, pick a different name with --as instead of forcing."
             )
             if not force
             else "The remote moved since jailbee last checked; re-run to pick up "
             "the change, or reconcile manually — jailbee never blindly overwrites."
         )
-        raise SyncError(f"Pushing '{dest}' to origin failed: {exc}\n{hint}") from exc
+        raise SyncError(f"Pushing '{dest}' to {remote} failed: {exc}\n{hint}") from exc
 
     return PublishResult(fetch=fetch, dirty=dirty, publish_name=dest, forced=bool(lease))
 
@@ -1176,7 +1179,9 @@ def checkout_from_container(
 
     if not git.local_branch_exists(cfg.repo_root, target):
         track = (
-            f"origin/{target}" if git.remote_ref_exists(cfg.repo_root, "origin", target) else None
+            f"{cfg.upstream_remote}/{target}"
+            if git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, target)
+            else None
         )
         git.create_branch(cfg.repo_root, target, start_point=fetched_ref, track=track)
         head_oid = git.rev_parse(cfg.repo_root, "HEAD")
@@ -1623,7 +1628,11 @@ def push_to_container(
     if not _container_is_running(incus, full_name):
         raise SyncError(f"Container '{short}' is not running. Start it with: jailbee start {short}")
 
-    resolved_source = source if source is not None else git.detect_default_branch(cfg.repo_root)
+    resolved_source = (
+        source
+        if source is not None
+        else git.detect_default_branch(cfg.repo_root, cfg.upstream_remote)
+    )
 
     host_ref: str | None
     if source_ref is not None:
@@ -1641,7 +1650,7 @@ def push_to_container(
             raise SyncError(
                 f"Source branch '{resolved_source}' does not exist on host "
                 f"(neither refs/heads/{resolved_source} nor "
-                f"refs/remotes/origin/{resolved_source})."
+                f"refs/remotes/{cfg.upstream_remote}/{resolved_source})."
             )
         local_only = (
             _count_local_only_commits(cfg, resolved_source, host_ref)

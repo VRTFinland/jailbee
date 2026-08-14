@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from jailbee.config import Config
 from jailbee.db import get_engine
+from jailbee.git import detect_upstream_remote
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
 from jailbee.network import acl_name
@@ -39,6 +40,32 @@ class CheckResult:
     name: str
     ok: bool
     detail: str
+
+
+def _upstream_remote_check(cfg: Config) -> CheckResult:
+    """Report which remote jailbee resolved as the upstream, and which branch.
+
+    Detection is otherwise invisible: nothing in normal output says whether
+    jailbee landed on the remote the user thinks it did. Failing the check when
+    the name could not be resolved matters more than the happy path — jailbee
+    then falls back to the literal `origin`, which is a guess, and every
+    `refs/remotes/origin/*` operation quietly degrades from there.
+    """
+    resolved = detect_upstream_remote(cfg.repo_root)
+    if resolved is None:
+        return CheckResult(
+            "upstream remote",
+            False,
+            f"could not tell which remote is the upstream — falling back to "
+            f"'{cfg.upstream_remote}'. Pick one with "
+            f"`git config remote.pushDefault <name>`, or set the branch's "
+            f"upstream with `git branch --set-upstream-to=<remote>/<branch>`",
+        )
+    return CheckResult(
+        "upstream remote",
+        True,
+        f"'{resolved}' (default branch '{cfg.default_branch}')",
+    )
 
 
 def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
@@ -85,6 +112,8 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
                 "`jailbee git pull` will error",
             )
         )
+    else:
+        results.append(_upstream_remote_check(cfg))
 
     # 3. Profiles exist
     names = profile_names(cfg)

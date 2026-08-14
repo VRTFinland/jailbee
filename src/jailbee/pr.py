@@ -4,7 +4,7 @@ This module is the only place that calls the `gh` CLI. All other jailbee
 modules stay PR-agnostic. The main functions are:
 
   - resolve_pr(): subprocess `gh pr view` → PrInfo
-  - fetch_pr_head(): subprocess `git fetch origin +pull/N/head:...`
+  - fetch_pr_head(): subprocess `git fetch <remote> +pull/N/head:...`
                      into jailbee's own `refs/jailbee/pr/<N>/head`
   - resolve_pr_head_sha(): the --no-fetch counterpart — resolve the head
                            from refs already on the host
@@ -92,15 +92,20 @@ class PrEditError(PrError):
     """`gh pr edit` / `gh pr ready` failed: gh missing, not authed, etc."""
 
 
-def resolve_pr(repo_root: Path, number: int) -> PrInfo:
+def resolve_pr(repo_root: Path, number: int, *, remote: str) -> PrInfo:
     """Resolve PR metadata via `gh pr view`.
 
-    Pre-flights `git remote get-url origin` to fail fast with a clear
-    message when there is no origin or it isn't on GitHub, then invokes
+    Pre-flights `git remote get-url <remote>` to fail fast with a clear
+    message when the upstream is missing or isn't on GitHub, then invokes
     `gh pr view <number> --json ...` with cwd=repo_root so gh's own
     auto-detection picks up the right repo.
+
+    Note that `gh` resolves the repo by its own rules (it prefers a remote
+    named `upstream`, and honours `gh repo set-default`), so in a multi-remote
+    repo it may not land on `remote`. This pre-flight only guarantees that the
+    remote jailbee itself fetches from is a GitHub one.
     """
-    _validate_github_origin(repo_root)
+    _validate_github_origin(repo_root, remote)
     try:
         proc = subprocess.run(
             ["gh", "pr", "view", str(number), "--json", GH_PR_VIEW_JSON_FIELDS],
@@ -175,10 +180,10 @@ def pr_head_ref(number: int) -> str:
     return f"refs/jailbee/pr/{number}/head"
 
 
-def fetch_pr_head(repo_root: Path, pr: PrInfo) -> FetchResult:
+def fetch_pr_head(repo_root: Path, pr: PrInfo, *, remote: str) -> FetchResult:
     """Fetch PR head into `refs/jailbee/pr/<N>/head` (forced).
 
-    Uses `git fetch origin +pull/<N>/head:refs/jailbee/pr/<N>/head`, which works
+    Uses `git fetch <remote> +pull/<N>/head:refs/jailbee/pr/<N>/head`, which works
     uniformly for same-repo and fork PRs and never touches a branch — see
     `pr_head_ref`. The refspec is forced because the PR head is
     authoritative: an author who force-pushes (rebase, amend) rewrites it,
@@ -192,7 +197,7 @@ def fetch_pr_head(repo_root: Path, pr: PrInfo) -> FetchResult:
     prev_sha = _rev_parse(repo_root, pr_head_ref(pr.number))
 
     with_remote_retry(
-        lambda: _run_pr_head_fetch(repo_root, pr),
+        lambda: _run_pr_head_fetch(repo_root, pr, remote),
         label=f"fetching PR #{pr.number}'s head",
         catch=PrFetchError,
     )
@@ -205,7 +210,7 @@ def fetch_pr_head(repo_root: Path, pr: PrInfo) -> FetchResult:
     )
 
 
-def _run_pr_head_fetch(repo_root: Path, pr: PrInfo) -> None:
+def _run_pr_head_fetch(repo_root: Path, pr: PrInfo, remote: str) -> None:
     """Fetch PR `pr`'s head into `refs/jailbee/pr/<N>/head` once.
 
     The retryable unit of `fetch_pr_head`: one `git fetch` plus the
@@ -214,7 +219,7 @@ def _run_pr_head_fetch(repo_root: Path, pr: PrInfo) -> None:
     refspec = f"+pull/{pr.number}/head:{pr_head_ref(pr.number)}"
     try:
         proc = subprocess.run(
-            ["git", "fetch", "origin", refspec],
+            ["git", "fetch", remote, refspec],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -247,12 +252,12 @@ def _rev_parse(repo_root: Path, ref: str) -> str | None:
     return proc.stdout.strip() or None
 
 
-def fetch_base_ref(repo_root: Path, base_ref: str) -> str | None:
-    """Refresh ``refs/remotes/origin/<base_ref>`` in `repo_root`; return its SHA.
+def fetch_base_ref(repo_root: Path, base_ref: str, *, remote: str) -> str | None:
+    """Refresh ``refs/remotes/<remote>/<base_ref>`` in `repo_root`; return its SHA.
 
     A PR-review container's AHEAD numbers are computed against
     ``refs/jailbee/base/<base_ref>``, which `lifecycle` seeds from the host's
-    ``refs/remotes/origin/<base_ref>`` at create time. Fetching the PR head
+    ``refs/remotes/<remote>/<base_ref>`` at create time. Fetching the PR head
     alone leaves that remote-tracking ref at whatever the host last fetched;
     once it predates the PR's branch point, the three-dot diff picks *it* as
     the merge base and folds every base-branch commit made since into the PR's
@@ -266,10 +271,10 @@ def fetch_base_ref(repo_root: Path, base_ref: str) -> str | None:
     upstream, no network, git missing) and never raises. A stale anchor
     degrades the AHEAD numbers; it must not block container creation.
     """
-    refspec = f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}"
+    refspec = f"+refs/heads/{base_ref}:refs/remotes/{remote}/{base_ref}"
     try:
         proc = subprocess.run(
-            ["git", "fetch", "origin", refspec],
+            ["git", "fetch", remote, refspec],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -278,7 +283,7 @@ def fetch_base_ref(repo_root: Path, base_ref: str) -> str | None:
         if proc.returncode != 0:
             return None
         resolved = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{base_ref}"],
+            ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{base_ref}"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -318,16 +323,17 @@ def create_pr(
     base: str,
     title: str,
     body: str,
+    remote: str,
     draft: bool = True,
 ) -> PrCreated:
     """Create a GitHub PR for `head` via `gh pr create` (non-interactive).
 
-    Pre-flights the GitHub origin like resolve_pr. When gh reports that a
+    Pre-flights the GitHub upstream like resolve_pr. When gh reports that a
     PR for `head` already exists, the existing PR is looked up with
     `gh pr view <head>` and returned with `already_existed=True`, making
     repeated invocations idempotent for the caller.
     """
-    _validate_github_origin(repo_root)
+    _validate_github_origin(repo_root, remote)
     cmd = [
         "gh",
         "pr",
@@ -418,10 +424,11 @@ def _run_gh_mutation(repo_root: Path, cmd: list[str], label: str) -> None:
         raise PrEditError(f"'{label}' failed: {proc.stderr.strip()}")
 
 
-def _validate_github_origin(repo_root: Path) -> None:
+def _validate_github_origin(repo_root: Path, remote: str) -> None:
+    """Fail fast unless `remote` exists in `repo_root` and points at GitHub."""
     try:
         proc = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            ["git", "remote", "get-url", remote],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -430,10 +437,11 @@ def _validate_github_origin(repo_root: Path) -> None:
     except (FileNotFoundError, OSError) as e:
         raise PrResolveError("--pr requires git to be installed and on PATH") from e
     if proc.returncode != 0:
-        raise PrResolveError(f"--pr requires a GitHub 'origin' remote in {repo_root}")
+        raise PrResolveError(f"--pr requires a GitHub '{remote}' remote in {repo_root}")
     if "github.com" not in proc.stdout:
         raise PrResolveError(
-            f"--pr requires a GitHub 'origin' remote in {repo_root} (found: {proc.stdout.strip()})"
+            f"--pr requires a GitHub '{remote}' remote in {repo_root} "
+            f"(found: {proc.stdout.strip()})"
         )
 
 

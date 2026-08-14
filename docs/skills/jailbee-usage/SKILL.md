@@ -115,7 +115,8 @@ every other config key still comes from your checkout. A deviation prints a
 diff naming the ref or commit it read.
 
 Privileges are checked separately, against the repo's reviewed baseline
-(`refs/remotes/origin/<default_branch>`) rather than your checkout — so a
+(`refs/remotes/<upstream-remote>/<default_branch>`) rather than your
+checkout — so a
 checkout lagging the default branch is not treated as an escalation. A step
 attaching an `optional_mounts` entry the baseline's same-named step doesn't
 **always** asks for confirmation (defaulting to no; declining creates nothing).

@@ -608,7 +608,13 @@ There is no global default for `extra_registries`; set it per-repo.
 Set at load time by `_build_config_from_dict`:
 
 - `repo_root` — directory containing `.jailbee/`
-- `default_branch` — `git symbolic-ref refs/remotes/origin/HEAD`, fallback `main`
+- `upstream_remote` — the remote jailbee treats as the upstream. Resolved
+  in order: the sole remote / `origin` / `remote.pushDefault` /
+  `branch.<current>.remote` / the one remote with a `refs/remotes/<r>/HEAD`
+  symref. Fallback `origin`. Not a YAML key — git already holds the answer,
+  and each submodule resolves against its own directory
+- `default_branch` — `git symbolic-ref refs/remotes/<upstream_remote>/HEAD`,
+  fallback `main`
 - `container_prefix` (when omitted) — `repo_root.name`
 - `shared_dir` (when omitted) — `~/.local/share/jailbee/shared/<repo-name>`
 - `golden.alias` (when omitted) — `<container_prefix>-base`

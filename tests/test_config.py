@@ -122,12 +122,47 @@ def test_load_config_sets_repo_root_from_path(tmp_path, mocker):
 
 def test_load_config_sets_default_branch_from_git(tmp_path, mocker):
     mocked = mocker.patch("jailbee.config.detect_default_branch", return_value="dev")
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
 
     assert cfg.default_branch == "dev"
-    mocked.assert_called_once_with(tmp_path / "myrepo")
+    mocked.assert_called_once_with(tmp_path / "myrepo", "origin")
+
+
+def test_load_config_sets_upstream_remote_from_git(tmp_path, mocker):
+    """The upstream remote is detected, not configured — same class of value as
+    `default_branch`, which is why neither is a YAML key."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value="public")
+    cfg_path = _make_config(tmp_path, "{}\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.upstream_remote == "public"
+
+
+def test_load_config_resolves_default_branch_against_the_detected_remote(tmp_path, mocker):
+    """`refs/remotes/<remote>/HEAD`, not `refs/remotes/origin/HEAD`."""
+    detect_branch = mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value="public")
+    cfg_path = _make_config(tmp_path, "{}\n")
+
+    load_config(cfg_path)
+
+    detect_branch.assert_called_once_with(tmp_path / "myrepo", "public")
+
+
+def test_load_config_upstream_remote_falls_back_to_origin_when_unresolvable(tmp_path, mocker):
+    """An ambiguous repo is left exactly where it was before the fix, not broken further."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value=None)
+    cfg_path = _make_config(tmp_path, "{}\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.upstream_remote == "origin"
 
 
 def test_load_config_sets_container_prefix_from_repo_name(tmp_path, mocker):

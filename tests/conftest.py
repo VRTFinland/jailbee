@@ -25,19 +25,21 @@ def make_config(
     repo_root: Path,
     *,
     default_branch: str = "main",
+    upstream_remote: str = "origin",
     shared_dir: Path | None = None,
     **overrides: Any,
 ) -> Config:
     """Build a fully-defaulted Config with computed fields wired up.
 
     Use in tests instead of constructing Config directly so that
-    repo_root/default_branch/container_prefix are always set. Extra
-    keyword args are forwarded to ``Config.model_validate`` so callers
+    repo_root/default_branch/upstream_remote/container_prefix are always set.
+    Extra keyword args are forwarded to ``Config.model_validate`` so callers
     can pass e.g. ``gpg={"enabled": False}`` or ``host_mounts=[...]``.
     """
     cfg = Config.model_validate(overrides) if overrides else Config()
     object.__setattr__(cfg, "repo_root", repo_root)
     object.__setattr__(cfg, "default_branch", default_branch)
+    object.__setattr__(cfg, "upstream_remote", upstream_remote)
     if not cfg.container_prefix:
         object.__setattr__(cfg, "container_prefix", repo_root.name)
     if shared_dir is not None:

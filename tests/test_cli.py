@@ -2388,7 +2388,7 @@ def test_new_cmd_no_prompt_when_base_given_and_branch_is_new(tmp_path, mocker):
     _, new_container = _setup_new_cmd_env(tmp_path, mocker)
     mocker.patch(
         "jailbee.git.branch_exists_in_source",
-        side_effect=lambda _root, name: name == "feat/y",
+        side_effect=lambda _root, _remote, name: name == "feat/y",
     )
 
     result = CliRunner().invoke(app, ["new", "feat/x", "feat/y", "--no-autostart"])
@@ -5760,7 +5760,7 @@ def test_refresh_pr_source_resolves_fetches_and_returns_head_ref(mocker):
     result = _refresh_pr_source(cfg, incus, "full-name")
 
     assert result == ("feat/pr-branch", "refs/jailbee/pr/1234/head")
-    resolve.assert_called_once_with(cfg.repo_root, 77)
+    resolve.assert_called_once_with(cfg.repo_root, 77, remote="origin")
     fetch.assert_called_once()
 
 
@@ -6794,8 +6794,8 @@ def _stub_preflight(mocker, cfg, *, branch_autostart=None, deviation=None):
 
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=_PREFLIGHT_SHA)
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=_PREFLIGHT_SHA)
     mocker.patch("jailbee.git.show_file_at_ref", return_value=None)
     loaded = None
     if branch_autostart is not None:
@@ -6829,6 +6829,11 @@ def _background_new_env(make_cfg, tmp_path, monkeypatch, mocker):
         return_value=mocker.MagicMock(docker_registry_mirror=mocker.MagicMock(enabled=False)),
     )
     mocker.patch("jailbee.git.branch_exists_in_source", return_value=False)
+    # The escalation gate probes the baseline ref before deciding whether to
+    # prompt. `subprocess.Popen` is mocked below to prove no background worker
+    # was spawned, and that patch is process-wide — an unstubbed git call here
+    # would be counted as a spawn. See `_baseline_autostart`.
+    mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
     mocker.patch("jailbee.egress_pool.register_repo")
     refresh = mocker.MagicMock()
     refresh.status = "ok"
@@ -6975,8 +6980,8 @@ def test_new_background_reports_an_unresolvable_ref_in_the_terminal(
     _cfg, popen_mock = _background_new_env(make_cfg, tmp_path, monkeypatch, mocker)
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=False)
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=None)
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
 
     result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
 

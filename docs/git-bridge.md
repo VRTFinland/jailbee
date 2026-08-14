@@ -120,6 +120,13 @@ When the origin ref is pushed while the local branch holds commits it lacks,
 silently. Configure the defaults with `push.push_from` / `push.autofetch`
 (see [config.md](config.md#push)).
 
+> Throughout this document `origin` means *the upstream copy*, not
+> necessarily a remote literally called `origin`. jailbee resolves which
+> remote that is (see [Which remote is the
+> upstream?](config.md#which-remote-is-the-upstream)); the flag names
+> `--from-origin` / `--from-local` and the `push_from: origin` value keep the
+> word regardless of what your remote is called.
+
 Both `jailbee git push` and `jailbee git pull` print a one-line
 `<source> (…) ──▶ <target> (…)` banner before the detailed summary, so the
 direction of the sync is always unambiguous at a glance.
