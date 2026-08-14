@@ -21,11 +21,11 @@ from jailbee.git import (
     branch_exists_locally,
     count_commits_between,
     diff_shortstat_between,
-    fetch_origin_ref,
+    fetch_remote_ref,
     get_head_sha,
     has_commit,
     rev_parse,
-    rev_parse_origin,
+    rev_parse_remote,
 )
 
 # `parse_shortstat` is imported (not reimplemented) so the host-side
@@ -602,7 +602,7 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
             # consulted, so there is no source branch to speak of.
             source_branch = opts.container_branch
             create_new_branch = False
-        elif branch_exists_in_source(cfg.repo_root, opts.container_branch):
+        elif branch_exists_in_source(cfg.repo_root, cfg.upstream_remote, opts.container_branch):
             source_branch = opts.container_branch
             create_new_branch = False
         elif opts.base is not None:
@@ -647,31 +647,32 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
         # Bound to a local so the closure below carries the narrowed `str` type
         # rather than the enclosing `str | None`.
         fetch_branch: str = source_branch
+        remote = cfg.upstream_remote
         if autofetch:
-            info(f"→ Fetching origin/{fetch_branch} on host...")
+            info(f"→ Fetching {remote}/{fetch_branch} on host...")
             try:
                 # Retry only the host fetch — never container creation.
                 with_remote_retry(
-                    lambda: fetch_origin_ref(cfg.repo_root, fetch_branch),
-                    label=f"fetching origin/{fetch_branch}",
+                    lambda: fetch_remote_ref(cfg.repo_root, remote, fetch_branch),
+                    label=f"fetching {remote}/{fetch_branch}",
                     catch=GitFetchError,
                 )
             except GitFetchError as e:
                 raise ValueError(
-                    f"jailbee new: autofetch of 'origin/{fetch_branch}' failed: "
+                    f"jailbee new: autofetch of '{remote}/{fetch_branch}' failed: "
                     f"{e.stderr.strip() or e}\n"
                     f"Resolve the underlying issue, or set new.autofetch=false "
                     f"in .jailbee/config.yaml to skip."
                 ) from e
-        checkout_commit = rev_parse_origin(cfg.repo_root, source_branch)
+        checkout_commit = rev_parse_remote(cfg.repo_root, remote, source_branch)
         if checkout_commit is None:
             raise ValueError(
-                f"jailbee new: 'refs/remotes/origin/{source_branch}' not found "
+                f"jailbee new: 'refs/remotes/{remote}/{source_branch}' not found "
                 f"in {cfg.repo_root}, and no local `refs/heads/{source_branch}` "
                 f"either.\n"
-                f"Fetch it first: git fetch origin {source_branch}\n"
+                f"Fetch it first: git fetch {remote} {source_branch}\n"
                 f"Or create a local branch: git branch {source_branch} "
-                f"origin/{source_branch}"
+                f"{remote}/{source_branch}"
             )
     return CloneRef(
         source_branch=source_branch,
@@ -811,11 +812,11 @@ def new_container(
     if opts.base is not None:
         if not opts.clone:
             raise ValueError("base argument requires clone (incompatible with --no-clone).")
-        if not branch_exists_in_source(cfg.repo_root, opts.base):
+        if not branch_exists_in_source(cfg.repo_root, cfg.upstream_remote, opts.base):
             raise ValueError(
                 f"Base branch '{opts.base}' not found in source repo at "
                 f"{cfg.repo_root}. Fetch it first:\n"
-                f"  git fetch origin {opts.base}"
+                f"  git fetch {cfg.upstream_remote} {opts.base}"
             )
 
     names = profile_names(cfg)
@@ -1353,7 +1354,7 @@ def _clone_repo_in_container(
     # reachable through the --shared alternates, so no network fetch is needed.
     # Without this the probe's BASE resolution falls through to
     # origin/<default_branch> and reports AHEAD against the wrong branch.
-    base_sha = rev_parse_origin(cfg.repo_root, base_branch) or rev_parse(
+    base_sha = rev_parse_remote(cfg.repo_root, cfg.upstream_remote, base_branch) or rev_parse(
         cfg.repo_root, f"refs/heads/{base_branch}"
     )
     if base_sha is not None:
@@ -1400,15 +1401,18 @@ def _wire_origin_and_tracking(
 ) -> None:
     """Rewrite `origin` to upstream URL + set `branch.<branch>` tracking config.
 
+    The container's remote is always named `origin`; only the `merge` ref is
+    read from the host. See the comment at the tracking write below.
+
     Origin rewrite is skipped if the host repo has no `origin` remote (the
     in-container clone retains `/mnt/host-source` as origin — fallback).
     Branch tracking mirrors the host repo's config when present; otherwise
     defaults to `origin` + `refs/heads/<branch>` so `git push` Just Works
     once the user toggles loose-mode for the push.
     """
-    from jailbee.git import get_branch_tracking, get_origin_url
+    from jailbee.git import get_branch_tracking, get_remote_url
 
-    upstream = get_origin_url(cfg.repo_root)
+    upstream = get_remote_url(cfg.repo_root, cfg.upstream_remote)
     if upstream is not None:
         incus.exec(
             container,
@@ -1417,11 +1421,16 @@ def _wire_origin_and_tracking(
             gid=gid,
         )
 
-    tracking = get_branch_tracking(cfg.repo_root, branch) or ("origin", f"refs/heads/{branch}")
-    remote_name, merge_ref = tracking
+    # The remote name is jailbee's own invariant, never the host's: the clone
+    # above is `git clone --shared /mnt/host-source`, whose only remote is
+    # `origin`. A host that calls its upstream something else would otherwise
+    # leave the container tracking a remote that does not exist there. Only
+    # `merge` is host-derived — that is a ref name on the shared upstream.
+    tracking = get_branch_tracking(cfg.repo_root, branch)
+    merge_ref = tracking[1] if tracking is not None else f"refs/heads/{branch}"
     incus.exec(
         container,
-        ["git", "-C", repo_target, "config", f"branch.{branch}.remote", remote_name],
+        ["git", "-C", repo_target, "config", f"branch.{branch}.remote", "origin"],
         uid=uid,
         gid=gid,
     )

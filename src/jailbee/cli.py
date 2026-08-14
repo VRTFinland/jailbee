@@ -667,7 +667,7 @@ def new_cmd(
         from jailbee import pr as pr_module
 
         try:
-            pr_info = pr_module.resolve_pr(cfg.repo_root, pr)
+            pr_info = pr_module.resolve_pr(cfg.repo_root, pr, remote=cfg.upstream_remote)
         except pr_module.PrError as e:
             error(str(e))
             raise typer.Exit(2) from e
@@ -689,7 +689,9 @@ def new_cmd(
             )
         else:
             try:
-                fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info)
+                fetch_result = pr_module.fetch_pr_head(
+                    cfg.repo_root, pr_info, remote=cfg.upstream_remote
+                )
             except pr_module.PrError as e:
                 error(str(e))
                 raise typer.Exit(2) from e
@@ -705,7 +707,9 @@ def new_cmd(
             # `jailbee ls` AHEAD by every base-branch commit made since the host
             # last fetched. Best-effort: a base branch deleted upstream must
             # not block the container.
-            base_sha = pr_module.fetch_base_ref(cfg.repo_root, pr_info.base_ref)
+            base_sha = pr_module.fetch_base_ref(
+                cfg.repo_root, pr_info.base_ref, remote=cfg.upstream_remote
+            )
             if base_sha is None:
                 warn(
                     f"Could not fetch PR base branch '{pr_info.base_ref}' from origin; "
@@ -787,7 +791,7 @@ def new_cmd(
         from jailbee.git import branch_exists_in_source
 
         assert container_branch is not None
-        if branch_exists_in_source(cfg.repo_root, container_branch):
+        if branch_exists_in_source(cfg.repo_root, cfg.upstream_remote, container_branch):
             info(f"Branch '{container_branch}' already exists in source repo.")
             question = (
                 f"Use existing branch '{container_branch}'?"
@@ -2653,8 +2657,12 @@ def _print_push_summary(short: str, result: "PushResult") -> None:
     # (branch not on origin at all, the normal stacked-PR case) the failure
     # had no bearing on what was pushed, and warning would be noise.
     if result.fetch_error is not None and result.source_ref.startswith("refs/remotes/"):
+        # `refs/remotes/<remote>/<branch>` — remote names carry no slash, so the
+        # third segment is the remote the fetch actually used. Reading it back off
+        # the ref keeps the suggested command honest without threading `cfg` in.
+        remote = result.source_ref.split("/")[2]
         warn(
-            f"⚠ host 'git fetch origin {result.source}' failed: "
+            f"⚠ host 'git fetch {remote} {result.source}' failed: "
             f"{result.fetch_error} — pushed {result.source_ref} as the host "
             f"already had it, which may be stale."
         )
@@ -2799,7 +2807,7 @@ def _resolve_push_source(
         return resolved
     configured = cfg.push.default_source
     if configured == "default-branch":
-        return detect_default_branch(cfg.repo_root)
+        return detect_default_branch(cfg.repo_root, cfg.upstream_remote)
     if configured == "current":
         resolved = get_current_branch(cfg.repo_root)
         if resolved is None:
@@ -2949,10 +2957,10 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     pr_number, _label_head_ref = head  # label head_ref may be stale; resolve_pr is authoritative
 
     try:
-        pr_info = pr_module.resolve_pr(cfg.repo_root, pr_number)
+        pr_info = pr_module.resolve_pr(cfg.repo_root, pr_number, remote=cfg.upstream_remote)
         if pr_info.state != "OPEN":
             warn(f"PR #{pr_number} is {pr_info.state}; refreshing anyway.")
-        fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info)
+        fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info, remote=cfg.upstream_remote)
     except pr_module.PrError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
@@ -3052,7 +3060,7 @@ def _pick_push_source(
 
     from jailbee.git import detect_default_branch, get_current_branch
 
-    default_branch = detect_default_branch(cfg.repo_root)
+    default_branch = detect_default_branch(cfg.repo_root, cfg.upstream_remote)
     current_branch = get_current_branch(cfg.repo_root)
 
     if (
@@ -3409,9 +3417,9 @@ def push(
         bool,
         typer.Option(
             "--from-origin",
-            help="Push 'refs/remotes/origin/<source>' — the fetched upstream "
-            "tip — rather than the host's local branch. Overrides "
-            "push.push_from and the --current default.",
+            help="Push the fetched upstream tip "
+            "('refs/remotes/<upstream>/<source>') rather than the host's local "
+            "branch. Overrides push.push_from and the --current default.",
         ),
     ] = False,
     from_local: Annotated[
@@ -3427,9 +3435,9 @@ def push(
         bool | None,
         typer.Option(
             "--fetch/--no-fetch",
-            help="Run 'git fetch origin <source>' on the host before "
+            help="Fetch <source> from the upstream on the host before "
             "resolving the source ref. Defaults to push.autofetch; only "
-            "applies when pushing the origin-tracking ref.",
+            "applies when pushing the upstream-tracking ref.",
         ),
     ] = None,
     confirm: Annotated[
@@ -3856,7 +3864,7 @@ def _adopt_pr_head(
         raise typer.Exit(1) from None
 
     try:
-        pr_info = pr_module.resolve_pr(cfg.repo_root, number)
+        pr_info = pr_module.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
     except pr_module.PrError as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
@@ -4362,7 +4370,9 @@ def pr_cmd(
                         f"Renamed local branch '{publish.fetch.branch}' → "
                         f"'{publish.publish_name}' to match the PR head."
                     )
-                    if git_mod.remote_ref_exists(cfg.repo_root, "origin", publish.publish_name):
+                    if git_mod.remote_ref_exists(
+                        cfg.repo_root, cfg.upstream_remote, publish.publish_name
+                    ):
                         git_mod.set_upstream(
                             cfg.repo_root, publish.publish_name, f"origin/{publish.publish_name}"
                         )
@@ -4403,6 +4413,7 @@ def pr_cmd(
                 base=resolved_base,
                 title=resolved_title,
                 body=resolved_body,
+                remote=cfg.upstream_remote,
                 draft=ready is not True,
             )
         except pr_mod.PrError as exc:

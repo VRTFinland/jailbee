@@ -1875,7 +1875,7 @@ def test_push_to_container_happy_path_local_branch(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
     # No origin ref: the local branch is the only candidate.
     mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
-    mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
     mocker.patch(
         "jailbee.sync.git.rev_parse",
         side_effect=lambda root, ref: "host-oid" if ref == "refs/heads/main" else None,
@@ -1913,7 +1913,7 @@ def test_push_to_container_uses_origin_when_local_absent(mocker, make_cfg, tmp_p
     mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.sync.git.local_branch_exists", return_value=False)
     mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=True)
-    mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
     mocker.patch("jailbee.sync.git.run_capture", return_value=(True, "0\n"))
     mocker.patch(
         "jailbee.sync.git.rev_parse",
@@ -1943,7 +1943,7 @@ def test_push_to_container_explicit_from_overrides_default(mocker, make_cfg, tmp
     mock_detect = mocker.patch("jailbee.sync.git.detect_default_branch")
     mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
     mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
-    mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
     mocker.patch("jailbee.sync.git.rev_parse", return_value="oid")
     mocker.patch("jailbee.sync.git.push_url")
 
@@ -1973,7 +1973,7 @@ def test_push_to_container_pushes_an_explicit_source_ref(mocker, make_cfg, tmp_p
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     local = mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
     remote = mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=True)
-    fetch = mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.sync.git.fetch_remote_ref")
     mocker.patch("jailbee.sync.git.rev_parse", return_value="pr-oid")
     mock_push = mocker.patch("jailbee.sync.git.push_url")
 
@@ -2067,7 +2067,7 @@ def test_push_to_container_missing_source_branch_raises(mocker, make_cfg, tmp_pa
     mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.sync.git.local_branch_exists", return_value=False)
     mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
-    mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
 
     with pytest.raises(SyncError, match="does not exist on host"):
         push_to_container(cfg, incus, "feat-foo")
@@ -2089,7 +2089,7 @@ def test_push_to_container_records_prior_oid(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
     mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
-    mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
     mocker.patch("jailbee.sync.git.rev_parse", return_value="newoid")
     mocker.patch("jailbee.sync.git.push_url")
 
@@ -2196,7 +2196,7 @@ def _stub_push_env(mocker, cfg, incus, *, base_branch=None, local=True, origin=T
     return SimpleNamespace(
         full=full,
         run_capture=mocker.patch("jailbee.sync.git.run_capture", return_value=(True, "0\n")),
-        fetch=mocker.patch("jailbee.sync.git.fetch_origin_ref"),
+        fetch=mocker.patch("jailbee.sync.git.fetch_remote_ref"),
         push=mocker.patch("jailbee.sync.git.push_url"),
         push_multi=mocker.patch("jailbee.sync.git.push_url_multi"),
     )
@@ -2227,7 +2227,7 @@ def test_push_autofetches_origin_before_resolving(mocker, make_cfg, tmp_path):
 
     result = push_to_container(cfg, incus, "feat-foo")
 
-    m.fetch.assert_called_once_with(cfg.repo_root, "main")
+    m.fetch.assert_called_once_with(cfg.repo_root, "origin", "main")
     assert result.fetched is True
     assert result.fetch_error is None
 
@@ -4392,7 +4392,7 @@ def test_publish_happy_path_pushes_gie_ref_to_origin(mocker, make_cfg, tmp_path)
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     _stub_publish_fetch(mocker)
-    push = mocker.patch("jailbee.sync.git.push_to_origin")
+    push = mocker.patch("jailbee.sync.git.push_to_remote")
 
     result = publish_branch_from_container(cfg, incus, "feat-foo")
 
@@ -4401,7 +4401,7 @@ def test_publish_happy_path_pushes_gie_ref_to_origin(mocker, make_cfg, tmp_path)
     assert result.fetch.commits_added == 2
     assert result.dirty is False
     push.assert_called_once_with(
-        cfg.repo_root, "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
+        cfg.repo_root, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
     )
 
 
@@ -4417,7 +4417,7 @@ def test_publish_passes_branch_override_to_fetch(mocker, make_cfg, tmp_path):
     )
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     fetch = _stub_publish_fetch(mocker, branch="feat/other")
-    mocker.patch("jailbee.sync.git.push_to_origin")
+    mocker.patch("jailbee.sync.git.push_to_remote")
 
     publish_branch_from_container(cfg, incus, "feat-foo", branch="feat/other")
 
@@ -4436,7 +4436,7 @@ def test_publish_reports_dirty_tree_but_proceeds(mocker, make_cfg, tmp_path):
     )
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     _stub_publish_fetch(mocker)
-    push = mocker.patch("jailbee.sync.git.push_to_origin")
+    push = mocker.patch("jailbee.sync.git.push_to_remote")
 
     result = publish_branch_from_container(cfg, incus, "feat-foo")
 
@@ -4458,7 +4458,7 @@ def test_publish_wraps_push_failure_in_sync_error(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     _stub_publish_fetch(mocker)
     mocker.patch(
-        "jailbee.sync.git.push_to_origin",
+        "jailbee.sync.git.push_to_remote",
         side_effect=GitError("git push failed (exit 1)"),
     )
 
@@ -4481,7 +4481,7 @@ def test_publish_retries_the_push_when_the_user_accepts(mocker, make_cfg, tmp_pa
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     fetch = _stub_publish_fetch(mocker)
     push = mocker.patch(
-        "jailbee.sync.git.push_to_origin",
+        "jailbee.sync.git.push_to_remote",
         side_effect=[GitError("git push failed (exit 128)"), None],
     )
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
@@ -4510,7 +4510,7 @@ def test_publish_push_retry_is_not_offered_off_tty(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     _stub_publish_fetch(mocker)
     push = mocker.patch(
-        "jailbee.sync.git.push_to_origin",
+        "jailbee.sync.git.push_to_remote",
         side_effect=GitError("git push failed (exit 128)"),
     )
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
@@ -4537,7 +4537,7 @@ def test_publish_push_failure_hint_has_no_device_specific_wording(mocker, make_c
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     _stub_publish_fetch(mocker)
     mocker.patch(
-        "jailbee.sync.git.push_to_origin",
+        "jailbee.sync.git.push_to_remote",
         side_effect=GitError("git push failed (exit 128)"),
     )
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
@@ -4578,12 +4578,12 @@ def test_publish_pushes_under_publish_name(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-dev-1")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.sync._container_status_dirty", return_value=False)
-    push = mocker.patch("jailbee.git.push_to_origin")
+    push = mocker.patch("jailbee.git.push_to_remote")
 
     result = sync.publish_branch_from_container(cfg, incus, "dev-1", publish_name="user/nice")
 
     push.assert_called_once_with(
-        cfg.repo_root, "refs/jailbee/dev-1/dev-1", "user/nice", force_with_lease=None
+        cfg.repo_root, "origin", "refs/jailbee/dev-1/dev-1", "user/nice", force_with_lease=None
     )
     assert result.publish_name == "user/nice"
     assert result.forced is False
@@ -4601,14 +4601,14 @@ def test_publish_force_uses_lease(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.sync._container_status_dirty", return_value=False)
     mocker.patch("jailbee.git.remote_branch_sha", return_value="oldsha")
-    push = mocker.patch("jailbee.git.push_to_origin")
+    push = mocker.patch("jailbee.git.push_to_remote")
 
     result = sync.publish_branch_from_container(
         cfg, incus, "dev-1", publish_name="user/nice", force=True
     )
 
     push.assert_called_once_with(
-        cfg.repo_root, "refs/jailbee/dev-1/dev-1", "user/nice", force_with_lease="oldsha"
+        cfg.repo_root, "origin", "refs/jailbee/dev-1/dev-1", "user/nice", force_with_lease="oldsha"
     )
     assert result.forced is True
 
@@ -4626,12 +4626,12 @@ def test_publish_defaults_to_container_branch(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-foo")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.sync._container_status_dirty", return_value=False)
-    push = mocker.patch("jailbee.git.push_to_origin")
+    push = mocker.patch("jailbee.git.push_to_remote")
 
     result = sync.publish_branch_from_container(cfg, incus, "feat-foo")
 
     push.assert_called_once_with(
-        cfg.repo_root, "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
+        cfg.repo_root, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
     )
     assert result.publish_name == "feat/foo"
 
@@ -5407,18 +5407,18 @@ def test_plan_push_reports_the_hoisted_fetch_outcome(mocker, make_cfg, tmp_path)
 
 def test_prefetch_push_source_fetches_in_origin_mode(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    fetch = mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.sync.git.fetch_remote_ref")
 
     assert sync.prefetch_push_source(cfg, source="main", prefer="origin", fetch=True) == (
         True,
         None,
     )
-    fetch.assert_called_once_with(cfg.repo_root, "main")
+    fetch.assert_called_once_with(cfg.repo_root, "origin", "main")
 
 
 def test_prefetch_push_source_skips_in_local_mode(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    fetch = mocker.patch("jailbee.sync.git.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.sync.git.fetch_remote_ref")
 
     assert sync.prefetch_push_source(cfg, source="main", prefer="local", fetch=True) == (
         False,
@@ -5432,7 +5432,7 @@ def test_prefetch_push_source_reports_a_failure_without_raising(mocker, make_cfg
 
     cfg = make_cfg(tmp_path)  # push.autofetch defaults to True, so fetch=None fetches
     mocker.patch(
-        "jailbee.sync.git.fetch_origin_ref",
+        "jailbee.sync.git.fetch_remote_ref",
         side_effect=GitFetchError("fetch failed", stderr="fatal: unable to access\n"),
     )
 

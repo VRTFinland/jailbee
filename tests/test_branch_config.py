@@ -581,3 +581,58 @@ def test_format_escalation_is_empty_without_a_widening(mocker, tmp_path):
     verdict = assess_escalation(cfg, Autostart(on_create=[_step("build")]), untrusted=True)
 
     assert format_escalation(verdict) == ""
+
+
+def test_baseline_is_read_at_the_configured_upstream_remote(mocker, tmp_path):
+    """The reviewed baseline lives on whatever the repo calls its upstream."""
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, default_branch="dev", upstream_remote="public")
+    show = _baseline(mocker, cfg, Autostart())
+
+    assess_escalation(cfg, Autostart(on_create=[_step("build", network="loose")]), untrusted=False)
+
+    assert show.call_args.args[1] == "refs/remotes/public/dev"
+
+
+def test_unreachable_baseline_ref_warns_instead_of_degrading_silently(mocker, tmp_path):
+    """The gate getting weaker must be said out loud.
+
+    When the baseline ref does not resolve at all — no such remote, or a default
+    branch never fetched — the privilege baseline silently becomes the caller's
+    own checkout, which is exactly the config a branch could have written for
+    itself. A repo that simply carries no `.jailbee/config.yaml` on its default
+    branch is a different, benign case and stays quiet (covered separately).
+    """
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, default_branch="dev", upstream_remote="public")
+    mocker.patch("jailbee.git.show_file_at_ref", return_value=None)
+    mocker.patch("jailbee.git.remote_ref_exists", return_value=False)
+    warned = mocker.patch("jailbee.tui.warn_plain")
+
+    verdict = assess_escalation(
+        cfg, Autostart(on_create=[_step("build", mounts=["aws"])]), untrusted=False
+    )
+
+    assert warned.call_count == 1
+    assert "refs/remotes/public/dev" in warned.call_args.args[0]
+    assert "checkout" in verdict.baseline_source
+    assert "cannot be read" in verdict.baseline_source
+
+
+def test_absent_baseline_config_on_a_reachable_ref_stays_quiet(mocker, tmp_path):
+    """A repo that just doesn't keep a config on its default branch is benign."""
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.show_file_at_ref", return_value=None)
+    mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
+    warned = mocker.patch("jailbee.tui.warn_plain")
+
+    verdict = assess_escalation(
+        cfg, Autostart(on_create=[_step("build", mounts=["aws"])]), untrusted=False
+    )
+
+    warned.assert_not_called()
+    assert "checkout" in verdict.baseline_source
