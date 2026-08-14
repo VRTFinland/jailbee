@@ -126,13 +126,13 @@
     </section>
 
     <section id="network">
-      <div class="wrap network__grid">
+      <div class="wrap split">
         <img
-          class="network__img"
+          class="split__img"
           src="assets/img/hive-entrance.jpg"
           alt="Isometric illustration: a hand slides an entrance reducer into the front of a beehive brood box that doubles as a server chassis, narrowing the opening the bees pass through."
         />
-        <div class="network__body">
+        <div class="split__body">
           <h2>A guarded entrance, not a sealed box.</h2>
           <p>
             The question was never whether a container reaches the network — it is how wide you
@@ -160,22 +160,32 @@
     </section>
 
     <section id="agents">
-      <div class="wrap">
-        <h2>Somewhere to let an agent work.</h2>
-        <p>
+      <!-- Copy first, image second: at 800px up that puts the illustration on
+           the right, mirroring #network, and stacked it means the section
+           still leads with its heading. -->
+      <div class="wrap split">
+        <div class="split__body">
+          <h2>Somewhere to let an agent work.</h2>
+          <p>
           JailBee has first-class support for
-          <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
-          once and every container comes with it installed, sharing one login across the whole
-          project, allowed through its own network rules, and taught to drive
-          <code>jailbee</code> itself. Have it start on its own and a container is working the
-          moment it boots.
-        </p>
-        <p>
-          The reason to run an agent here is that you stop having to be the safety mechanism. It
-          normally stops to ask before anything consequential; in a container you can turn that
-          off and let it work, because what it can break is the container — and how much that
-          is, you decide in advance by choosing what the container gets to see.
-        </p>
+            <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
+            once and every container comes with it installed, sharing one login across the whole
+            project, allowed through its own network rules, and taught to drive
+            <code>jailbee</code> itself. Have it start on its own and a container is working the
+            moment it boots.
+          </p>
+          <p>
+            The reason to run an agent here is that you stop having to be the safety mechanism.
+            It normally stops to ask before anything consequential; in a container you can turn
+            that off and let it work, because what it can break is the container — and how much
+            that is, you decide in advance by choosing what the container gets to see.
+          </p>
+        </div>
+        <img
+          class="split__img"
+          src="assets/img/hive-observation.jpg"
+          alt="Isometric illustration: the same beehive brood box and server chassis, its front now a single sealed pane of glass rimmed in glowing amber; inside, four bees rebuild honeycomb amid drifting comb fragments, while the air outside the box is completely still."
+        />
       </div>
     </section>
 
