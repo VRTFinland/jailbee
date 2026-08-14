@@ -72,11 +72,16 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results."""
     results: list[CheckResult] = []
 
-    # 1. incus binary
-    if shutil.which("incus") is None:
-        results.append(CheckResult("incus binary", False, "`incus` not found in PATH"))
-    else:
+    # 1. incus binary. Every check below that talks to Incus hangs off this:
+    # with no binary there is nothing to inspect, and running them anyway
+    # would repeat one root cause a dozen times, burying it.
+    incus_available = shutil.which("incus") is not None
+    if incus_available:
         results.append(CheckResult("incus binary", True, "found"))
+    else:
+        results.append(
+            CheckResult("incus binary", False, "`incus` not found in PATH — install Incus")
+        )
 
     # 1b. Kernel keyring quota for Incus's mapped root uid (issue: misleading
     # "disk quota exceeded" from runc when starting nested containers).
@@ -115,46 +120,59 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     else:
         results.append(_upstream_remote_check(cfg))
 
-    # 3. Profiles exist
-    names = profile_names(cfg)
-    try:
-        for p in (names.base, names.binds, *names.net_by_mode.values()):
-            if not incus.profile_exists(p):
-                results.append(CheckResult(f"profile {p}", False, "missing — run `jailbee init`"))
-            else:
-                results.append(CheckResult(f"profile {p}", True, "present"))
-    except IncusError as e:
-        results.append(CheckResult("profile checks", False, str(e)))
-
-    # 4. ACL exists
-    acl = acl_name(cfg)
-    try:
-        if incus.network_acl_exists(acl):
-            results.append(CheckResult(f"ACL {acl}", True, "present"))
-        else:
-            results.append(CheckResult(f"ACL {acl}", False, "missing — run `jailbee init`"))
-    except IncusError as e:
-        results.append(CheckResult("ACL check", False, str(e)))
-
-    # 4b. jailbee-loose bridge exists
-    try:
-        if incus.network_exists(LOOSE_BRIDGE):
-            results.append(CheckResult(f"network {LOOSE_BRIDGE}", True, "present"))
-        else:
-            results.append(
-                CheckResult(
-                    f"network {LOOSE_BRIDGE}",
-                    False,
-                    "missing — run `jailbee init`",
-                )
+    if not incus_available:
+        results.append(
+            CheckResult(
+                "Incus-dependent checks",
+                False,
+                "skipped — profiles, ACL, bridge, registry mirror and pre-1.0 "
+                "state all need the `incus` binary",
             )
-    except IncusError as e:
-        results.append(CheckResult(f"network {LOOSE_BRIDGE}", False, str(e)))
+        )
 
-    # 4c. ...and actually carries traffic
-    addressing = _check_loose_bridge_addressing(cfg, incus)
-    if addressing is not None:
-        results.append(addressing)
+    # 3. Profiles exist
+    if incus_available:
+        names = profile_names(cfg)
+        try:
+            for p in (names.base, names.binds, *names.net_by_mode.values()):
+                if not incus.profile_exists(p):
+                    results.append(
+                        CheckResult(f"profile {p}", False, "missing — run `jailbee init`")
+                    )
+                else:
+                    results.append(CheckResult(f"profile {p}", True, "present"))
+        except IncusError as e:
+            results.append(CheckResult("profile checks", False, str(e)))
+
+        # 4. ACL exists
+        acl = acl_name(cfg)
+        try:
+            if incus.network_acl_exists(acl):
+                results.append(CheckResult(f"ACL {acl}", True, "present"))
+            else:
+                results.append(CheckResult(f"ACL {acl}", False, "missing — run `jailbee init`"))
+        except IncusError as e:
+            results.append(CheckResult("ACL check", False, str(e)))
+
+        # 4b. jailbee-loose bridge exists
+        try:
+            if incus.network_exists(LOOSE_BRIDGE):
+                results.append(CheckResult(f"network {LOOSE_BRIDGE}", True, "present"))
+            else:
+                results.append(
+                    CheckResult(
+                        f"network {LOOSE_BRIDGE}",
+                        False,
+                        "missing — run `jailbee init`",
+                    )
+                )
+        except IncusError as e:
+            results.append(CheckResult(f"network {LOOSE_BRIDGE}", False, str(e)))
+
+        # 4c. ...and actually carries traffic
+        addressing = _check_loose_bridge_addressing(cfg, incus)
+        if addressing is not None:
+            results.append(addressing)
 
     # 5. Shared dir tree
     assert cfg.shared_dir is not None  # set by load_config
@@ -199,38 +217,39 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             )
 
     # 7. Docker registry mirror status (Incus-hosted)
-    try:
-        rstatus = registry_status(incus)
-    except IncusError as e:
-        results.append(CheckResult("registry mirror", False, f"error querying: {e}"))
-    else:
-        if rstatus == MirrorStatus.RUNNING:
-            results.append(CheckResult("registry mirror", True, "status: running"))
-        elif rstatus == MirrorStatus.DEGRADED:
-            results.append(
-                CheckResult(
-                    "registry mirror",
-                    False,
-                    "status: degraded (container up, inner service inactive) — "
-                    "run 'jailbee registry up' to recover",
+    if incus_available:
+        try:
+            rstatus = registry_status(incus)
+        except IncusError as e:
+            results.append(CheckResult("registry mirror", False, f"error querying: {e}"))
+        else:
+            if rstatus == MirrorStatus.RUNNING:
+                results.append(CheckResult("registry mirror", True, "status: running"))
+            elif rstatus == MirrorStatus.DEGRADED:
+                results.append(
+                    CheckResult(
+                        "registry mirror",
+                        False,
+                        "status: degraded (container up, inner service inactive) — "
+                        "run 'jailbee registry up' to recover",
+                    )
                 )
-            )
-        elif rstatus == MirrorStatus.STOPPED:
-            results.append(
-                CheckResult(
-                    "registry mirror",
-                    False,
-                    "status: stopped — run 'jailbee registry up'",
+            elif rstatus == MirrorStatus.STOPPED:
+                results.append(
+                    CheckResult(
+                        "registry mirror",
+                        False,
+                        "status: stopped — run 'jailbee registry up'",
+                    )
                 )
-            )
-        else:  # MISSING
-            results.append(
-                CheckResult(
-                    "registry mirror",
-                    False,
-                    "status: missing — run 'jailbee registry up'",
+            else:  # MISSING
+                results.append(
+                    CheckResult(
+                        "registry mirror",
+                        False,
+                        "status: missing — run 'jailbee registry up'",
+                    )
                 )
-            )
 
     # 7b. Legacy host-Docker mirror left over from installs that predate
     # the Incus-hosted registry mirror.
@@ -295,24 +314,25 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     # a plan describes what the migrator is willing to do, so anything it
     # refuses (e.g. a directory whose target already exists) would read as
     # clean here — precisely the state a user most needs told about.
-    from jailbee.migrate import MIGRATION_GUIDE, leftovers
+    if incus_available:
+        from jailbee.migrate import MIGRATION_GUIDE, leftovers
 
-    try:
-        stale = leftovers(incus)
-    except Exception as e:  # broad catch: diagnostics must never abort
-        results.append(CheckResult("pre-1.0 gie state", False, f"could not inspect: {e}"))
-    else:
-        legacy_config = (cfg.repo_root / ".gie" / "config.yaml").is_file()
-        if not stale and not legacy_config:
-            results.append(CheckResult("pre-1.0 gie state", True, "none"))
+        try:
+            stale = leftovers(incus)
+        except Exception as e:  # broad catch: diagnostics must never abort
+            results.append(CheckResult("pre-1.0 gie state", False, f"could not inspect: {e}"))
         else:
-            hint = "run `jailbee migrate`"
-            if legacy_config:
-                hint += " and `git mv .gie .jailbee` in this repo"
-            detail = f"found: {'; '.join(stale)} — {hint}" if stale else f"found — {hint}"
-            results.append(
-                CheckResult("pre-1.0 gie state", False, f"{detail}; see {MIGRATION_GUIDE}")
-            )
+            legacy_config = (cfg.repo_root / ".gie" / "config.yaml").is_file()
+            if not stale and not legacy_config:
+                results.append(CheckResult("pre-1.0 gie state", True, "none"))
+            else:
+                hint = "run `jailbee migrate`"
+                if legacy_config:
+                    hint += " and `git mv .gie .jailbee` in this repo"
+                detail = f"found: {'; '.join(stale)} — {hint}" if stale else f"found — {hint}"
+                results.append(
+                    CheckResult("pre-1.0 gie state", False, f"{detail}; see {MIGRATION_GUIDE}")
+                )
 
     return results
 
