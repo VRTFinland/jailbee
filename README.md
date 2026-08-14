@@ -49,6 +49,14 @@ its origin, not its scope.
   addresses rotate, and pins the container's `/etc/hosts` to match. Any
   protocol, not just HTTP — `ssh`, `git+ssh` and a database client work
   under the same list.
+- **First-class Claude Code** — opt in with `claude.enabled: true` and every
+  container gets Claude Code installed, sharing one login and one settings
+  directory across the repo's containers while your host `~/.claude` is
+  never read. The Anthropic hosts are added to the strict-mode allowlist
+  automatically, JailBee's own skills teach the in-container Claude to drive
+  `jailbee`, and `jailbee pr` writes the PR title and body. Start it
+  automatically in a tmux window and the container is ready for an
+  unattended run the moment it boots.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
   TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans every repo.
 
