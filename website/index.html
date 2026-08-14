@@ -315,15 +315,29 @@
     <section id="install">
       <div class="wrap">
         <h2>Requirements.</h2>
-        <p>
-          JailBee needs a Linux host running Incus, and either uv or pipx to install the CLI.
-          Ubuntu 26.04 gives nested Docker out of the box. Host setup — Incus, firewall, UID mapping, kernel keyring
-          limits — is a one-time job with a few moving parts, and the
-          <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
-            >installation guide</a
-          >
-          walks it end to end. Running from an Apple Silicon Mac through a Linux VM is supported,
-          experimentally.
+        <ul class="reqs">
+          <li>
+            <strong>A Linux host running Incus.</strong>
+            <span>Ubuntu 26.04 gives nested Docker out of the box.</span>
+          </li>
+          <li>
+            <strong>uv or pipx.</strong>
+            <span>Either one installs the CLI.</span>
+          </li>
+          <li>
+            <strong>A one-time host setup.</strong>
+            <span
+              >Incus itself, the firewall, UID mapping and kernel keyring limits — a few moving
+              parts, and the
+              <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
+                >installation guide</a
+              >
+              walks them end to end.</span
+            >
+          </li>
+        </ul>
+        <p class="install__hint">
+          Running from an Apple Silicon Mac through a Linux VM is supported, experimentally.
         </p>
 
         <div class="install" data-installer="uv">
@@ -361,6 +375,9 @@
           </p>
         </div>
 
+        <!-- The steps are the outcome, not the ceremony: the heading names
+             where the five commands land. Run from the repo root. -->
+        <h3 class="steps__title">Your first container.</h3>
         <ol class="steps">
           <li><code>jailbee config init</code></li>
           <li><code>jailbee doctor</code></li>
