@@ -53,8 +53,7 @@
         <p class="hero__lead">
           JailBee gives every git branch a full system container of its own: its own services,
           its own Docker daemon, its own IDE and browser, cloned copy-on-write from one golden
-          image. Several stacks run in parallel on one host without a single port collision,
-          Docker-name clash, or shared-database accident.
+          image. Several stacks run in parallel on one host, out of each other's way.
         </p>
 
         <!-- The installer choice is cosmetic: jailbee is a normal PyPI
@@ -136,16 +135,13 @@
         <div class="network__body">
           <h2>A guarded entrance, not a sealed box.</h2>
           <p>
-            An agent that cannot reach the network cannot do its job, so the question was never
-            whether it gets out — it is how wide you leave the opening. <code>jailbee net strict</code>
-            allows the hosts your build actually needs. You name them the way you'd say them out
-            loud — <code>api.example.com:443</code>, not an IP range — and JailBee keeps the rule
-            pointed at the right addresses as they rotate underneath. The filtering happens below
-            the application, so an <code>ssh</code> or a database connection is covered by the same
-            list as a web request. <code>jailbee net loose</code> widens it for a set time and
-            reverts on its own, so nobody leaves it open by forgetting. JailBee shields the host
-            from what runs inside a container; it does not pretend to shield the code inside from
-            the world.
+            The question was never whether a container reaches the network — it is how wide you
+            leave the opening. <code>jailbee net strict</code> allows the hosts your build
+            actually needs, by name, and follows them as their addresses rotate underneath. The
+            filtering sits below the application, so an <code>ssh</code> or a database connection
+            is covered by the same list as a web request. <code>jailbee net loose</code> widens it
+            for a set time and reverts on its own, so nobody leaves it open by forgetting. It
+            shields the host from what runs inside — not the code inside from the world.
           </p>
         </div>
       </div>
@@ -158,7 +154,7 @@
           <code>jb ide</code> launches the JetBrains IDE that lives in the container onto your own
           Wayland session. <code>jb chrome</code> does the same for a browser with its own
           profile and its own localhost. <code>jb gui</code> opens a Qt dashboard that spans every
-          repo on the host.
+          repo on the host. Working in one feels the same as working locally.
         </p>
       </div>
     </section>
@@ -168,15 +164,17 @@
         <h2>Somewhere to let an agent work.</h2>
         <p>
           JailBee has first-class support for
-          <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>. Turn it on
-          once and every container comes with it installed, sharing one login and one set of
-          settings across the whole project — while the <code>~/.claude</code> on your own
-          computer is never read or copied in. The addresses Claude needs are added to the
-          container's allowlist for you, so a strict container still works without you opening
-          it up by hand. JailBee also teaches the Claude inside the container to drive
-          <code>jailbee</code> itself, and <code>jb pr</code> lets it write the pull request.
-          Have it start on its own in a terminal window and the container is ready to work the
+          <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
+          once and every container comes with it installed, sharing one login across the whole
+          project, allowed through its own network rules, and taught to drive
+          <code>jailbee</code> itself. Have it start on its own and a container is working the
           moment it boots.
+        </p>
+        <p>
+          The reason to run an agent here is that you stop having to be the safety mechanism. It
+          normally stops to ask before anything consequential; in a container you can turn that
+          off and let it work, because what it can break is the container — and how much that
+          is, you decide in advance by choosing what the container gets to see.
         </p>
       </div>
     </section>
@@ -185,13 +183,6 @@
       <div class="wrap">
         <h2>What you get.</h2>
         <div class="cards">
-          <div class="card">
-            <p>
-              <strong>Isolation, per branch.</strong> Every branch you're working on gets a full
-              environment of its own — services, database and all — so two branches never fight
-              over the same port or the same data.
-            </p>
-          </div>
           <div class="card">
             <p>
               <strong>A shortcut for git.</strong> Commits move straight between your computer
@@ -208,16 +199,11 @@
           </div>
           <div class="card">
             <p>
-              <strong>A leash on the network.</strong> Each container can only reach the internet
-              addresses your build actually needs, and you can widen that temporarily when you
-              need to — it closes back up on its own.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>Your tools, not a copy.</strong> The IDE and browser that live inside a
-              container open on your own screen, so working in one feels the same as working
-              locally.
+              <strong>Set up once, not once per branch.</strong> Every container in a project
+              shares the same downloaded packages, tool settings and logins. Configure
+              something in one and the rest have it, and the fifth branch you open starts
+              warm instead of fetching everything over again. Throwing a container away
+              leaves all of it in place.
             </p>
           </div>
           <div class="card">
@@ -232,14 +218,6 @@
               <strong>Submodules come along.</strong> If your project pulls in other repositories,
               they are set up for you in every new container and travel with your commits in both
               directions — nothing to prepare by hand on either side.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>Claude Code, already set up.</strong> Every container can come with
-              Claude Code installed, allowed through the network rules, and taught how to use
-              JailBee. You sign in once for the whole project, and nothing is shared with the
-              copy on your own computer.
             </p>
           </div>
           <div class="card">
@@ -337,15 +315,29 @@
     <section id="install">
       <div class="wrap">
         <h2>Requirements.</h2>
-        <p>
-          JailBee needs a Linux host running Incus, and either uv or pipx to install the CLI.
-          Ubuntu 26.04 gives nested Docker out of the box. Host setup — Incus, firewall, UID mapping, kernel keyring
-          limits — is a one-time job with a few moving parts, and the
-          <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
-            >installation guide</a
-          >
-          walks it end to end. Running from an Apple Silicon Mac through a Linux VM is supported,
-          experimentally.
+        <ul class="reqs">
+          <li>
+            <strong>A Linux host running Incus.</strong>
+            <span>Ubuntu 26.04 gives nested Docker out of the box.</span>
+          </li>
+          <li>
+            <strong>uv or pipx.</strong>
+            <span>Either one installs the CLI.</span>
+          </li>
+          <li>
+            <strong>A one-time host setup.</strong>
+            <span
+              >Incus itself, the firewall, UID mapping and kernel keyring limits — a few moving
+              parts, and the
+              <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
+                >installation guide</a
+              >
+              walks them end to end.</span
+            >
+          </li>
+        </ul>
+        <p class="install__hint">
+          Running from an Apple Silicon Mac through a Linux VM is supported, experimentally.
         </p>
 
         <div class="install" data-installer="uv">
@@ -383,6 +375,9 @@
           </p>
         </div>
 
+        <!-- The steps are the outcome, not the ceremony: the heading names
+             where the five commands land. Run from the repo root. -->
+        <h3 class="steps__title">Your first container.</h3>
         <ol class="steps">
           <li><code>jailbee config init</code></li>
           <li><code>jailbee doctor</code></li>

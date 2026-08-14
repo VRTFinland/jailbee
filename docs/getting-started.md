@@ -28,9 +28,15 @@ A quick mental model before the commands:
   `pull` / `push`) rather than through GitHub.
 - **Network modes.** Each container runs `strict` (kernel egress allowlist)
   or `loose` (open egress, auto-reverts) — switch with `jailbee net`.
-- **Shared state persists.** Caches, the JetBrains config, Chrome profile,
-  and Claude state live in a shared dir, so they survive `jailbee destroy` /
-  `jailbee new` cycles.
+- **One shared state layer per repo.** Package-manager caches, the JetBrains
+  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a
+  shared dir outside the containers, bind-mounted into every one of them.
+  It works across both axes: branches running *in parallel* share one warm
+  Gradle or pnpm cache and one set of tool settings — configure something in
+  one container and the others have it — and the state also survives
+  `jailbee destroy` / `jailbee new` cycles. It is a layer of its own, so
+  nothing a container does leaks into your host's own dotfiles. See
+  [`shared_caches`](config.md#shared_caches).
 
 ## Configure
 
@@ -126,10 +132,15 @@ stacked PRs, and reviewing existing PRs.
 ## Claude Code in the container
 
 Running a coding agent unattended is what the per-branch container and the
-strict egress allowlist are *for*: the agent gets a full machine to break,
-and the blast radius stops at the container boundary. JailBee has
-first-class support for [Claude Code](https://claude.com/claude-code) —
-turn it on in `~/.config/jailbee/global.yaml`:
+strict egress allowlist are *for*. The practical payoff is that you can
+stop answering permission prompts: run Claude with
+`--dangerously-skip-permissions` and let the container be the boundary
+instead of the agent's own judgement. You size the blast radius once, in
+the container's config — read-only mounts for what the build needs,
+sensitive `optional_mounts` left detached, `strict` egress — rather than
+adjudicating it one prompt at a time. JailBee has first-class support for
+[Claude Code](https://claude.com/claude-code) — turn it on in
+`~/.config/jailbee/global.yaml`:
 
 ```yaml
 claude:
@@ -164,11 +175,12 @@ What turning it on gets you:
 
 With `autostart: true`, every container comes up with Claude already
 running in a tmux window; `jailbee tmux <name>` drops you straight into it.
-That plus `jailbee net strict <name>` is the intended shape for
-unattended runs — see [Security and limitations](security.md) for why
-disabling an agent's own in-process sandbox is a reasonable trade
-*inside* a container, and [`config.md`](config.md#claude) for every
-`claude.*` key.
+That plus `jailbee net strict <name>` is the intended shape for unattended
+runs. Before leaning on it, read
+[Running an agent without prompts](security.md#running-an-agent-without-prompts)
+— it spells out exactly what an agent in that mode can and cannot reach,
+including the parts of the shared state layer it *can*. See
+[`config.md`](config.md#claude) for every `claude.*` key.
 
 ## Next steps
 

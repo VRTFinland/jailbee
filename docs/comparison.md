@@ -111,8 +111,10 @@ That file is where the genericity above is actually spent:
   ask (`jailbee mount <kind> <name>`), so sensitive things like `~/.aws` stay out
   of an unattended agent's reach unless you attach them deliberately.
 - **Devices** (`host_devices`), **egress allowlist**, **shared caches** that
-  survive `jailbee destroy`, and the **golden image's** language stacks and
-  `install.d/` provisioning snippets.
+  every one of the repo's containers mounts at once and that survive
+  `jailbee destroy` — a warm package cache and a configured tool are shared
+  across branches rather than rebuilt per container — and the **golden
+  image's** language stacks and `install.d/` provisioning snippets.
 - **What happens on create** — `autostart` boots the repo's services and a
   tmux session, so `jailbee new` ends with a running stack, not an empty shell.
 - **Behavioural defaults** — confirmation prompts, push/pull semantics, which
