@@ -340,10 +340,16 @@
              command, verbatim. The `gui` extra lives in the README and the
              installation guide, and `jb gui` prints how to get it when
              PySide6 is missing. -->
+      </div>
+    </section>
 
-        <!-- The steps are the outcome, not the ceremony: the heading names
-             where the five commands land. Run from the repo root. -->
-        <h3 class="steps__title">Your first container.</h3>
+    <!-- The first run is its own section, not a subheading under
+         Requirements: prerequisites and the commands you type are different
+         claims, and one h2 covering both is what made the steps read as an
+         orphan. Run from the repo root. -->
+    <section id="first-run">
+      <div class="wrap">
+        <h2>Your first container.</h2>
         <ol class="steps">
           <li><code>jailbee config init</code></li>
           <li><code>jailbee doctor</code></li>

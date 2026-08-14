@@ -457,17 +457,12 @@ button.copy[data-state="copied"] {
 }
 
 /* -----------------------------------------------------------------------
-   Install steps — #install first-run sequence.
+   Install steps — the #first-run command sequence.
    ----------------------------------------------------------------------- */
-.steps__title {
-  font-size: 1.15rem;
-  margin: 3rem 0 0;
-}
-
 .steps {
   list-style: none;
   counter-reset: step;
-  margin: 1rem 0 0;
+  margin: 2rem 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
