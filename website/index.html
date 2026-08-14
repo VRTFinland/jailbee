@@ -53,8 +53,7 @@
         <p class="hero__lead">
           JailBee gives every git branch a full system container of its own: its own services,
           its own Docker daemon, its own IDE and browser, cloned copy-on-write from one golden
-          image. Several stacks run in parallel on one host without a single port collision,
-          Docker-name clash, or shared-database accident.
+          image. Several stacks run in parallel on one host, out of each other's way.
         </p>
 
         <!-- The installer choice is cosmetic: jailbee is a normal PyPI
@@ -136,16 +135,13 @@
         <div class="network__body">
           <h2>A guarded entrance, not a sealed box.</h2>
           <p>
-            An agent that cannot reach the network cannot do its job, so the question was never
-            whether it gets out — it is how wide you leave the opening. <code>jailbee net strict</code>
-            allows the hosts your build actually needs. You name them the way you'd say them out
-            loud — <code>api.example.com:443</code>, not an IP range — and JailBee keeps the rule
-            pointed at the right addresses as they rotate underneath. The filtering happens below
-            the application, so an <code>ssh</code> or a database connection is covered by the same
-            list as a web request. <code>jailbee net loose</code> widens it for a set time and
-            reverts on its own, so nobody leaves it open by forgetting. JailBee shields the host
-            from what runs inside a container; it does not pretend to shield the code inside from
-            the world.
+            The question was never whether a container reaches the network — it is how wide you
+            leave the opening. <code>jailbee net strict</code> allows the hosts your build
+            actually needs, by name, and follows them as their addresses rotate underneath. The
+            filtering sits below the application, so an <code>ssh</code> or a database connection
+            is covered by the same list as a web request. <code>jailbee net loose</code> widens it
+            for a set time and reverts on its own, so nobody leaves it open by forgetting. It
+            shields the host from what runs inside — not the code inside from the world.
           </p>
         </div>
       </div>
@@ -158,7 +154,7 @@
           <code>jb ide</code> launches the JetBrains IDE that lives in the container onto your own
           Wayland session. <code>jb chrome</code> does the same for a browser with its own
           profile and its own localhost. <code>jb gui</code> opens a Qt dashboard that spans every
-          repo on the host.
+          repo on the host. Working in one feels the same as working locally.
         </p>
       </div>
     </section>
@@ -189,13 +185,6 @@
         <div class="cards">
           <div class="card">
             <p>
-              <strong>Isolation, per branch.</strong> Every branch you're working on gets a full
-              environment of its own — services, database and all — so two branches never fight
-              over the same port or the same data.
-            </p>
-          </div>
-          <div class="card">
-            <p>
               <strong>A shortcut for git.</strong> Commits move straight between your computer
               and a branch's container, so you don't have to push to GitHub and pull again just
               to get code from one place to the other.
@@ -206,20 +195,6 @@
               <strong>Docker, unchanged.</strong> Docker and Docker Compose run normally inside
               each container, so whatever you already use for local development keeps working
               as-is.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>A leash on the network.</strong> Each container can only reach the internet
-              addresses your build actually needs, and you can widen that temporarily when you
-              need to — it closes back up on its own.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>Your tools, not a copy.</strong> The IDE and browser that live inside a
-              container open on your own screen, so working in one feels the same as working
-              locally.
             </p>
           </div>
           <div class="card">
@@ -243,14 +218,6 @@
               <strong>Submodules come along.</strong> If your project pulls in other repositories,
               they are set up for you in every new container and travel with your commits in both
               directions — nothing to prepare by hand on either side.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>Claude Code, already set up.</strong> Every container can come with
-              Claude Code installed, allowed through the network rules, and taught how to use
-              JailBee. You sign in once for the whole project, and nothing is shared with the
-              copy on your own computer.
             </p>
           </div>
           <div class="card">
