@@ -63,7 +63,8 @@ scope.
 - [Git bridge](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md): host↔container git bridge, stacked PRs, PR review
 - [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md): every `.jailbee/config.yaml` and `global.yaml` key
 - [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md): isolation model and known limits, including what running an agent without prompts does and does not cover
-- [Who JailBee is for](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, and what it costs
+- [Who JailBee is for](https://jailbee.gisgro.io/comparison.html): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs
+- [Full technical comparison](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): the same comparison at length, with every caveat and the sources each claim was checked against
 - [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md): how the pieces fit together
 
 ## Optional

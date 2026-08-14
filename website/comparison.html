@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Who JailBee is for — Dev Containers, BranchBox, nono, Docker Sandboxes</title>
+    <meta
+      name="description"
+      content="How JailBee compares to Dev Containers, BranchBox, nono and Docker Sandboxes: what each one does with your working tree, your credentials and the network — and when not to use JailBee."
+    />
+    <meta
+      property="og:title"
+      content="Who JailBee is for — Dev Containers, BranchBox, nono, Docker Sandboxes"
+    />
+    <meta
+      property="og:description"
+      content="How JailBee compares to Dev Containers, BranchBox, nono and Docker Sandboxes: what each one does with your working tree, your credentials and the network — and when not to use JailBee."
+    />
+    <meta property="og:url" content="https://jailbee.gisgro.io/comparison.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="JailBee" />
+    <meta
+      property="og:image"
+      content="https://jailbee.gisgro.io/assets/img/jailbee-logo-dark.jpg"
+    />
+    <meta property="og:image:alt" content="JailBee logo: a bee behind bars" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://jailbee.gisgro.io/comparison.html" />
+    <link rel="icon" href="assets/img/jailbee-logo.png" />
+    <link rel="stylesheet" href="assets/style.css?v=c4561d50" />
+  </head>
+  <body>
+    <section class="hero">
+      <div class="wrap">
+        <p class="page-nav"><a href="./">← JailBee</a></p>
+        <h1>Who JailBee is for.</h1>
+        <p class="hero__lead">
+          Four projects come up whenever this one does. They are all good, and they sort into
+          two families answering two different questions: <em>how do I get the right toolchain,
+          per branch?</em> and <em>how do I stop the agent from wrecking my laptop?</em> JailBee
+          answers both at once, which is exactly why it is heavier than either.
+        </p>
+      </div>
+    </section>
+
+    <section id="short-answer">
+      <div class="wrap">
+        <h2>The short answer.</h2>
+        <div class="cards">
+          <div class="card">
+            <p>
+              <strong>Pick Dev Containers</strong> if a shared toolchain is what you need, or if
+              anyone on the team is on macOS or Windows. It is the standard, and JailBee has
+              nothing to add.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Pick Docker Sandboxes</strong> if you need a hypervisor between the agent
+              and your laptop. Its microVM is a genuinely stronger boundary than JailBee's.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Pick JailBee</strong> when the runtime is the hard part: a stack that
+              boots, listens, renders and occasionally wants <code>/dev/kvm</code> — several of
+              them at once, with an agent working behind the fence.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <div class="wrap">
+        <h2>What each one lets you do.</h2>
+        <p>
+          Note the two rows where JailBee is the one that can't. They are the trade, not an
+          oversight.
+        </p>
+        <div class="matrix__scroll">
+          <table class="matrix">
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col">Dev Containers</th>
+                <th scope="col">BranchBox</th>
+                <th scope="col">nono</th>
+                <th scope="col">Docker Sandboxes</th>
+                <th scope="col">JailBee</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">What it is</th>
+                <td>a toolchain in a container</td>
+                <td>a worktree + Compose per feature</td>
+                <td>a fence around one process</td>
+                <td>a microVM per agent run</td>
+                <td>a Linux machine per branch</td>
+              </tr>
+              <tr>
+                <th scope="row">Boundary</th>
+                <td>host Docker daemon</td>
+                <td>host Docker daemon</td>
+                <td>Landlock + seccomp</td>
+                <td>hypervisor, own kernel</td>
+                <td>Incus container, shared kernel</td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  Run the repo's <code>docker-compose.yml</code> without touching the host's
+                  Docker daemon
+                </th>
+                <td>privileged docker-in-docker</td>
+                <td>no</td>
+                <td>no</td>
+                <td>yes</td>
+                <td>yes</td>
+              </tr>
+              <tr>
+                <th scope="row">Two branches both listening on <code>:3000</code></th>
+                <td>each forwarded to a different host port</td>
+                <td>a port range per feature</td>
+                <td>no</td>
+                <td>yes</td>
+                <td>yes</td>
+              </tr>
+              <tr>
+                <th scope="row">A browser and an IDE inside the boundary, on your own screen</th>
+                <td>community noVNC only</td>
+                <td>no</td>
+                <td>n/a — they run on the host</td>
+                <td>no</td>
+                <td>yes</td>
+              </tr>
+              <tr>
+                <th scope="row">Restrict what the code inside can reach</th>
+                <td>no</td>
+                <td>no</td>
+                <td>per tool, HTTP</td>
+                <td>HTTP(S) only, rest dropped</td>
+                <td><code>host:port</code>, any protocol</td>
+              </tr>
+              <tr>
+                <th scope="row">Keep an agent out of your real checkout</th>
+                <td>opt-in clone into a volume</td>
+                <td>no</td>
+                <td>per-path grants</td>
+                <td><code>--clone</code></td>
+                <td>always its own clone</td>
+              </tr>
+              <tr>
+                <th scope="row">Snapshot before an agent runs, roll back after</th>
+                <td>rebuild</td>
+                <td>no</td>
+                <td>n/a</td>
+                <td>recreate</td>
+                <td>yes</td>
+              </tr>
+              <tr>
+                <th scope="row">Hold up when the <em>kernel</em> is what breaks</th>
+                <td>no</td>
+                <td>no</td>
+                <td>no</td>
+                <td>own kernel per sandbox</td>
+                <td><strong>no</strong> — shared kernel</td>
+              </tr>
+              <tr>
+                <th scope="row">Work on macOS or Windows</th>
+                <td>yes</td>
+                <td>macOS</td>
+                <td>yes</td>
+                <td>yes</td>
+                <td><strong>no</strong> — Linux only</td>
+              </tr>
+              <tr>
+                <th scope="row">Licence</th>
+                <td>open spec (MIT)</td>
+                <td>MIT</td>
+                <td>Apache-2.0</td>
+                <td>free CLI, sign-in required</td>
+                <td>GPL-3.0-or-later</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="matrix__hint">Scroll sideways for the full grid.</p>
+      </div>
+    </section>
+
+    <section id="idea">
+      <div class="wrap split">
+        <div class="split__body">
+          <h2>Isolation by boundary, not by allowlist.</h2>
+          <p>
+            Most sandboxes work by enumeration. You declare which paths, which hosts, which
+            syscalls, which tools — and everything the workload does has to fit through that
+            list. It is precise, and it works beautifully when you know in advance what the
+            workload will do.
+          </p>
+          <p>
+            Agentic development is the case where you don't. The agent decides it needs
+            <code>docker compose up</code>. Then an emulator. Then a headless browser, then a
+            real one. Then a package manager you have never installed. With an allowlist, every
+            one of those is a policy change, and each one widens the policy for everything else
+            — so the isolation degrades exactly as the work gets interesting.
+          </p>
+          <p>
+            JailBee moves the boundary instead of enumerating through it. The container is the
+            boundary; what happens inside is your business. Adding a tool costs nothing, because
+            nothing was enumerated in the first place.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="families">
+      <div class="wrap">
+        <h2>The four, briefly.</h2>
+        <ul class="docs__list">
+          <li>
+            <a href="https://containers.dev/">Dev Containers</a>
+            <span>
+              The default answer in this space and the one most teams should try first. It is a
+              <em>toolchain</em> boundary, not a containment one, and its defaults point away
+              from containment: your folder is bind-mounted read-write, so an agent inside edits
+              your real tree; credential helpers and your SSH agent are forwarded by design; and
+              the two supported ways to get Docker inside are a <code>privileged</code>
+              docker-in-docker feature or bind-mounting the host's Docker socket, which is host
+              root by another name. <code>devcontainer.json</code> declares the tools a repo
+              needs; <code>.jailbee/config.yaml</code> declares the machine it needs.
+            </span>
+          </li>
+          <li>
+            <a href="https://github.com/branchbox/branchbox">BranchBox</a>
+            <span>
+              The closest thing to JailBee's shape: a worktree plus a Compose project plus a
+              generated devcontainer, per feature. Much lighter to adopt, and it runs on macOS.
+              It inherits the devcontainer posture and goes further in the same direction — tool
+              credentials are mounted read-write into every feature by design. It solves
+              collisions between your own parallel workstreams; it is not built to contain
+              something you don't trust.
+            </span>
+          </li>
+          <li>
+            <a href="https://github.com/nolabs-ai/nono">nono</a>
+            <span>
+              A fence around the agent process — no container, no VM. Its per-tool policies are
+              finer-grained than anything JailBee does: the agent may call <code>gh</code>, but
+              <code>gh</code> gets its own filesystem grants and a proxied token. It is the
+              allowlist model, and it cannot give you a second Postgres or a second port 3000,
+              because it is not an environment. Its own docs recommend running it inside a
+              container when you need guest/host isolation — <strong>running nono inside a
+              JailBee container is a sensible combination</strong>, not a contradiction.
+            </span>
+          </li>
+          <li>
+            <a href="https://docs.docker.com/ai/sandboxes/">Docker Sandboxes</a>
+            <span>
+              The one tool here with a <em>stronger</em> boundary than JailBee's, and it should
+              be said plainly: each sandbox is a microVM with its own kernel, and its egress
+              proxy injects API keys into requests so credentials never enter the VM — strictly
+              better than JailBee, which bind-mounts your gpg-agent and SSH sockets and trusts
+              the container boundary to hold. What it is not is an environment for a branch.
+              <code>sbx</code> puts a stronger wall around one agent run; JailBee gives you a
+              whole machine per branch with a weaker — though still kernel-enforced — wall
+              around it.
+            </span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="costs">
+      <div class="wrap">
+        <h2>When not to use JailBee.</h2>
+        <ul class="reqs">
+          <li>
+            <strong>You're not on Linux.</strong>
+            <span>The macOS path runs JailBee inside a Linux VM and is experimental.</span>
+          </li>
+          <li>
+            <strong>You need a hypervisor boundary.</strong>
+            <span>
+              A system container shares the host kernel, so a kernel bug is an escape path. It is
+              the right boundary for code you are supervising loosely, not a multi-tenant
+              boundary against a determined attacker.
+            </span>
+          </li>
+          <li>
+            <strong>Your stack is one process and one database.</strong>
+            <span>
+              <code>git worktree</code> plus <code>docker compose -p</code> is free and already
+              installed.
+            </span>
+          </li>
+          <li>
+            <strong>You want it working in ten minutes.</strong>
+            <span>
+              Host setup — Incus, UID delegation, firewall, kernel keyring limits — is an
+              afternoon, once. The golden image is another 10–15 minutes, once per repo stack.
+              After that, containers are copy-on-write clones and creation is fast.
+            </span>
+          </li>
+          <li>
+            <strong>You want VS Code.</strong>
+            <span>
+              GUI passthrough targets the JetBrains IDEs, and there is no Dev Containers
+              integration.
+            </span>
+          </li>
+          <li>
+            <strong>Your secrets must never sit in the environment.</strong>
+            <span>
+              Key material stays on the host — GnuPG and SSH reach the container as sockets — but
+              an API token a repo mounts is a file in the container like any other. A credential
+              proxy (nono, <code>sbx</code>) is the stronger design for those.
+            </span>
+          </li>
+        </ul>
+        <p class="compare__more">
+          <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md"
+            >Read the full technical comparison</a
+          >
+          — every row of the grid above with its caveats, how the repo's config spends the
+          genericity, and the sources each claim was checked against.
+        </p>
+        <div class="actions">
+          <a class="button button--primary" href="./">Back to JailBee</a>
+          <a class="button button--secondary" href="https://github.com/VRTFinland/jailbee"
+            >View on GitHub</a
+          >
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <div class="footer__brand">
+          <img class="footer__mark" src="assets/img/jailbee-mark.png" alt="" width="340"
+            height="345" />
+          <span class="footer__word">J<em>ai</em>lBee</span>
+        </div>
+        <p>
+          Written by the JailBee maintainers, so read the comparison with that in mind. Claims
+          about the other four tools were checked by reading their source and documentation
+          rather than by running them. All four move quickly —
+          <a href="https://github.com/VRTFinland/jailbee/issues">corrections are welcome</a>.
+        </p>
+        <p>
+          JailBee is free software under the GNU General Public License v3.0 or later. ·
+          <a href="https://github.com/VRTFinland/jailbee">GitHub</a>
+        </p>
+        <a class="footer__gisgro" href="https://gisgro.com" rel="noopener">
+          <img src="assets/img/gisgro-logo.svg" width="140" height="25" alt="GISGRO" />
+        </a>
+        <p class="footer__copyright">© 2026 GISGRO Oy</p>
+      </div>
+    </footer>
+  </body>
+</html>
