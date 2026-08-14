@@ -15,7 +15,7 @@ in every command you write or suggest.
 
 ## Workflow
 
-1. **Confirm JailBee is installed.** `jailbee --version` should work. If not, the user installs it with `uv tool install -e <path-to-jailbee>` or from the project's git URL.
+1. **Confirm JailBee is installed.** `jailbee --version` should work. If not, the user installs it with `uv tool install jailbee` or `pipx install jailbee`.
 2. **Confirm cwd is a git repo.** `jailbee` derives `repo_root` from the directory containing `.jailbee/`. If `.git/` is missing or the repo dir name has uppercase/underscores/dots, note it — `container_prefix` will need an explicit override.
 3. **Inspect the stack.** Read the manifest files (see [Stack detection](#stack-detection) below). Note the language, build tool, runtime versions, and any services declared (databases, Redis, etc.) in `docker-compose*.yml`.
 4. **Generate the starter file.** Run `jailbee config init` (or `uv tool run jailbee config init` if `jailbee` isn't on PATH yet). This writes a fully-defaulted `.jailbee/config.yaml`. **Don't** hand-write the file from scratch — the template's comments are the user-facing schema documentation.

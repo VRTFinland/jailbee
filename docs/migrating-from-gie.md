@@ -9,7 +9,7 @@ lists what it found, and points at this file.
 The short version, run once per machine:
 
 ```bash
-uv tool install --force git+https://github.com/VRTFinland/jailbee
+uv tool install --force jailbee
 uv tool uninstall gisgro-incus-env
 jailbee migrate
 jailbee apply          # in each repo — see "After the migration" below
@@ -36,13 +36,12 @@ all of them.
 ## Upgrading the CLI
 
 ```bash
-uv tool install --force git+https://github.com/VRTFinland/jailbee
+uv tool install --force jailbee     # or: pipx install --force jailbee
 ```
 
-JailBee is not on PyPI yet, so install it from the git repository; once the
-first release is published, `uv tool install --force jailbee` is the same
-thing and shorter. `--force` matters either way: `uv tool install` alone
-won't overwrite an existing tool install. The old `gie` console script keeps
+`--force` is what matters here: `uv tool install` alone won't overwrite an
+existing tool install. Installing from `git+https://github.com/VRTFinland/jailbee`
+works the same way if you want the unreleased tip instead of the release. The old `gie` console script keeps
 working after this — see [Deprecations](#deprecations-and-their-removal) —
 so nothing breaks the moment you upgrade.
 

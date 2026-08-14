@@ -45,7 +45,7 @@ handles communication automatically — no manual shell wrapper needed.
 
 ```sh
 brew install colima incus
-uv tool install git+https://github.com/VRTFinland/jailbee   # the macOS bridge
+uv tool install jailbee   # the macOS bridge
 ```
 
 ### 2. Start the VM once
