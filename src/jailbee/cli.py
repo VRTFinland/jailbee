@@ -52,6 +52,29 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the jailbee version and exit.",
+        ),
+    ] = False,
+) -> None:
+    # No docstring: `help=` on the Typer() above is the command's help text,
+    # and a docstring here would silently replace it.
+    pass
+
+
 @app.command()
 def version() -> None:
     """Show the jailbee version."""

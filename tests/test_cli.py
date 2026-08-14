@@ -31,6 +31,15 @@ def test_version() -> None:
     assert __version__ in result.stdout
 
 
+def test_version_flag() -> None:
+    """`--version` is what users reach for, and the docs promise it works."""
+    from jailbee import __version__
+
+    result = run_cli("--version")
+    assert result.returncode == 0
+    assert __version__ in result.stdout
+
+
 def test_help() -> None:
     result = run_cli("--help")
     assert result.returncode == 0
