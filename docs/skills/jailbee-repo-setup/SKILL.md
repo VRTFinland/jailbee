@@ -66,6 +66,19 @@ host_mounts:
   - { host: ~/.docker, container: /home/dev/.docker, readonly: true }   # if you need host docker auth
 ```
 
+Android repos: to let `adb` inside the container drive a device attached to the host, mount the host adb server's socket **read-write** and point the client at it (a read-only socket cannot be talked on). The host must run its adb server on that socket (`adb -L localfilesystem:$HOME/.android/adb.sock start-server`):
+
+```yaml
+host_mounts:
+  - { host: ~/.android/adb.sock, container: /home/dev/.adb.sock, readonly: false }
+
+container:
+  env:
+    ADB_SERVER_SOCKET: "localfilesystem:/home/dev/.adb.sock"
+```
+
+For an emulator inside the container instead, add `host_devices: [{ path: /dev/kvm }]`.
+
 For mounts only some containers need (e.g. AWS for ECR pulls during a specific autostart step), use `optional_mounts` and reference them from the step:
 
 ```yaml

@@ -51,6 +51,34 @@ never auto-created). Disable with `share_local: false` in `.jailbee/config.yaml`
 auto-mount is skipped there. Existing containers pick it up on the next
 `jailbee new`.
 
+### Talking to Android devices over `adb`
+
+`adb` inside a container can drive a device or emulator attached to the
+**host** — no USB passthrough, no second adb server. Bind-mount the host adb
+server's socket and point the container's `adb` at it:
+
+```yaml
+host_mounts:
+  - { host: ~/.android/adb.sock, container: /home/dev/.adb.sock, readonly: false }
+
+container:
+  env:
+    ADB_SERVER_SOCKET: "localfilesystem:/home/dev/.adb.sock"
+```
+
+The mount is read-write on purpose: a socket the container can only read is
+a socket it cannot talk on. On the host, the adb server has to be listening
+on that same socket rather than on its default port — start it with
+`adb -L localfilesystem:$HOME/.android/adb.sock start-server` (or export the
+same `ADB_SERVER_SOCKET` on the host). After that, `adb devices` inside the
+container lists what the host has plugged in, and every container sharing
+the socket sees the same devices.
+
+To run the emulator *inside* the container instead, pass the KVM node
+through with `host_devices: [{ path: /dev/kvm }]` — see
+[`host_devices`](config.md#host_devices). That gives the container its own
+emulator and its own adb server, isolated from the host's.
+
 ## 4. Optional — stack runtimes and extra apt packages
 
 The golden image is **stack-neutral by default** (locale, prompt, GUI

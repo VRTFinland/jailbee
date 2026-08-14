@@ -57,6 +57,7 @@ Concretely, that means the container behaves like a Linux box you own:
 |---|---|
 | Run the repo's existing `docker-compose.yml` | Works unmodified — the container runs **its own Docker daemon** (`security.nesting`). No project renaming, no port remapping, no adapter for your stack. |
 | Run an Android emulator or a KVM VM | Declare `host_devices: [{ path: /dev/kvm }]` and it's there. Same for `/dev/net/tun`, a USB device, whatever the repo needs. |
+| Drive a phone plugged into your laptop | Bind-mount the host adb server's socket and set `ADB_SERVER_SOCKET`; `adb` inside the container then sees the host's devices. [Recipe](project-config.md#talking-to-android-devices-over-adb). |
 | Run systemd services | It has systemd. |
 | Test your stack in a real browser | `jailbee chrome <name>` launches Chrome **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
 | Use a JetBrains IDE against the code | `jailbee ide <name>`, same passthrough. |
