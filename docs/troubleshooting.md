@@ -14,7 +14,7 @@ the sections below expand on the ones that need host changes.
 A new container's `IPV4` column in `jailbee ls` / `incus list` stays empty, or
 nothing inside it can reach the network.
 
-**Cause:** a host firewall is blocking DHCP/DNS or forwarding on the jailbee
+**Cause:** a host firewall is blocking DHCP/DNS or forwarding on the JailBee
 bridges. See [Host networking](installation.md#host-networking-only-if-you-use-a-firewall)
 — add the firewalld zone entries or the UFW `route` + `before.rules` lines.
 `jailbee doctor` only checks that the `jailbee-loose` bridge *exists*; it does not
@@ -59,10 +59,10 @@ commits to the host and push from there (`jailbee git checkout <name>` →
 ### GPU / NVIDIA passthrough
 
 Not configured by `jailbee init`. NVIDIA passthrough needs extra Incus setup on
-the host (drivers + `nvidia.runtime` / device wiring) that jailbee does not
+the host (drivers + `nvidia.runtime` / device wiring) that JailBee does not
 manage — configure it directly on the Incus profile/instance.
 
-## Removing jailbee
+## Removing JailBee
 
 There is no `jailbee uninstall` command; teardown is manual. Some resources are
 **per-repo**, others are **host-wide and shared** — remove them in that
@@ -85,7 +85,7 @@ incus image delete "<prefix>-base"     # the golden image (by alias)
 rm -rf ~/.local/share/jailbee/shared/<prefix>
 ```
 
-### Host-wide resources (only after the last jailbee repo is gone)
+### Host-wide resources (only after the last JailBee repo is gone)
 
 ```bash
 jailbee registry down                      # stop the shared Docker registry mirror

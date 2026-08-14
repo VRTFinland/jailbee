@@ -1,8 +1,8 @@
-# Setting up jailbee in your own project
+# Setting up JailBee in your own project
 
 `jailbee` is project-agnostic — every repo provides its own `.jailbee/config.yaml`.
 The built-in defaults are stack-neutral: the golden image installs only
-jailbee's own plumbing, and language toolchains (JDK, Node, Python, Docker)
+JailBee's own plumbing, and language toolchains (JDK, Node, Python, Docker)
 are bundled but opt-in per repo via
 [`golden.stacks`](config.md#stacks-goldenstacks).
 
@@ -55,7 +55,7 @@ auto-mount is skipped there. Existing containers pick it up on the next
 
 A container shares the host's kernel, so a **unix socket on the host can be
 used from inside it** — the container connects to the host process on the
-other end instead of running its own copy. jailbee already does this for you:
+other end instead of running its own copy. JailBee already does this for you:
 the Wayland, PulseAudio, D-Bus and GnuPG sockets under `/run/user/<uid>` are
 attached to each container at the same path, which is what makes
 `jailbee chrome` render on your desktop, and what makes `git commit -S` and

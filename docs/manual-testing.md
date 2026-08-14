@@ -250,7 +250,7 @@ jailbee destroy <derived-container-name> --force
 ```
 
 This recipe is for host-side manual verification; it cannot be exercised
-from inside a jailbee container session.
+from inside a JailBee container session.
 
 ## `jailbee new --background` smoke test
 
@@ -451,7 +451,7 @@ Requires a container created by a pre-removal `jailbee`.
 
 1. On the old version: `jailbee net offline feat-x` and confirm
    `jailbee ls` shows `offline`.
-2. Upgrade jailbee, then run `jailbee apply`.
+2. Upgrade JailBee, then run `jailbee apply`.
 3. Expect a `Migrating myrepo-feat-x off myrepo-net-offline → myrepo-net-strict`
    line, followed by `Deleted stale profile myrepo-net-offline`.
 4. `jailbee ls` shows `strict`; `incus profile list | grep net-offline` is empty.
@@ -1561,7 +1561,7 @@ jailbee destroy --all --force
 
 ## GUI dashboard (`jailbee gui`)
 
-Requires a real Incus daemon, at least one jailbee container, and PySide6
+Requires a real Incus daemon, at least one JailBee container, and PySide6
 (`uv tool install -e '.[gui]'`).
 
 1. `jailbee gui` (or `jailbee dashboard --gui`) — the command detaches to the
@@ -1623,7 +1623,7 @@ keys in `list_containers`.
 ## Auto-target confirmation smoke test
 
 Exercises `confirm.auto_target` (default on): the plan-and-confirm block that
-`push`/`pull`/`checkout` show when jailbee — not the user — picks the container.
+`push`/`pull`/`checkout` show when JailBee — not the user — picks the container.
 Requires a real Incus daemon and exactly one running container for the repo.
 
 ```bash

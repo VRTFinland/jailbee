@@ -114,5 +114,5 @@ stacked PRs, and reviewing existing PRs.
 
 - [Commands](commands.md) — full command + flag reference
 - [Git bridge and branch workflows](git-bridge.md) — moving commits between host and containers, stacked PRs, mount vs clone
-- [Setting up jailbee in your own project](project-config.md) — adapting `jailbee` to your own repo and stack
+- [Setting up JailBee in your own project](project-config.md) — adapting `jailbee` to your own repo and stack
 - [Configuration reference](config.md) — every `.jailbee/config.yaml` key

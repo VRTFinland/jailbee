@@ -44,7 +44,7 @@ its origin, not its scope.
   database — and use it from inside.
 - **Network modes** — per-container egress allowlist with `strict` and
   `loose` policies (`jailbee net`), safe for unattended agent runs. Entries are
-  hostnames and ports (`api.example.com:443`), not IP addresses: jailbee
+  hostnames and ports (`api.example.com:443`), not IP addresses: JailBee
   resolves them into the kernel ACL, keeps a cumulative pool as CDN
   addresses rotate, and pins the container's `/etc/hosts` to match. Any
   protocol, not just HTTP — `ssh`, `git+ssh` and a database client work
