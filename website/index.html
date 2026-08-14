@@ -231,8 +231,8 @@
       <div class="wrap">
         <h2>Not the only way to do this.</h2>
         <p>
-          Four other tools solve neighbouring problems, and one of them draws a stronger boundary
-          than JailBee does. Here is where each of them fits.
+          Four other tools solve neighbouring problems, and one of them puts a hypervisor where
+          JailBee puts the kernel. Here is where each of them fits.
         </p>
         <!-- A real table, but rows stack into cards below 720px: the site's
              own rule is that nothing forces a horizontal scrollbar. Each cell
@@ -281,15 +281,15 @@
                 A microVM per agent run, with its own kernel and a deny-by-default network proxy.
               </td>
               <td data-label="Pick it instead when">
-                you want a hypervisor between the agent and your laptop. That is a stronger wall
-                than JailBee's.
+                you want a hypervisor between the agent and your laptop. A stronger wall than
+                JailBee's — and a VM image per run to pay for it.
               </td>
             </tr>
             <tr class="compare__self">
               <th scope="row">JailBee</th>
               <td data-label="What it is">
-                A full system container per branch — services, Docker, IDE and browser, all
-                inside the boundary.
+                An unprivileged system container per branch — services, Docker, IDE and browser,
+                all inside one kernel-enforced boundary.
               </td>
               <td data-label="Pick it instead when">
                 the runtime is the hard part: a stack that boots, listens and renders, several of
