@@ -14,11 +14,19 @@
       content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for Claude Code behind a strict network allowlist."
     />
     <meta property="og:url" content="https://jailbee.gisgro.io/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="JailBee" />
     <meta
       property="og:image"
       content="https://jailbee.gisgro.io/assets/img/jailbee-logo-dark.jpg"
     />
+    <meta property="og:image:alt" content="JailBee logo: a bee behind bars" />
     <meta name="twitter:card" content="summary_large_image" />
+    <!-- GitHub Pages serves this content from vrtfinland.github.io/jailbee as
+         well as from the CNAME domain, so name the one that should rank.
+         test_website exempts this from the anchors-only rule for absolute
+         URLs: a canonical link declares an identity, it fetches nothing. -->
+    <link rel="canonical" href="https://jailbee.gisgro.io/" />
     <!-- Proves site ownership to Google Search Console. Removing it drops
          verification, so it stays even though it looks like dead markup. -->
     <meta

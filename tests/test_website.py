@@ -200,15 +200,39 @@ def test_every_local_reference_resolves_on_disk() -> None:
         assert target.is_file(), f"broken local reference: {value}"
 
 
+CANONICAL_URL = "https://jailbee.gisgro.io/"
+
+# The single non-anchor absolute URL the page is allowed to carry. A
+# canonical link names which host should rank; unlike a stylesheet, script
+# or image reference it causes no fetch, so it cannot drag in a CDN — which
+# is the only thing test_only_anchors_use_absolute_urls exists to prevent.
+ABSOLUTE_URL_EXEMPTIONS = frozenset({("link", "href", CANONICAL_URL)})
+
+
 def test_only_anchors_use_absolute_urls() -> None:
     """No CDN, no webfont service, no third-party image — ever."""
     html = INDEX.read_text()
     refs = collect_tagged_references(html)
     for tag, attr, value in refs:
+        if (tag, attr, value) in ABSOLUTE_URL_EXEMPTIONS:
+            continue
         if value.startswith(("http://", "https://")):
             assert tag == "a" and attr == "href", (
                 f"non-anchor absolute URL: <{tag} {attr}={value!r}>"
             )
+
+
+def test_the_page_declares_its_canonical_host() -> None:
+    """GitHub Pages serves the same bytes from two hosts; name the winner.
+
+    Asserted on `rel="canonical"` specifically rather than on the URL
+    alone, so that dropping the rel — which silently turns the tag into a
+    no-op the exemption above still waves through — fails here.
+    """
+    html = INDEX.read_text()
+    assert f'<link rel="canonical" href="{CANONICAL_URL}" />' in html, (
+        f"the page must declare exactly one canonical URL, and it must be {CANONICAL_URL}"
+    )
 
 
 def test_the_stylesheet_makes_no_external_requests() -> None:
