@@ -359,14 +359,18 @@ def _conflicted_gitlinks(run: GitRun, top_dir: str) -> list[tuple[str, str | Non
     return result
 
 
+def _nongitlink_paths(entries: dict[str, dict[int, tuple[str, str]]]) -> list[str]:
+    """Sorted paths in ``entries`` that are NOT gitlinks (ordinary file conflicts)."""
+    return sorted(
+        path
+        for path, stages in entries.items()
+        if "160000" not in {mode for mode, _sha in stages.values()}
+    )
+
+
 def _nongitlink_unmerged_paths(run: GitRun, top_dir: str) -> list[str]:
     """Sorted unmerged paths that are NOT gitlinks (ordinary file conflicts)."""
-    paths = [
-        path
-        for path, stages in _unmerged_entries(run, top_dir).items()
-        if "160000" not in {mode for mode, _sha in stages.values()}
-    ]
-    return sorted(paths)
+    return _nongitlink_paths(_unmerged_entries(run, top_dir))
 
 
 @dataclass(frozen=True)
@@ -390,35 +394,78 @@ def resolve_gitlink_conflicts(run: GitRun, top_dir: str, *, message: str) -> Git
     """Auto-merge conflicted submodule gitlinks under an in-progress superproject merge.
 
     For each path with a gitlink (mode 160000) conflict, merge ``theirs`` into
-    ``ours`` inside the submodule and stage the merged pointer. Recurses into
-    nested submodules. Best-effort and never raises: a dirty tree, a content
-    conflict, a nested conflict, or a one-sided add/remove leaves that submodule
-    untouched (in whatever state git left it) and recorded in ``unresolved``.
-    Only gitlinks are touched; ordinary file conflicts are never resolved here.
+    ``ours`` inside the submodule and stage the merged pointer, recursing into
+    nested submodules whose own gitlinks conflict in turn. Never fails fast: a
+    submodule that cannot be resolved is recorded in ``unresolved`` and the next
+    one is still attempted, so one pass reports every conflict. Best-effort and
+    never raises. Only gitlinks are touched; ordinary file conflicts are never
+    resolved here.
+
+    Paths are reported relative to ``top_dir``, so a nested submodule surfaces
+    as ``lib/inner`` in both lists.
     """
     resolved: list[str] = []
     unresolved: list[UnresolvedSub] = []
     for path, ours_sha, theirs_sha in _conflicted_gitlinks(run, top_dir):
-        sub = f"{top_dir}/{path}"
-        if ours_sha is None or theirs_sha is None:
-            unresolved.append(UnresolvedSub(path, "deleted-side", ""))
-            continue
-        if _is_dirty(run, sub):
-            unresolved.append(UnresolvedSub(path, "dirty", ""))
-            continue
-        run(sub, ["checkout", "--detach", ours_sha])
-        ok, out = run(sub, ["merge", "--no-edit", "-m", message, theirs_sha])
-        if not ok:
-            unresolved.append(UnresolvedSub(path, "content-conflict", out))
-            continue
-        nested = resolve_gitlink_conflicts(run, sub, message=message)
-        if nested.unresolved or _has_unmerged(run, sub):
-            detail = "; ".join(f"{u.path} ({u.reason})" for u in nested.unresolved)
-            unresolved.append(UnresolvedSub(path, "nested-conflict", detail))
-            continue
-        run(top_dir, ["add", path])
-        resolved.append(path)
+        sub_resolved, sub_unresolved = _resolve_one_gitlink(
+            run, top_dir, path, ours_sha, theirs_sha, message=message
+        )
+        resolved.extend(sub_resolved)
+        unresolved.extend(sub_unresolved)
     return GitlinkResolution(resolved, unresolved)
+
+
+def _resolve_one_gitlink(
+    run: GitRun,
+    top_dir: str,
+    path: str,
+    ours_sha: str | None,
+    theirs_sha: str | None,
+    *,
+    message: str,
+) -> tuple[list[str], list[UnresolvedSub]]:
+    """Resolve one conflicted gitlink -> ``(resolved paths, unresolved)``.
+
+    Both lists are ``top_dir``-relative and may carry nested submodule paths.
+    """
+    sub = f"{top_dir}/{path}"
+    if ours_sha is None or theirs_sha is None:
+        return ([], [UnresolvedSub(path, "deleted-side", "")])
+    if _is_dirty(run, sub):
+        return ([], [UnresolvedSub(path, "dirty", "")])
+
+    run(sub, ["checkout", "--detach", ours_sha])
+    ok, out = run(sub, ["merge", "--no-edit", "-m", message, theirs_sha])
+    entries = _unmerged_entries(run, sub)
+    if not ok and not entries:
+        # git refused the merge outright (unrelated histories, a stale index,
+        # a missing object): there is nothing staged to finish.
+        return ([], [UnresolvedSub(path, "content-conflict", out)])
+    if _nongitlink_paths(entries):
+        return ([], [UnresolvedSub(path, "content-conflict", out)])
+
+    # Either the merge succeeded, or its only conflicts are the submodule's own
+    # gitlinks — which git leaves for us (`CONFLICT (submodule)`, exit 1).
+    nested = resolve_gitlink_conflicts(run, sub, message=message)
+    resolved = [f"{path}/{p}" for p in nested.resolved]
+    if nested.unresolved or _has_unmerged(run, sub):
+        unresolved = [
+            UnresolvedSub(f"{path}/{u.path}", u.reason, u.output) for u in nested.unresolved
+        ]
+        detail = "; ".join(f"{u.path} ({u.reason})" for u in nested.unresolved)
+        unresolved.append(UnresolvedSub(path, "nested-conflict", detail))
+        return (resolved, unresolved)
+
+    if entries:
+        # The merge stopped on those gitlinks and never committed; now that they
+        # are staged, finishing it is what turns `sub` into a mergeable pointer.
+        commit_ok, commit_out = run(sub, ["commit", "--no-edit"])
+        if not commit_ok:
+            return (resolved, [UnresolvedSub(path, "nested-conflict", commit_out or out)])
+
+    run(top_dir, ["add", path])
+    resolved.append(path)
+    return (resolved, [])
 
 
 HOST_SOURCE = "/mnt/host-source"

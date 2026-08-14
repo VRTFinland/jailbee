@@ -1204,23 +1204,27 @@ def test_seed_skips_unresolvable_gitlink():
     assert [c for c in run.calls if c[1][0] == "update-ref"] == []
 
 
-def test_resolve_nested_conflict_bubbles_up():
+def test_resolve_nested_gitlink_conflict_recurses_and_commits():
+    # `git merge` exits non-zero when its only conflict is a gitlink, so the
+    # submodule's own merge stops half-done: resolving `inner` must finish it.
+    staged: set[str] = set()
+
     def ls_files(cwd, args):
         if cwd == "/repo":
             return (True, "160000 ours 2\tlib\n160000 theirs 3\tlib\n")
-        if cwd == "/repo/lib":
-            # the submodule merged but ITS own gitlink (inner) is unmerged
+        if cwd == "/repo/lib" and "inner" not in staged:
             return (True, "160000 io 2\tinner\n160000 it 3\tinner\n")
         return (True, "")
 
     def merge(cwd, args):
-        # inner submodule merge fails -> parent must not be staged
-        return (False, "CONFLICT\n") if cwd == "/repo/lib/inner" else (True, "ok\n")
+        if cwd == "/repo/lib":
+            return (False, "CONFLICT (submodule): Merge conflict in inner\n")
+        return (True, "ok\n")
 
-    def config(cwd, args):
-        if "--get-regexp" in args and cwd == "/repo/lib":
-            return (True, "submodule.inner.path inner\n")
-        return (False, "")
+    def add(cwd, args):
+        if cwd == "/repo/lib":
+            staged.add(args[1])
+        return (True, "")
 
     run = _FakeRun(
         {
@@ -1228,14 +1232,57 @@ def test_resolve_nested_conflict_bubbles_up():
             "status": (True, ""),
             "checkout": (True, ""),
             "merge": merge,
-            "config": config,
+            "add": add,
+            "commit": (True, ""),
+        }
+    )
+
+    report = submodules.resolve_gitlink_conflicts(run, "/repo", message="m")
+
+    assert report.resolved == ["lib/inner", "lib"]
+    assert report.unresolved == []
+    assert ("/repo/lib/inner", ["merge", "--no-edit", "-m", "m", "it"]) in run.calls
+    assert ("/repo/lib", ["commit", "--no-edit"]) in run.calls
+    assert ("/repo", ["add", "lib"]) in run.calls
+
+
+def test_resolve_nested_conflict_bubbles_up():
+    def ls_files(cwd, args):
+        if cwd == "/repo":
+            return (True, "160000 ours 2\tlib\n160000 theirs 3\tlib\n")
+        if cwd == "/repo/lib":
+            # the submodule's merge stopped on ITS own gitlink (inner)
+            return (True, "160000 io 2\tinner\n160000 it 3\tinner\n")
+        if cwd == "/repo/lib/inner":
+            return (True, "100644 a 2\tx.c\n100644 b 3\tx.c\n")
+        return (True, "")
+
+    def merge(cwd, args):
+        if cwd == "/repo/lib":
+            return (False, "CONFLICT (submodule): Merge conflict in inner\n")
+        if cwd == "/repo/lib/inner":
+            return (False, "CONFLICT (content): Merge conflict in x.c\n")
+        return (True, "ok\n")
+
+    run = _FakeRun(
+        {
+            "ls-files": ls_files,
+            "status": (True, ""),
+            "checkout": (True, ""),
+            "merge": merge,
             "add": (True, ""),
         }
     )
     report = submodules.resolve_gitlink_conflicts(run, "/repo", message="m")
+
     assert report.resolved == []
-    assert report.unresolved[0].path == "lib"
-    assert report.unresolved[0].reason == "nested-conflict"
+    assert [(u.path, u.reason) for u in report.unresolved] == [
+        ("lib/inner", "content-conflict"),
+        ("lib", "nested-conflict"),
+    ]
+    assert "CONFLICT (content): Merge conflict in x.c" in report.unresolved[0].output
+    assert ("/repo", ["add", "lib"]) not in run.calls
+    assert [c for c in run.calls if c[1][0] == "commit"] == []
 
 
 # ---- delete_submodule_base_anchors ----------------------------------------
