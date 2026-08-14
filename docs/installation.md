@@ -7,9 +7,12 @@
   That build carries the nested-Docker AppArmor fix (CVE-2025-52881 fallout,
   backported to the 6.0 LTS series), so nested Docker works out of the box
   with `security.nesting=true` — no AppArmor workaround required.
-- `uv` package manager:
+- A way to install a Python CLI application — [`uv`](https://docs.astral.sh/uv/)
+  or [`pipx`](https://pipx.pypa.io/). jailbee itself needs neither at runtime;
+  pick whichever you already have:
   ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
+  sudo apt install pipx                             # or pipx
   ```
 - Host-installed Chrome at `/opt/google/chrome` and JetBrains Toolbox at
   `~/.local/share/JetBrains/Toolbox` (only needed for the GUI passthrough
@@ -72,10 +75,27 @@ the rationale, the security impact, and a verification recipe.
 ### 3. Install jailbee
 
 ```bash
-uv tool install git+https://github.com/VRTFinland/jailbee
+uv tool install jailbee     # or: pipx install jailbee
 ```
 
-This installs the `jailbee` and `jb` commands.
+This installs the `jailbee` and `jb` commands. Add the Qt dashboard with the
+`gui` extra (`uv tool install 'jailbee[gui]'`), and install
+`git+https://github.com/VRTFinland/jailbee` instead of the release when you
+want the unreleased tip.
+
+jailbee is an ordinary PyPI package and needs neither uv nor pipx at
+runtime — both are here only because Ubuntu 24.04+ marks its system Python
+as externally managed (PEP 668), so a bare `pip install jailbee` is refused.
+A virtualenv you manage yourself works exactly as well:
+
+```bash
+python3 -m venv ~/.venvs/jailbee
+~/.venvs/jailbee/bin/pip install jailbee
+ln -s ~/.venvs/jailbee/bin/jailbee ~/.local/bin/jailbee   # and jb, if you want it
+```
+
+Reaching for `pip install --break-system-packages` instead is not
+recommended: it installs into the Python that `apt` owns.
 
 ### 4. You're done with host setup
 

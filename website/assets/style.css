@@ -224,6 +224,40 @@ section {
   margin: 1.75rem 0;
 }
 
+/* Segmented installer switch above the command rows. Sized to the text
+   so it reads as a control, not a pair of buttons competing with the
+   page's real call to action. */
+.install__switch {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  overflow: hidden;
+}
+
+.install__tab {
+  background: none;
+  color: var(--muted);
+  border: none;
+  padding: 0.3rem 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.install__tab + .install__tab {
+  border-left: 1px solid var(--border);
+}
+
+.install__tab:hover {
+  color: var(--text);
+}
+
+.install__tab[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--amber);
+}
+
 .install__row {
   display: flex;
   align-items: center;

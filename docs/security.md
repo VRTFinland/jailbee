@@ -7,7 +7,20 @@ containers, read-only binds for secrets (GnuPG, SSH, and gitconfig are
 mounted read-only; note that user-declared `host_mounts` are read-write
 unless you set `readonly: true`), a kernel-level egress allowlist, and
 snapshot/rollback — gives stronger isolation than an in-process sandbox on
-the host. That is why running agentic tools with their in-process sandbox
+the host.
+
+**Keys stay on the host.** Where a secret has an agent, jailbee shares the
+agent's *socket* rather than the key: with `gpg.enabled`, the host
+gpg-agent's socket is attached to the container and `SSH_AUTH_SOCK` points
+at its SSH socket, so signing and SSH authentication are performed by the
+host agent. `ssh.enabled` seeds only `config`, `known_hosts` and
+`config.d/` into the shared `~/.ssh` — **private keys, `authorized_keys`
+and sockets are never seeded**. A process in the container can therefore
+ask the agent to sign for as long as it runs, but cannot take the key with
+it; on a smartcard-backed key each signature can still require a physical
+touch. This is the same "use it, don't hold it" property a credential proxy
+provides, and it does not extend to plain API tokens mounted or written
+into a container — those are ordinary files. That is why running agentic tools with their in-process sandbox
 disabled (e.g. Claude Code's `dangerouslyDisableSandbox`) is reasonable
 *inside* a `jailbee` container in `strict` network mode, provided optional
 mounts (e.g. `.aws`) stay detached and sensitive data isn't copied in.
