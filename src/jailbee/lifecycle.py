@@ -1400,6 +1400,9 @@ def _wire_origin_and_tracking(
 ) -> None:
     """Rewrite `origin` to upstream URL + set `branch.<branch>` tracking config.
 
+    The container's remote is always named `origin`; only the `merge` ref is
+    read from the host. See the comment at the tracking write below.
+
     Origin rewrite is skipped if the host repo has no `origin` remote (the
     in-container clone retains `/mnt/host-source` as origin — fallback).
     Branch tracking mirrors the host repo's config when present; otherwise
@@ -1417,11 +1420,16 @@ def _wire_origin_and_tracking(
             gid=gid,
         )
 
-    tracking = get_branch_tracking(cfg.repo_root, branch) or ("origin", f"refs/heads/{branch}")
-    remote_name, merge_ref = tracking
+    # The remote name is jailbee's own invariant, never the host's: the clone
+    # above is `git clone --shared /mnt/host-source`, whose only remote is
+    # `origin`. A host that calls its upstream something else would otherwise
+    # leave the container tracking a remote that does not exist there. Only
+    # `merge` is host-derived — that is a ref name on the shared upstream.
+    tracking = get_branch_tracking(cfg.repo_root, branch)
+    merge_ref = tracking[1] if tracking is not None else f"refs/heads/{branch}"
     incus.exec(
         container,
-        ["git", "-C", repo_target, "config", f"branch.{branch}.remote", remote_name],
+        ["git", "-C", repo_target, "config", f"branch.{branch}.remote", "origin"],
         uid=uid,
         gid=gid,
     )

@@ -1613,8 +1613,8 @@ def test_new_container_rewrites_origin_and_sets_tracking_for_existing_branch(tmp
     """After clone, rewrite origin URL to upstream + set tracking.
 
     Branch-exists path: `clone --branch` auto-sets tracking, but we still
-    re-write it from host config (idempotent) to preserve non-standard
-    setups (e.g. fork/upstream split).
+    write it explicitly (idempotent) so the `merge` ref follows the host's
+    rather than whatever the clone inferred.
     """
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -1658,6 +1658,54 @@ def test_new_container_rewrites_origin_and_sets_tracking_for_existing_branch(tmp
         cmd for cmd in git_cmds if "config" in cmd and any("branch.feat/x." in c for c in cmd)
     ]
     assert len(branch_cfg_cmds) == 2
+    keys = {cmd[-2]: cmd[-1] for cmd in branch_cfg_cmds}
+    assert keys["branch.feat/x.remote"] == "origin"
+    assert keys["branch.feat/x.merge"] == "refs/heads/feat/x"
+
+
+def test_new_container_tracking_remote_is_always_origin_in_the_container(tmp_path, mocker):
+    """The container's `branch.<b>.remote` is jailbee's own invariant, not the host's.
+
+    The in-container clone is `git clone --shared /mnt/host-source`, so its only
+    remote is called `origin` no matter what the host calls its upstream. Copying
+    the host's `branch.<b>.remote` verbatim configured the container to track a
+    remote that does not exist there, and `git push` inside the container died
+    with "'upstream' does not appear to be a git repository".
+
+    Only `merge` is host-derived — that is a ref name on the upstream, which the
+    two repos genuinely share.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.git.get_origin_url", return_value="git@github.com:Acme/repo.git")
+    mocker.patch(
+        "jailbee.git.get_branch_tracking",
+        return_value=("upstream", "refs/heads/feat/x"),
+    )
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    git_cmds = [
+        c.args[1]
+        for c in incus.exec.call_args_list
+        if len(c.args) > 1 and isinstance(c.args[1], list) and c.args[1][0] == "git"
+    ]
+    branch_cfg_cmds = [
+        cmd for cmd in git_cmds if "config" in cmd and any("branch.feat/x." in c for c in cmd)
+    ]
     keys = {cmd[-2]: cmd[-1] for cmd in branch_cfg_cmds}
     assert keys["branch.feat/x.remote"] == "origin"
     assert keys["branch.feat/x.merge"] == "refs/heads/feat/x"
