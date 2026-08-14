@@ -344,9 +344,13 @@ the runtime is the hard part *and* you want the whole runtime fenced.
 - **A golden image build**, ~10–15 minutes, once per repo stack. After that
   containers are copy-on-write clones and creation is fast.
 - **Disk.** Cheap per container, not free.
-- **JetBrains and Chrome, not VS Code.** JailBee's GUI passthrough targets the
-  JetBrains IDEs; there is no devcontainer integration. Only one IDEA-family
-  IDE at a time across containers (shared profile).
+- **JetBrains and Chrome out of the box; anything else by hand.** `jailbee ide`
+  accepts the JetBrains launcher names and `jailbee chrome` knows Chrome, and
+  there is no devcontainer integration. The passthrough underneath is generic
+  — it hands the container the host's Wayland socket and the environment any
+  GUI app needs — so VS Code installed into the golden image and started from
+  a shell does work; there is simply no command that sets it up for you. Only
+  one IDEA-family IDE at a time across containers (shared profile).
 - **A shared kernel.** A system container is the right boundary for code you
   are supervising loosely; it is not a multi-tenant boundary against a
   determined attacker, and a kernel bug is an escape path. Incus can run real

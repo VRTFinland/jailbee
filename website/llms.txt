@@ -52,8 +52,11 @@ scope.
 - **Not free to adopt.** Host setup (Incus, UID delegation, firewall, kernel
   keyring limits) is a one-time afternoon, and the golden image takes 10–15
   minutes to build once per repo stack.
-- **Not VS Code.** GUI passthrough targets the JetBrains IDEs; there is no
-  Dev Containers integration.
+- **No editor set up for you beyond JetBrains.** `jailbee ide` accepts the
+  JetBrains launcher names and there is no Dev Containers integration. VS Code
+  is not ruled out — the GUI passthrough is generic, so installing it into the
+  golden image and launching it from a shell works — but nothing ships to wire
+  it up.
 
 ## Documentation
 
