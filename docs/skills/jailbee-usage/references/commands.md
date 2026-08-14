@@ -47,7 +47,7 @@ speculatively.
 | `jailbee doctor` | Host-level diagnostics: Incus running, bridges, subuid/subgid mapping, keyring limits, registry mirror, GitHub token perms. Read-only. |
 | `jailbee registry up [--recreate]\|down\|status` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. |
 | `jailbee net install` | (Re)install the `jailbee-net-refresh` user systemd timer + service. Idempotent; safe to re-run. |
-| `jailbee version` | Print the version. |
+| `jailbee version` / `jailbee --version` | Print the version. |
 
 ## Config
 

@@ -2,8 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **`jailbee --version`** alongside the existing `jailbee version` subcommand.
+
 ### Fixed
 
+- **A missing `incus` binary is now reported, not a traceback.** On a host
+  where Incus was not installed (or not on `PATH`), every command that talks
+  to it ended in a raw `FileNotFoundError` traceback — including `jailbee
+  doctor`, which detected the missing binary, recorded the failure, and then
+  crashed before printing it. The wrapper now raises `IncusError` like it
+  does for timeouts, the CLI prints it as a one-line message and exits 1, and
+  `doctor` skips the checks that need the binary rather than repeating one
+  root cause a dozen times.
 - **The upstream remote no longer has to be called `origin`.** Every host-side
   git operation assumed that name, so a repo whose upstream had been renamed
   (`git remote rename` is ordinary) saw `jailbee new --pr` and branch

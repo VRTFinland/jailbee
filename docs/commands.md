@@ -40,17 +40,18 @@
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration |
-| `jailbee version` | Print the JailBee version |
+| `jailbee version` / `jailbee --version` | Print the JailBee version |
 
 ### `jailbee gui` / `jailbee dashboard --gui`
 
 The graphical (Qt) counterpart to the terminal dashboard — the same live,
 cross-repo container view with per-container actions via right-click / popup
-menus. Requires the optional PySide6 extra. From a checkout of the JailBee repo:
+menus. Requires the optional PySide6 extra:
 
-    make install
+    uv tool install 'jailbee[gui]'     # or: pipx install 'jailbee[gui]'
 
-(or: `uv tool install -e '.[gui]'`)
+(from a checkout of the JailBee repo: `make install`, or
+`uv tool install -e '.[gui]'`)
 
 By default the GUI **detaches to the background**: the command prints a
 "Launched jailbee dashboard GUI in the background" message and returns

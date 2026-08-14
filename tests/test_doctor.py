@@ -3,11 +3,32 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from jailbee.config import load_config
 from jailbee.doctor import run_checks
 from jailbee.registry import MirrorStatus
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def incus_on_path():
+    """Default every doctor test to a host that has the `incus` binary.
+
+    doctor gates its Incus-dependent checks on `shutil.which("incus")`, so
+    without this the suite's verdict would depend on whether the machine
+    running it happens to have Incus installed — a real host dependency in
+    an otherwise fully-mocked suite. Tests about a *missing* binary, or
+    about `docker` being present, patch `which` themselves and win: their
+    patch is applied after this one.
+    """
+
+    def which_stub(name):
+        return "/usr/bin/incus" if name == "incus" else None
+
+    with patch("jailbee.doctor.shutil.which", side_effect=which_stub):
+        yield
 
 
 def _cfg(tmp_path):
@@ -61,10 +82,7 @@ def test_doctor_reports_registry_running(tmp_path):
     incus = _baseline_incus()
     incus.network_exists.return_value = True
 
-    with (
-        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
-        patch("jailbee.doctor.shutil.which", return_value=None),
-    ):
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
         results = run_checks(cfg, incus)
 
     mirror = next(r for r in results if r.name == "registry mirror")
@@ -77,10 +95,7 @@ def test_doctor_reports_registry_degraded(tmp_path):
     incus = _baseline_incus()
     incus.network_exists.return_value = True
 
-    with (
-        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.DEGRADED),
-        patch("jailbee.doctor.shutil.which", return_value=None),
-    ):
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.DEGRADED):
         results = run_checks(cfg, incus)
 
     mirror = next(r for r in results if r.name == "registry mirror")
@@ -95,10 +110,7 @@ def test_doctor_reports_registry_stopped(tmp_path):
     incus = _baseline_incus()
     incus.network_exists.return_value = True
 
-    with (
-        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.STOPPED),
-        patch("jailbee.doctor.shutil.which", return_value=None),
-    ):
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.STOPPED):
         results = run_checks(cfg, incus)
 
     mirror = next(r for r in results if r.name == "registry mirror")
@@ -112,10 +124,7 @@ def test_doctor_reports_registry_missing(tmp_path):
     incus = _baseline_incus()
     incus.network_exists.return_value = True
 
-    with (
-        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING),
-        patch("jailbee.doctor.shutil.which", return_value=None),
-    ):
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING):
         results = run_checks(cfg, incus)
 
     mirror = next(r for r in results if r.name == "registry mirror")
@@ -1027,3 +1036,38 @@ def test_run_checks_skips_the_upstream_remote_check_without_a_git_repo(make_cfg,
         results = run_checks(cfg, incus)
 
     assert not any(r.name == "upstream remote" for r in results)
+
+
+def test_doctor_reports_missing_incus_binary_instead_of_crashing(tmp_path):
+    """No `incus` on PATH is the state doctor exists to report, not to die on.
+
+    Before, the binary check recorded a failure and then the very next check
+    called through to the CLI anyway, so `jailbee doctor` on a host that had
+    not installed Incus yet ended in a raw FileNotFoundError traceback — the
+    recorded failure never reached the user.
+    """
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+
+    with patch("jailbee.doctor.shutil.which", return_value=None):
+        results = run_checks(cfg, incus)
+
+    binary = next(r for r in results if r.name == "incus binary")
+    assert binary.ok is False
+    assert "PATH" in binary.detail
+
+    # The dependent checks did not merely fail — they never touched Incus.
+    incus.profile_exists.assert_not_called()
+    incus.network_acl_exists.assert_not_called()
+    incus.network_exists.assert_not_called()
+    incus.list_containers.assert_not_called()
+    assert [r for r in results if r.name.startswith("profile ")] == []
+
+    # ...and the report says so once, not once per check it could not run.
+    skipped = [r for r in results if "skipped" in r.detail]
+    assert len(skipped) == 1
+
+    # Host-side checks that need no daemon still run, so one missing
+    # prerequisite does not blank out the rest of the diagnosis.
+    assert any(r.name == "shared_dir tree" for r in results)
+    assert any(r.name == "container_user uid/gid" for r in results)
