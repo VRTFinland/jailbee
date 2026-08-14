@@ -450,6 +450,27 @@ def test_warn_plain_keeps_bracketed_text_verbatim(capsys):
     assert "[build]" not in marked_up
 
 
+def test_error_plain_keeps_bracketed_text_verbatim(capsys):
+    """Same hazard as `warn_plain`, on stderr.
+
+    The two cases in the tree: a pip extra in the missing-PySide6 hint, and
+    the `[<container>]` prefix on a batch-push failure. Under plain `error`
+    both lose the brackets and everything between them.
+    """
+    from jailbee import tui
+
+    tui.error_plain("uv tool install 'jailbee[gui]' for [feat-wip]")
+    plain = capsys.readouterr().err
+    assert "jailbee[gui]" in plain
+    assert "[feat-wip]" in plain
+    assert plain.startswith("✗ ")
+
+    tui.error("uv tool install 'jailbee[gui]' for [feat-wip]")
+    marked_up = capsys.readouterr().err
+    assert "[gui]" not in marked_up  # silently deleted as a style tag
+    assert "[feat-wip]" not in marked_up
+
+
 def test_render_bridge_plan_returns_a_plain_string():
     """`render_bridge_plan` returns plain text — no Rich markup interpretation
     happens here regardless of the input. That's true of any implementation,

@@ -122,6 +122,21 @@ def error(msg: str) -> None:
     err_console.print(f"✗ {msg}")
 
 
+def error_plain(msg: str) -> None:
+    """Like `error`, but the body is never reinterpreted as Rich markup.
+
+    The `warn` / `warn_plain` hazard, on the error path: a message carrying
+    square brackets — a pip extra (``jailbee[gui]``), a bracketed container
+    name in a batch summary — has them read as style tags and *silently
+    deleted*, so the user is told to install ``'jailbee'`` or sees which
+    container failed replaced by nothing. Highlighting is off too, so Rich
+    doesn't recolour paths or numbers inside the body.
+
+    The console's own ``bold red`` style still applies to the whole line.
+    """
+    err_console.print(Text(f"✗ {msg}"), highlight=False)
+
+
 ConfirmFn = Callable[[str], bool]
 
 

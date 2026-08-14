@@ -19,7 +19,7 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
-from jailbee.tui import confirm_destroy_risk, error, info, success, warn
+from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, warn
 
 app = typer.Typer(
     name="jailbee",
@@ -1377,10 +1377,13 @@ def _run_dashboard(
         try:
             import jailbee.qtui.app as qtui_app
         except ImportError:
-            error(
+            # error_plain, not error: Rich reads `[gui]` as a style tag and
+            # drops it, so the command printed would be `install 'jailbee'`.
+            error_plain(
                 "The graphical dashboard requires PySide6 (the optional 'gui' extra).\n"
-                "Install it from the jailbee repo with:  make install\n"
-                "(or:  uv tool install -e '.[gui]')"
+                "Install it with:  uv tool install 'jailbee[gui]'\n"
+                "(or:  pipx install 'jailbee[gui]')\n"
+                "From a jailbee repo checkout:  make install"
             )
             return 1
 
@@ -3716,7 +3719,9 @@ def push(
                 )
                 outcomes.append(_PushOutcome(short=short, ok=True, summary=summary))
             except (sync.SyncError, git_helpers.GitError) as exc:
-                error(f"[{short}] ✗ {exc}")
+                # error_plain: `[<container>]` is a style tag to Rich, and
+                # dropping it takes the only thing naming which one failed.
+                error_plain(f"[{short}] ✗ {exc}")
                 outcomes.append(_PushOutcome(short=short, ok=False, summary=str(exc)))
 
         _print_push_batch_summary(outcomes)
