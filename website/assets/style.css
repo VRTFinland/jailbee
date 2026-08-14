@@ -722,3 +722,95 @@ footer p {
 .footer__gisgro:focus-visible {
   opacity: 1;
 }
+
+/* -----------------------------------------------------------------------
+   Matrix — the capability grid on comparison.html. Six columns cannot fit
+   a phone at a readable size, and the front page's card-stacking trick
+   doesn't transfer: stacking this would make one card per row holding
+   five one-word cells, which is less legible than scrolling. So this one
+   table scrolls sideways inside its own container. The page body never
+   does — that is the rule the container exists to keep.
+   ----------------------------------------------------------------------- */
+.matrix__scroll {
+  overflow-x: auto;
+  margin-top: 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.matrix {
+  width: 100%;
+  /* Below this the columns wrap to one word per line and the grid stops
+     being readable at all; scrolling is the better failure mode. */
+  min-width: 48rem;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.matrix th,
+.matrix td {
+  padding: 0.7rem 0.9rem;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.matrix thead th {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.matrix th[scope="row"] {
+  color: var(--text);
+  font-weight: 400;
+  min-width: 15rem;
+}
+
+.matrix td {
+  color: var(--muted);
+}
+
+.matrix tbody tr:last-child th,
+.matrix tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* JailBee is the last column, marked the way its row is marked on the
+   front page: a quiet surface tint, not a shout. */
+.matrix th:last-child,
+.matrix td:last-child {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.matrix thead th:last-child {
+  color: var(--amber);
+}
+
+.matrix__hint {
+  margin-top: 0.9rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* -----------------------------------------------------------------------
+   Page nav — the way back from a subpage. Monospace and small: it is a
+   signpost, not a navigation bar, and this site has too few pages to
+   deserve one.
+   ----------------------------------------------------------------------- */
+.page-nav {
+  padding-top: 2.5rem;
+}
+
+.page-nav a {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.page-nav a:hover,
+.page-nav a:focus-visible {
+  color: var(--amber);
+}

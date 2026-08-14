@@ -15,6 +15,26 @@ SITE = REPO_ROOT / "website"
 INDEX = SITE / "index.html"
 FONTS = SITE / "assets" / "fonts"
 
+CANONICAL_URL = "https://jailbee.gisgro.io/"
+
+# Discovered rather than listed, so a page added to website/ inherits every
+# whole-page check below instead of shipping unverified.
+PAGES = sorted(SITE.glob("*.html"))
+
+
+def canonical_url_for(page: Path) -> str:
+    """The URL a page must name as its own."""
+    if page.name == "index.html":
+        return CANONICAL_URL
+    return f"{CANONICAL_URL}{page.name}"
+
+
+def test_the_site_publishes_the_pages_this_module_thinks_it_does() -> None:
+    """Guards the glob above: if it ever matches nothing, every per-page
+    test below would pass vacuously by iterating an empty list."""
+    assert {p.name for p in PAGES} == {"index.html", "comparison.html"}
+
+
 # Weights the stylesheet declares. Shipping more is dead weight — even as
 # woff2 these are 39-64 KB each, so every extra weight costs more than the
 # page's own HTML and CSS put together. Shipping fewer breaks a @font-face
@@ -174,19 +194,24 @@ def test_the_stylesheet_link_carries_its_current_content_hash() -> None:
     css = (SITE / "assets" / "style.css").read_bytes()
     expected = hashlib.sha256(css).hexdigest()[:8]
     href = f"assets/style.css?v={expected}"
-    assert href in INDEX.read_text(), (
-        f"stylesheet cache-buster is stale — set the <link> href to {href!r}"
-    )
+    for page in PAGES:
+        assert href in page.read_text(), (
+            f"{page.name}: stylesheet cache-buster is stale — set the <link> href to {href!r}"
+        )
 
 
 def test_every_local_reference_resolves_on_disk() -> None:
-    refs = collect_tagged_references(INDEX.read_text())
+    refs = [
+        (tag, attr, value)
+        for page in PAGES
+        for tag, attr, value in collect_tagged_references(page.read_text())
+    ]
     local = [
         (tag, attr, v)
         for tag, attr, v in refs
         if not v.startswith(("http://", "https://", "#", "mailto:"))
     ]
-    assert local, "the page references no local assets at all"
+    assert local, "the pages reference no local assets at all"
     for tag, attr, value in local:
         # The one exemption: a demo clip's <source src="assets/media/...">
         # is legitimately absent until someone runs demo/render.sh on a
@@ -197,18 +222,47 @@ def test_every_local_reference_resolves_on_disk() -> None:
         if tag == "source" and attr == "src" and value.startswith("assets/media/"):
             continue
         target = (SITE / value.split("?", 1)[0]).resolve()
+        # A directory reference (`./`, `subdir/`) is what a server resolves
+        # to that directory's index.html — so check the file it will
+        # actually serve, rather than rejecting the link as broken.
+        if target.is_dir():
+            target = target / "index.html"
         assert target.is_file(), f"broken local reference: {value}"
 
 
 def test_only_anchors_use_absolute_urls() -> None:
-    """No CDN, no webfont service, no third-party image — ever."""
-    html = INDEX.read_text()
-    refs = collect_tagged_references(html)
-    for tag, attr, value in refs:
-        if value.startswith(("http://", "https://")):
-            assert tag == "a" and attr == "href", (
-                f"non-anchor absolute URL: <{tag} {attr}={value!r}>"
-            )
+    """No CDN, no webfont service, no third-party image — ever.
+
+    The one exemption per page is its own canonical link. A canonical link
+    names which host should rank; unlike a stylesheet, script or image
+    reference it causes no fetch, so it cannot drag in a CDN — which is the
+    only thing this test exists to prevent.
+    """
+    for page in PAGES:
+        exempt = ("link", "href", canonical_url_for(page))
+        for tag, attr, value in collect_tagged_references(page.read_text()):
+            if (tag, attr, value) == exempt:
+                continue
+            if value.startswith(("http://", "https://")):
+                assert tag == "a" and attr == "href", (
+                    f"{page.name}: non-anchor absolute URL: <{tag} {attr}={value!r}>"
+                )
+
+
+def test_every_page_declares_its_own_canonical_url() -> None:
+    """GitHub Pages serves the same bytes from two hosts; name the winner.
+
+    Asserted on `rel="canonical"` specifically rather than on the URL
+    alone, so that dropping the rel — which silently turns the tag into a
+    no-op the exemption above still waves through — fails here. Asserted
+    per page so that a new page cannot copy index.html's canonical and
+    quietly declare itself a duplicate of the front page.
+    """
+    for page in PAGES:
+        expected = f'<link rel="canonical" href="{canonical_url_for(page)}" />'
+        assert expected in page.read_text(), (
+            f"{page.name} must declare exactly one canonical URL: {expected}"
+        )
 
 
 def test_the_stylesheet_makes_no_external_requests() -> None:
@@ -217,21 +271,36 @@ def test_the_stylesheet_makes_no_external_requests() -> None:
     assert "https://" not in css
 
 
-def test_the_page_has_exactly_one_top_level_heading() -> None:
-    assert INDEX.read_text().count("<h1") == 1
+def test_every_page_has_exactly_one_top_level_heading() -> None:
+    for page in PAGES:
+        assert page.read_text().count("<h1") == 1, f"{page.name} needs exactly one <h1>"
 
 
 DOC_LINK_PREFIX = "https://github.com/VRTFinland/jailbee/blob/main/"
 
 
 def test_documentation_links_point_at_files_that_exist_in_this_repo() -> None:
-    """The public repo does not exist yet, so verify against the local tree."""
-    refs = collect_references(INDEX.read_text())
-    doc_links = [v for a, v in refs if a == "href" and v.startswith(DOC_LINK_PREFIX)]
-    assert len(doc_links) >= 6, "the docs section should link at least six documents"
-    for link in doc_links:
-        path = REPO_ROOT / link[len(DOC_LINK_PREFIX) :]
-        assert path.is_file(), f"documentation link has no local counterpart: {link}"
+    """Verified against the local tree, which is what the repo will publish.
+
+    Every page, not just the front one: comparison.html hands the reader
+    off to docs/comparison.md, and a rename there would otherwise break
+    that link silently.
+    """
+    for page in PAGES:
+        refs = collect_references(page.read_text())
+        doc_links = [v for a, v in refs if a == "href" and v.startswith(DOC_LINK_PREFIX)]
+        for link in doc_links:
+            path = REPO_ROOT / link[len(DOC_LINK_PREFIX) :]
+            assert path.is_file(), (
+                f"{page.name}: documentation link has no local counterpart: {link}"
+            )
+
+    index_links = [
+        v
+        for a, v in collect_references(INDEX.read_text())
+        if a == "href" and v.startswith(DOC_LINK_PREFIX)
+    ]
+    assert len(index_links) >= 6, "the docs section should link at least six documents"
 
 
 def test_every_expected_section_id_exists() -> None:
@@ -322,3 +391,83 @@ def test_render_script_is_executable() -> None:
 
     script = SITE / "demo" / "render.sh"
     assert os.access(script, os.X_OK)
+
+
+def test_robots_allows_crawling_and_points_at_the_sitemap() -> None:
+    """A stray ``Disallow: /`` here would delist the site silently."""
+    robots = (SITE / "robots.txt").read_text()
+    assert "Sitemap: https://jailbee.gisgro.io/sitemap.xml" in robots
+    disallows = [
+        line.split(":", 1)[1].strip()
+        for line in robots.splitlines()
+        if line.lower().startswith("disallow:")
+    ]
+    assert "/" not in disallows, "robots.txt disallows the whole site"
+
+
+def test_the_sitemap_lists_every_page_the_site_publishes() -> None:
+    """Add a page under website/ and the sitemap has to learn about it.
+
+    Without this, a second page ships unlisted and the sitemap quietly
+    describes a site that no longer exists.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring((SITE / "sitemap.xml").read_bytes())
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    listed = {loc.text for loc in root.findall(".//sm:url/sm:loc", ns)}
+
+    published = {p.name for p in SITE.glob("*.html")}
+    expected = {
+        CANONICAL_URL if name == "index.html" else f"{CANONICAL_URL}{name}" for name in published
+    }
+    assert listed == expected, (
+        f"sitemap lists {sorted(listed)}, but website/ publishes {sorted(published)}"
+    )
+
+
+def test_llms_txt_follows_the_format_and_links_only_to_real_docs() -> None:
+    """The file LLM crawlers read. A dead link here is a wrong answer later."""
+    import re
+
+    text = (SITE / "llms.txt").read_text()
+    assert text.startswith("# JailBee\n"), "llms.txt must open with an H1 naming the project"
+    assert "\n> " in text, "llms.txt must carry a blockquote summary after the H1"
+
+    for link in re.findall(rf"\]\({re.escape(DOC_LINK_PREFIX)}([^)]+)\)", text):
+        assert (REPO_ROOT / link).is_file(), f"llms.txt links a missing document: {link}"
+
+
+def _structured_data() -> dict[str, object]:
+    import json
+    import re
+
+    html = INDEX.read_text()
+    block = re.search(
+        r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>', html, re.DOTALL
+    )
+    assert block, "the page ships no JSON-LD block"
+    parsed = json.loads(block.group(1))
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def test_the_structured_data_describes_this_software() -> None:
+    data = _structured_data()
+    assert data["@type"] == "SoftwareApplication"
+    assert data["name"] == "JailBee"
+    assert data["url"] == CANONICAL_URL
+    # The positioning rule of test_the_page_never_calls_a_container_a_machine
+    # applies to the description a search engine quotes, too.
+    assert "machine" not in str(data["description"]).lower()
+
+
+def test_the_structured_data_version_tracks_pyproject() -> None:
+    """Bump the version and forget this, and the page advertises the old one."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert _structured_data()["softwareVersion"] == version, (
+        f"JSON-LD softwareVersion is stale — set it to {version!r}"
+    )

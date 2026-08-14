@@ -8,15 +8,31 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Tuomas Airaksinen", email = "tuomas.airaksinen@gisgro.com" }]
 maintainers = [{ name = "Tuomas Airaksinen", email = "tuomas.airaksinen@gisgro.com" }]
-keywords = ["incus", "lxc", "containers", "dev-environment", "cli", "sandbox"]
+keywords = [
+    "incus",
+    "lxc",
+    "containers",
+    "dev-environment",
+    "cli",
+    "sandbox",
+    "agent-sandbox",
+    "ai-agent",
+    "coding-agent",
+    "claude-code",
+    "developer-tools",
+    "git-branch",
+    "isolation",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
+    "Topic :: System :: Systems Administration",
 ]
 dependencies = [
     "typer>=0.12",
