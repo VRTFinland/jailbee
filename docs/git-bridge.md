@@ -162,8 +162,24 @@ superproject whose gitlinks point at objects it doesn't have.
 **What you see.** `jailbee pull` prints a delimited `── Submodules` block
 after git's own output — per submodule `new → <sha>`, `<sha> → removed`, or
 a commit count with insertions and deletions — so a gitlink that moved is
-never buried in the superproject's diff. When a submodule can't be merged
-automatically, the same block names it as needing manual resolution.
+never buried in the superproject's diff.
+
+**Conflicting gitlinks.** When both sides moved the same submodule, git stops
+at `CONFLICT (submodule)` and leaves the pointer to you. JailBee merges it
+instead: inside each conflicted submodule it merges their commit into ours and
+stages the result, recursing into nested submodules whose own gitlinks conflict
+in turn. One pass attempts every submodule — a failure never stops the sweep —
+so a single `jailbee pull` (or `jailbee git push --merge`) hands you one report
+of everything rather than one conflict per run. If that clears the merge, the
+superproject commit is made for you and the operation succeeds. What is left
+over is grouped by what it needs:
+
+- **in merge state** — git stopped mid-merge here: resolve, `git add`, `git commit`
+- **skipped, not touched** — a dirty sub-repo (commit or stash, then re-run) or
+  a gitlink that exists on one side only (pick a side by hand)
+
+Ordinary file conflicts are never auto-resolved; they are listed alongside so
+you see the whole picture before starting.
 
 **Branch placement.** `jailbee submodule checkout` recursively puts submodules
 on the superproject's branch. It is purely local — it moves nothing between

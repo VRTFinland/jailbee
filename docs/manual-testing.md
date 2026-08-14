@@ -1114,14 +1114,36 @@ cd <submodule-path> && echo host > h.txt && git add h.txt && git commit -m "host
 cd .. && git add <submodule-path> && git commit -m "host: bump submodule"
 jailbee pull feat-submod-conflict
 # expect: submodule auto-merged, superproject merge committed automatically,
-#         "Submodules auto-merged: <submodule-path>" — no manual gitlink fix needed
+#         "auto-merged (1):  ✓ <submodule-path>" — no manual gitlink fix needed
 git submodule status --recursive   # submodule on a real merge commit
 git -C <submodule-path> branch --show-current   # -> main (the superproject branch), not detached
 
 # If a submodule has a genuine CONTENT conflict (same file edited both sides),
-# expect a SyncError listing that submodule with git's CONFLICT lines, and the
-# superproject left in merge state for manual resolution.
+# expect a non-zero exit, that submodule under "in merge state — resolve these"
+# with git's CONFLICT lines, and the superproject left in merge state.
 jailbee destroy feat-submod-conflict --force
+
+# 7b. NESTED gitlink conflict (requires a submodule that has its own submodule).
+# Both sides move the inner submodule, so BOTH gitlink levels conflict.
+git checkout main
+jailbee new feat/nested-conflict
+jailbee shell feat-nested-conflict
+cd ~/SampleApp/<submodule-path>/<inner-path>
+echo ctr > c.txt && git add c.txt && git commit -m "container inner commit"
+cd .. && git add <inner-path> && git commit -m "container: bump inner"
+cd ~/SampleApp && git add <submodule-path> && git commit -m "container: bump submodule"
+exit
+cd <submodule-path>/<inner-path> && echo hst > h.txt && git add h.txt && git commit -m "host inner commit"
+cd .. && git add <inner-path> && git commit -m "host: bump inner"
+cd .. && git add <submodule-path> && git commit -m "host: bump submodule"
+jailbee pull feat-nested-conflict
+# expect BOTH levels resolved in one pass and the merge committed:
+#   auto-merged (2):
+#     ✓ <submodule-path>/<inner-path>
+#     ✓ <submodule-path>
+git -C <submodule-path> log -1 --format=%p          # two parents (a real merge)
+git -C <submodule-path>/<inner-path> log -1 --format=%p   # two parents as well
+jailbee destroy feat-nested-conflict --force
 
 # 8. jailbee ls / jailbee diff reflect submodule changes.
 jailbee new feat/submod-vis --no-autostart
@@ -1205,12 +1227,18 @@ git checkout main
 jailbee pull feat-submod-conflict2 --into main --no-cleanup
 # expect end of output:
 #   ── Submodules ──────────────────────────────────────────────
-#   <submodule-path>   ✓ auto-merged
+#   auto-merged (1):
+#     ✓ <submodule-path>
 
 # Unresolvable content conflict path: if a submodule has the same file
-# edited on both sides, jailbee pull reports ✗ and exits non-zero:
+# edited on both sides, jailbee pull exits non-zero and groups the outcome:
 #   ── Submodules ──────────────────────────────────────────────
-#   <submodule-path>   ✗ needs manual resolution
+#   in merge state — resolve these (1):
+#     ✗ <submodule-path>  file conflicts
+#         CONFLICT (content): Merge conflict in <file>
+#   superproject left in merge state
+# A submodule left dirty instead lands under "skipped, not touched" — it was
+# never touched, so it needs a stash/commit and a re-run, not a merge commit.
 
 # Cleanup.
 jailbee destroy feat-submod-report --force
