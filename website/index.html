@@ -168,15 +168,17 @@
         <h2>Somewhere to let an agent work.</h2>
         <p>
           JailBee has first-class support for
-          <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>. Turn it on
-          once and every container comes with it installed, sharing one login and one set of
-          settings across the whole project — while the <code>~/.claude</code> on your own
-          computer is never read or copied in. The addresses Claude needs are added to the
-          container's allowlist for you, so a strict container still works without you opening
-          it up by hand. JailBee also teaches the Claude inside the container to drive
-          <code>jailbee</code> itself, and <code>jb pr</code> lets it write the pull request.
-          Have it start on its own in a terminal window and the container is ready to work the
+          <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
+          once and every container comes with it installed, sharing one login across the whole
+          project, allowed through its own network rules, and taught to drive
+          <code>jailbee</code> itself. Have it start on its own and a container is working the
           moment it boots.
+        </p>
+        <p>
+          The reason to run an agent here is that you stop having to be the safety mechanism. It
+          normally stops to ask before anything consequential; in a container you can turn that
+          off and let it work, because what it can break is the container — and how much that
+          is, you decide in advance by choosing what the container gets to see.
         </p>
       </div>
     </section>

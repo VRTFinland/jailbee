@@ -56,7 +56,12 @@ its origin, not its scope.
   automatically, JailBee's own skills teach the in-container Claude to drive
   `jailbee`, and `jailbee pr` writes the PR title and body. Start it
   automatically in a tmux window and the container is ready for an
-  unattended run the moment it boots.
+  unattended run the moment it boots — with permission prompts turned off
+  (`--dangerously-skip-permissions`), because the boundary is the container
+  rather than the agent's own judgement. You size that boundary once in the
+  repo's config; see
+  [Running an agent without prompts](docs/security.md#running-an-agent-without-prompts)
+  for what it does and doesn't cover.
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, the Chrome profile pool, `~/.ssh` and Claude's login live in a shared
   dir bind-mounted into every one of the repo's containers. Branches running in
