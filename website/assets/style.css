@@ -843,21 +843,55 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
-   Page nav — the way back from a subpage. Monospace and small: it is a
-   signpost, not a navigation bar, and this site has too few pages to
-   deserve one.
+   Page header — the brand on a subpage, and the way back from it.
+
+   A subpage of this site is not reached from the front page: comparison
+   .html is what ranks for the competitors' names, so for many readers it
+   is the first JailBee page they see and has to say whose page it is. The
+   whole lockup is the link home, which is the convention every reader
+   already knows — so no separate "back" affordance is needed.
+
+   Deliberately smaller than the hero lockup: the page's own <h1> should
+   carry the weight here, and the brand only has to be recognisable.
    ----------------------------------------------------------------------- */
-.page-nav {
+.page-header {
   padding-top: 2.5rem;
+  margin-bottom: 2.5rem;
 }
 
-.page-nav a {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--muted);
+.page-header__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-decoration: none;
 }
 
-.page-nav a:hover,
-.page-nav a:focus-visible {
+.page-header__mark {
+  width: auto;
+  /* Same floor as the footer mark: below ~40px the bars stop reading as
+     bars and the mark turns into a smudge. */
+  height: 42px;
+}
+
+.page-header__word {
+  color: var(--amber);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+
+.page-header__word em {
+  color: var(--text);
+  font-style: normal;
+}
+
+.page-header__brand:hover .page-header__word,
+.page-header__brand:focus-visible .page-header__word {
+  color: var(--text);
+}
+
+.page-header__brand:hover .page-header__word em,
+.page-header__brand:focus-visible .page-header__word em {
   color: var(--amber);
 }

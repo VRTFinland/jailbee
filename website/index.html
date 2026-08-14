@@ -16,11 +16,19 @@
     <meta property="og:url" content="https://jailbee.gisgro.io/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="JailBee" />
+    <!-- 1200x630 exactly: at any other ratio Slack, Signal, LinkedIn and X
+         fall back to a small square thumbnail. Regenerate with
+         `uv run scripts/make_og_card.py`; test_website pins the dimensions. -->
     <meta
       property="og:image"
-      content="https://jailbee.gisgro.io/assets/img/jailbee-logo-dark.jpg"
+      content="https://jailbee.gisgro.io/assets/img/jailbee-og.png"
     />
-    <meta property="og:image:alt" content="JailBee logo: a bee behind bars" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The JailBee mark — a bee behind bars — beside the wordmark and the line: one container per branch."
+    />
     <meta name="twitter:card" content="summary_large_image" />
     <!-- GitHub Pages serves this content from vrtfinland.github.io/jailbee as
          well as from the CNAME domain, so name the one that should rank.
@@ -39,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=2e458051" />
+    <link rel="stylesheet" href="assets/style.css?v=0539adfe" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->

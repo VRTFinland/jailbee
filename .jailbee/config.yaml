@@ -98,6 +98,17 @@ golden:
   # website's terminal demos (website/demo/render.sh). The third, vhs itself,
   # plus a system Chrome, are installed by .jailbee/install.d/65-vhs.sh —
   # neither can come from apt here, and that snippet explains why.
+  #
+  # Nothing else website-related belongs in this list either. ImageMagick is
+  # installed by .jailbee/install.d/70-imagemagick.sh, because it needs
+  # `dpkg --path-exclude=/usr/share/fonts/*` to install at all: its font
+  # dependencies unpack into the host's read-only font mount and a plain
+  # apt-get here would fail the whole transaction. Every script in
+  # .jailbee/install.d/ is staged into the build automatically (see
+  # golden.py) — there is no list to add a snippet to, only this file to
+  # keep honest about what ends up in the image.
+  #
+  # Rebuild after editing any snippet: `jailbee base build`.
   extra_apt_packages:
     - libgl1
     - ttyd
