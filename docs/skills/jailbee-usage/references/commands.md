@@ -1,4 +1,4 @@
-# jailbee command reference
+# JailBee command reference
 
 Flag-level reference for every `jailbee` command. The SKILL.md body covers the
 mental model and the common workflows; come here for an exact flag or an edge
@@ -64,7 +64,7 @@ speculatively.
 `BASE` names the container's **base branch** (`user.jailbee.base_branch` + the
 `refs/jailbee/base/<base>` anchor that `jailbee ls` AHEAD/MERGE and `jailbee git pull` use).
 `NAME` is forked off it only when `NAME` does not exist in the source repo; when
-it does, that branch is cloned as-is and `BASE` is just the anchor — jailbee prints
+it does, that branch is cloned as-is and `BASE` is just the anchor — JailBee prints
 `Branch 'X' already exists in source repo.` and asks `Use existing branch 'X'
 with base 'BASE'?` (`--yes`/`-y` skips, declining exits 0). `BASE` may exist only
 as `refs/remotes/origin/<base>`; a missing one errors with the exact `git fetch`.
@@ -142,7 +142,7 @@ accept a picker when `NAME` is omitted with a TTY.
 A container mid-background-destroy refuses attach (`jailbee shell` reports it's being
 destroyed).
 
-**The destroy guard.** Before the confirmation above, jailbee assesses what the
+**The destroy guard.** Before the confirmation above, JailBee assesses what the
 destroy would discard: a dirty working tree, a changed submodule, or commits
 that exist on neither the host nor a remote-tracking ref (`remote_contained
 is not True` counts as at risk — unknown is not safe). Nothing here fires
@@ -215,7 +215,7 @@ the container's HEAD and the *host's currently checked-out branch*, as
 opposed to `AHEAD ±`/`↑`'s comparison against the container's pinned base.
 Opt in with `--fields` or the `ls:` config block. Either can show `?`: the
 comparison needs one side to already hold the other's commit as an object
-in the same repository, and jailbee never fetches or pushes to force an answer
+in the same repository, and JailBee never fetches or pushes to force an answer
 out of a listing command — `?` means neither side happened to have the
 other's tip; `jailbee git pull <name>` puts the container's tip on the host and
 resolves it. `head_sha` and `remote_contained` are not columns, but appear
@@ -244,7 +244,7 @@ ignores `fields` entirely.
 
 ### `jailbee dashboard`
 
-Live, auto-refreshing TUI of all jailbee containers across registered repos + the cwd
+Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
 `Enter` action menu (tmux/shell/ide/chrome/restart/stop/destroy for Running;
 start/destroy for Stopped), `r` force refresh, `q`/`Ctrl-C` quit. Two-tier
@@ -300,7 +300,7 @@ All refuse on mount-mode containers. `jailbee pull`/`push`/`diff` are top-level
 aliases for the `jailbee git` forms. There is **no `jailbee git merge`** — superseded by
 `jailbee git pull`. With exactly one eligible container and no NAME given, `push` /
 `pull` / `checkout` print a plan block (both branches, both tips, the action)
-and ask `[Y/n]` before doing anything, so jailbee choosing the container silently
+and ask `[Y/n]` before doing anything, so JailBee choosing the container silently
 never means the direction is a surprise (`confirm.auto_target`).
 
 ### Container → host
@@ -327,7 +327,7 @@ Fetch + **merge the container's branch into its base branch**
 | `--current` | Merge into the host's currently checked-out branch (= `--into <checked-out branch>`); mirrors `jailbee git push --current`. Mutually exclusive with `--into`; errors on detached HEAD. |
 | `--checkout` | If the target branch isn't checked out, check it out, merge, restore the original. Refuses on a dirty host tree. |
 | `--cleanup` / `--no-cleanup` | Force both / neither of the post-merge steps (destroy container, delete merged branch). Otherwise governed by the `pull:` config block (`destroy_container`, `delete_branch` ∈ `prompt|always|never`). Cleanup failures are warnings. |
-| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when jailbee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Off a TTY the block prints and nothing is asked. |
+| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Off a TTY the block prints and nothing is asked. |
 | (no NAME, TTY) | Multi-select picker; pulls in order, **stops at the first failure** (remaining listed, not attempted). |
 
 Conflicts leave the host tree in merge state — resolve and `git commit` (or
@@ -349,7 +349,7 @@ are `ask`. CLI flags always win.
 | `--from-local` | Push the host's local `refs/heads/<source>` and skip the host fetch. Use when the host has commits not yet pushed to origin. |
 | `--from-origin` | Force `refs/remotes/origin/<source>` (overrides `push.push_from: local` and the `--current` default). |
 | `--fetch` / `--no-fetch` | Run/skip `git fetch origin <source>` on the host before resolving. Default: `push.autofetch` (true). Only applies when pushing the origin ref. |
-| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when jailbee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Unlike pull/checkout, this never triggers off a TTY: without an explicit NAME, `push` requires a TTY in the first place and errors before it lists containers, so the block is never reached there. |
+| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Unlike pull/checkout, this never triggers off a TTY: without an explicit NAME, `push` requires a TTY in the first place and errors before it lists containers, so the block is never reached there. |
 | (no NAME, TTY) | Multi-select picker; source/action chosen once, applied to all. Failures **don't** stop the batch — ✓/✗ summary at the end, non-zero exit if any failed. |
 
 `push.default_source` defaults to `base` (push the container's base branch in
@@ -364,7 +364,7 @@ just fetched — and pushing it would force-move the container's
 `refs/jailbee/base/<base>` anchor backwards, inflating `jailbee ls` AHEAD. `--current`
 always resolves locally; `--pr` sidesteps the question by pushing
 `refs/jailbee/pr/<N>/head` verbatim. If the origin ref is pushed while the local
-branch has commits it lacks, jailbee prints the count and points at `--from-local`.
+branch has commits it lacks, JailBee prints the count and points at `--from-local`.
 
 ### `jailbee git diff [NAME]`
 
@@ -381,7 +381,7 @@ container from `feat/a` to `main`.
 
 | Flag | Effect |
 |---|---|
-| `--merge` | After retargeting, merge the new base into the container's branch (equivalent to a follow-up `jailbee git push <name> --merge`). Without it, jailbee just flips the label and prints the `jailbee git push --merge` command to run. |
+| `--merge` | After retargeting, merge the new base into the container's branch (equivalent to a follow-up `jailbee git push <name> --merge`). Without it, JailBee just flips the label and prints the `jailbee git push --merge` command to run. |
 
 ## PR publishing
 
@@ -395,12 +395,12 @@ container. No PR yet → opens a **draft** PR; PR exists → the push updates it
 `jailbee new --pr N` container it asks once whether to push the container's commits
 to PR #N's head, records the answer (`user.jailbee.pr_adopted`) and updates that PR
 on every later run; cross-repository (fork) PRs are refused with a manual-push
-recipe. On such a container (a PR jailbee did not create) the PR description is
+recipe. On such a container (a PR JailBee did not create) the PR description is
 never regenerated unless you ask — the interactive "update the description?"
 offer is suppressed — and `--force` takes a second confirmation.
 
 A container with no PR label gets the same treatment when its **branch** already
-has one: before opening anything jailbee runs `gh pr view <container branch>` and, on
+has one: before opening anything JailBee runs `gh pr view <container branch>` and, on
 an open same-repo PR, asks `Push this container's commits to PR #N instead of
 opening a new one?` (`--yes` skips; declining exits without publishing and points
 at `--as`). Adopting records `pr` / `pr_branch` / `pr_adopted` but **not**
@@ -419,7 +419,7 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. |
 | `--yes` / `-y` | Skip the confirmations asked on a `jailbee new --pr` container: the one-time adoption, and the `--force` overwrite gate. Required when there is no TTY. |
 | `--no-ai` | Skip AI generation of the title/body; keep the container branch name as-is. |
-| `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR jailbee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
+| `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | Override branch detection. |
 
@@ -427,7 +427,7 @@ When `claude.enabled` + `claude.ai_pr_description` (both default on), a new PR's
 title/body come from the container's Claude CLI; `claude.ai_pr_branch` similarly
 proposes the head branch name (confirmed interactively). On an existing PR the
 description is left untouched unless you pass `--description`, `--title`/`--body`,
-or accept the interactive prompt — which is only offered for a PR jailbee itself
+or accept the interactive prompt — which is only offered for a PR JailBee itself
 created.
 
 ## Submodules
@@ -450,7 +450,7 @@ jailbee submodule checkout feat-foo       # container 'feat-foo', its branch
 | Command | Behaviour |
 |---|---|
 | `jailbee net strict [NAME]` | Egress allowlist (default mode). Clears any loose TTL. **`github.com` intentionally blocked** — don't add it to the allowlist; use loose for pushes. |
-| `jailbee net loose [NAME] [--for DUR\|--no-revert]` | Full NAT (uses the `jailbee-loose` bridge). Auto-reverts to the previous mode after a TTL (default 5 min, `loose_auto_revert` config). `--for` sets that TTL for this switch only: `30s`/`45m`/`4h`, max 24h, or `never` (= `--no-revert`); the two flags are mutually exclusive and a bad value exits 2. With neither flag jailbee asks — only on a TTY, with `JAILBEE_NONINTERACTIVE` unset and the policy enabled; otherwise `loose_auto_revert.after` applies with no prompt. With `enabled: false` jailbee schedules no TTL and never asks, but an explicit `--for` is still honoured and still auto-reverts. |
+| `jailbee net loose [NAME] [--for DUR\|--no-revert]` | Full NAT (uses the `jailbee-loose` bridge). Auto-reverts to the previous mode after a TTL (default 5 min, `loose_auto_revert` config). `--for` sets that TTL for this switch only: `30s`/`45m`/`4h`, max 24h, or `never` (= `--no-revert`); the two flags are mutually exclusive and a bad value exits 2. With neither flag JailBee asks — only on a TTY, with `JAILBEE_NONINTERACTIVE` unset and the policy enabled; otherwise `loose_auto_revert.after` applies with no prompt. With `enabled: false` JailBee schedules no TTL and never asks, but an explicit `--for` is still honoured and still auto-reverts. |
 | `jailbee net refresh [--json]` | Re-resolve `egress_allow` hostnames, merge into the per-repo pool, push ACL + `/etc/hosts`. Useful after CDN IP rotation. |
 | `jailbee net status` | Refresh-timer health, registered repos, per-repo pool sizes, per-container loose expiry. |
 | `jailbee net unregister [--repo <path>]` | Remove the repo from the refresh registry. `jailbee apply` re-registers. |

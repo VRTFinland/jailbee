@@ -3,7 +3,7 @@ name: jailbee-repo-setup
 description: Use when configuring a new repository to work with `jailbee` — adding `.jailbee/config.yaml`, optional `install.d/` snippets, and `container_prefix`/host-mounts/egress/autostart adjustments. Trigger on phrases like "set up jailbee", "configure jailbee", "make this repo jailbee-compatible", "jailbee config", "set up gie", "configure gie", "make this repo gie-compatible", "gie config", "lisää gie-konfiguraatio" (`gie` is jailbee's deprecated pre-1.0 command alias), or whenever the user wants to run `jailbee new`/`jailbee shell` against a repo that doesn't yet have `.jailbee/config.yaml`. The skill inspects the repo's stack (package.json, pyproject.toml, pom.xml, Cargo.toml, Makefile, docker-compose, …) and generates a tailored config rather than the defaults-only template `jailbee config init` ships.
 ---
 
-# jailbee repo setup
+# JailBee repo setup
 
 Goal: take any existing git repo and make `jailbee new <name>` work for it. The repo needs at minimum `<repo>/.jailbee/config.yaml`. Beyond that, the configuration is **repo-specific** — stack versions, system packages, autostart commands, and egress endpoints all depend on what the repo actually does.
 
@@ -15,7 +15,7 @@ in every command you write or suggest.
 
 ## Workflow
 
-1. **Confirm jailbee is installed.** `jailbee --version` should work. If not, the user installs it with `uv tool install -e <path-to-jailbee>` or from the project's git URL.
+1. **Confirm JailBee is installed.** `jailbee --version` should work. If not, the user installs it with `uv tool install -e <path-to-jailbee>` or from the project's git URL.
 2. **Confirm cwd is a git repo.** `jailbee` derives `repo_root` from the directory containing `.jailbee/`. If `.git/` is missing or the repo dir name has uppercase/underscores/dots, note it — `container_prefix` will need an explicit override.
 3. **Inspect the stack.** Read the manifest files (see [Stack detection](#stack-detection) below). Note the language, build tool, runtime versions, and any services declared (databases, Redis, etc.) in `docker-compose*.yml`.
 4. **Generate the starter file.** Run `jailbee config init` (or `uv tool run jailbee config init` if `jailbee` isn't on PATH yet). This writes a fully-defaulted `.jailbee/config.yaml`. **Don't** hand-write the file from scratch — the template's comments are the user-facing schema documentation.
@@ -36,7 +36,7 @@ Walk the repo root and look at top-level manifest files. Don't recurse — sub-p
 | `Cargo.toml` | Rust | No first-class support — add `cargo` via `golden.extra_apt_packages: [cargo]` or write an `install.d/` snippet that installs rustup. |
 | `go.mod` | Go | No first-class support — `golden.extra_apt_packages: [golang-go]` or an `install.d/` snippet for a specific Go version. |
 | `Gemfile` | Ruby | `golden.extra_apt_packages: [ruby-full]` |
-| `docker-compose*.yml` | Containerized services | Don't add to jailbee config — the dev user runs compose inside the jailbee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true`. |
+| `docker-compose*.yml` | Containerized services | Don't add to JailBee config — the dev user runs compose inside the JailBee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true`. |
 | `Makefile` | Conventional build entrypoints | Useful for autostart: targets like `make dev-env`, `make run` are good `autostart.on_create`/`on_start` candidates. |
 | `.nvmrc`, `.node-version`, `.tool-versions` | Version pins | Set `golden.stacks.node` to the pinned major. |
 
@@ -224,7 +224,7 @@ Snippets live at one of three tiers, resolved by filename (repo > user > bundled
 |---|---|---|
 | `<repo>/.jailbee/install.d/*.sh` | repo | Stack tooling specific to this repo |
 | `~/.config/jailbee/install.d/*.sh` | user | Personal tooling you want in every container (e.g. shell config) |
-| Bundled (in the jailbee wheel) | base | Don't touch directly |
+| Bundled (in the JailBee wheel) | base | Don't touch directly |
 
 ### Writing a snippet
 
@@ -295,7 +295,7 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - Duplicate autostart step names within a trigger
 - Non-existent `optional_mounts` referenced from a step
 
-`jailbee doctor` is host-level — failures there mean the user needs to fix host setup (see the jailbee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows.
+`jailbee doctor` is host-level — failures there mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows.
 
 ## What this skill does NOT do
 
@@ -305,9 +305,9 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - **Don't put personal credentials in the per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The per-repo file is committed to git and shared with the team.
 - **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config.
 
-## Inside a jailbee container
+## Inside a JailBee container
 
-You may be reading this from **inside** a jailbee container (repo clone at
+You may be reading this from **inside** a JailBee container (repo clone at
 `~/<container_prefix>`, no `jailbee` binary on `PATH`). You can still help with
 configuration: edit `.jailbee/config.yaml` and `install.d/` snippets directly in the
 clone. You **cannot** run `jailbee config validate` / `jailbee apply` / `jailbee new` here —
@@ -317,6 +317,6 @@ change.
 
 ## Further reference
 
-If you hit a field this document doesn't cover, see [`references/config-schema.md`](references/config-schema.md) for the full field reference (every key, every default, every validation rule). It's a verbatim distillation of `docs/config.md` from the jailbee repo.
+If you hit a field this document doesn't cover, see [`references/config-schema.md`](references/config-schema.md) for the full field reference (every key, every default, every validation rule). It's a verbatim distillation of `docs/config.md` from the JailBee repo.
 
 Once the repo is configured and the user wants to *use* `jailbee` day-to-day (creating/entering containers, the host↔container git bridge, network modes, the dashboard, reviewing PRs, …), that's the **jailbee-usage** skill's domain — point there rather than reproducing command guidance here.

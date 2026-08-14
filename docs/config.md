@@ -294,7 +294,7 @@ overrides live under `autostart.env` (every step) or
 `autostart.on_{create,start}[*].env` (one step), and win on conflict because
 they are passed as `tmux new-window -e`.
 
-User entries also win over jailbee's own GUI/SSH defaults
+User entries also win over JailBee's own GUI/SSH defaults
 (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`) — set them
 only if you know why you want to.
 
@@ -311,7 +311,7 @@ container:
 
 ### `shared_dir`
 
-Host directory that holds jailbee's shared state: shared caches (pnpm,
+Host directory that holds JailBee's shared state: shared caches (pnpm,
 gradle, npm, m2), JetBrains config/data, Chrome pool slots, and Claude
 state. It is the host-side *root* for these — each entry is bind-mounted
 individually at its own in-container path (e.g. `~/.claude`, and the
@@ -372,7 +372,7 @@ host_devices:
 | `group` | container group the `dev` user is added to for access | auto |
 
 Layered like `host_mounts`: per-repo entries append to global ones; `[]` resets.
-A device whose host `source` is absent is **skipped** (jailbee does not fail), and
+A device whose host `source` is absent is **skipped** (JailBee does not fail), and
 `jailbee config validate` reports it as an advisory — so a team-shared config still
 works on hosts that lack the device.
 
@@ -382,10 +382,10 @@ mechanism is **group membership**, not the profile `mode`. Many host devices
 the container's own `systemd-udevd` resets the node to its distro default
 (e.g. `/dev/kvm` → `root:kvm 0660`) on every boot — overriding whatever `mode`
 the Incus profile set. (Verified: neither the profile `mode` nor an in-container
-udev override survives this; only group membership does.) So jailbee adds the `dev`
+udev override survives this; only group membership does.) So JailBee adds the `dev`
 user to the device's owning group:
 
-- When `group` is **unset** (default), jailbee auto-derives it from the host source
+- When `group` is **unset** (default), JailBee auto-derives it from the host source
   node's owning group — `/dev/kvm` → `kvm`. Zero-config: `{ path: /dev/kvm }`
   just works.
 - Set `group` explicitly to override (e.g. when the host and container group
@@ -394,13 +394,13 @@ user to the device's owning group:
   for devices **without** a `static_node` rule (e.g. the GPU render nodes,
   which keep `0666`).
 
-> **Group membership takes effect on the next session.** jailbee runs the group-add
+> **Group membership takes effect on the next session.** JailBee runs the group-add
 > on `jailbee new` and on `jailbee apply` (for running containers). A new `jailbee shell` /
 > `jailbee tmux` / autostart session picks the group up via `incus exec --user`'s
 > supplementary-group setup; an **already-open** shell must be reopened. Check
 > with `id` inside the container — the device's group (e.g. `kvm`) should appear.
 
-**Security.** jailbee containers are unprivileged (userns + `raw.idmap`), so
+**Security.** JailBee containers are unprivileged (userns + `raw.idmap`), so
 `/dev/kvm` does not grant container escape, host root, or new filesystem access on
 its own. It does **widen the host-kernel attack surface**: KVM ioctls run in
 host-kernel context, so a process that can open `/dev/kvm` could in principle
@@ -556,9 +556,9 @@ jailbee net loose mybug --no-revert   # stay in loose until manually switched
 ```
 
 `--for` and `--no-revert` are mutually exclusive. A value over 24h, or one
-jailbee cannot parse, exits 2 without switching.
+JailBee cannot parse, exits 2 without switching.
 
-With **neither** flag, jailbee asks — but only when all of these hold: stdin is
+With **neither** flag, JailBee asks — but only when all of these hold: stdin is
 a TTY, `JAILBEE_NONINTERACTIVE` is unset, and the effective policy is enabled.
 The prompt offers a preset list with `after` pre-selected and labelled
 *(config default)*, plus `no auto-revert`, `custom…` (type any accepted
@@ -572,7 +572,7 @@ default and validating a typed value with the same parser as the CLI.
 
 ##### With `enabled: false`
 
-A disabled policy means jailbee **schedules** no TTL of its own: `jailbee net loose`
+A disabled policy means JailBee **schedules** no TTL of its own: `jailbee net loose`
 writes no labels, and neither the CLI prompt nor the GUI dialog appears.
 It does not veto an explicit request — `--for 2h` still writes the labels and
 the timer still reverts the container when they expire. A stated intent wins
@@ -724,12 +724,12 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, jailbee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; `jailbee tmux <c>` lands in that window. `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
+| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
 

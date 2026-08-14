@@ -8,7 +8,7 @@
   backported to the 6.0 LTS series), so nested Docker works out of the box
   with `security.nesting=true` — no AppArmor workaround required.
 - A way to install a Python CLI application — [`uv`](https://docs.astral.sh/uv/)
-  or [`pipx`](https://pipx.pypa.io/). jailbee itself needs neither at runtime;
+  or [`pipx`](https://pipx.pypa.io/). JailBee itself needs neither at runtime;
   pick whichever you already have:
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
@@ -72,7 +72,7 @@ line but never the second one, so this step is required. See
 [Why the UID mapping is needed](#why-the-uid-mapping-is-needed) below for
 the rationale, the security impact, and a verification recipe.
 
-### 3. Install jailbee
+### 3. Install JailBee
 
 ```bash
 uv tool install jailbee     # or: pipx install jailbee
@@ -83,7 +83,7 @@ This installs the `jailbee` and `jb` commands. Add the Qt dashboard with the
 `git+https://github.com/VRTFinland/jailbee` instead of the release when you
 want the unreleased tip.
 
-jailbee is an ordinary PyPI package and needs neither uv nor pipx at
+JailBee is an ordinary PyPI package and needs neither uv nor pipx at
 runtime — both are here only because Ubuntu 24.04+ marks its system Python
 as externally managed (PEP 668), so a bare `pip install jailbee` is refused.
 A virtualenv you manage yourself works exactly as well:
@@ -139,7 +139,7 @@ sudo firewall-cmd --reload
 
 If your host runs `ufw` with the default `deny (incoming)` and `deny (routed)`
 policies, containers won't get DHCP leases or reach the internet without
-opening up the jailbee bridges. `jailbee doctor` flags a *missing* `jailbee-loose`
+opening up the JailBee bridges. `jailbee doctor` flags a *missing* `jailbee-loose`
 bridge — but that is an existence check only; it does not test DHCP/DNS
 reachability. If a bridge exists yet containers get no IPv4 lease, suspect
 the UFW rules below.
@@ -201,7 +201,7 @@ incus delete ufw-test-loose --force
 If `IPV4` is empty after these steps, run `jailbee doctor` for diagnostics.
 
 **Existing setups.** If your host already has the `incusbr0` rules from
-an earlier jailbee install, you only need to add the `jailbee-loose` ones (one
+an earlier JailBee install, you only need to add the `jailbee-loose` ones (one
 `ufw route allow in` plus the three `before.rules` lines), then
 `ufw reload`. `jailbee net loose <container>` will then work end-to-end.
 
@@ -230,7 +230,7 @@ Putting the ACCEPT into `ufw-before-input` sidesteps both issues.
 
 ## Kernel keyring limits (running many containers in parallel)
 
-Running several jailbee containers in parallel exhausts the host kernel's
+Running several JailBee containers in parallel exhausts the host kernel's
 per-user keyring quota long before any disk fills up. The symptom is a
 misleading error from runc when starting a container or launching
 nested Docker inside one:
@@ -296,7 +296,7 @@ If the launch fails with `newuidmap: uid range [<UID>-<UID+1>) ... not allowed`,
 the delegation lines didn't take effect — check `/etc/subuid` / `/etc/subgid`
 and confirm `incus` was restarted.
 
-**Why this is needed and what it actually means.** jailbee containers
+**Why this is needed and what it actually means.** JailBee containers
 deliberately combine two things that are usually mutually exclusive:
 
 - **Unprivileged execution** — the container's UID 0 is mapped to a high

@@ -90,7 +90,7 @@ only skip the prompt. `push` behaves differently: without an explicit name
 it requires a TTY in the first place — off one it errors with "No container
 name given…" before it ever lists containers — so it never shows the block
 there either. A container named explicitly, or chosen from the picker, is
-never confirmed. If jailbee cannot build the plan at all (the container vanished,
+never confirmed. If JailBee cannot build the plan at all (the container vanished,
 a daemon hiccup), the confirmation is silently skipped and the operation
 proceeds to produce its own error.
 
@@ -134,7 +134,7 @@ tree — use git on the host directly).
 
 A container holds its own clone, which is what makes it disposable — and
 what makes submodules the hard part, because a sub-repo the peer has never
-seen has no objects to check out. jailbee moves them with the superproject,
+seen has no objects to check out. JailBee moves them with the superproject,
 in both directions, without a round trip through the submodule's upstream.
 
 **On `jailbee new`.** Submodules are initialised recursively and *offline*:
@@ -347,7 +347,7 @@ later `jailbee pr` runs push new commits without asking again. Fork PRs are
 refused: their head lives in another repository, so pushing to `origin`
 would create an unrelated branch instead of updating the PR.
 
-The PR is still not jailbee's own, so on every run it stays hands-off in ways a
+The PR is still not JailBee's own, so on every run it stays hands-off in ways a
 jailbee-authored PR does not:
 
 - The **description is never regenerated** unless you ask for it
@@ -375,7 +375,7 @@ Push this container's commits to PR #77 instead of opening a new one? [Y/n]
 ```
 
 Confirming records `user.jailbee.pr` / `user.jailbee.pr_branch` / `user.jailbee.pr_adopted`
-— not `user.jailbee.pr_author`, because jailbee found this PR rather than opening it, so
+— not `user.jailbee.pr_author`, because JailBee found this PR rather than opening it, so
 the hands-off rules above stay in force. Declining exits without publishing and
 points at `--as <other-branch>` for opening a separate PR; `--yes` skips the
 question, and without a TTY it is an error.

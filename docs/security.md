@@ -9,7 +9,7 @@ unless you set `readonly: true`), a kernel-level egress allowlist, and
 snapshot/rollback — gives stronger isolation than an in-process sandbox on
 the host.
 
-**Keys stay on the host.** Where a secret has an agent, jailbee shares the
+**Keys stay on the host.** Where a secret has an agent, JailBee shares the
 agent's *socket* rather than the key: with `gpg.enabled`, the host
 gpg-agent's socket is attached to the container and `SSH_AUTH_SOCK` points
 at its SSH socket, so signing and SSH authentication are performed by the

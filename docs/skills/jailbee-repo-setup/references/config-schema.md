@@ -1,6 +1,6 @@
-# jailbee configuration schema — full reference
+# JailBee configuration schema — full reference
 
-Distilled from `docs/config.md` of the jailbee repo. Read this when SKILL.md doesn't cover a field you need.
+Distilled from `docs/config.md` of the JailBee repo. Read this when SKILL.md doesn't cover a field you need.
 
 ## File locations
 
@@ -105,9 +105,9 @@ host_devices:
 
 Pass arbitrary host character/block devices into every container as Incus `unix-char` / `unix-block` devices (the same mechanism as the GPU render-node passthrough). Fields: `path` (in-container, absolute, required), `source` (host path, absolute, defaults to `path`), `type` (`unix-char` default, or `unix-block`), `mode` (octal string, default `"0666"`), `gid`/`uid` (Incus profile-device owner), `group` (container group the `dev` user is added to; auto-derived from the host node when unset). Layered like `host_mounts`; `[]` resets.
 
-A device whose host `source` is absent is **skipped** (jailbee does not fail); `jailbee config validate` reports it as an advisory, so a team-shared config still works on hosts lacking the device.
+A device whose host `source` is absent is **skipped** (JailBee does not fail); `jailbee config validate` reports it as an advisory, so a team-shared config still works on hosts lacking the device.
 
-**Access is via group membership, not `mode`.** Devices with a udev `static_node` rule (`/dev/kvm`, `/dev/net/tun`, `/dev/fuse`, …) get reset to their distro default (e.g. `root:kvm 0660`) by the container's `systemd-udevd` on every boot, overriding the profile `mode`. So jailbee adds the `dev` user to the device's owning group — auto-derived from the host node (`/dev/kvm` → `kvm`), or set `group:` to override. Applied on `jailbee new` and `jailbee apply`; a new `jailbee shell`/`jailbee tmux` session picks the group up (an already-open shell must be reopened — check with `id`). `mode`/`gid`/`uid` still apply to the profile device and matter for non-`static_node` devices (e.g. render nodes keep `0666`).
+**Access is via group membership, not `mode`.** Devices with a udev `static_node` rule (`/dev/kvm`, `/dev/net/tun`, `/dev/fuse`, …) get reset to their distro default (e.g. `root:kvm 0660`) by the container's `systemd-udevd` on every boot, overriding the profile `mode`. So JailBee adds the `dev` user to the device's owning group — auto-derived from the host node (`/dev/kvm` → `kvm`), or set `group:` to override. Applied on `jailbee new` and `jailbee apply`; a new `jailbee shell`/`jailbee tmux` session picks the group up (an already-open shell must be reopened — check with `id`). `mode`/`gid`/`uid` still apply to the profile device and matter for non-`static_node` devices (e.g. render nodes keep `0666`).
 
 **Security:** opt-in, default empty. Containers are unprivileged, so `/dev/kvm` doesn't grant escape on its own, but each device widens the host-kernel attack surface (KVM ioctls run in host-kernel context). List only what the repo needs.
 
@@ -301,7 +301,7 @@ Step schema:
 
 Steps run inside a container-local tmux session named `autostart`. Attach with `jailbee tmux <container>`. Sync steps' output stays visible after completion (`remain-on-exit on`). Background steps keep running until the container stops.
 
-**Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the jailbee repo.
+**Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the JailBee repo.
 
 ## `push`
 
@@ -415,7 +415,7 @@ pull:
 
 ## `confirm`
 
-Confirmation for `push`/`pull`/`checkout` when jailbee picks the target container
+Confirmation for `push`/`pull`/`checkout` when JailBee picks the target container
 itself (exactly one exists, no name given) rather than the user naming it or
 picking it from a list.
 
@@ -441,7 +441,7 @@ loose_auto_revert:
   after: "5m"      # duration string ("5m", "30s", "1h") or bare integer minutes
 ```
 
-`after` is only the **default** TTL: `jailbee net loose <name> --for <dur>` sets it per invocation (`30s`/`45m`/`4h`, max 24h, or `never`), and `--no-revert` stays loose indefinitely. Given neither flag, jailbee asks on a TTY (with `JAILBEE_NONINTERACTIVE` unset and `enabled: true`) and otherwise applies `after` silently. `enabled: false` means jailbee schedules no TTL and never asks — an explicit `--for` is still honoured. `jailbee ls` shows the remaining TTL while any container is loose.
+`after` is only the **default** TTL: `jailbee net loose <name> --for <dur>` sets it per invocation (`30s`/`45m`/`4h`, max 24h, or `never`), and `--no-revert` stays loose indefinitely. Given neither flag, JailBee asks on a TTY (with `JAILBEE_NONINTERACTIVE` unset and `enabled: true`) and otherwise applies `after` silently. `enabled: false` means JailBee schedules no TTL and never asks — an explicit `--for` is still honoured. `jailbee ls` shows the remaining TTL while any container is loose.
 
 ## `share_local`
 
@@ -507,12 +507,12 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, jailbee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude.json` → `~/.claude.json` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `downloads.claude.ai:443` (the last enables the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude.json` → `~/.claude.json` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `downloads.claude.ai:443` (the last enables the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
 | `claude.plugins_enabled` | bool | `true` | When `true`, `effective_egress_allow` also opens the Claude plugin-marketplace hosts so the in-container CLI can install plugins. |
 | `claude.autostart` | bool | `false` | When `true` (and `enabled`), `run_autostart` launches the `claude` CLI as an autostart step. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the CLI is current. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the **in-container Claude understands jailbee** and can help edit `.jailbee/config.yaml`. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of jailbee knowledge. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
+| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the **in-container Claude understands JailBee** and can help edit `.jailbee/config.yaml`. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` generates a new PR's title and body with the container's Claude CLI (opt out per-invocation with `jailbee pr --no-ai`). |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` asks Claude to propose a convention-following PR head branch name (confirmed interactively; `--as` / `--no-ai` override). |
 

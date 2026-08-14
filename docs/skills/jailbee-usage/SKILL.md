@@ -3,7 +3,7 @@ name: jailbee-usage
 description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/dashboard", "how do I use gie", "gie new/shell/git/net/dashboard" (`gie` is jailbee's deprecated pre-1.0 command alias), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
-# Using jailbee day-to-day
+# Using JailBee day-to-day
 
 `jailbee` (short form `jb`) runs many isolated dev environments in parallel
 on one Linux host. Each environment is an **Incus system container** cloned from a
@@ -19,7 +19,7 @@ This skill is for **using** an already-configured repo (one that has
 the repo isn't set up yet, or you need to change `.jailbee/config.yaml`, use the
 **jailbee-repo-setup** skill instead.
 
-Goal: answer almost any "how do I do X with jailbee" question and run the right
+Goal: answer almost any "how do I do X with JailBee" question and run the right
 command without falling back to `jailbee --help` for every step. The full flag-level
 reference lives in [`references/commands.md`](references/commands.md) — read it
 when you need an exact flag or an edge case this page doesn't cover.
@@ -33,7 +33,7 @@ Four ideas make the whole tool make sense:
    branch become dashes in the **container name**: `feat/foo` → container
    `feat-foo`. Incus resources are prefixed per-repo (`<container_prefix>-feat-foo`),
    so two repos coexist; you can always pass the **short** name (`feat-foo`) and
-   jailbee resolves it.
+   JailBee resolves it.
 
 2. **Clone mode vs mount mode.** Default is *clone*: the host repo is
    `git clone --shared`'d into `~/<container_prefix>` inside the container (e.g.
@@ -103,7 +103,7 @@ what happens when the work branch does not exist yet. So the way to put an
 existing branch on the right base is `jailbee new <existing-branch> <base>`; use
 `jailbee git retarget` only to change a base after the fact.
 
-Missing refs fail fast with the exact `git fetch` to run — jailbee does **not**
+Missing refs fail fast with the exact `git fetch` to run — JailBee does **not**
 silently auto-fetch a base you don't have. A base that exists only as
 `origin/<base>` is fine. By default it clones the *upstream* tip
 (`origin/<default>`), not your possibly-stale local branch
@@ -193,7 +193,7 @@ git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff` ==
   - `--pr` (PR containers only) — re-fetch the PR head from GitHub first, pulling in
     commits the author pushed since the container was created.
   - `--from-local` / `--from-origin` / `--fetch`/`--no-fetch` — which *copy* of the
-    source branch to send. By default jailbee fetches and pushes
+    source branch to send. By default JailBee fetches and pushes
     `refs/remotes/origin/<source>`, because a local `refs/heads/<base>` only
     advances on `git pull` and is therefore stale right after a plain
     `git fetch`. `--from-local` sends the host's local branch as-is (use it when
@@ -254,7 +254,7 @@ jailbee net strict feat-foo            # back to the egress allowlist now
 `loose` auto-reverts to the previous mode after a TTL (default 5 min, see
 `loose_auto_revert` config). Per switch, `--for <dur>` overrides that default
 (`30s`, `45m`, `4h` — max 24h; `--for never` = `--no-revert`, and the two flags
-are mutually exclusive). With neither flag jailbee **asks interactively** — only on
+are mutually exclusive). With neither flag JailBee **asks interactively** — only on
 a TTY, with `JAILBEE_NONINTERACTIVE` unset and the policy enabled; anywhere else the
 configured `after` applies silently. In a script, pass `--for` or `--no-revert`
 rather than relying on either behaviour. A disabled policy schedules nothing and
@@ -274,7 +274,7 @@ refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
   autostart. `jailbee destroy <name> --force`, or `jailbee destroy --all` (whole repo,
   one confirmation), or `jailbee destroy` with no args for an interactive checkbox.
-  Add `--background`/`-b` to detach. Before the usual confirmation, jailbee
+  Add `--background`/`-b` to detach. Before the usual confirmation, JailBee
   assesses what destroying would discard — a dirty working tree, a changed
   submodule, or commits that exist on neither the host nor a remote — and, if
   anything is at risk, shows a one-line summary per container and a second
@@ -369,7 +369,7 @@ Neither step needs `jailbee net loose`: `jailbee git push --pr` fetches the PR h
 The first `jailbee pr` asks for confirmation and records it (`user.jailbee.pr_adopted`);
 `--yes` skips the prompt for non-interactive use.
 
-`jailbee new --pr` never touches your branches: the head is fetched into jailbee's own
+`jailbee new --pr` never touches your branches: the head is fetched into JailBee's own
 `refs/jailbee/pr/<N>/head` and the container's clone is checked out at that exact
 commit. So reviewing your own PR works with its branch checked out on the host
 (git refuses to fetch into a checked-out branch), and a stale or diverging local
@@ -393,7 +393,7 @@ jailbee pr feat-foo --ready    # open (or flip) it ready-for-review
 jailbee pr feat-foo --web      # …and open it in the browser
 ```
 
-Key point: it publishes **host-side** — jailbee fetches the container's branch to the
+Key point: it publishes **host-side** — JailBee fetches the container's branch to the
 host, then fast-forward pushes it under the **host's** `gh` credentials. So,
 unlike `jailbee git push --pr`, you do **not** need `jailbee net loose` on the container
 for `jailbee pr`; you need `gh` authenticated on the host.
@@ -402,7 +402,7 @@ On a container created with `jailbee new --pr N`, `jailbee pr` does not open a s
 it asks once whether to push the container's commits to PR #N's head branch,
 records the answer (`user.jailbee.pr_adopted`), and updates that PR from then on.
 `--yes` skips the prompt and fork PRs are refused outright. Because the PR is
-not jailbee's own, two extra guards apply on **every** run: `--force` asks again
+not JailBee's own, two extra guards apply on **every** run: `--force` asks again
 before overwriting that head (`--yes` skips), and the interactive "regenerate
 the description?" offer is suppressed, so the PR author's text is never replaced
 unless you pass `--description`/`--title`/`--body`.
@@ -427,7 +427,7 @@ PR's **title and body are written by the container's Claude CLI**, and
 interactively). Opt out with `--no-ai`, or override per field with
 `--title`/`--body`/`--as`. Updating an existing PR leaves the description alone
 unless you pass `--description` (regenerate with Claude), `--title`/`--body`, or
-accept the prompt — which is offered only for a PR jailbee itself created.
+accept the prompt — which is offered only for a PR JailBee itself created.
 `--force` force-pushes (with lease) a rebased/amended branch.
 
 ## Using `gh` / `git push` to GitHub from inside a container
@@ -438,9 +438,9 @@ must be enabled in `~/.config/jailbee/global.yaml` (a per-repo token map keyed b
 network call needs **loose** mode. So the in-container pattern is: `jailbee net loose
 <name>` on the host → do the GitHub op inside → `jailbee net strict <name>`.
 
-## Inside a jailbee container
+## Inside a JailBee container
 
-You may be reading this from **inside** a jailbee container — the repo clone lives at
+You may be reading this from **inside** a JailBee container — the repo clone lives at
 `~/<container_prefix>` and there is no `jailbee` binary or Incus daemon on `PATH`. If
 so, you **cannot** run `jailbee ...` commands here; they all operate on the host.
 What you can still do from inside:
