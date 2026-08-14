@@ -26,7 +26,12 @@
       content="5cwAWggh-3htw2zvfi2BAQgTrZ-kNOwmLNOxWRH_QIY"
     />
     <link rel="icon" href="assets/img/jailbee-logo.png" />
-    <link rel="stylesheet" href="assets/style.css" />
+    <!-- ?v= is the first 8 hex of style.css's sha256. GitHub Pages publishes
+         website/ as committed, with no build step to hash a filename, and it
+         serves assets with a cache lifetime long enough that an edited
+         stylesheet reaches readers stale. test_website recomputes this and
+         fails with the value to paste, so it can't drift unnoticed. -->
+    <link rel="stylesheet" href="assets/style.css?v=31b80f50" />
   </head>
   <body>
     <section class="hero">

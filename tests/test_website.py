@@ -106,6 +106,25 @@ def test_the_hero_illustrations_are_present() -> None:
     assert (img / "hive-observation.jpg").is_file()
 
 
+def test_the_stylesheet_link_carries_its_current_content_hash() -> None:
+    """Cache-bust the stylesheet, and make forgetting to bump it a failure.
+
+    GitHub Pages publishes `website/` verbatim — there is no build step to
+    write a hashed filename, and no control over the cache headers it
+    serves. So the link carries `?v=<sha256[:8]>` instead, and this test is
+    what keeps it honest: edit the CSS without updating the query and it
+    fails here rather than by silently serving a reader the old file.
+    """
+    import hashlib
+
+    css = (SITE / "assets" / "style.css").read_bytes()
+    expected = hashlib.sha256(css).hexdigest()[:8]
+    href = f"assets/style.css?v={expected}"
+    assert href in INDEX.read_text(), (
+        f"stylesheet cache-buster is stale — set the <link> href to {href!r}"
+    )
+
+
 def test_every_local_reference_resolves_on_disk() -> None:
     refs = collect_tagged_references(INDEX.read_text())
     local = [
