@@ -3417,9 +3417,9 @@ def push(
         bool,
         typer.Option(
             "--from-origin",
-            help="Push 'refs/remotes/origin/<source>' — the fetched upstream "
-            "tip — rather than the host's local branch. Overrides "
-            "push.push_from and the --current default.",
+            help="Push the fetched upstream tip "
+            "('refs/remotes/<upstream>/<source>') rather than the host's local "
+            "branch. Overrides push.push_from and the --current default.",
         ),
     ] = False,
     from_local: Annotated[
@@ -3435,9 +3435,9 @@ def push(
         bool | None,
         typer.Option(
             "--fetch/--no-fetch",
-            help="Run 'git fetch origin <source>' on the host before "
+            help="Fetch <source> from the upstream on the host before "
             "resolving the source ref. Defaults to push.autofetch; only "
-            "applies when pushing the origin-tracking ref.",
+            "applies when pushing the upstream-tracking ref.",
         ),
     ] = None,
     confirm: Annotated[
