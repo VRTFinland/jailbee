@@ -795,6 +795,53 @@ footer p {
   font-size: 0.8rem;
 }
 
+/* Verdict cells. Colour is never the only carrier of the answer: the glyph
+   shapes (✓ ✗ ~ –) are distinguishable without it, which matters for the
+   ~8% of men with red-green colour deficiency reading a green/red grid.
+   And a visually-hidden word states the verdict outright for a screen
+   reader, which sees neither shape nor colour. */
+.mx__mark {
+  font-family: var(--mono);
+  font-weight: 600;
+  margin-right: 0.35rem;
+}
+
+.mx--yes .mx__mark {
+  color: var(--green);
+}
+
+.mx--no .mx__mark {
+  color: var(--red);
+}
+
+.mx--partial .mx__mark {
+  color: var(--amber);
+}
+
+.mx--na .mx__mark {
+  color: var(--muted);
+}
+
+/* The two rows where JailBee is the one that can't. Bold, so the concession
+   is as visible as the wins are — the page argues its own limits. */
+.mx--against {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* -----------------------------------------------------------------------
+   Visually hidden — present for assistive technology, absent on screen.
+   Not `display: none`, which removes it from the accessibility tree too.
+   ----------------------------------------------------------------------- */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* -----------------------------------------------------------------------
    Page nav — the way back from a subpage. Monospace and small: it is a
    signpost, not a navigation bar, and this site has too few pages to
