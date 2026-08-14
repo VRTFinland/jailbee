@@ -55,16 +55,18 @@ its origin, not its scope.
 ## Getting started
 
 **JailBee** needs a Linux host running Incus. Install the CLI with
-[`uv`](https://docs.astral.sh/uv/):
+[`uv`](https://docs.astral.sh/uv/) or [`pipx`](https://pipx.pypa.io/) —
+JailBee is an ordinary PyPI package and needs neither at runtime, but
+Ubuntu 24.04+ refuses a bare `pip install` into its system Python:
 
 ```bash
-uv tool install jailbee
+uv tool install jailbee      # or: pipx install jailbee
 ```
 
 For the optional Qt GUI dashboard (`jailbee gui`), add the `gui` extra:
 
 ```bash
-uv tool install 'jailbee[gui]'
+uv tool install 'jailbee[gui]'      # or: pipx install 'jailbee[gui]'
 ```
 
 Host setup — Incus, firewall, UID mapping, kernel keyring limits — is a

@@ -51,9 +51,29 @@
           Docker-name clash, or shared-database accident.
         </p>
 
-        <div class="install">
+        <!-- The installer choice is cosmetic: jailbee is a normal PyPI
+             package and needs neither tool at runtime. Both isolate the
+             install, which is why plain `pip` is not offered here — on the
+             Ubuntu hosts jailbee targets it refuses to touch the system
+             Python (PEP 668). -->
+        <div class="install" data-installer="uv">
+          <div class="install__switch" role="group" aria-label="Installer">
+            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="true">
+              uv
+            </button>
+            <button
+              type="button"
+              class="install__tab"
+              data-installer-choice="pipx"
+              aria-pressed="false"
+            >
+              pipx
+            </button>
+          </div>
           <div class="install__row">
-            <code>uv tool install jailbee</code>
+            <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
+              >uv tool install jailbee</code
+            >
             <button class="copy" data-copy="uv tool install jailbee">Copy</button>
           </div>
           <p class="install__hint">
@@ -286,8 +306,8 @@
       <div class="wrap">
         <h2>Requirements.</h2>
         <p>
-          JailBee needs a Linux host running Incus, and uv to install the CLI. Ubuntu 26.04 gives
-          nested Docker out of the box. Host setup — Incus, firewall, UID mapping, kernel keyring
+          JailBee needs a Linux host running Incus, and either uv or pipx to install the CLI.
+          Ubuntu 26.04 gives nested Docker out of the box. Host setup — Incus, firewall, UID mapping, kernel keyring
           limits — is a one-time job with a few moving parts, and the
           <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md"
             >installation guide</a
@@ -296,16 +316,39 @@
           experimentally.
         </p>
 
-        <div class="install">
+        <div class="install" data-installer="uv">
+          <div class="install__switch" role="group" aria-label="Installer">
+            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="true">
+              uv
+            </button>
+            <button
+              type="button"
+              class="install__tab"
+              data-installer-choice="pipx"
+              aria-pressed="false"
+            >
+              pipx
+            </button>
+          </div>
           <div class="install__row">
-            <code>uv tool install jailbee</code>
+            <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
+              >uv tool install jailbee</code
+            >
             <button class="copy" data-copy="uv tool install jailbee">Copy</button>
           </div>
           <div class="install__row">
-            <code>uv tool install 'jailbee[gui]'</code>
+            <code
+              data-cmd-uv="uv tool install 'jailbee[gui]'"
+              data-cmd-pipx="pipx install 'jailbee[gui]'"
+              >uv tool install 'jailbee[gui]'</code
+            >
             <button class="copy" data-copy="uv tool install 'jailbee[gui]'">Copy</button>
           </div>
-          <p class="install__hint">The <code>gui</code> extra adds the Qt dashboard.</p>
+          <p class="install__hint">
+            The <code>gui</code> extra adds the Qt dashboard. JailBee is an ordinary PyPI package,
+            so <code>pip</code> works inside a virtualenv — but on Ubuntu 24.04+ it refuses to
+            install into the system Python, which is what these two tools handle for you.
+          </p>
         </div>
 
         <ol class="steps">
@@ -397,6 +440,40 @@
     </footer>
 
     <script>
+      // Installer toggle. Every .install block switches together, so the
+      // hero and the Requirements section can't disagree about which tool
+      // the reader picked. The command text lives in data-cmd-<choice> on
+      // the <code>, and the copy button's payload is rewritten with it.
+      (function () {
+        var blocks = document.querySelectorAll(".install[data-installer]");
+        if (!blocks.length) {
+          return;
+        }
+        function select(choice) {
+          blocks.forEach(function (block) {
+            block.setAttribute("data-installer", choice);
+            block.querySelectorAll(".install__tab").forEach(function (tab) {
+              var pressed = tab.getAttribute("data-installer-choice") === choice;
+              tab.setAttribute("aria-pressed", pressed ? "true" : "false");
+            });
+            block.querySelectorAll("code[data-cmd-" + choice + "]").forEach(function (code) {
+              var command = code.getAttribute("data-cmd-" + choice);
+              code.textContent = command;
+              var row = code.closest(".install__row");
+              var button = row && row.querySelector("button.copy");
+              if (button) {
+                button.setAttribute("data-copy", command);
+              }
+            });
+          });
+        }
+        document.querySelectorAll(".install__tab[data-installer-choice]").forEach(function (tab) {
+          tab.addEventListener("click", function () {
+            select(tab.getAttribute("data-installer-choice"));
+          });
+        });
+      })();
+
       (function () {
         document.querySelectorAll("button.copy[data-copy]").forEach(function (button) {
           button.addEventListener("click", function () {
