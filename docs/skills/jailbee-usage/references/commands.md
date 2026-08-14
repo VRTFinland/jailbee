@@ -103,7 +103,7 @@ it read (`+`/`-`/`~` for added/removed/changed steps, `!` for
 `on_create[build]` vs `on_start[build]`).
 
 Privileges are a **separate** comparison, against the repo's reviewed baseline
-`refs/remotes/origin/<default_branch>` rather than your checkout (a checkout
+`refs/remotes/<upstream-remote>/<default_branch>` rather than your checkout (a checkout
 lagging the default branch grants nothing, and used to be treated as an
 escalation); it prints its own `branch autostart widens privileges beyond …`
 block with `⚠ network access 'loose' in: …` / `⚠ attaches host mount(s): …`

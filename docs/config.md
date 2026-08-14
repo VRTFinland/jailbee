@@ -836,7 +836,7 @@ because the same name can exist under both triggers as distinct steps.
 That diff explains a surprise: why the container runs steps you don't have.
 Whether the branch *gains* anything by them is a different question, and it is
 answered against a different reference — the repo's reviewed baseline,
-`refs/remotes/origin/<default_branch>`, rather than your checkout:
+`refs/remotes/<upstream_remote>/<default_branch>`, rather than your checkout:
 
 ```
 branch autostart widens privileges beyond refs/remotes/origin/main:
@@ -844,13 +844,16 @@ branch autostart widens privileges beyond refs/remotes/origin/main:
   ⚠ attaches host mount(s): aws
 ```
 
-Your checkout is one snapshot of one branch: it may lag origin, run ahead of
-it, or be an unrelated feature branch with local edits. Measuring privileges
-against it made the same `jailbee new` ask one developer and not another, and
-turned "my checkout is a few commits behind" into an escalation. The default
-branch on origin is what review and CI gate, so that is the baseline. If it
-carries no usable config (no origin, never fetched, invalid), the check falls
-back to comparing against your checkout and says so in that line.
+Your checkout is one snapshot of one branch: it may lag the upstream, run
+ahead of it, or be an unrelated feature branch with local edits. Measuring
+privileges against it made the same `jailbee new` ask one developer and not
+another, and turned "my checkout is a few commits behind" into an escalation.
+The default branch on the upstream is what review and CI gate, so that is the
+baseline. If it carries no usable config, the check falls back to comparing
+against your checkout and says so in that line. When the baseline ref cannot
+be read at all — no such remote, or a default branch never fetched — that
+fallback is a genuinely weaker gate, so it is warned about rather than only
+noted in the line.
 
 Two kinds of widening are reported, and they are weighed differently:
 
@@ -1200,14 +1203,45 @@ the Grid card style but never Compact. Switch card style to see it.
 
 ## Computed attributes
 
-The `Config` object exposes three attributes set at load time, not from
+The `Config` object exposes four attributes set at load time, not from
 YAML:
 
 - `repo_root` — directory containing `.jailbee/`.
-- `default_branch` — auto-detected via `git symbolic-ref refs/remotes/origin/HEAD`. Fallback `main`.
+- `upstream_remote` — which of the repo's git remotes jailbee treats as the
+  upstream. See [Which remote is the upstream?](#which-remote-is-the-upstream)
+  below. Fallback `origin`.
+- `default_branch` — auto-detected via
+  `git symbolic-ref refs/remotes/<upstream_remote>/HEAD`. Fallback `main`.
 - `container_prefix` — defaults to `repo_root.name`, overridable via the
   optional `container_prefix:` YAML key. Used as the prefix for every
   jailbee-owned Incus resource (containers, profiles, ACL).
+
+### Which remote is the upstream?
+
+`origin` is only the name `git clone` picks by default, and `git remote
+rename` is an ordinary thing to do. jailbee therefore resolves the name
+instead of assuming it, once per invocation, taking the first of:
+
+1. the sole remote, when the repo has exactly one;
+2. `origin`, when it exists;
+3. `remote.pushDefault`;
+4. the current branch's `branch.<branch>.remote`;
+5. the one remote carrying a `refs/remotes/<remote>/HEAD` symref — the signal
+   that survives both a rename and a branch that was never pushed.
+
+A candidate naming a remote that no longer exists is skipped, so a stale
+`remote.pushDefault` cannot win.
+
+`origin` sits ahead of every other signal on purpose: a repo that has one
+behaves exactly as it always did. In particular, a fork checkout where
+`origin` is your fork and branches track the canonical repo keeps pushing to
+the fork.
+
+There is no config key for this — git already holds the answer, and a
+submodule may answer differently from its superproject (each is resolved
+against its own directory). If jailbee cannot tell, it falls back to the
+literal `origin` and `jailbee doctor` reports the ambiguity; disambiguate with
+`git config remote.pushDefault <name>` or by giving the branch an upstream.
 
 ## `github`
 

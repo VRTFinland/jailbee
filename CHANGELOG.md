@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The upstream remote no longer has to be called `origin`.** Every host-side
+  git operation assumed that name, so a repo whose upstream had been renamed
+  (`git remote rename` is ordinary) saw `jailbee new --pr` and branch
+  publishing fail outright, while `jailbee git push` silently pushed the local
+  ref instead of the fetched upstream one, `jailbee git checkout` created host
+  branches with no upstream, and default-branch detection fell back to the
+  literal `main`. jailbee now resolves the name — see [Which remote is the
+  upstream?](docs/config.md#which-remote-is-the-upstream). Repos that do have
+  an `origin` are unaffected; `jailbee doctor` reports which remote was
+  resolved.
+- **The autostart privilege gate no longer degrades silently.** Its baseline
+  is the reviewed config on the upstream's default branch, and a remote under
+  another name made that ref unresolvable — so the baseline became the
+  caller's own checkout permanently, with nothing printed. The ref now follows
+  the resolved remote, and a baseline that cannot be read at all is warned
+  about instead of only noted.
+- **Container branch tracking is no longer copied verbatim from the host.**
+  The in-container clone's only remote is `origin`, but `branch.<b>.remote`
+  was taken from the host, so a host using another name left the container
+  tracking a remote that does not exist there and `git push` inside it failed.
+
 ## 1.0.0 - 2026-08-13
 
 ### Added: first public release

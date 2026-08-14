@@ -27,12 +27,17 @@ mounts (e.g. `.aws`) stay detached and sensitive data isn't copied in.
 
 ### Git remote & push
 
-After `jailbee new` clones the source repo into the container, `origin` is
-rewritten from the RO mount path (`/mnt/host-source`) to the host
+After `jailbee new` clones the source repo into the container, the clone's
+`origin` is rewritten from the RO mount path (`/mnt/host-source`) to the host
 repo's real upstream URL, and branch tracking is set explicitly so
 `git push`/`fetch`/`gh` work without `-u` once the network ACL allows
 them. The `--shared` clone semantics survive — objects continue to read
 from the mount through `.git/objects/info/alternates`.
+
+The container's remote is always named `origin`, whatever the host calls its
+own upstream (see [Which remote is the
+upstream?](config.md#which-remote-is-the-upstream)) — the clone is jailbee's
+own, so its naming is jailbee's invariant rather than something inherited.
 
 **By design, `github.com` is NOT in the default strict-mode
 `egress_allow`.** Day-to-day strict-mode work runs offline-of-GitHub;
