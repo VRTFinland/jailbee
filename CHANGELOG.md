@@ -6,8 +6,26 @@
 
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
 
+### Changed
+
+- **The submodule conflict report is grouped by what you have to do about
+  it.** Every unresolved submodule used to be listed the same way, so one that
+  was skipped untouched — a dirty sub-repo needing a stash and a re-run — read
+  exactly like one git had left mid-merge, needing `git add && git commit`.
+  The block now separates `auto-merged`, `in merge state — resolve these`, and
+  `skipped, not touched`, each with a count and a reason in plain terms.
+  `jailbee git push --merge` prints the same block as `jailbee pull`; it used
+  to format the same information its own way.
+
 ### Fixed
 
+- **Conflicting gitlinks in nested submodules are resolved too.** `git merge`
+  exits non-zero when its only conflict is a submodule pointer, so a submodule
+  whose *own* gitlink conflicted was classified as a content conflict and left
+  to the user — the recursion meant to handle it could never run. JailBee now
+  classifies by what the submodule's index actually contains, so a chain of
+  conflicting gitlinks is merged all the way down in a single `jailbee pull`
+  or `jailbee git push --merge`.
 - **A missing `incus` binary is now reported, not a traceback.** On a host
   where Incus was not installed (or not on `PATH`), every command that talks
   to it ended in a raw `FileNotFoundError` traceback — including `jailbee

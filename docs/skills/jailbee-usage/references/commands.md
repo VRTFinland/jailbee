@@ -331,7 +331,13 @@ Fetch + **merge the container's branch into its base branch**
 | (no NAME, TTY) | Multi-select picker; pulls in order, **stops at the first failure** (remaining listed, not attempted). |
 
 Conflicts leave the host tree in merge state — resolve and `git commit` (or
-`git merge --abort`).
+`git merge --abort`). Conflicting submodule gitlinks are merged automatically
+first, at every nesting level; if that clears everything the merge commit is
+made for you. Whatever is left prints in the `── Submodules` block grouped as
+`auto-merged`, `in merge state — resolve these`, and `skipped, not touched`
+(dirty sub-repo, or a gitlink on one side only). Every submodule is attempted
+in one pass, so one run reports them all. `jailbee git push --merge` prints the
+same block for the container side.
 
 ### `jailbee git push [NAME]`
 

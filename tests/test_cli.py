@@ -4136,6 +4136,42 @@ def test_cli_push_transport_only(mocker, tmp_path):
     mock_rebase.assert_not_called()
 
 
+def test_cli_push_merge_conflict_prints_submodule_report(mocker, tmp_path):
+    """`git push --merge` renders the same submodule block the pull path does."""
+    from typer.testing import CliRunner
+
+    from jailbee import submodules, sync
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="ask", source="default-branch")
+    mocker.patch("jailbee.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(mocker.MagicMock(), "full-name"),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
+    report = sync.ConflictReport(
+        resolution=submodules.GitlinkResolution(
+            resolved=["deps/libfoo"],
+            unresolved=[submodules.UnresolvedSub("vendor/baz", "content-conflict", "")],
+        ),
+        nongitlink=[],
+        branch="main",
+        location="jailbee shell feat-x",
+    )
+    mocker.patch(
+        "jailbee.sync.push_and_merge",
+        side_effect=sync.MergeConflictError("conflicts", report=report),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--merge"])
+
+    assert result.exit_code == 1
+    assert "deps/libfoo" in result.output
+    assert "vendor/baz" in result.output
+
+
 def test_cli_push_with_merge(mocker, tmp_path):
     from typer.testing import CliRunner
 

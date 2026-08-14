@@ -1701,38 +1701,6 @@ def _sub_merge_message(branch: str) -> str:
     return f"Merge for superproject merge of '{branch}'"
 
 
-def _format_conflict_summary(
-    report: submodules.GitlinkResolution,
-    nongitlink: list[str],
-    *,
-    branch: str,
-    location: str,
-) -> str:
-    """Human-readable summary left in a SyncError when conflicts remain.
-
-    Echoes each unresolved submodule's captured git output so the user sees the
-    actual conflicting files, not just paths.
-    """
-    lines = [f"Merge of '{branch}' hit conflicts."]
-    if report.resolved:
-        lines.append(f"Submodules auto-merged: {', '.join(report.resolved)}")
-    if report.unresolved:
-        lines.append("Needs manual resolution:")
-        for u in report.unresolved:
-            lines.append(f"  {u.path} ({u.reason})")
-            for outline in u.output.splitlines():
-                lines.append(f"    {outline}")
-    if nongitlink:
-        lines.append(f"Superproject also has non-submodule conflicts: {', '.join(nongitlink)}")
-    lines.append("Superproject left in merge state.")
-    lines.append("")
-    lines.append("To finish:")
-    lines.append(f"  {location}")
-    lines.append("  # resolve the listed submodule(s) and any superproject files")
-    lines.append("  git add <paths> && git commit")
-    return "\n".join(lines)
-
-
 def compute_submodule_moves(
     repo_root: Path, old: str | None, new: str | None
 ) -> list[SubmoduleMove]:
@@ -1820,23 +1788,59 @@ def render_submodule_report(
     return "\n".join(lines)
 
 
+# What each unresolved reason means, in the user's terms rather than the
+# resolver's. Keys are `submodules.UnresolvedSub.reason` values.
+_UNRESOLVED_LABELS = {
+    "content-conflict": "file conflicts",
+    "nested-conflict": "nested submodule conflict",
+    "dirty": "working tree dirty — commit or stash, then re-run",
+    "deleted-side": "gitlink on one side only — pick a side by hand",
+}
+
+
+def _unresolved_lines(subs: list[submodules.UnresolvedSub], marker: str) -> list[str]:
+    """Aligned ``<marker> <path>  <label>`` lines, each followed by its git output."""
+    width = max(len(u.path) for u in subs)
+    lines: list[str] = []
+    for u in subs:
+        label = _UNRESOLVED_LABELS.get(u.reason, u.reason)
+        lines.append(f"    {marker} {u.path.ljust(width)}  {label}")
+        lines.extend(f"        {outline}" for outline in u.output.splitlines())
+    return lines
+
+
 def _render_conflict_report(conflict: ConflictReport) -> str:
+    """Group the outcome by what the user has to do about it.
+
+    Auto-merged submodules need nothing; the ones git left mid-merge need
+    resolving and committing; the skipped ones were never touched and need a
+    different fix, so they are deliberately kept out of the resolve list.
+    """
     r = conflict.resolution
+    in_merge = [u for u in r.unresolved if u.in_merge_state]
+    skipped = [u for u in r.unresolved if not u.in_merge_state]
+
     lines = [_REPORT_RULE]
-    for path in r.resolved:
-        lines.append(f"  ✓ {path}  auto-merged")
-    for u in r.unresolved:
-        lines.append(f"  ✗ {u.path}  conflict — needs manual resolution ({u.reason})")
-        for outline in u.output.splitlines():
-            lines.append(f"      {outline}")
+    if r.resolved:
+        lines.append(f"  auto-merged ({len(r.resolved)}):")
+        lines.extend(f"    ✓ {path}" for path in r.resolved)
+    if in_merge:
+        lines.append(f"  in merge state — resolve these ({len(in_merge)}):")
+        lines.extend(_unresolved_lines(in_merge, "✗"))
+    if skipped:
+        lines.append(f"  skipped, not touched ({len(skipped)}):")
+        lines.extend(_unresolved_lines(skipped, "•"))
     if conflict.nongitlink:
         lines.append(
             f"  superproject also has non-submodule conflicts: {', '.join(conflict.nongitlink)}"
         )
     lines.append("  superproject left in merge state")
     lines.append("")
-    lines.append(f"  to finish:  {conflict.location}")
-    lines.append("  git add <paths> && git commit")
+    lines.append("  to finish:")
+    lines.extend(f"    {line}" for line in conflict.location.splitlines())
+    if in_merge:
+        lines.append("    # in each submodule above: resolve, then  git add -A && git commit")
+    lines.append("    git add <paths> && git commit")
     return "\n".join(lines)
 
 
@@ -1944,13 +1948,15 @@ def push_and_merge(
             run, repo_dir, message=_sub_merge_message(push_result.source)
         )
         if submodules._has_unmerged(run, repo_dir):
-            raise SyncError(
-                _format_conflict_summary(
-                    report,
-                    submodules._nongitlink_unmerged_paths(run, repo_dir),
+            raise MergeConflictError(
+                f"Merge of '{push_result.source}' in container '{short}' hit "
+                f"conflicts — see the submodule report below.",
+                report=ConflictReport(
+                    resolution=report,
+                    nongitlink=submodules._nongitlink_unmerged_paths(run, repo_dir),
                     branch=push_result.source,
-                    location=f"jailbee shell {short}\n  cd {repo_dir}",
-                )
+                    location=f"jailbee shell {short}\ncd {repo_dir}",
+                ),
             ) from exc
         # All conflicts were gitlink pointers the resolver staged — finalize.
         incus.exec(

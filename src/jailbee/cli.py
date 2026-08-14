@@ -2241,8 +2241,12 @@ def checkout(
     success(f"Now on '{result.branch}' at {result.head_oid[:7]}.")
 
 
-def _emit_pull_conflict_report(exc: Exception) -> None:
-    """If *exc* is a ``MergeConflictError``, print its submodule report block."""
+def _emit_conflict_report(exc: Exception) -> None:
+    """If *exc* is a ``MergeConflictError``, print its submodule report block.
+
+    Shared by the pull and push paths — both resolve submodule gitlinks the
+    same way, so both report them the same way.
+    """
     from jailbee import sync
     from jailbee.tui import console
 
@@ -2539,7 +2543,7 @@ def pull(
                     )
                 except (sync.SyncError, git_helpers.GitError) as exc:
                     error(str(exc))
-                    _emit_pull_conflict_report(exc)
+                    _emit_conflict_report(exc)
                     remaining = selected[idx + 1 :]
                     if remaining:
                         not_attempted = ", ".join(short_name(cfg, n) for n in remaining)
@@ -2572,7 +2576,7 @@ def pull(
         )
     except sync.SyncError as exc:
         error(str(exc))
-        _emit_pull_conflict_report(exc)
+        _emit_conflict_report(exc)
         raise typer.Exit(1) from exc
     except git_helpers.GitError as exc:
         error(str(exc))
@@ -3745,6 +3749,7 @@ def push(
                 # error_plain: `[<container>]` is a style tag to Rich, and
                 # dropping it takes the only thing naming which one failed.
                 error_plain(f"[{short}] ✗ {exc}")
+                _emit_conflict_report(exc)
                 outcomes.append(_PushOutcome(short=short, ok=False, summary=str(exc)))
 
         _print_push_batch_summary(outcomes)
@@ -3818,6 +3823,7 @@ def push(
         )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
+        _emit_conflict_report(exc)
         raise typer.Exit(1) from exc
 
 
