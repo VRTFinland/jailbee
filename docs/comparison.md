@@ -365,9 +365,9 @@ the runtime is the hard part *and* you want the whole runtime fenced.
 - **Every `host_devices` entry widens that surface further** — `/dev/kvm` in
   particular hands the container a host-kernel interface. List only what the
   repo needs.
-- **It's young.** JailBee is developed at GISGRO for its own use. No public
-  community, no package-manager release, a small maintainer team. Price that
-  in.
+- **It's young.** JailBee is developed at GISGRO for its own use, released
+  publicly at 1.0.0. It's on PyPI, but there is no community around it yet
+  and the maintainer team is small. Price that in.
 
 If your stack is one process and one database, `git worktree` plus
 `docker compose -p` is free and already installed. JailBee earns its cost when the
