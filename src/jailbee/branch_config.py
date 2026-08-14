@@ -21,13 +21,14 @@ checkout look like a privilege escalation:
 
 2. *"Does this grant privileges the repo has not already granted?"* —
    `assess_escalation` against the **reviewed baseline**
-   (`refs/remotes/origin/<default_branch>`), rendered by `format_escalation`.
+   (`refs/remotes/<upstream_remote>/<default_branch>`), rendered by
+   `format_escalation`.
    Only this one can prompt.
 
 The checkout is one arbitrary snapshot of one arbitrary branch: it may be
 behind, ahead, or an unrelated feature branch with local edits, so the same
 `jailbee new` would prompt one developer and not another. The default branch on
-origin is what review and CI gate, which makes it the privilege baseline.
+the upstream is what review and CI gate, which makes it the privilege baseline.
 """
 
 from __future__ import annotations
@@ -283,19 +284,36 @@ def _can_widen(autostart: Autostart) -> bool:
 def _baseline_autostart(cfg: Config) -> tuple[Autostart, str]:
     """The autostart the privilege gate measures against, plus its label.
 
-    `refs/remotes/origin/<default_branch>` — what review and CI gate. Falls
-    back to the host checkout (never to "no baseline", which would grant
-    everything silently) when that ref carries no usable config: a repo with no
-    origin, a default branch never fetched, or a baseline config that does not
-    load. The label says which of the two was used, because it changes what the
-    verdict means.
+    `refs/remotes/<upstream_remote>/<default_branch>` — what review and CI
+    gate. Falls back to the host checkout (never to "no baseline", which would
+    grant everything silently) when that ref carries no usable config: a repo
+    with no upstream remote, a default branch never fetched, or a baseline
+    config that does not load. The label says which of the two was used,
+    because it changes what the verdict means.
+
+    An *unreachable* ref is warned about; an absent config on a reachable one
+    is not. The difference matters: the second is a repo that simply keeps no
+    autostart config on its default branch, while the first silently reduces
+    the baseline to the caller's own checkout — the very config a branch could
+    have authored for itself. That is the gate getting weaker, and it must be
+    said out loud rather than inferred from a label nobody reads.
     """
     from jailbee.config import ConfigError, load_config_from_text
+    from jailbee.git import remote_ref_exists
     from jailbee.tui import warn_plain
 
-    ref = f"refs/remotes/origin/{cfg.default_branch}"
+    ref = f"refs/remotes/{cfg.upstream_remote}/{cfg.default_branch}"
     found = _config_text_at_ref(cfg.repo_root, ref)
     if found is None:
+        if not remote_ref_exists(cfg.repo_root, cfg.upstream_remote, cfg.default_branch):
+            warn_plain(
+                f"Cannot use {ref} as the privilege baseline — the ref does not "
+                f"exist on this host (no '{cfg.upstream_remote}' remote, or "
+                f"'{cfg.default_branch}' never fetched).\n"
+                f"Falling back to your checkout's autostart config, which is a "
+                f"weaker gate: it is not what review and CI approved."
+            )
+            return cfg.autostart, f"your checkout ({ref} cannot be read)"
         return cfg.autostart, f"your checkout ({ref} has no .jailbee/config.yaml)"
     text, config_rel = found
     try:

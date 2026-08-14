@@ -224,6 +224,10 @@ def _detect_submodule_default(run: GitRun, parent_dir: str, sub: str, name: str)
 
     Order: ``submodule.<name>.branch`` in the parent's ``.gitmodules`` (unless
     ``.``) -> the submodule's ``origin/HEAD`` target -> ``main``.
+
+    The literal ``origin`` is correct here and must not be parameterised: both
+    callers run this through a *container* `GitRun`, and a container sub-repo's
+    remote is one jailbee created itself (see `_create_container_subrepo`).
     """
     declared = _gitmodules_branch(run, parent_dir, name)
     if declared and declared != ".":

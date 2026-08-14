@@ -667,7 +667,7 @@ def new_cmd(
         from jailbee import pr as pr_module
 
         try:
-            pr_info = pr_module.resolve_pr(cfg.repo_root, pr)
+            pr_info = pr_module.resolve_pr(cfg.repo_root, pr, remote=cfg.upstream_remote)
         except pr_module.PrError as e:
             error(str(e))
             raise typer.Exit(2) from e
@@ -689,7 +689,9 @@ def new_cmd(
             )
         else:
             try:
-                fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info)
+                fetch_result = pr_module.fetch_pr_head(
+                    cfg.repo_root, pr_info, remote=cfg.upstream_remote
+                )
             except pr_module.PrError as e:
                 error(str(e))
                 raise typer.Exit(2) from e
@@ -705,7 +707,9 @@ def new_cmd(
             # `jailbee ls` AHEAD by every base-branch commit made since the host
             # last fetched. Best-effort: a base branch deleted upstream must
             # not block the container.
-            base_sha = pr_module.fetch_base_ref(cfg.repo_root, pr_info.base_ref)
+            base_sha = pr_module.fetch_base_ref(
+                cfg.repo_root, pr_info.base_ref, remote=cfg.upstream_remote
+            )
             if base_sha is None:
                 warn(
                     f"Could not fetch PR base branch '{pr_info.base_ref}' from origin; "
@@ -2953,10 +2957,10 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     pr_number, _label_head_ref = head  # label head_ref may be stale; resolve_pr is authoritative
 
     try:
-        pr_info = pr_module.resolve_pr(cfg.repo_root, pr_number)
+        pr_info = pr_module.resolve_pr(cfg.repo_root, pr_number, remote=cfg.upstream_remote)
         if pr_info.state != "OPEN":
             warn(f"PR #{pr_number} is {pr_info.state}; refreshing anyway.")
-        fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info)
+        fetch_result = pr_module.fetch_pr_head(cfg.repo_root, pr_info, remote=cfg.upstream_remote)
     except pr_module.PrError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
@@ -3860,7 +3864,7 @@ def _adopt_pr_head(
         raise typer.Exit(1) from None
 
     try:
-        pr_info = pr_module.resolve_pr(cfg.repo_root, number)
+        pr_info = pr_module.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
     except pr_module.PrError as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
@@ -4409,6 +4413,7 @@ def pr_cmd(
                 base=resolved_base,
                 title=resolved_title,
                 body=resolved_body,
+                remote=cfg.upstream_remote,
                 draft=ready is not True,
             )
         except pr_mod.PrError as exc:

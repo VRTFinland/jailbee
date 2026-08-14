@@ -61,7 +61,7 @@ def test_resolve_pr_happy_path(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = resolve_pr(tmp_path, 1234)
+    result = resolve_pr(tmp_path, 1234, remote="origin")
     assert result == PrInfo(
         number=1234,
         head_ref="feat/foo",
@@ -82,7 +82,7 @@ def test_resolve_pr_no_origin(tmp_path, mocker):
         return_value=_completed(returncode=2, stderr="fatal: no such remote\n"),
     )
     with pytest.raises(PrResolveError, match="GitHub 'origin' remote"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 def test_resolve_pr_origin_not_github(tmp_path, mocker):
@@ -93,7 +93,7 @@ def test_resolve_pr_origin_not_github(tmp_path, mocker):
         return_value=_completed(stdout="git@gitlab.com:acme/widgets.git\n"),
     )
     with pytest.raises(PrResolveError, match="GitHub 'origin' remote"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 def test_resolve_pr_gh_not_installed(tmp_path, mocker):
@@ -106,7 +106,7 @@ def test_resolve_pr_gh_not_installed(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrResolveError, match=r"(?i)install"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 def test_resolve_pr_not_authenticated(tmp_path, mocker):
@@ -119,7 +119,7 @@ def test_resolve_pr_not_authenticated(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrResolveError, match="authenticated"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 def test_resolve_pr_not_found(tmp_path, mocker):
@@ -132,7 +132,7 @@ def test_resolve_pr_not_found(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrResolveError, match="not found"):
-        resolve_pr(tmp_path, 9999)
+        resolve_pr(tmp_path, 9999, remote="origin")
 
 
 @pytest.mark.parametrize(
@@ -154,7 +154,7 @@ def test_resolve_pr_state_parametrised(tmp_path, mocker, fixture_name, expected_
         return _completed(stdout=payload)
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = resolve_pr(tmp_path, 1234)
+    result = resolve_pr(tmp_path, 1234, remote="origin")
     assert result.state == expected_state
 
 
@@ -180,7 +180,7 @@ def test_resolve_pr_reports_fork_head(tmp_path, mocker):
         return _completed(stdout=payload)
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = resolve_pr(tmp_path, 7)
+    result = resolve_pr(tmp_path, 7, remote="origin")
 
     assert result.is_cross_repository is True
     assert result.head_repo_owner == "contributor"
@@ -209,7 +209,7 @@ def test_resolve_pr_tolerates_null_author_and_missing_owner(tmp_path, mocker):
         return _completed(stdout=payload)
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = resolve_pr(tmp_path, 8)
+    result = resolve_pr(tmp_path, 8, remote="origin")
 
     assert result.author_login is None
     assert result.head_repo_owner is None
@@ -311,7 +311,7 @@ def test_fetch_pr_head_targets_the_gie_pr_ref_forced(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     run = mocker.patch("subprocess.run", side_effect=fake_run)
-    result = fetch_pr_head(tmp_path, _pr_info())
+    result = fetch_pr_head(tmp_path, _pr_info(), remote="origin")
     assert result == FetchResult(
         updated=True, prev_sha=None, new_sha="newsha", ref="refs/jailbee/pr/1234/head"
     )
@@ -345,7 +345,7 @@ def test_fetch_pr_head_never_touches_refs_heads(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     run = mocker.patch("subprocess.run", side_effect=fake_run)
-    fetch_pr_head(tmp_path, _pr_info())
+    fetch_pr_head(tmp_path, _pr_info(), remote="origin")
 
     for call in run.call_args_list:
         assert not any("refs/heads/" in arg for arg in call.args[0]), call.args[0]
@@ -362,7 +362,7 @@ def test_fetch_pr_head_already_at_head_is_noop(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"))
+    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"), remote="origin")
     assert result == FetchResult(
         updated=False, prev_sha="newsha", new_sha="newsha", ref="refs/jailbee/pr/1234/head"
     )
@@ -379,7 +379,7 @@ def test_fetch_pr_head_reports_previous_sha(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"))
+    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"), remote="origin")
     assert result == FetchResult(
         updated=True, prev_sha="oldsha", new_sha="newsha", ref="refs/jailbee/pr/1234/head"
     )
@@ -397,7 +397,7 @@ def test_fetch_pr_head_prev_sha_is_read_from_the_gie_ref(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     run = mocker.patch("subprocess.run", side_effect=fake_run)
-    fetch_pr_head(tmp_path, _pr_info())
+    fetch_pr_head(tmp_path, _pr_info(), remote="origin")
 
     rev_parse_calls = [c for c in run.call_args_list if "rev-parse" in c.args[0]]
     assert rev_parse_calls == [
@@ -426,7 +426,7 @@ def test_fetch_pr_head_failure_surfaces_stderr(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrFetchError, match="network"):
-        fetch_pr_head(tmp_path, _pr_info())
+        fetch_pr_head(tmp_path, _pr_info(), remote="origin")
 
 
 def test_fetch_pr_head_retries_a_transient_failure_when_accepted(tmp_path, mocker):
@@ -448,7 +448,7 @@ def test_fetch_pr_head_retries_a_transient_failure_when_accepted(tmp_path, mocke
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
 
-    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"))
+    result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"), remote="origin")
 
     assert result == FetchResult(
         updated=True, prev_sha="oldsha", new_sha="newsha", ref="refs/jailbee/pr/1234/head"
@@ -474,7 +474,7 @@ def test_fetch_pr_head_retry_is_not_offered_off_tty(tmp_path, mocker):
     prompt = mocker.patch("builtins.input")
 
     with pytest.raises(PrFetchError, match="Could not read"):
-        fetch_pr_head(tmp_path, _pr_info())
+        fetch_pr_head(tmp_path, _pr_info(), remote="origin")
 
     assert len(fetch_attempts) == 1
     prompt.assert_not_called()
@@ -485,7 +485,7 @@ def test_resolve_pr_git_not_installed(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=FileNotFoundError("git"))
     with pytest.raises(PrResolveError, match=r"(?i)git"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 def test_fetch_pr_head_git_not_installed_on_rev_parse(tmp_path, mocker):
@@ -493,7 +493,7 @@ def test_fetch_pr_head_git_not_installed_on_rev_parse(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=FileNotFoundError("git"))
     with pytest.raises(PrFetchError, match=r"(?i)git"):
-        fetch_pr_head(tmp_path, _pr_info())
+        fetch_pr_head(tmp_path, _pr_info(), remote="origin")
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +518,7 @@ def test_fetch_base_ref_updates_remote_tracking_and_returns_sha(tmp_path, mocker
         raise AssertionError(f"unexpected command: {cmd}")
 
     run = mocker.patch("subprocess.run", side_effect=fake_run)
-    assert fetch_base_ref(tmp_path, "dev") == "basesha"
+    assert fetch_base_ref(tmp_path, "dev", remote="origin") == "basesha"
     fetch_calls = [c for c in run.call_args_list if "fetch" in c.args[0]]
     assert fetch_calls == [
         mocker.call(
@@ -541,7 +541,7 @@ def test_fetch_base_ref_returns_none_when_fetch_fails(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    assert fetch_base_ref(tmp_path, "gone") is None
+    assert fetch_base_ref(tmp_path, "gone", remote="origin") is None
 
 
 def test_fetch_base_ref_returns_none_when_rev_parse_fails(tmp_path, mocker):
@@ -553,14 +553,14 @@ def test_fetch_base_ref_returns_none_when_rev_parse_fails(tmp_path, mocker):
         return _completed(returncode=1)
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    assert fetch_base_ref(tmp_path, "dev") is None
+    assert fetch_base_ref(tmp_path, "dev", remote="origin") is None
 
 
 def test_fetch_base_ref_returns_none_when_git_missing(tmp_path, mocker):
     from jailbee.pr import fetch_base_ref
 
     mocker.patch("subprocess.run", side_effect=FileNotFoundError("git"))
-    assert fetch_base_ref(tmp_path, "dev") is None
+    assert fetch_base_ref(tmp_path, "dev", remote="origin") is None
 
 
 # ---------------------------------------------------------------------------
@@ -643,7 +643,9 @@ def test_create_pr_happy_path_draft(tmp_path, mocker):
         ),
     )
 
-    result = create_pr(tmp_path, head="feat/foo", base="main", title="feat: foo", body="pending")
+    result = create_pr(
+        tmp_path, head="feat/foo", base="main", title="feat: foo", body="pending", remote="origin"
+    )
 
     assert result == PrCreated(
         number=123, url="https://github.com/acme/widgets/pull/123", already_existed=False
@@ -667,7 +669,9 @@ def test_create_pr_no_draft_omits_flag(tmp_path, mocker):
         ),
     )
 
-    result = create_pr(tmp_path, head="feat/foo", base="main", title="t", body="b", draft=False)
+    result = create_pr(
+        tmp_path, head="feat/foo", base="main", title="t", body="b", remote="origin", draft=False
+    )
 
     assert result.number == 9
     assert "--draft" not in run.call_args_list[-1].args[0]
@@ -686,7 +690,7 @@ def test_create_pr_already_exists_falls_back_to_view(tmp_path, mocker):
     )
     mocker.patch("subprocess.run", side_effect=_fake_run_for_create(create_fail, view_ok))
 
-    result = create_pr(tmp_path, head="feat/foo", base="main", title="t", body="b")
+    result = create_pr(tmp_path, head="feat/foo", base="main", title="t", body="b", remote="origin")
 
     assert result.already_existed is True
     assert result.number == 77
@@ -703,7 +707,7 @@ def test_create_pr_gh_missing(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrCreateError, match=r"(?i)install"):
-        create_pr(tmp_path, head="h", base="b", title="t", body="b")
+        create_pr(tmp_path, head="h", base="b", title="t", body="b", remote="origin")
 
 
 def test_create_pr_not_authenticated(tmp_path, mocker):
@@ -716,7 +720,7 @@ def test_create_pr_not_authenticated(tmp_path, mocker):
         ),
     )
     with pytest.raises(PrCreateError, match="authenticated"):
-        create_pr(tmp_path, head="h", base="b", title="t", body="b")
+        create_pr(tmp_path, head="h", base="b", title="t", body="b", remote="origin")
 
 
 def test_create_pr_unparseable_url(tmp_path, mocker):
@@ -727,7 +731,7 @@ def test_create_pr_unparseable_url(tmp_path, mocker):
         side_effect=_fake_run_for_create(_completed(stdout="something weird\n")),
     )
     with pytest.raises(PrCreateError, match="parse"):
-        create_pr(tmp_path, head="h", base="b", title="t", body="b")
+        create_pr(tmp_path, head="h", base="b", title="t", body="b", remote="origin")
 
 
 def test_create_pr_requires_github_origin(tmp_path, mocker):
@@ -738,7 +742,7 @@ def test_create_pr_requires_github_origin(tmp_path, mocker):
         return_value=_completed(stdout="git@gitlab.com:acme/widgets.git\n"),
     )
     with pytest.raises(PrResolveError, match="GitHub 'origin' remote"):
-        create_pr(tmp_path, head="h", base="b", title="t", body="b")
+        create_pr(tmp_path, head="h", base="b", title="t", body="b", remote="origin")
 
 
 def test_pr_create_error_is_pr_error():
@@ -770,7 +774,7 @@ def test_create_pr_author_error_is_not_misclassified_as_auth(tmp_path, mocker):
         ),
     )
     with pytest.raises(PrCreateError, match="Author is required"):
-        create_pr(tmp_path, head="h", base="b", title="t", body="b")
+        create_pr(tmp_path, head="h", base="b", title="t", body="b", remote="origin")
 
 
 def test_resolve_pr_authorization_error_not_misclassified(tmp_path, mocker):
@@ -787,7 +791,7 @@ def test_resolve_pr_authorization_error_not_misclassified(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     with pytest.raises(PrResolveError, match="OAuth app authorization rules"):
-        resolve_pr(tmp_path, 1234)
+        resolve_pr(tmp_path, 1234, remote="origin")
 
 
 # ---------------------------------------------------------------------------
@@ -877,3 +881,92 @@ def test_set_ready_failure_raises(tmp_path, mocker):
     mocker.patch("subprocess.run", return_value=_completed(returncode=1, stderr="boom"))
     with pytest.raises(pr.PrEditError):
         pr.set_ready(tmp_path, 9, True)
+
+
+# ---------------------------------------------------------------------------
+# non-default upstream remote name
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_pr_validates_the_given_remote(tmp_path, mocker):
+    """The pre-flight gate must not reject a repo `gh` itself would handle."""
+    from jailbee.pr import resolve_pr
+
+    payload = (FIXTURES / "gh_pr_view_open.json").read_text()
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "git" and "get-url" in cmd:
+            seen.append(cmd)
+            return _completed(stdout="git@github.com:acme/widgets.git\n")
+        return _completed(stdout=payload)
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+
+    resolve_pr(tmp_path, 1234, remote="public")
+
+    assert seen == [["git", "remote", "get-url", "public"]]
+
+
+def test_resolve_pr_names_the_missing_remote_in_the_error(tmp_path, mocker):
+    from jailbee.pr import PrResolveError, resolve_pr
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=_completed(returncode=2, stderr="fatal: no such remote\n"),
+    )
+
+    with pytest.raises(PrResolveError, match="GitHub 'public' remote"):
+        resolve_pr(tmp_path, 1234, remote="public")
+
+
+def test_fetch_pr_head_fetches_from_the_given_remote(tmp_path, mocker):
+    from jailbee.pr import fetch_pr_head
+
+    fetches = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "fetch"]:
+            fetches.append(cmd)
+            return _completed()
+        return _completed(returncode=1)
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+
+    fetch_pr_head(tmp_path, _pr_info(), remote="public")
+
+    assert fetches == [["git", "fetch", "public", "+pull/1234/head:refs/jailbee/pr/1234/head"]]
+
+
+def test_fetch_base_ref_uses_the_given_remote(tmp_path, mocker):
+    from jailbee.pr import fetch_base_ref
+
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        return _completed(stdout="basesha\n")
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+
+    assert fetch_base_ref(tmp_path, "dev", remote="public") == "basesha"
+    assert seen[0] == ["git", "fetch", "public", "+refs/heads/dev:refs/remotes/public/dev"]
+    assert seen[1][-1] == "refs/remotes/public/dev"
+
+
+def test_create_pr_validates_the_given_remote(tmp_path, mocker):
+    from jailbee.pr import create_pr
+
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "git":
+            seen.append(cmd)
+            return _completed(stdout="git@github.com:acme/widgets.git\n")
+        return _completed(stdout="https://github.com/acme/widgets/pull/7\n")
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+
+    create_pr(tmp_path, head="feat/x", base="main", title="t", body="b", remote="public")
+
+    assert seen == [["git", "remote", "get-url", "public"]]

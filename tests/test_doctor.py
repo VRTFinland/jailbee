@@ -966,3 +966,64 @@ def test_doctor_stays_silent_when_nothing_runs_on_the_loose_bridge(tmp_path, mak
     mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     assert _bridge_check(run_checks(cfg, incus)) is None
+
+
+def test_run_checks_reports_the_resolved_upstream_remote(make_cfg, tmp_path):
+    """Detection is invisible unless doctor says what it landed on."""
+    repo = tmp_path / "with-git"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    cfg = make_cfg(repo, upstream_remote="public", default_branch="dev")
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    incus.list_containers.return_value = []
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.doctor.detect_upstream_remote", return_value="public"),
+    ):
+        results = run_checks(cfg, incus)
+
+    checks = [r for r in results if r.name == "upstream remote"]
+    assert len(checks) == 1
+    assert checks[0].ok is True
+    assert "public" in checks[0].detail
+    assert "dev" in checks[0].detail
+
+
+def test_run_checks_flags_an_unresolvable_upstream_remote(make_cfg, tmp_path):
+    """Several remotes and no signal picking one: jailbee falls back to the
+    literal `origin`, which is a guess, so say so rather than look healthy."""
+    repo = tmp_path / "with-git"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    cfg = make_cfg(repo)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    incus.list_containers.return_value = []
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.doctor.detect_upstream_remote", return_value=None),
+    ):
+        results = run_checks(cfg, incus)
+
+    checks = [r for r in results if r.name == "upstream remote"]
+    assert len(checks) == 1
+    assert checks[0].ok is False
+    assert "remote.pushDefault" in checks[0].detail
+
+
+def test_run_checks_skips_the_upstream_remote_check_without_a_git_repo(make_cfg, tmp_path):
+    """Nothing to resolve, and the missing-.git note already covers it."""
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    incus.list_containers.return_value = []
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    assert not any(r.name == "upstream remote" for r in results)
