@@ -162,7 +162,7 @@ def test_documentation_links_point_at_files_that_exist_in_this_repo() -> None:
 
 def test_every_expected_section_id_exists() -> None:
     html = INDEX.read_text()
-    for anchor in ("network", "desktop", "features", "install", "docs"):
+    for anchor in ("network", "desktop", "agents", "features", "install", "docs"):
         assert f'id="{anchor}"' in html, f"missing section: {anchor}"
 
 

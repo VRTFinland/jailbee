@@ -719,8 +719,12 @@ IDE restart.
 
 ### `claude`
 
-Claude Code CLI integration. Defaults to disabled — opt-in via
-`~/.config/jailbee/global.yaml`.
+Claude Code CLI integration. The schema default is disabled, so a repo
+with no `claude:` block anywhere gets no Claude Code. Opt-in belongs in
+`~/.config/jailbee/global.yaml` — and the template written by `jailbee
+config init --global` already carries `claude.enabled: true`, so the
+usual first-run path turns it on. Delete or flip that block to keep
+Claude Code out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

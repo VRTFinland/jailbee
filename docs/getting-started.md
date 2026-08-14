@@ -56,9 +56,22 @@ your directory name contains underscores, dots, or capital letters, set
 same host with distinct prefixes coexist without colliding. Use
 `jailbee ls --all` to list containers from every jailbee-managed repo.
 
-A small optional global file at `~/.config/jailbee/global.yaml` carries
-host-level settings (Docker registry mirror port, data directory, image
-pin, enable flag). Default port is 3128 (rpardini's default).
+**Per-developer settings:** `.jailbee/config.yaml` is checked into the repo
+and shared with your team, so anything personal lives in
+`~/.config/jailbee/global.yaml` instead:
+
+```bash
+jailbee config init --global    # writes a fully-commented ~/.config/jailbee/global.yaml
+```
+
+That file carries your host mounts (`~/.gitconfig`, `~/.gnupg`), your IDE
+preference, your GitHub token, the Docker registry mirror port (default
+3128, rpardini's default), and the **Claude Code** opt-in — see
+[Claude Code in the container](#claude-code-in-the-container) below. The
+two files are deep-merged at load time: the repo config wins on scalar
+collisions, lists are appended, and a few blocks (like
+`github.api_tokens`) are permitted *only* in the global file so tokens
+can't leak via git.
 
 ## Initialize and build
 
@@ -109,6 +122,53 @@ network, so switch it out of strict first with
 `jailbee net loose feat-my-feature`. See
 [Git bridge and branch workflows](git-bridge.md) for pushing host→container,
 stacked PRs, and reviewing existing PRs.
+
+## Claude Code in the container
+
+Running a coding agent unattended is what the per-branch container and the
+strict egress allowlist are *for*: the agent gets a full machine to break,
+and the blast radius stops at the container boundary. JailBee has
+first-class support for [Claude Code](https://claude.com/claude-code) —
+turn it on in `~/.config/jailbee/global.yaml`:
+
+```yaml
+claude:
+  enabled: true
+  plugins_enabled: true
+  # autostart: true                                # launch claude on every container start
+  # command: claude --dangerously-skip-permissions # what the autostart window runs
+```
+
+The template written by `jailbee config init --global` already contains
+this block with `enabled: true`, so if you took that path you have it
+already. Run `jailbee apply` after editing, then `jailbee new` a container.
+
+What turning it on gets you:
+
+- **Claude Code installed in every container**, from a version store shared
+  across the repo's containers — no per-container download.
+- **One login, all containers.** `<shared_dir>/claude` and
+  `<shared_dir>/claude.json` are mounted as `~/.claude` / `~/.claude.json`,
+  so settings, MCP servers, agents and credentials are shared and survive
+  `jailbee destroy` / `jailbee new` cycles. Your *host* `~/.claude` is never
+  read — Claude runs its onboarding once, inside the first container.
+- **Strict mode still works.** The Anthropic API and CLI-update hosts are
+  added to the egress allowlist automatically; `plugins_enabled` adds the
+  GitHub + npm hosts the plugin marketplace and skills reach. You don't
+  list them by hand.
+- **Claude knows JailBee.** JailBee's own `jailbee-usage` and
+  `jailbee-repo-setup` skills are copied into the shared skills directory,
+  so the in-container Claude can drive `jailbee` commands for you.
+- **AI-written PRs.** `jailbee pr <name>` asks the in-container Claude for
+  the title, body, and branch name (`--no-ai` opts out per call).
+
+With `autostart: true`, every container comes up with Claude already
+running in a tmux window; `jailbee tmux <name>` drops you straight into it.
+That plus `jailbee net strict <name>` is the intended shape for
+unattended runs — see [Security and limitations](security.md) for why
+disabling an agent's own in-process sandbox is a reasonable trade
+*inside* a container, and [`config.md`](config.md#claude) for every
+`claude.*` key.
 
 ## Next steps
 
