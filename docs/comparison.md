@@ -154,26 +154,26 @@ toolchain, per branch?"* and *"how do I stop the agent from wrecking my
 laptop?"* jailbee is trying to answer both at once, which is why it is
 heavier than either.
 
-The table below is about what each one *lets you do*. **✓** yes, **✗** no,
-**~** yes with the caveat named in the cell. Note the two rows where jailbee
-is the one with the ✗.
+The table below is about what each one *lets you do*. **✅** yes, **❌** no,
+**🟡** yes with the caveat named in the cell, **n/a** the question doesn't
+apply to that model. Note the two rows where jailbee is the one with the ❌.
 
 | | **Dev Containers** | **BranchBox** | **nono** | **Docker Sandboxes** | **jailbee** |
 |---|---|---|---|---|---|
 | **What it is** | a toolchain in a container | a worktree + Compose per feature | a fence around one process | a microVM per agent run | a Linux machine per branch |
 | **Boundary** | host Docker daemon | host Docker daemon | Landlock + seccomp, Seatbelt | hypervisor, own kernel | Incus container, shared kernel |
-| Run the repo's `docker-compose.yml` unchanged | ✓ | ✓ | ✗ | ✓ | ✓ |
-| …without touching the host's Docker daemon | ~ privileged `docker-in-docker` | ✗ | ✗ | ✓ | ✓ |
-| Two branches both listening on `:3000` | ~ each forwarded to a different host port | ~ a port range per feature | ✗ | ✓ | ✓ |
-| Run an emulator or a VM (`/dev/kvm`) | ~ if you pass the device in yourself | ✗ | ✗ | ✗ no device passthrough documented | ✓ `host_devices` |
-| A browser and an IDE **inside** the boundary, on your own screen | ✗ community noVNC feature only | ✗ | n/a — they run on the host | ✗ | ✓ |
-| Restrict what the code inside can reach | ✗ | ✗ | ✓ per tool, HTTP | ✓ HTTP(S) only, rest dropped | ✓ any protocol, `strict`/`loose` + TTL |
-| Keep an agent out of your real checkout | ~ opt-in clone into a volume | ✗ | ~ per-path grants | ~ `--clone` | ✓ always its own clone |
-| Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✓ `jailbee git push/pull/diff` |
-| Snapshot before an agent runs, roll back after | ✗ rebuild | ✗ | n/a | ✗ recreate | ✓ |
-| Hold up when the **kernel** is what breaks | ✗ | ✗ | ✗ | ✓ own kernel per sandbox | ✗ shared kernel |
-| Work on macOS or Windows | ✓ | ~ macOS | ✓ | ✓ hardware virtualisation required | ✗ Linux only |
-| Ship the environment in the repo | ✓ `devcontainer.json` | ~ generated from stack detection | ~ per agent, not per repo | ~ per agent or team (kit YAML) | ✓ `.jailbee/config.yaml` |
+| Run the repo's `docker-compose.yml` unchanged | ✅ | ✅ | ❌ | ✅ | ✅ |
+| …without touching the host's Docker daemon | 🟡 privileged `docker-in-docker` | ❌ | ❌ | ✅ | ✅ |
+| Two branches both listening on `:3000` | 🟡 each forwarded to a different host port | 🟡 a port range per feature | ❌ | ✅ | ✅ |
+| Run an emulator or a VM (`/dev/kvm`) | 🟡 if you pass the device in yourself | ❌ | ❌ | ❌ no device passthrough documented | ✅ `host_devices` |
+| A browser and an IDE **inside** the boundary, on your own screen | ❌ community noVNC feature only | ❌ | n/a — they run on the host | ❌ | ✅ |
+| Restrict what the code inside can reach | ❌ | ❌ | ✅ per tool, HTTP | ✅ HTTP(S) only, rest dropped | ✅ any protocol, `strict`/`loose` + TTL |
+| Keep an agent out of your real checkout | 🟡 opt-in clone into a volume | ❌ | 🟡 per-path grants | 🟡 `--clone` | ✅ always its own clone |
+| Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✅ `jailbee git push/pull/diff` |
+| Snapshot before an agent runs, roll back after | ❌ rebuild | ❌ | n/a | ❌ recreate | ✅ |
+| Hold up when the **kernel** is what breaks | ❌ | ❌ | ❌ | ✅ own kernel per sandbox | ❌ shared kernel |
+| Work on macOS or Windows | ✅ | 🟡 macOS | ✅ | ✅ hardware virtualisation required | ❌ Linux only |
+| Ship the environment in the repo | ✅ `devcontainer.json` | 🟡 generated from stack detection | 🟡 per agent, not per repo | 🟡 per agent or team (kit YAML) | ✅ `.jailbee/config.yaml` |
 | Licence | open spec (MIT); VS Code's extension is Microsoft's | MIT | Apache-2.0 | free CLI, Docker sign-in required, governance is paid | GPL-3.0-or-later |
 
 ### Toolchain per branch: Dev Containers and BranchBox
