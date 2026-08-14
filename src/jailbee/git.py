@@ -10,21 +10,25 @@ import subprocess
 from pathlib import Path
 
 _FALLBACK_BRANCH = "main"
-_ORIGIN_PREFIX = "origin/"
+
+#: What every host-side helper falls back to when the upstream remote cannot
+#: be resolved — the historical behaviour, preserved so an unresolvable repo is
+#: no worse off than before. See `detect_upstream_remote`.
+DEFAULT_REMOTE = "origin"
 
 
-def detect_default_branch(repo_root: Path) -> str:
-    """Return the upstream's default branch name.
+def detect_default_branch(repo_root: Path, remote: str) -> str:
+    """Return `remote`'s default branch name.
 
-    Runs `git symbolic-ref --short refs/remotes/origin/HEAD` in repo_root.
-    Output looks like `origin/main`; we strip the `origin/` prefix.
+    Runs `git symbolic-ref --short refs/remotes/<remote>/HEAD` in repo_root.
+    Output looks like `<remote>/main`; we strip the `<remote>/` prefix.
 
-    On any failure (no origin remote, command non-zero, missing git binary,
+    On any failure (no such remote, command non-zero, missing git binary,
     unexpected output), returns "main".
     """
     try:
         result = subprocess.run(
-            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            ["git", "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -37,26 +41,113 @@ def detect_default_branch(repo_root: Path) -> str:
         return _FALLBACK_BRANCH
 
     out = result.stdout.strip()
-    if not out.startswith(_ORIGIN_PREFIX):
+    prefix = f"{remote}/"
+    if not out.startswith(prefix):
         return _FALLBACK_BRANCH
 
-    branch = out[len(_ORIGIN_PREFIX) :]
+    branch = out[len(prefix) :]
     return branch or _FALLBACK_BRANCH
 
 
-def get_origin_url(repo_root: Path) -> str | None:
-    """Return the URL of the host repo's `origin` remote, or None.
+def list_remotes(repo_root: Path) -> list[str]:
+    """Return the repo's remote names (`git remote`), or `[]`."""
+    try:
+        result = subprocess.run(
+            ["git", "remote"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _remote_has_head_symref(repo_root: Path, remote: str) -> bool:
+    """True when `refs/remotes/<remote>/HEAD` resolves.
+
+    Set by `git clone` for the remote it cloned from, and moved by
+    `git remote rename`; a remote added later with `git remote add` has none
+    unless someone ran `git remote set-head`. That makes it the one signal
+    that survives both a rename and a branch that was never pushed.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    return result.returncode == 0
+
+
+def detect_upstream_remote(repo_root: Path) -> str | None:
+    """Return the name of the remote jailbee should treat as the upstream.
+
+    `origin` is only the name `git clone` picks by default; `git remote rename`
+    is ordinary. Every host-side git operation therefore resolves the name
+    rather than assuming it.
+
+    Resolution order, first hit wins, and a candidate naming a remote that no
+    longer exists is skipped (stale `remote.pushDefault` outlives its remote):
+
+    1. the sole remote, when there is exactly one
+    2. `origin`, when it exists — so every repo that works today keeps its
+       exact behaviour, including a fork checkout whose branches track the
+       canonical repo rather than the fork
+    3. `remote.pushDefault` — git's own explicit override, which is why jailbee
+       ships no config key of its own for this
+    4. the current branch's `branch.<b>.remote`
+    5. the unique remote carrying a `refs/remotes/<r>/HEAD` symref
+
+    Returns None when the repo has no remotes, git is unavailable, or the
+    setup is genuinely ambiguous (several remotes, none of them `origin`, and
+    no signal picking one out). Callers fall back to the literal `origin`,
+    i.e. the historical behaviour; `jailbee doctor` reports the ambiguity.
+    """
+    remotes = list_remotes(repo_root)
+    if not remotes:
+        return None
+    if len(remotes) == 1:
+        return remotes[0]
+    if "origin" in remotes:
+        return "origin"
+
+    push_default = _git_config_get(repo_root, "remote.pushDefault")
+    if push_default in remotes:
+        return push_default
+
+    current = get_current_branch(repo_root)
+    if current is not None:
+        tracked = _git_config_get(repo_root, f"branch.{current}.remote")
+        if tracked in remotes:
+            return tracked
+
+    with_head = [r for r in remotes if _remote_has_head_symref(repo_root, r)]
+    if len(with_head) == 1:
+        return with_head[0]
+    return None
+
+
+def get_remote_url(repo_root: Path, remote: str) -> str | None:
+    """Return the URL of the host repo's `remote`, or None.
 
     Used by `jailbee new` to rewrite the in-container clone's origin from the
     RO mount path (`/mnt/host-source`) to the real upstream so
     `git push`/`fetch` reach GitHub when strict-mode allows it.
 
-    Returns None if there's no origin remote, the command fails, or git
+    Returns None if there's no such remote, the command fails, or git
     isn't on PATH — callers fall back to leaving the mount path in place.
     """
     try:
         result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            ["git", "remote", "get-url", remote],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -253,17 +344,17 @@ class GitFetchError(RuntimeError):
         self.stderr = stderr
 
 
-def fetch_origin_ref(repo_root: Path, branch: str) -> None:
-    """Run ``git fetch origin <branch>`` in ``repo_root``.
+def fetch_remote_ref(repo_root: Path, remote: str, branch: str) -> None:
+    """Run ``git fetch <remote> <branch>`` in ``repo_root``.
 
     Raises `GitFetchError` on any failure (git missing, fetch non-zero).
-    The remote-tracking ref ``refs/remotes/origin/<branch>`` is updated
+    The remote-tracking ref ``refs/remotes/<remote>/<branch>`` is updated
     on success; the host's local ``refs/heads/<branch>`` is left
     untouched (no `:refs/heads/...` refspec).
     """
     try:
         result = subprocess.run(
-            ["git", "fetch", "origin", branch],
+            ["git", "fetch", remote, branch],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -273,13 +364,13 @@ def fetch_origin_ref(repo_root: Path, branch: str) -> None:
         raise GitFetchError("git is not installed or not on PATH") from e
     if result.returncode != 0:
         raise GitFetchError(
-            f"git fetch origin {branch} failed in {repo_root}",
+            f"git fetch {remote} {branch} failed in {repo_root}",
             stderr=result.stderr,
         )
 
 
-def rev_parse_origin(repo_root: Path, branch: str) -> str | None:
-    """Resolve ``refs/remotes/origin/<branch>`` to a commit SHA in ``repo_root``.
+def rev_parse_remote(repo_root: Path, remote: str, branch: str) -> str | None:
+    """Resolve ``refs/remotes/<remote>/<branch>`` to a commit SHA in ``repo_root``.
 
     Returns ``None`` when the ref does not exist or git is unavailable.
     Callers (notably `lifecycle.new_container` in origin-mode) treat
@@ -287,7 +378,7 @@ def rev_parse_origin(repo_root: Path, branch: str) -> str | None:
     """
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+            ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -327,8 +418,8 @@ def show_file_at_ref(repo_root: Path, ref: str, path: str) -> str | None:
     return result.stdout
 
 
-def branch_exists_in_source(repo_root: Path, branch: str) -> bool:
-    """Check whether `branch` exists in `repo_root` as a local or origin ref.
+def branch_exists_in_source(repo_root: Path, remote: str, branch: str) -> bool:
+    """Check whether `branch` exists in `repo_root` as a local or `remote` ref.
 
     Used by `jailbee new` for pre-flight validation before creating a container.
     Mirrors the in-container `_branch_exists_in_source` in lifecycle.py but
@@ -336,7 +427,7 @@ def branch_exists_in_source(repo_root: Path, branch: str) -> bool:
 
     Returns False if neither ref resolves, or if git is unavailable.
     """
-    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+    for ref in (f"refs/heads/{branch}", f"refs/remotes/{remote}/{branch}"):
         try:
             result = subprocess.run(
                 ["git", "show-ref", "--verify", "--quiet", ref],
@@ -505,17 +596,18 @@ def set_upstream(repo_root: Path, branch: str, upstream: str) -> None:
         raise GitError(f"git branch --set-upstream-to failed (exit {returncode})")
 
 
-def push_to_origin(
+def push_to_remote(
     repo_root: Path,
+    remote: str,
     src_ref: str,
     branch: str,
     *,
     force_with_lease: str | None = None,
 ) -> None:
-    """Run `git push origin <src_ref>:refs/heads/<branch>` in repo_root.
+    """Run `git push <remote> <src_ref>:refs/heads/<branch>` in repo_root.
 
     Used by `jailbee pr` to publish a container's fetched branch
-    (`refs/jailbee/<short>/<branch>`) to the GitHub origin under the host's
+    (`refs/jailbee/<short>/<branch>`) to the GitHub upstream under the host's
     credentials. With `force_with_lease=None` (default) no `--force` and no
     leading `+` is used — git's native fast-forward rule rejects a diverged
     remote branch, which is what we want before opening a PR. When
@@ -530,7 +622,7 @@ def push_to_origin(
     cmd = ["git", "push"]
     if force_with_lease is not None:
         cmd.append(f"--force-with-lease=refs/heads/{branch}:{force_with_lease}")
-    cmd += ["origin", f"{src_ref}:refs/heads/{branch}"]
+    cmd += [remote, f"{src_ref}:refs/heads/{branch}"]
     returncode = subprocess.call(cmd, cwd=repo_root)
     if returncode != 0:
         raise GitError(f"git push failed (exit {returncode})")

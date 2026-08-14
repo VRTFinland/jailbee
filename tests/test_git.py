@@ -9,7 +9,7 @@ from jailbee import git
 from jailbee.git import (
     detect_default_branch,
     get_branch_tracking,
-    get_origin_url,
+    get_remote_url,
 )
 
 
@@ -19,7 +19,7 @@ def test_detect_default_branch_main(mocker, tmp_path):
         args=[], returncode=0, stdout="origin/main\n", stderr=""
     )
 
-    result = detect_default_branch(tmp_path)
+    result = detect_default_branch(tmp_path, "origin")
 
     assert result == "main"
     mock_run.assert_called_once()
@@ -34,14 +34,14 @@ def test_detect_default_branch_dev(mocker, tmp_path):
         args=[], returncode=0, stdout="origin/dev\n", stderr=""
     )
 
-    assert detect_default_branch(tmp_path) == "dev"
+    assert detect_default_branch(tmp_path, "origin") == "dev"
 
 
 def test_detect_default_branch_fallback_on_nonzero(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(args=[], returncode=1, stdout="", stderr="fatal: ...")
 
-    assert detect_default_branch(tmp_path) == "main"
+    assert detect_default_branch(tmp_path, "origin") == "main"
 
 
 def test_detect_default_branch_fallback_on_oserror(mocker, tmp_path):
@@ -50,7 +50,7 @@ def test_detect_default_branch_fallback_on_oserror(mocker, tmp_path):
         side_effect=FileNotFoundError("git not found"),
     )
 
-    assert detect_default_branch(tmp_path) == "main"
+    assert detect_default_branch(tmp_path, "origin") == "main"
 
 
 def test_detect_default_branch_strips_origin_prefix(mocker, tmp_path):
@@ -61,7 +61,7 @@ def test_detect_default_branch_strips_origin_prefix(mocker, tmp_path):
     )
 
     # Strip leading "origin/" prefix only
-    assert detect_default_branch(tmp_path) == "feature/x"
+    assert detect_default_branch(tmp_path, "origin") == "feature/x"
 
 
 def test_detect_default_branch_unexpected_output(mocker, tmp_path):
@@ -71,10 +71,10 @@ def test_detect_default_branch_unexpected_output(mocker, tmp_path):
         args=[], returncode=0, stdout="weird-output\n", stderr=""
     )
 
-    assert detect_default_branch(tmp_path) == "main"
+    assert detect_default_branch(tmp_path, "origin") == "main"
 
 
-def test_get_origin_url_returns_url(mocker, tmp_path):
+def test_get_remote_url_returns_url(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(
         args=[],
@@ -83,13 +83,13 @@ def test_get_origin_url_returns_url(mocker, tmp_path):
         stderr="",
     )
 
-    assert get_origin_url(tmp_path) == "git@github.com:example/example.git"
+    assert get_remote_url(tmp_path, "origin") == "git@github.com:example/example.git"
     call_args = mock_run.call_args
     assert call_args.args[0] == ["git", "remote", "get-url", "origin"]
     assert call_args.kwargs["cwd"] == tmp_path
 
 
-def test_get_origin_url_no_origin(mocker, tmp_path):
+def test_get_remote_url_no_origin(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(
         args=[],
@@ -98,23 +98,23 @@ def test_get_origin_url_no_origin(mocker, tmp_path):
         stderr="error: No such remote 'origin'\n",
     )
 
-    assert get_origin_url(tmp_path) is None
+    assert get_remote_url(tmp_path, "origin") is None
 
 
-def test_get_origin_url_empty_output(mocker, tmp_path):
+def test_get_remote_url_empty_output(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(args=[], returncode=0, stdout="\n", stderr="")
 
-    assert get_origin_url(tmp_path) is None
+    assert get_remote_url(tmp_path, "origin") is None
 
 
-def test_get_origin_url_no_git_binary(mocker, tmp_path):
+def test_get_remote_url_no_git_binary(mocker, tmp_path):
     mocker.patch(
         "jailbee.git.subprocess.run",
         side_effect=FileNotFoundError("git not found"),
     )
 
-    assert get_origin_url(tmp_path) is None
+    assert get_remote_url(tmp_path, "origin") is None
 
 
 def test_get_branch_tracking_configured(mocker, tmp_path):
@@ -177,7 +177,7 @@ def test_branch_exists_in_source_local_ref(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
-    assert branch_exists_in_source(tmp_path, "feat/x") is True
+    assert branch_exists_in_source(tmp_path, "origin", "feat/x") is True
     # First call probes refs/heads/<branch>
     first_call_args = mock_run.call_args_list[0].args[0]
     assert first_call_args[:5] == ["git", "show-ref", "--verify", "--quiet", "refs/heads/feat/x"]
@@ -194,7 +194,7 @@ def test_branch_exists_in_source_remote_ref(mocker, tmp_path):
         CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
     ]
 
-    assert branch_exists_in_source(tmp_path, "feat/x") is True
+    assert branch_exists_in_source(tmp_path, "origin", "feat/x") is True
     assert mock_run.call_count == 2
     second_call_args = mock_run.call_args_list[1].args[0]
     assert second_call_args[4] == "refs/remotes/origin/feat/x"
@@ -206,7 +206,7 @@ def test_branch_exists_in_source_missing(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(args=[], returncode=1, stdout="", stderr="")
 
-    assert branch_exists_in_source(tmp_path, "feat/missing") is False
+    assert branch_exists_in_source(tmp_path, "origin", "feat/missing") is False
     assert mock_run.call_count == 2  # tried both heads and remotes
 
 
@@ -218,7 +218,7 @@ def test_branch_exists_in_source_no_git_binary(mocker, tmp_path):
         side_effect=FileNotFoundError("git not found"),
     )
 
-    assert branch_exists_in_source(tmp_path, "feat/x") is False
+    assert branch_exists_in_source(tmp_path, "origin", "feat/x") is False
 
 
 def test_branch_exists_locally_present(mocker, tmp_path):
@@ -263,15 +263,15 @@ def test_branch_exists_locally_no_git_binary(mocker, tmp_path):
     assert branch_exists_locally(tmp_path, "feat/x") is False
 
 
-def test_fetch_origin_ref_invokes_git_fetch(mocker, tmp_path):
-    from jailbee.git import fetch_origin_ref
+def test_fetch_remote_ref_legacy_invokes_git_fetch(mocker, tmp_path):
+    from jailbee.git import fetch_remote_ref
 
     mock_run = mocker.patch(
         "jailbee.git.subprocess.run",
         return_value=CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
     )
 
-    fetch_origin_ref(tmp_path, "main")
+    fetch_remote_ref(tmp_path, "origin", "main")
 
     mock_run.assert_called_once()
     call = mock_run.call_args
@@ -279,8 +279,8 @@ def test_fetch_origin_ref_invokes_git_fetch(mocker, tmp_path):
     assert call.kwargs["cwd"] == tmp_path
 
 
-def test_fetch_origin_ref_raises_on_nonzero(mocker, tmp_path):
-    from jailbee.git import GitFetchError, fetch_origin_ref
+def test_fetch_remote_ref_legacy_raises_on_nonzero(mocker, tmp_path):
+    from jailbee.git import GitFetchError, fetch_remote_ref
 
     mocker.patch(
         "jailbee.git.subprocess.run",
@@ -288,12 +288,12 @@ def test_fetch_origin_ref_raises_on_nonzero(mocker, tmp_path):
     )
 
     with pytest.raises(GitFetchError) as exc:
-        fetch_origin_ref(tmp_path, "main")
+        fetch_remote_ref(tmp_path, "origin", "main")
     assert "fatal: refusing" in exc.value.stderr
 
 
-def test_fetch_origin_ref_raises_when_git_missing(mocker, tmp_path):
-    from jailbee.git import GitFetchError, fetch_origin_ref
+def test_fetch_remote_ref_legacy_raises_when_git_missing(mocker, tmp_path):
+    from jailbee.git import GitFetchError, fetch_remote_ref
 
     mocker.patch(
         "jailbee.git.subprocess.run",
@@ -301,37 +301,37 @@ def test_fetch_origin_ref_raises_when_git_missing(mocker, tmp_path):
     )
 
     with pytest.raises(GitFetchError, match="not on PATH"):
-        fetch_origin_ref(tmp_path, "main")
+        fetch_remote_ref(tmp_path, "origin", "main")
 
 
-def test_rev_parse_origin_returns_sha(mocker, tmp_path):
-    from jailbee.git import rev_parse_origin
+def test_rev_parse_remote_legacy_returns_sha(mocker, tmp_path):
+    from jailbee.git import rev_parse_remote
 
     mocker.patch(
         "jailbee.git.subprocess.run",
         return_value=CompletedProcess(args=[], returncode=0, stdout="abc123def456\n", stderr=""),
     )
-    assert rev_parse_origin(tmp_path, "main") == "abc123def456"
+    assert rev_parse_remote(tmp_path, "origin", "main") == "abc123def456"
 
 
-def test_rev_parse_origin_returns_none_when_missing(mocker, tmp_path):
-    from jailbee.git import rev_parse_origin
+def test_rev_parse_remote_legacy_returns_none_when_missing(mocker, tmp_path):
+    from jailbee.git import rev_parse_remote
 
     mocker.patch(
         "jailbee.git.subprocess.run",
         return_value=CompletedProcess(args=[], returncode=1, stdout="", stderr=""),
     )
-    assert rev_parse_origin(tmp_path, "main") is None
+    assert rev_parse_remote(tmp_path, "origin", "main") is None
 
 
-def test_rev_parse_origin_returns_none_when_git_missing(mocker, tmp_path):
-    from jailbee.git import rev_parse_origin
+def test_rev_parse_remote_legacy_returns_none_when_git_missing(mocker, tmp_path):
+    from jailbee.git import rev_parse_remote
 
     mocker.patch(
         "jailbee.git.subprocess.run",
         side_effect=FileNotFoundError("git not found"),
     )
-    assert rev_parse_origin(tmp_path, "main") is None
+    assert rev_parse_remote(tmp_path, "origin", "main") is None
 
 
 def test_show_file_at_ref_returns_content(mocker, tmp_path):
@@ -973,16 +973,16 @@ def test_run_capture_oserror_returns_false(mocker):
 
 
 # ---------------------------------------------------------------------------
-# push_to_origin
+# push_to_remote
 # ---------------------------------------------------------------------------
 
 
-def test_push_to_origin_builds_refspec_and_inherits_output(mocker, tmp_path):
-    from jailbee.git import push_to_origin
+def test_push_to_remote_legacy_builds_refspec_and_inherits_output(mocker, tmp_path):
+    from jailbee.git import push_to_remote
 
     call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
 
-    push_to_origin(tmp_path, "refs/jailbee/feat-foo/feat/foo", "feat/foo")
+    push_to_remote(tmp_path, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo")
 
     call.assert_called_once_with(
         ["git", "push", "origin", "refs/jailbee/feat-foo/feat/foo:refs/heads/feat/foo"],
@@ -990,12 +990,12 @@ def test_push_to_origin_builds_refspec_and_inherits_output(mocker, tmp_path):
     )
 
 
-def test_push_to_origin_never_passes_force(mocker, tmp_path):
-    from jailbee.git import push_to_origin
+def test_push_to_remote_legacy_never_passes_force(mocker, tmp_path):
+    from jailbee.git import push_to_remote
 
     call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
 
-    push_to_origin(tmp_path, "refs/jailbee/x/main", "main")
+    push_to_remote(tmp_path, "origin", "refs/jailbee/x/main", "main")
 
     args = call.call_args.args[0]
     assert "--force" not in args
@@ -1003,13 +1003,13 @@ def test_push_to_origin_never_passes_force(mocker, tmp_path):
     assert not any(spec.startswith("+") for spec in args)
 
 
-def test_push_to_origin_raises_git_error_on_failure(mocker, tmp_path):
-    from jailbee.git import GitError, push_to_origin
+def test_push_to_remote_legacy_raises_git_error_on_failure(mocker, tmp_path):
+    from jailbee.git import GitError, push_to_remote
 
     mocker.patch("jailbee.git.subprocess.call", return_value=1)
 
     with pytest.raises(GitError, match="git push failed"):
-        push_to_origin(tmp_path, "refs/jailbee/x/feat/y", "feat/y")
+        push_to_remote(tmp_path, "origin", "refs/jailbee/x/feat/y", "feat/y")
 
 
 def test_check_ref_format_valid(mocker):
@@ -1079,11 +1079,13 @@ def test_set_upstream_builds_command(mocker, tmp_path):
     )
 
 
-def test_push_to_origin_force_with_lease(mocker, tmp_path):
-    from jailbee.git import push_to_origin
+def test_push_to_remote_legacy_force_with_lease(mocker, tmp_path):
+    from jailbee.git import push_to_remote
 
     call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
-    push_to_origin(tmp_path, "refs/jailbee/x/dev-1", "user/nice", force_with_lease="deadbeef")
+    push_to_remote(
+        tmp_path, "origin", "refs/jailbee/x/dev-1", "user/nice", force_with_lease="deadbeef"
+    )
     call.assert_called_once_with(
         [
             "git",
@@ -1321,3 +1323,234 @@ def test_count_commits_between_returns_none_on_failure(tmp_path, mocker):
     mocker.patch("jailbee.git.subprocess.run", side_effect=OSError)
 
     assert count_commits_between(tmp_path, "HEAD", "abc123") is None
+
+
+# ---------------------------------------------------------------------------
+# detect_upstream_remote
+# ---------------------------------------------------------------------------
+
+
+def _fake_git(mocker, *, remotes, config=None, head_symrefs=(), current_branch=None):
+    """Dispatch `jailbee.git.subprocess.run` on argv, modelling a real repo.
+
+    `remotes` is the output of `git remote`, `config` a `git config --get` map,
+    `head_symrefs` the remotes that have a `refs/remotes/<r>/HEAD` symref, and
+    `current_branch` what `git rev-parse --abbrev-ref HEAD` reports (None for a
+    detached HEAD).
+    """
+    config = config or {}
+
+    def run(argv, **kwargs):
+        if argv[:2] == ["git", "remote"] and len(argv) == 2:
+            out = "".join(f"{r}\n" for r in remotes)
+            return CompletedProcess(args=argv, returncode=0, stdout=out, stderr="")
+        if argv[:3] == ["git", "config", "--get"]:
+            value = config.get(argv[3])
+            if value is None:
+                return CompletedProcess(args=argv, returncode=1, stdout="", stderr="")
+            return CompletedProcess(args=argv, returncode=0, stdout=f"{value}\n", stderr="")
+        if argv[:2] == ["git", "symbolic-ref"]:
+            ref = argv[-1]
+            if ref == "HEAD":
+                if current_branch is None:
+                    return CompletedProcess(
+                        args=argv,
+                        returncode=1,
+                        stdout="",
+                        stderr="fatal: ref HEAD is not a symbolic ref",
+                    )
+                return CompletedProcess(
+                    args=argv, returncode=0, stdout=f"{current_branch}\n", stderr=""
+                )
+            for remote in head_symrefs:
+                if ref == f"refs/remotes/{remote}/HEAD":
+                    return CompletedProcess(
+                        args=argv, returncode=0, stdout=f"{remote}/main\n", stderr=""
+                    )
+            return CompletedProcess(args=argv, returncode=1, stdout="", stderr="fatal: no such ref")
+        raise AssertionError(f"unexpected git call: {argv}")
+
+    return mocker.patch("jailbee.git.subprocess.run", side_effect=run)
+
+
+def test_detect_upstream_remote_prefers_origin_when_it_exists(mocker, tmp_path):
+    """Any repo that has an `origin` keeps behaving exactly as it did before.
+
+    Deliberately ahead of every other signal: a fork workflow (`origin`=fork,
+    `upstream`=canonical) would otherwise start pushing container work to the
+    canonical repo the moment a branch happened to track it.
+    """
+    _fake_git(
+        mocker,
+        remotes=["origin", "upstream"],
+        config={"remote.pushDefault": "upstream", "branch.main.remote": "upstream"},
+        head_symrefs=["upstream"],
+        current_branch="main",
+    )
+
+    assert git.detect_upstream_remote(tmp_path) == "origin"
+
+
+def test_detect_upstream_remote_uses_the_sole_remote_whatever_its_name(mocker, tmp_path):
+    _fake_git(mocker, remotes=["public"], current_branch="main")
+
+    assert git.detect_upstream_remote(tmp_path) == "public"
+
+
+def test_detect_upstream_remote_honours_push_default(mocker, tmp_path):
+    """`remote.pushDefault` is the git-native way to disambiguate; jailbee has no key of its own."""
+    _fake_git(
+        mocker,
+        remotes=["public", "history"],
+        config={"remote.pushDefault": "public"},
+        current_branch="main",
+    )
+
+    assert git.detect_upstream_remote(tmp_path) == "public"
+
+
+def test_detect_upstream_remote_falls_back_to_current_branch_tracking(mocker, tmp_path):
+    _fake_git(
+        mocker,
+        remotes=["public", "history"],
+        config={"branch.main.remote": "public"},
+        current_branch="main",
+    )
+
+    assert git.detect_upstream_remote(tmp_path) == "public"
+
+
+def test_detect_upstream_remote_uses_the_remote_that_has_a_head_symref(mocker, tmp_path):
+    """The signal that survives `git remote rename` and an unpushed branch.
+
+    A fresh local branch has no `branch.<b>.remote` at all, so tracking alone
+    leaves a two-remote repo unresolved. `refs/remotes/<r>/HEAD` exists only
+    for the remote the repo was cloned from, and `git remote rename` moves it.
+    """
+    _fake_git(
+        mocker,
+        remotes=["history", "public"],
+        head_symrefs=["public"],
+        current_branch="feature/x",
+    )
+
+    assert git.detect_upstream_remote(tmp_path) == "public"
+
+
+def test_detect_upstream_remote_returns_none_when_genuinely_ambiguous(mocker, tmp_path):
+    """Two remotes, no `origin`, no pushDefault, no tracking, no HEAD symref."""
+    _fake_git(mocker, remotes=["history", "public"], current_branch="feature/x")
+
+    assert git.detect_upstream_remote(tmp_path) is None
+
+
+def test_detect_upstream_remote_returns_none_without_remotes(mocker, tmp_path):
+    _fake_git(mocker, remotes=[])
+
+    assert git.detect_upstream_remote(tmp_path) is None
+
+
+def test_detect_upstream_remote_returns_none_without_git(mocker, tmp_path):
+    mocker.patch("jailbee.git.subprocess.run", side_effect=FileNotFoundError("git not found"))
+
+    assert git.detect_upstream_remote(tmp_path) is None
+
+
+def test_detect_upstream_remote_ignores_signals_naming_a_missing_remote(mocker, tmp_path):
+    """Stale config must not win: `remote.pushDefault` can outlive the remote."""
+    _fake_git(
+        mocker,
+        remotes=["history", "public"],
+        config={"remote.pushDefault": "deleted-remote"},
+        head_symrefs=["public"],
+        current_branch="feature/x",
+    )
+
+    assert git.detect_upstream_remote(tmp_path) == "public"
+
+
+# ---------------------------------------------------------------------------
+# host-side helpers honour a non-default remote name
+# ---------------------------------------------------------------------------
+
+
+def test_detect_default_branch_uses_the_given_remote(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="public/dev\n", stderr=""),
+    )
+
+    assert git.detect_default_branch(tmp_path, "public") == "dev"
+    assert run.call_args.args[0] == [
+        "git",
+        "symbolic-ref",
+        "--short",
+        "refs/remotes/public/HEAD",
+    ]
+
+
+def test_get_remote_url_uses_the_given_remote(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(
+            args=[], returncode=0, stdout="git@github.com:Acme/repo.git\n", stderr=""
+        ),
+    )
+
+    assert git.get_remote_url(tmp_path, "public") == "git@github.com:Acme/repo.git"
+    assert run.call_args.args[0] == ["git", "remote", "get-url", "public"]
+
+
+def test_fetch_remote_ref_uses_the_given_remote(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+    )
+
+    git.fetch_remote_ref(tmp_path, "public", "feat/x")
+
+    assert run.call_args.args[0] == ["git", "fetch", "public", "feat/x"]
+
+
+def test_fetch_remote_ref_names_the_remote_in_the_error(mocker, tmp_path):
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=1, stdout="", stderr="boom"),
+    )
+
+    with pytest.raises(git.GitFetchError, match="git fetch public feat/x"):
+        git.fetch_remote_ref(tmp_path, "public", "feat/x")
+
+
+def test_rev_parse_remote_uses_the_given_remote(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="deadbeef\n", stderr=""),
+    )
+
+    assert git.rev_parse_remote(tmp_path, "public", "feat/x") == "deadbeef"
+    assert run.call_args.args[0][-1] == "refs/remotes/public/feat/x"
+
+
+def test_branch_exists_in_source_checks_the_given_remote(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=1, stdout="", stderr=""),
+    )
+
+    assert git.branch_exists_in_source(tmp_path, "public", "feat/x") is False
+    checked = [call.args[0][-1] for call in run.call_args_list]
+    assert checked == ["refs/heads/feat/x", "refs/remotes/public/feat/x"]
+
+
+def test_push_to_remote_uses_the_given_remote(mocker, tmp_path):
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+
+    git.push_to_remote(tmp_path, "public", "refs/jailbee/x/feat", "feat")
+
+    assert call.call_args.args[0] == [
+        "git",
+        "push",
+        "public",
+        "refs/jailbee/x/feat:refs/heads/feat",
+    ]

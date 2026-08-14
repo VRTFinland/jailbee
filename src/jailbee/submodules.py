@@ -760,6 +760,17 @@ def _container_subrepo_exists(
     return True
 
 
+def _submodule_upstream_url(host_sub: Path) -> str | None:
+    """The upstream URL of the host sub-repo at `host_sub`, or None.
+
+    Resolved against the submodule's *own* directory rather than inherited from
+    `cfg.upstream_remote`: a submodule is a separate repository and may well
+    name its upstream something the superproject does not.
+    """
+    remote = git.detect_upstream_remote(host_sub) or git.DEFAULT_REMOTE
+    return git.get_remote_url(host_sub, remote)
+
+
 def _create_container_subrepo(
     incus: Incus,
     container: str,
@@ -814,7 +825,7 @@ def transport_submodules_to_container(
                 incus,
                 container,
                 sub_dir,
-                origin_url=git.get_origin_url(repo_root / path),
+                origin_url=_submodule_upstream_url(repo_root / path),
                 uid=uid,
                 gid=cfg.container_user.gid,
             )

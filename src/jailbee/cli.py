@@ -787,7 +787,7 @@ def new_cmd(
         from jailbee.git import branch_exists_in_source
 
         assert container_branch is not None
-        if branch_exists_in_source(cfg.repo_root, container_branch):
+        if branch_exists_in_source(cfg.repo_root, cfg.upstream_remote, container_branch):
             info(f"Branch '{container_branch}' already exists in source repo.")
             question = (
                 f"Use existing branch '{container_branch}'?"
@@ -2653,8 +2653,12 @@ def _print_push_summary(short: str, result: "PushResult") -> None:
     # (branch not on origin at all, the normal stacked-PR case) the failure
     # had no bearing on what was pushed, and warning would be noise.
     if result.fetch_error is not None and result.source_ref.startswith("refs/remotes/"):
+        # `refs/remotes/<remote>/<branch>` — remote names carry no slash, so the
+        # third segment is the remote the fetch actually used. Reading it back off
+        # the ref keeps the suggested command honest without threading `cfg` in.
+        remote = result.source_ref.split("/")[2]
         warn(
-            f"⚠ host 'git fetch origin {result.source}' failed: "
+            f"⚠ host 'git fetch {remote} {result.source}' failed: "
             f"{result.fetch_error} — pushed {result.source_ref} as the host "
             f"already had it, which may be stale."
         )
@@ -2799,7 +2803,7 @@ def _resolve_push_source(
         return resolved
     configured = cfg.push.default_source
     if configured == "default-branch":
-        return detect_default_branch(cfg.repo_root)
+        return detect_default_branch(cfg.repo_root, cfg.upstream_remote)
     if configured == "current":
         resolved = get_current_branch(cfg.repo_root)
         if resolved is None:
@@ -3052,7 +3056,7 @@ def _pick_push_source(
 
     from jailbee.git import detect_default_branch, get_current_branch
 
-    default_branch = detect_default_branch(cfg.repo_root)
+    default_branch = detect_default_branch(cfg.repo_root, cfg.upstream_remote)
     current_branch = get_current_branch(cfg.repo_root)
 
     if (
@@ -4362,7 +4366,9 @@ def pr_cmd(
                         f"Renamed local branch '{publish.fetch.branch}' → "
                         f"'{publish.publish_name}' to match the PR head."
                     )
-                    if git_mod.remote_ref_exists(cfg.repo_root, "origin", publish.publish_name):
+                    if git_mod.remote_ref_exists(
+                        cfg.repo_root, cfg.upstream_remote, publish.publish_name
+                    ):
                         git_mod.set_upstream(
                             cfg.repo_root, publish.publish_name, f"origin/{publish.publish_name}"
                         )

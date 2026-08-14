@@ -172,11 +172,12 @@ def test_update_on_host_hard_fails_on_git_error(mocker):
         submodules.update_submodules_on_host(Path("/host/repo"))
 
 
-def _cfg_repo(tmp_path):
+def _cfg_repo(tmp_path, *, upstream_remote="origin"):
     cfg = MagicMock()
     cfg.container_user.uid = 1000
     cfg.container_user.gid = 1000
     cfg.repo_root = tmp_path
+    cfg.upstream_remote = upstream_remote
     return cfg
 
 
@@ -405,7 +406,7 @@ def test_transport_to_container_creates_a_subrepo_the_container_lacks(mocker, tm
     calls, exec_stub = _exec_recorder(missing={"/home/dev/repo/lib/.git"})
     incus.exec.side_effect = exec_stub
     mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
-    mocker.patch("jailbee.submodules.git.get_origin_url", return_value=None)
+    mocker.patch("jailbee.submodules.git.get_remote_url", return_value=None)
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
@@ -438,7 +439,7 @@ def test_transport_to_container_points_a_new_subrepo_at_the_real_origin(mocker, 
     incus.exec.side_effect = exec_stub
     mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
     origin = mocker.patch(
-        "jailbee.submodules.git.get_origin_url",
+        "jailbee.submodules.git.get_remote_url",
         return_value="git@github.com:acme/lib.git",
     )
     mocker.patch("jailbee.submodules.git.push_url_multi")
@@ -455,6 +456,28 @@ def test_transport_to_container_points_a_new_subrepo_at_the_real_origin(mocker, 
         "origin",
         "git@github.com:acme/lib.git",
     ] in calls
+
+
+def test_transport_to_container_resolves_the_submodules_own_remote_name(mocker, tmp_path):
+    """A submodule is a separate repo and may name its upstream differently
+    from the superproject — so the name is resolved against the submodule's own
+    directory, not inherited from `cfg.upstream_remote`.
+    """
+    cfg = _cfg_repo(tmp_path, upstream_remote="public")
+    incus = MagicMock()
+    _calls, exec_stub = _exec_recorder(missing={"/home/dev/repo/lib/.git"})
+    incus.exec.side_effect = exec_stub
+    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
+    mocker.patch("jailbee.submodules.git.detect_upstream_remote", return_value="fork")
+    url = mocker.patch(
+        "jailbee.submodules.git.get_remote_url",
+        return_value="git@github.com:acme/lib.git",
+    )
+    mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+
+    assert url.call_args.args == (tmp_path / "lib", "fork")
 
 
 def test_transport_to_container_never_touches_an_existing_subrepo(mocker, tmp_path):

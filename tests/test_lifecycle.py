@@ -853,10 +853,10 @@ def test_new_container_sets_default_base_branch_label(make_cfg, tmp_path, mocker
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="abc1234",
     )
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
     opts = NewContainerOptions(
         container_branch="feat/foo",
@@ -883,7 +883,7 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
     incus.exists.return_value = False
     mocker.patch(
         "jailbee.lifecycle.branch_exists_in_source",
-        side_effect=lambda root, b: b == "feat/foo",
+        side_effect=lambda root, remote, b: b == "feat/foo",
     )
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
@@ -1374,7 +1374,7 @@ def test_new_container_announces_branch_decision(
     incus.exists.return_value = False
     incus.exec.return_value = ""
 
-    def host_check(_repo_root, name):
+    def host_check(_repo_root, _remote, name):
         # A given base must exist in source; whether <branch> does is what
         # decides between forking off the base and reusing the branch.
         if name == base:
@@ -1417,8 +1417,8 @@ def test_new_container_creates_branch_off_base(tmp_path, mocker):
     incus.exec.return_value = ""
 
     # Pre-flight host check: branch X is NOT in source; base Y IS in source.
-    def host_check(repo_root, branch):
-        del repo_root
+    def host_check(repo_root, remote, branch):
+        del repo_root, remote
         return branch == "feat/y"
 
     mocker.patch(
@@ -1427,7 +1427,7 @@ def test_new_container_creates_branch_off_base(tmp_path, mocker):
     )
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
-        side_effect=host_check,
+        side_effect=lambda repo_root, branch: host_check(repo_root, "origin", branch),
     )
 
     opts = NewContainerOptions(
@@ -1561,7 +1561,7 @@ def test_new_container_existing_branch_with_base_seeds_the_base_anchor(tmp_path,
     incus.exec.return_value = ""
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=True)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    rev_parse_origin = mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="basesha")
+    rev_parse_origin = mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
 
     opts = NewContainerOptions(
         container_branch="feat/x",
@@ -1576,7 +1576,7 @@ def test_new_container_existing_branch_with_base_seeds_the_base_anchor(tmp_path,
     )
     new_container(cfg, incus, opts)
 
-    assert rev_parse_origin.call_args.args[1] == "feat/y"
+    assert rev_parse_origin.call_args.args[2] == "feat/y"
     update_ref_cmds = [
         c.args[1]
         for c in incus.exec.call_args_list
@@ -1625,7 +1625,7 @@ def test_new_container_rewrites_origin_and_sets_tracking_for_existing_branch(tmp
         return_value=True,
     )
     mocker.patch(
-        "jailbee.git.get_origin_url",
+        "jailbee.git.get_remote_url",
         return_value="git@github.com:Acme/repo.git",
     )
     mocker.patch(
@@ -1680,7 +1680,7 @@ def test_new_container_tracking_remote_is_always_origin_in_the_container(tmp_pat
     incus.exists.return_value = False
     incus.exec.return_value = ""
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    mocker.patch("jailbee.git.get_origin_url", return_value="git@github.com:Acme/repo.git")
+    mocker.patch("jailbee.git.get_remote_url", return_value="git@github.com:Acme/repo.git")
     mocker.patch(
         "jailbee.git.get_branch_tracking",
         return_value=("upstream", "refs/heads/feat/x"),
@@ -1724,7 +1724,7 @@ def test_new_container_seeds_base_ref_from_host_origin_sha(tmp_path, mocker):
     incus.exec.return_value = ""
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=True)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    rev = mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="a4ebc3ed1234")
+    rev = mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="a4ebc3ed1234")
 
     opts = NewContainerOptions(
         container_branch="alice/fix/x",
@@ -1749,7 +1749,7 @@ def test_new_container_seeds_base_ref_from_host_origin_sha(tmp_path, mocker):
     i = cmd.index("update-ref")
     assert cmd[i + 1] == "refs/jailbee/base/release/0.98.0"
     assert cmd[i + 2] == "a4ebc3ed1234"
-    rev.assert_any_call(cfg.repo_root, "release/0.98.0")
+    rev.assert_any_call(cfg.repo_root, "origin", "release/0.98.0")
 
 
 def test_new_container_skips_base_seed_when_host_lacks_base_ref(tmp_path, mocker):
@@ -1762,7 +1762,7 @@ def test_new_container_skips_base_seed_when_host_lacks_base_ref(tmp_path, mocker
     incus.exec.return_value = ""
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=True)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=None)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
     mocker.patch("jailbee.lifecycle.rev_parse", return_value=None)
 
     opts = NewContainerOptions(
@@ -1804,7 +1804,7 @@ def test_new_container_rewrites_origin_and_sets_tracking_for_new_branch(tmp_path
         return_value=True,
     )
     mocker.patch(
-        "jailbee.git.get_origin_url",
+        "jailbee.git.get_remote_url",
         return_value="git@github.com:Acme/repo.git",
     )
     # Branch is brand-new locally → host has no tracking config for it
@@ -1849,7 +1849,7 @@ def test_new_container_skips_origin_rewrite_when_host_has_no_origin(tmp_path, mo
         "jailbee.lifecycle.branch_exists_locally",
         return_value=True,
     )
-    mocker.patch("jailbee.git.get_origin_url", return_value=None)
+    mocker.patch("jailbee.git.get_remote_url", return_value=None)
     mocker.patch("jailbee.git.get_branch_tracking", return_value=None)
 
     opts = NewContainerOptions(
@@ -1891,9 +1891,9 @@ def test_new_container_origin_mode_fetches_and_checkouts_commit(tmp_path, mocker
         "jailbee.lifecycle.branch_exists_in_source",
         return_value=False,
     )
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="abc123def456",
     )
 
@@ -1909,7 +1909,7 @@ def test_new_container_origin_mode_fetches_and_checkouts_commit(tmp_path, mocker
     )
     new_container(cfg, incus, opts)
 
-    fetch.assert_called_once_with(cfg.repo_root, "dev")
+    fetch.assert_called_once_with(cfg.repo_root, "origin", "dev")
 
     git_clone_calls = [
         c
@@ -1942,9 +1942,9 @@ def test_new_container_origin_mode_skips_fetch_when_autofetch_false(tmp_path, mo
         "jailbee.lifecycle.branch_exists_in_source",
         return_value=False,
     )
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="deadbeef",
     )
 
@@ -1974,7 +1974,7 @@ def test_new_container_origin_mode_errors_when_fetch_fails(tmp_path, mocker):
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.fetch_origin_ref",
+        "jailbee.lifecycle.fetch_remote_ref",
         side_effect=GitFetchError("fetch failed", stderr="fatal: connection refused"),
     )
 
@@ -2007,10 +2007,10 @@ def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
         return_value=False,
     )
     fetch = mocker.patch(
-        "jailbee.lifecycle.fetch_origin_ref",
+        "jailbee.lifecycle.fetch_remote_ref",
         side_effect=[GitFetchError("fetch failed", stderr="fatal: connection refused"), None],
     )
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=None)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     reported = mocker.patch("jailbee.retry.error")
@@ -2049,7 +2049,7 @@ def test_new_container_autofetch_retry_is_not_offered_off_tty(tmp_path, mocker):
         return_value=False,
     )
     fetch = mocker.patch(
-        "jailbee.lifecycle.fetch_origin_ref",
+        "jailbee.lifecycle.fetch_remote_ref",
         side_effect=GitFetchError("fetch failed", stderr="fatal: connection refused"),
     )
     mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
@@ -2082,7 +2082,7 @@ def test_new_container_origin_mode_errors_when_origin_ref_missing(tmp_path, mock
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value=None,
     )
 
@@ -2115,7 +2115,10 @@ def test_new_container_origin_mode_skipped_for_base_existing_locally(tmp_path, m
     incus.exists.return_value = False
     incus.exec.return_value = ""
 
-    def host_check(_repo_root, name):
+    def host_check(_repo_root, _remote, name):
+        return name == "feat/y"
+
+    def local_check(_repo_root, name):
         return name == "feat/y"
 
     mocker.patch(
@@ -2124,12 +2127,12 @@ def test_new_container_origin_mode_skipped_for_base_existing_locally(tmp_path, m
     )
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
-        side_effect=host_check,
+        side_effect=local_check,
     )
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     # Seed the base ref deterministically (base-seed now also calls
     # rev_parse_origin, so its invocation no longer proves origin-mode).
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="basesha")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
 
     opts = NewContainerOptions(
         container_branch="feat/x",
@@ -2180,7 +2183,7 @@ def test_new_container_origin_mode_skipped_when_branch_not_default(tmp_path, moc
         "jailbee.lifecycle.branch_exists_locally",
         return_value=True,
     )
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
     opts = NewContainerOptions(
         container_branch="feat/x",
@@ -2218,7 +2221,7 @@ def test_new_container_origin_mode_announces_origin_in_branch_note(tmp_path, moc
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="abc123def456",
     )
 
@@ -2256,7 +2259,7 @@ def test_new_container_origin_mode_when_base_is_origin_only(tmp_path, mocker):
     # Pre-flight: feat/y exists in source (via origin); feat/x does not.
     mocker.patch(
         "jailbee.lifecycle.branch_exists_in_source",
-        side_effect=lambda _r, n: n == "feat/y",
+        side_effect=lambda _r, _remote, n: n == "feat/y",
     )
     # But refs/heads/feat/y is absent — only origin has it.
     mocker.patch(
@@ -2264,7 +2267,7 @@ def test_new_container_origin_mode_when_base_is_origin_only(tmp_path, mocker):
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="deadbeefcafebabe",
     )
 
@@ -2318,14 +2321,14 @@ def test_new_container_announces_origin_base_when_base_only_in_origin(tmp_path, 
     incus.exec.return_value = ""
     mocker.patch(
         "jailbee.lifecycle.branch_exists_in_source",
-        side_effect=lambda _r, n: n == "feat/y",
+        side_effect=lambda _r, _remote, n: n == "feat/y",
     )
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
         return_value=False,
     )
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="abc123",
     )
 
@@ -2359,15 +2362,15 @@ def test_new_container_origin_only_base_autofetches(tmp_path, mocker):
 
     mocker.patch(
         "jailbee.lifecycle.branch_exists_in_source",
-        side_effect=lambda _r, n: n == "feat/y",
+        side_effect=lambda _r, _remote, n: n == "feat/y",
     )
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
         return_value=False,
     )
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch(
-        "jailbee.lifecycle.rev_parse_origin",
+        "jailbee.lifecycle.rev_parse_remote",
         return_value="abc123",
     )
 
@@ -2384,7 +2387,7 @@ def test_new_container_origin_only_base_autofetches(tmp_path, mocker):
     )
     new_container(cfg, incus, opts)
 
-    fetch.assert_called_once_with(cfg.repo_root, "feat/y")
+    fetch.assert_called_once_with(cfg.repo_root, "origin", "feat/y")
 
 
 def test_new_container_attaches_host_source_device_per_container(tmp_path, mocker):
@@ -3407,8 +3410,8 @@ def test_new_container_clone_commit_checks_out_that_commit(tmp_path, mocker):
     incus = MagicMock()
     incus.exists.return_value = False
     incus.exec.return_value = ""
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="basesha")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
 
     new_container(cfg, incus, _clone_commit_opts())
 
@@ -3444,7 +3447,7 @@ def test_new_container_clone_commit_ignores_a_same_named_host_branch(tmp_path, m
     incus.exec.return_value = ""
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=True)
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="basesha")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
 
     new_container(cfg, incus, _clone_commit_opts())
 
@@ -4422,8 +4425,8 @@ def _new_opts(**overrides):
 
 def _patch_new_container_deps(mocker):
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="abc1234")
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
 
 def test_new_container_runs_ensure_claude_when_enabled(make_cfg, tmp_path, mocker):
@@ -4537,8 +4540,8 @@ def test_new_container_invokes_on_phase_in_order(make_cfg, tmp_path, mocker):
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="abc1234")
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     # Autostart runs against a MagicMock incus; stub it so the test stays a
     # pure callback-ordering check.
     mocker.patch("jailbee.autostart.run_autostart")
@@ -4567,8 +4570,8 @@ def test_new_container_without_on_phase_is_unchanged(make_cfg, tmp_path, mocker)
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="abc1234")
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
     opts = NewContainerOptions(
         container_branch="feat/foo",
@@ -5293,7 +5296,7 @@ def test_clone_seeds_gie_base_ref(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     mocker.patch("jailbee.lifecycle._wire_origin_and_tracking")
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="deadbeefcafe")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="deadbeefcafe")
     # Submodules off so the clone path doesn't reach into submodule helpers.
     object.__setattr__(cfg.new, "submodules", False)
 
@@ -5329,7 +5332,7 @@ def test_clone_seed_swallows_missing_origin_base(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     mocker.patch("jailbee.lifecycle._wire_origin_and_tracking")
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="deadbeefcafe")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="deadbeefcafe")
     object.__setattr__(cfg.new, "submodules", False)
 
     # update-ref raises (object unreachable) — must not propagate.
@@ -5850,8 +5853,8 @@ def _new_env(make_cfg, tmp_path, mocker, *, local_branch: bool = True):
         return_value=local_branch,
     )
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=local_branch)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value="abc1234")
-    mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     return cfg, incus
 
 
@@ -6107,7 +6110,7 @@ def test_autofetch_done_suppresses_the_worker_side_fetch(make_cfg, tmp_path, moc
     """The foreground pre-flight already fetched; fetching again could resolve a
     newer commit than the one it assessed."""
     cfg, incus = _new_env(make_cfg, tmp_path, mocker, local_branch=False)
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=None)
     mocker.patch("jailbee.autostart.run_autostart")
 
@@ -6119,7 +6122,7 @@ def test_autofetch_done_suppresses_the_worker_side_fetch(make_cfg, tmp_path, moc
 def test_the_foreground_path_still_fetches(make_cfg, tmp_path, mocker):
     """Guard for the flag's default: a plain `gie new` must keep autofetching."""
     cfg, incus = _new_env(make_cfg, tmp_path, mocker, local_branch=False)
-    fetch = mocker.patch("jailbee.lifecycle.fetch_origin_ref")
+    fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=None)
     mocker.patch("jailbee.autostart.run_autostart")
 
@@ -6221,7 +6224,7 @@ def test_branch_config_read_from_origin_resolved_sha_for_an_origin_only_branch(
     """
     cfg, incus = _new_env(make_cfg, tmp_path, mocker, local_branch=False)
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=True)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=_ORIGIN_SHA)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=_ORIGIN_SHA)
     load = mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=None)
     mocker.patch("jailbee.autostart.run_autostart")
 
@@ -6240,7 +6243,7 @@ def test_branch_config_read_from_the_base_commit_when_forking_off_origin_default
     autostart read) is of `origin/main`'s commit; the label names that branch.
     """
     cfg, incus = _new_env(make_cfg, tmp_path, mocker, local_branch=False)
-    mocker.patch("jailbee.lifecycle.rev_parse_origin", return_value=_ORIGIN_SHA)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=_ORIGIN_SHA)
     load = mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=None)
     mocker.patch("jailbee.autostart.run_autostart")
 
