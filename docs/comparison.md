@@ -57,6 +57,7 @@ Concretely, that means the container behaves like a Linux box you own:
 |---|---|
 | Run the repo's existing `docker-compose.yml` | Works unmodified — the container runs **its own Docker daemon** (`security.nesting`). No project renaming, no port remapping, no adapter for your stack. |
 | Run an Android emulator or a KVM VM | Declare `host_devices: [{ path: /dev/kvm }]` and it's there. Same for `/dev/net/tun`, a USB device, whatever the repo needs. |
+| Drive a phone plugged into your laptop | Bind-mount the host adb server's socket and set `ADB_SERVER_SOCKET`; `adb` inside the container then sees the host's devices. [Recipe](project-config.md#talking-to-android-devices-over-adb). |
 | Run systemd services | It has systemd. |
 | Test your stack in a real browser | `jailbee chrome <name>` launches Chrome **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
 | Use a JetBrains IDE against the code | `jailbee ide <name>`, same passthrough. |
@@ -74,9 +75,15 @@ jailbee doesn't have the problem.
 Genericity inside the container doesn't mean the container is open:
 
 - **Per-container egress allowlist** (`jailbee net strict|loose`), enforced by a
-  kernel-level ACL. `github.com` is deliberately **not** in the default strict
-  list, so an unattended agent can't surprise-push. Flip to `loose` for the
-  minute you need it, with an auto-revert TTL.
+  kernel-level ACL. You write hostnames and ports — `api.example.com:443`,
+  not an IP range — and jailbee resolves them, accumulates the addresses a
+  rotating CDN hands out, and pins each container's `/etc/hosts` to the
+  same set so its resolver can't drift onto an address the ACL drops. It
+  filters at the network layer rather than in an HTTP proxy, so `ssh`,
+  `git+ssh` and a database connection are covered by the same list.
+  `github.com` is deliberately **not** in the default strict list, so an
+  unattended agent can't surprise-push. Flip to `loose` for the minute you
+  need it, with an auto-revert TTL.
 - **Secrets are read-only or absent.** GnuPG, SSH agent and gitconfig are
   bind-mounted read-only; everything else stays out unless you declare it.
 - **Snapshots.** `jailbee snapshot create` before you let it run, `restore` when
@@ -125,6 +132,11 @@ cost of that is transport, so jailbee makes the container a git remote:
   land in `refs/jailbee/<short>/*` on the host.
 - Each container knows its **base branch**, so `jailbee ls` can show how far ahead
   it is, and `jailbee git retarget` re-points it when a stacked PR's base moves.
+- **Submodules travel with the superproject.** A separate clone per branch is
+  exactly what makes sub-repos painful, so jailbee initialises them offline
+  from the read-only host mount on `jailbee new` and moves their objects over the
+  same transport on every push and pull — see
+  [Git bridge](git-bridge.md#submodules).
 - `jailbee new --pr <N>` builds a container from a pull request for review;
   `jailbee pr` opens or updates a draft PR from a container, generating the branch
   name and description when `claude.enabled`.
@@ -167,7 +179,7 @@ apply to that model. Note the two rows where jailbee is the one with the ❌.
 | Two branches both listening on `:3000` | 🟡 each forwarded to a different host port | 🟡 a port range per feature | ❌ | ✅ | ✅ |
 | Run an emulator or a VM (`/dev/kvm`) | 🟡 if you pass the device in yourself | ❌ | ❌ | ❌ no device passthrough documented | ✅ `host_devices` |
 | A browser and an IDE **inside** the boundary, on your own screen | ❌ community noVNC feature only | ❌ | n/a — they run on the host | ❌ | ✅ |
-| Restrict what the code inside can reach | ❌ | ❌ | ✅ per tool, HTTP | ✅ HTTP(S) only, rest dropped | ✅ any protocol, `strict`/`loose` + TTL |
+| Restrict what the code inside can reach | ❌ | ❌ | ✅ per tool, HTTP | ✅ HTTP(S) only, rest dropped | ✅ `host:port` rules, any protocol |
 | Keep an agent out of your real checkout | 🟡 opt-in clone into a volume | ❌ | 🟡 per-path grants | 🟡 `--clone` | ✅ always its own clone |
 | Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✅ `jailbee git push/pull/diff` |
 | Snapshot before an agent runs, roll back after | ❌ rebuild | ❌ | n/a | ❌ recreate | ✅ |

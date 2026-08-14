@@ -112,7 +112,11 @@
           <p>
             An agent that cannot reach the network cannot do its job, so the question was never
             whether it gets out — it is how wide you leave the opening. <code>jailbee net strict</code>
-            allows the hosts your build actually needs. <code>jailbee net loose</code> widens it for a set time and
+            allows the hosts your build actually needs. You name them the way you'd say them out
+            loud — <code>api.example.com:443</code>, not an IP range — and JailBee keeps the rule
+            pointed at the right addresses as they rotate underneath. The filtering happens below
+            the application, so an <code>ssh</code> or a database connection is covered by the same
+            list as a web request. <code>jailbee net loose</code> widens it for a set time and
             reverts on its own, so nobody leaves it open by forgetting. JailBee shields the host
             from what runs inside a container; it does not pretend to shield the code inside from
             the world.
@@ -177,6 +181,20 @@
               <strong>Fast to spin up, easy to watch.</strong> New containers start in about a
               minute because they're cheap copies of one shared image, and a live dashboard shows
               every one of them across every project.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Submodules come along.</strong> If your project pulls in other repositories,
+              they are set up for you in every new container and travel with your commits in both
+              directions — nothing to prepare by hand on either side.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A save point before the risky part.</strong> Take a snapshot of a container
+              before you let an agent loose in it, and put it back the way it was in seconds when
+              the run goes wrong.
             </p>
           </div>
         </div>
