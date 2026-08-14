@@ -130,6 +130,54 @@ alias). **There is no `jailbee git merge`** — it was replaced by `jailbee git 
 All bridge commands refuse on mount-mode containers (they share the host
 tree — use git on the host directly).
 
+## Submodules
+
+A container holds its own clone, which is what makes it disposable — and
+what makes submodules the hard part, because a sub-repo the peer has never
+seen has no objects to check out. jailbee moves them with the superproject,
+in both directions, without a round trip through the submodule's upstream.
+
+**On `jailbee new`.** Submodules are initialised recursively and *offline*:
+each one's URL is pointed at the matching subdirectory of the read-only
+`/mnt/host-source` mount, `submodule update --init` runs from there, and
+`submodule sync` then repoints `origin` at the real upstream. Nothing is
+fetched over the network, and every submodule lands on the container's
+branch. Set `new.submodules: false` to skip the whole step (see
+[config.md](config.md#new)).
+
+**On `jailbee git push` / `pull` / `checkout`.** Submodule objects travel over
+the same `ext::` transport the superproject uses. A sub-repo the peer is
+missing is created there first, so adding a submodule on one side and
+syncing works without preparing the other side by hand. Failures are loud:
+a `SubmoduleError` stops the operation rather than leaving the peer with a
+superproject whose gitlinks point at objects it doesn't have.
+
+**What you see.** `jailbee pull` prints a delimited `── Submodules` block
+after git's own output — per submodule `new → <sha>`, `<sha> → removed`, or
+a commit count with insertions and deletions — so a gitlink that moved is
+never buried in the superproject's diff. When a submodule can't be merged
+automatically, the same block names it as needing manual resolution.
+
+**Branch placement.** `jailbee submodule checkout` recursively puts submodules
+on the superproject's branch. It is purely local — it moves nothing between
+host and container — and works on either side: with no argument it aligns
+the host repo, with a container name it aligns that container.
+
+```bash
+jailbee submodule checkout               # host repo, current branch
+jailbee submodule checkout -b feat/x     # host repo, explicit branch
+jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
+```
+
+**Before you destroy.** `jailbee destroy`'s pre-flight check counts a changed
+submodule as work at risk — added, removed, committed ahead, or merely dirty
+— and names it in the summary, so a container is not thrown away because
+only its sub-repo held the change.
+
+Each submodule also carries its own base anchor, seeded from the gitlink
+recorded at the superproject's `refs/jailbee/base/<base>`, which is what lets
+per-submodule comparisons stay meaningful on a stacked branch.
+
 ## Stacked PRs
 
 When PR1 (`feat/a`) is waiting for review and PR2 builds on top of it,

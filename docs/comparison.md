@@ -125,6 +125,11 @@ cost of that is transport, so jailbee makes the container a git remote:
   land in `refs/jailbee/<short>/*` on the host.
 - Each container knows its **base branch**, so `jailbee ls` can show how far ahead
   it is, and `jailbee git retarget` re-points it when a stacked PR's base moves.
+- **Submodules travel with the superproject.** A separate clone per branch is
+  exactly what makes sub-repos painful, so jailbee initialises them offline
+  from the read-only host mount on `jailbee new` and moves their objects over the
+  same transport on every push and pull — see
+  [Git bridge](git-bridge.md#submodules).
 - `jailbee new --pr <N>` builds a container from a pull request for review;
   `jailbee pr` opens or updates a draft PR from a container, generating the branch
   name and description when `claude.enabled`.

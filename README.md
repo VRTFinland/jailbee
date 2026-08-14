@@ -31,6 +31,9 @@ its origin, not its scope.
 - **Host↔container git bridge** — the container acts as a git remote; move
   commits with `jailbee git push`/`pull`/`checkout` instead of round-tripping
   through GitHub.
+- **Submodules that travel** — sub-repos are initialised offline on
+  `jailbee new` and their objects move with the superproject on every
+  push/pull, so a repo with submodules needs no manual setup on either side.
 - **Nested Docker** — `security.nesting=true` out of the box on Ubuntu 26.04.
 - **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`) and Chrome
   (`jailbee chrome`) from inside a container onto your Wayland session.
