@@ -28,9 +28,15 @@ A quick mental model before the commands:
   `pull` / `push`) rather than through GitHub.
 - **Network modes.** Each container runs `strict` (kernel egress allowlist)
   or `loose` (open egress, auto-reverts) — switch with `jailbee net`.
-- **Shared state persists.** Caches, the JetBrains config, Chrome profile,
-  and Claude state live in a shared dir, so they survive `jailbee destroy` /
-  `jailbee new` cycles.
+- **One shared state layer per repo.** Package-manager caches, the JetBrains
+  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a
+  shared dir outside the containers, bind-mounted into every one of them.
+  It works across both axes: branches running *in parallel* share one warm
+  Gradle or pnpm cache and one set of tool settings — configure something in
+  one container and the others have it — and the state also survives
+  `jailbee destroy` / `jailbee new` cycles. It is a layer of its own, so
+  nothing a container does leaks into your host's own dotfiles. See
+  [`shared_caches`](config.md#shared_caches).
 
 ## Configure
 

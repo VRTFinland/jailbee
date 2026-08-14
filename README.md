@@ -57,6 +57,13 @@ its origin, not its scope.
   `jailbee`, and `jailbee pr` writes the PR title and body. Start it
   automatically in a tmux window and the container is ready for an
   unattended run the moment it boots.
+- **One shared state layer per repo** — package-manager caches, the JetBrains
+  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a shared
+  dir bind-mounted into every one of the repo's containers. Branches running in
+  parallel draw on one warm Gradle or pnpm cache and one set of tool settings
+  rather than building each from scratch, and the state outlives
+  `jailbee destroy` / `jailbee new` — while nothing a container does reaches
+  your host's own dotfiles.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
   TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans every repo.
 

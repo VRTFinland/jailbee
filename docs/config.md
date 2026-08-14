@@ -411,6 +411,15 @@ attack-surface-widening and list only what the repo's workflow needs.
 
 ### `shared_caches`
 
+The state layer every container of this repo has in common. Each entry is
+bind-mounted read-write into *all* of them, which is what makes a tool
+worth configuring once: a package-manager cache stays warm across branches
+instead of being refilled per container, and settings written in one
+container are visible in the next. The same mounts outlive
+`jailbee destroy` / `jailbee new`, and they live in `<shared_dir>` rather
+than in your host's dotfiles, so a container can write to them freely
+without touching your own setup.
+
 List of bind-mounted shared caches, each `{name, host_subpath, container_path}`.
 The host source is `<shared_dir>/<host_subpath>`; `container_path` may
 start with `~` (expands to `/home/dev`).
