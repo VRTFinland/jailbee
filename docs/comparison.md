@@ -154,16 +154,26 @@ toolchain, per branch?"* and *"how do I stop the agent from wrecking my
 laptop?"* jailbee is trying to answer both at once, which is why it is
 heavier than either.
 
+The table below is about what each one *lets you do*. **✓** yes, **✗** no,
+**~** yes with the caveat named in the cell. Note the two rows where jailbee
+is the one with the ✗.
+
 | | **Dev Containers** | **BranchBox** | **nono** | **Docker Sandboxes** | **jailbee** |
 |---|---|---|---|---|---|
-| Isolates | a toolchain | a per-feature app stack | a process tree | an agent session | a full userland |
-| Boundary | host Docker daemon | host Docker daemon | Landlock + seccomp, Seatbelt | hypervisor, own kernel | unprivileged Incus container, shared kernel |
-| Your working tree | bind-mounted read-write (or cloned into a volume) | worktree on the host, read-write | the host tree itself | mounted read-write at the same path; `--clone` for a private copy | the container's own clone; commits move over a git bridge |
-| Nested Docker daemon | privileged `docker-in-docker`, or the host socket | no — shares the host daemon | no | yes, one per sandbox | yes (`security.nesting`) |
-| Desktop browser / IDE **inside** the boundary | no | no | n/a — they run on the host | no | yes, on your Wayland session |
-| Egress control | none | none | per-tool L7 credential proxy | deny-by-default HTTP(S) proxy; other protocols dropped | kernel ACL, any protocol, `strict`/`loose` + TTL |
-| Environment spec | committed `.devcontainer/` | generated from stack detection | agent profile (JSON, registry) | template image + kit YAML | committed `.jailbee/config.yaml` |
-| Platforms | Linux, macOS, Windows | Linux, macOS | Linux, macOS, WSL2 | macOS (Apple silicon), Windows 11, Ubuntu 24.04+ — hardware virtualisation required | Linux |
+| **What it is** | a toolchain in a container | a worktree + Compose per feature | a fence around one process | a microVM per agent run | a Linux machine per branch |
+| **Boundary** | host Docker daemon | host Docker daemon | Landlock + seccomp, Seatbelt | hypervisor, own kernel | Incus container, shared kernel |
+| Run the repo's `docker-compose.yml` unchanged | ✓ | ✓ | ✗ | ✓ | ✓ |
+| …without touching the host's Docker daemon | ~ privileged `docker-in-docker` | ✗ | ✗ | ✓ | ✓ |
+| Two branches both listening on `:3000` | ~ each forwarded to a different host port | ~ a port range per feature | ✗ | ✓ | ✓ |
+| Run an emulator or a VM (`/dev/kvm`) | ~ if you pass the device in yourself | ✗ | ✗ | ✗ no device passthrough documented | ✓ `host_devices` |
+| A browser and an IDE **inside** the boundary, on your own screen | ✗ community noVNC feature only | ✗ | n/a — they run on the host | ✗ | ✓ |
+| Restrict what the code inside can reach | ✗ | ✗ | ✓ per tool, HTTP | ✓ HTTP(S) only, rest dropped | ✓ any protocol, `strict`/`loose` + TTL |
+| Keep an agent out of your real checkout | ~ opt-in clone into a volume | ✗ | ~ per-path grants | ~ `--clone` | ✓ always its own clone |
+| Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✓ `jailbee git push/pull/diff` |
+| Snapshot before an agent runs, roll back after | ✗ rebuild | ✗ | n/a | ✗ recreate | ✓ |
+| Hold up when the **kernel** is what breaks | ✗ | ✗ | ✗ | ✓ own kernel per sandbox | ✗ shared kernel |
+| Work on macOS or Windows | ✓ | ~ macOS | ✓ | ✓ hardware virtualisation required | ✗ Linux only |
+| Ship the environment in the repo | ✓ `devcontainer.json` | ~ generated from stack detection | ~ per agent, not per repo | ~ per agent or team (kit YAML) | ✓ `.jailbee/config.yaml` |
 | Licence | open spec (MIT); VS Code's extension is Microsoft's | MIT | Apache-2.0 | free CLI, Docker sign-in required, governance is paid | GPL-3.0-or-later |
 
 ### Toolchain per branch: Dev Containers and BranchBox
