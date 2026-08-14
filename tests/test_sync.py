@@ -5096,8 +5096,6 @@ def test_emit_conflict_report_ignores_other_errors(mocker):
     assert recording.export_text().strip() == ""
 
 
-
-
 # ---- submodule anchor re-pin on refresh/retarget --------------------------
 
 
