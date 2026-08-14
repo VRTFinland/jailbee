@@ -112,7 +112,11 @@
           <p>
             An agent that cannot reach the network cannot do its job, so the question was never
             whether it gets out — it is how wide you leave the opening. <code>jailbee net strict</code>
-            allows the hosts your build actually needs. <code>jailbee net loose</code> widens it for a set time and
+            allows the hosts your build actually needs. You name them the way you'd say them out
+            loud — <code>api.example.com:443</code>, not an IP range — and JailBee keeps the rule
+            pointed at the right addresses as they rotate underneath. The filtering happens below
+            the application, so an <code>ssh</code> or a database connection is covered by the same
+            list as a web request. <code>jailbee net loose</code> widens it for a set time and
             reverts on its own, so nobody leaves it open by forgetting. JailBee shields the host
             from what runs inside a container; it does not pretend to shield the code inside from
             the world.
