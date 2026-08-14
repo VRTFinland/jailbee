@@ -1,12 +1,17 @@
 """Egress allowlist parsing and DNS resolution.
 
 `egress_allow` entries support six forms:
-    <hostname>             → resolve, all TCP ports
+    <hostname>             → resolve, any protocol/port
     <hostname>:<port>      → resolve, TCP/<port> only
-    <ipv4>                 → literal, all TCP ports
+    <ipv4>                 → literal, any protocol/port
     <ipv4>:<port>          → literal, TCP/<port> only
-    <cidr>                 → literal, all TCP ports
+    <cidr>                 → literal, any protocol/port
     <cidr>:<port>          → literal, TCP/<port> only
+
+The port-less forms emit an ACL rule with no `protocol` field, which
+Incus reads as "any protocol" (see `network.allowlist_acl_yaml` and
+`tests/test_network.py::test_acl_bare_host_has_no_port_field`) — UDP and
+ICMP included, not TCP alone.
 
 IPv6 is not supported (single `:` is unambiguous as the host/port
 separator).

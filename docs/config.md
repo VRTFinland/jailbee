@@ -475,19 +475,31 @@ this list. Each entry takes one of six forms:
 
 | Form | Meaning | Example |
 |---|---|---|
-| `<hostname>` | Resolve via DNS, allow all TCP ports to each IPv4 | `github.com` |
+| `<hostname>` | Resolve via DNS, allow **any protocol and port** to each IPv4 | `github.com` |
 | `<hostname>:<port>` | Resolve, allow only TCP/`<port>` | `github.com:22` |
-| `<ipv4>` | Allow all TCP ports | `192.168.1.5` |
+| `<ipv4>` | Allow any protocol and port | `192.168.1.5` |
 | `<ipv4>:<port>` | Allow only TCP/`<port>` | `192.168.1.5:5432` |
-| `<cidr>` | Allow all TCP ports | `10.0.0.0/8` |
+| `<cidr>` | Allow any protocol and port | `10.0.0.0/8` |
 | `<cidr>:<port>` | Allow only TCP/`<port>` | `10.0.0.0/8:5432` |
 
+The port-less forms emit an ACL rule with **no `protocol` field at all**,
+which Incus reads as "any protocol" — UDP and ICMP to that destination
+included, not only TCP. Adding `:<port>` narrows the rule to TCP. Prefer
+the `host:port` form when you know the port: `github.com:443` is a
+materially tighter rule than `github.com`.
+
 Hostname entries are resolved to IPv4 addresses at ACL-apply time
-(during `jailbee init` and `jailbee apply`). All A records returned by the
-resolver are inserted into the ACL — useful for CDN-fronted services
-that round-robin a small pool. If a CDN rotates IPs, run
-`jailbee apply --no-restart` to re-resolve and update the ACL live, without
-restarting any container.
+(during `jailbee init` and `jailbee apply`), and all A records returned by the
+resolver are inserted — useful for CDN-fronted services that round-robin a
+small pool. Resolution does not stop there: the `jailbee net refresh` timer
+re-resolves every registered repo's hostnames each minute into a
+**cumulative IP pool** (SQLite-backed, 24 h TTL per IP, capped per host), so
+a service that rotates through a set of addresses accumulates all of them
+and stale ones expire on their own. The same pass rewrites the ACL and
+mirrors the allowed IPs into each strict container's `/etc/hosts`, so the
+container's own resolver answers with exactly the addresses the ACL permits
+instead of drifting to an IP the ACL will drop. `jailbee apply --no-restart`
+forces the same refresh immediately, live, without restarting a container.
 
 **Error handling:** if any hostname fails to resolve, the entire ACL
 apply is aborted with a non-zero exit code — the previous ACL remains
@@ -495,8 +507,10 @@ in place. The list is meant to be minimal; a broken entry is treated
 as a real config error, not a soft warning.
 
 **Limitations:** IPv6 is not supported (a single `:` is the host/port
-separator, which would clash with IPv6 syntax). Only TCP is allowed
-via `host:port`. UDP egress beyond DNS is not user-configurable.
+separator, which would clash with IPv6 syntax). The `host:port` form is
+TCP-only — there is no way to allow a *specific* UDP port, so UDP to a
+destination is all-or-nothing via the port-less form (DNS and DHCP are
+allowed unconditionally, independent of this list).
 
 **`github.com` and strict-mode push:** `github.com` is
 intentionally **not** in the default `egress_allow`, so strict-mode work
