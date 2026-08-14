@@ -373,6 +373,10 @@ def _nongitlink_unmerged_paths(run: GitRun, top_dir: str) -> list[str]:
     return _nongitlink_paths(_unmerged_entries(run, top_dir))
 
 
+# Reasons that leave the submodule mid-merge; the rest were skipped untouched.
+_IN_MERGE_STATE_REASONS = frozenset({"content-conflict", "nested-conflict"})
+
+
 @dataclass(frozen=True)
 class UnresolvedSub:
     """A submodule whose gitlink conflict could not be auto-resolved."""
@@ -380,6 +384,14 @@ class UnresolvedSub:
     path: str
     reason: str  # "dirty" | "content-conflict" | "nested-conflict" | "deleted-side"
     output: str  # captured git output (CONFLICT lines), "" when N/A
+
+    @property
+    def in_merge_state(self) -> bool:
+        """True when git left this submodule mid-merge, so it needs resolving
+        and a commit; False when it was skipped untouched (dirty tree, gitlink
+        present on only one side) and needs a different fix entirely.
+        """
+        return self.reason in _IN_MERGE_STATE_REASONS
 
 
 @dataclass(frozen=True)
@@ -449,11 +461,12 @@ def _resolve_one_gitlink(
     nested = resolve_gitlink_conflicts(run, sub, message=message)
     resolved = [f"{path}/{p}" for p in nested.resolved]
     if nested.unresolved or _has_unmerged(run, sub):
+        # The nested entries are reported in their own right (prefixed), so the
+        # parent only records that it is blocked on them — no restated detail.
         unresolved = [
             UnresolvedSub(f"{path}/{u.path}", u.reason, u.output) for u in nested.unresolved
         ]
-        detail = "; ".join(f"{u.path} ({u.reason})" for u in nested.unresolved)
-        unresolved.append(UnresolvedSub(path, "nested-conflict", detail))
+        unresolved.append(UnresolvedSub(path, "nested-conflict", ""))
         return (resolved, unresolved)
 
     if entries:

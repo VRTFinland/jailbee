@@ -2788,8 +2788,9 @@ def test_push_and_merge_merge_in_progress_raises(mocker, make_cfg, tmp_path):
         return_value=["README.md"],
     )
 
-    with pytest.raises(SyncError, match="left in merge state"):
+    with pytest.raises(SyncError) as excinfo:
         push_and_merge(cfg, incus, "feat-foo")
+    assert excinfo.value.report.nongitlink == ["README.md"]
 
 
 def test_push_and_merge_resolves_gitlinks_and_commits(mocker, make_cfg, tmp_path):
@@ -2869,8 +2870,15 @@ def test_push_and_merge_leaves_state_when_unresolved(mocker, make_cfg, tmp_path)
     mocker.patch("jailbee.sync.submodules._has_unmerged", return_value=True)
     mocker.patch("jailbee.sync.submodules._nongitlink_unmerged_paths", return_value=[])
 
-    with pytest.raises(SyncError, match="vendor/baz"):
+    with pytest.raises(SyncError) as excinfo:
         push_and_merge(cfg, incus, "feat-foo")
+
+    # Same structured report as the pull path, so the CLI renders one block.
+    exc = excinfo.value
+    assert isinstance(exc, sync.MergeConflictError)
+    assert exc.report.resolution.resolved == ["lib/foo"]
+    assert [u.path for u in exc.report.resolution.unresolved] == ["vendor/baz"]
+    assert "jailbee shell feat-foo" in exc.report.location
 
     commit_calls = [c for c in incus.exec.call_args_list if "commit" in c.args[1]]
     assert commit_calls == []
@@ -2970,8 +2978,13 @@ def test_push_and_merge_conflict_emits_resolution_hint(mocker, make_cfg, tmp_pat
     _common_push_patches(mocker, cfg, full)
     mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
 
-    with pytest.raises(SyncError, match=r"non-submodule conflicts: README\.md"):
+    with pytest.raises(SyncError) as excinfo:
         push_and_merge(cfg, incus, "feat-foo")
+
+    block = sync.render_submodule_report(conflict=excinfo.value.report)
+    assert block is not None
+    assert "non-submodule conflicts: README.md" in block
+    assert "jailbee shell feat-foo" in block
 
 
 def test_push_and_rebase_happy_path(mocker, make_cfg, tmp_path):
@@ -4915,6 +4928,77 @@ def test_render_conflict_report_lists_resolved_and_unresolved():
     assert "merge state" in out
 
 
+def _conflict_report_all_outcomes():
+    from jailbee import submodules
+
+    return sync.ConflictReport(
+        resolution=submodules.GitlinkResolution(
+            resolved=["deps/libfoo", "lib/inner"],
+            unresolved=[
+                submodules.UnresolvedSub("lib", "nested-conflict", ""),
+                submodules.UnresolvedSub(
+                    "vendor/baz", "content-conflict", "CONFLICT (content): Merge conflict in x.c"
+                ),
+                submodules.UnresolvedSub("tools/sdk", "dirty", ""),
+                submodules.UnresolvedSub("old/dep", "deleted-side", ""),
+            ],
+        ),
+        nongitlink=["README.md"],
+        branch="feat/x",
+        location="cd /repo\n# on 'main' in merge state",
+    )
+
+
+def test_render_conflict_report_groups_outcomes_with_counts():
+    out = sync.render_submodule_report(conflict=_conflict_report_all_outcomes())
+    assert out is not None
+    assert "auto-merged (2):" in out
+    assert "in merge state — resolve these (2):" in out
+    assert "skipped, not touched (2):" in out
+
+
+def test_render_conflict_report_separates_merge_state_from_skipped():
+    """A dirty/one-sided submodule was never touched — it must not be listed
+    among the ones awaiting `git add && git commit`."""
+    out = sync.render_submodule_report(conflict=_conflict_report_all_outcomes())
+    assert out is not None
+    in_merge = out.split("in merge state")[1].split("skipped, not touched")[0]
+    assert "lib" in in_merge
+    assert "vendor/baz" in in_merge
+    assert "tools/sdk" not in in_merge
+    assert "old/dep" not in in_merge
+
+    skipped = out.split("skipped, not touched")[1]
+    assert "tools/sdk" in skipped
+    assert "commit or stash" in skipped
+    assert "old/dep" in skipped
+    assert "one side" in skipped
+
+
+def test_render_conflict_report_omits_empty_groups():
+    from jailbee import submodules
+
+    report = sync.ConflictReport(
+        resolution=submodules.GitlinkResolution(resolved=[], unresolved=[]),
+        nongitlink=["README.md"],
+        branch="feat/x",
+        location="cd /repo",
+    )
+    out = sync.render_submodule_report(conflict=report)
+    assert out is not None
+    assert "auto-merged" not in out
+    assert "in merge state — resolve these" not in out
+    assert "skipped, not touched" not in out
+    assert "README.md" in out
+
+
+def test_render_conflict_report_indents_multiline_location():
+    out = sync.render_submodule_report(conflict=_conflict_report_all_outcomes())
+    assert out is not None
+    assert "    cd /repo" in out
+    assert "    # on 'main' in merge state" in out
+
+
 def test_merge_conflict_error_carries_report():
     from jailbee import submodules
 
@@ -4996,9 +5080,22 @@ def test_pull_prints_conflict_report(mocker):
     exc = sync.MergeConflictError("conflicts", report=report)
     recording = Console(record=True)
     mocker.patch("jailbee.tui.console", recording)
-    cli._emit_pull_conflict_report(exc)
+    cli._emit_conflict_report(exc)
     out = recording.export_text()
     assert "deps/libfoo" in out
+
+
+def test_emit_conflict_report_ignores_other_errors(mocker):
+    from rich.console import Console
+
+    from jailbee import cli, sync
+
+    recording = Console(record=True)
+    mocker.patch("jailbee.tui.console", recording)
+    cli._emit_conflict_report(sync.SyncError("plain failure"))
+    assert recording.export_text().strip() == ""
+
+
 
 
 # ---- submodule anchor re-pin on refresh/retarget --------------------------
