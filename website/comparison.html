@@ -27,7 +27,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://jailbee.gisgro.io/comparison.html" />
     <link rel="icon" href="assets/img/jailbee-logo.png" />
-    <link rel="stylesheet" href="assets/style.css?v=c4561d50" />
+    <link rel="stylesheet" href="assets/style.css?v=2e458051" />
   </head>
   <body>
     <section class="hero">
@@ -112,67 +112,166 @@
                   Run the repo's <code>docker-compose.yml</code> without touching the host's
                   Docker daemon
                 </th>
-                <td>privileged docker-in-docker</td>
-                <td>no</td>
-                <td>no</td>
-                <td>yes</td>
-                <td>yes</td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>privileged docker-in-docker
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
               </tr>
               <tr>
                 <th scope="row">Two branches both listening on <code>:3000</code></th>
-                <td>each forwarded to a different host port</td>
-                <td>a port range per feature</td>
-                <td>no</td>
-                <td>yes</td>
-                <td>yes</td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>each forwarded to a different host port
+                </td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>a port range per feature
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
               </tr>
               <tr>
                 <th scope="row">A browser and an IDE inside the boundary, on your own screen</th>
-                <td>community noVNC only</td>
-                <td>no</td>
-                <td>n/a — they run on the host</td>
-                <td>no</td>
-                <td>yes</td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>community noVNC only
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--na">
+                  <span class="mx__mark" aria-hidden="true">–</span
+                  ><span class="vh">not applicable — </span>they run on the host
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
               </tr>
               <tr>
                 <th scope="row">Restrict what the code inside can reach</th>
-                <td>no</td>
-                <td>no</td>
-                <td>per tool, HTTP</td>
-                <td>HTTP(S) only, rest dropped</td>
-                <td><code>host:port</code>, any protocol</td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span
+                  ><span class="vh">yes — </span>per tool, HTTP
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span
+                  ><span class="vh">yes — </span>HTTP(S) only, rest dropped
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span
+                  ><span class="vh">yes — </span><code>host:port</code>, any protocol
+                </td>
               </tr>
               <tr>
                 <th scope="row">Keep an agent out of your real checkout</th>
-                <td>opt-in clone into a volume</td>
-                <td>no</td>
-                <td>per-path grants</td>
-                <td><code>--clone</code></td>
-                <td>always its own clone</td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>opt-in clone into a volume
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>per-path grants
+                </td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span><code>--clone</code>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span
+                  ><span class="vh">yes — </span>always its own clone
+                </td>
               </tr>
               <tr>
                 <th scope="row">Snapshot before an agent runs, roll back after</th>
-                <td>rebuild</td>
-                <td>no</td>
-                <td>n/a</td>
-                <td>recreate</td>
-                <td>yes</td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span
+                  ><span class="vh">no — </span>rebuild
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--na">
+                  <span class="mx__mark" aria-hidden="true">–</span
+                  ><span class="vh">not applicable</span>
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span
+                  ><span class="vh">no — </span>recreate
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
               </tr>
               <tr>
                 <th scope="row">Hold up when the <em>kernel</em> is what breaks</th>
-                <td>no</td>
-                <td>no</td>
-                <td>no</td>
-                <td>own kernel per sandbox</td>
-                <td><strong>no</strong> — shared kernel</td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--no">
+                  <span class="mx__mark" aria-hidden="true">✗</span><span class="vh">no</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span
+                  ><span class="vh">yes — </span>own kernel per sandbox
+                </td>
+                <td class="mx mx--no mx--against">
+                  <span class="mx__mark" aria-hidden="true">✗</span
+                  ><span class="vh">no — </span>shared kernel
+                </td>
               </tr>
               <tr>
                 <th scope="row">Work on macOS or Windows</th>
-                <td>yes</td>
-                <td>macOS</td>
-                <td>yes</td>
-                <td>yes</td>
-                <td><strong>no</strong> — Linux only</td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
+                <td class="mx mx--partial">
+                  <span class="mx__mark" aria-hidden="true">~</span
+                  ><span class="vh">partial — </span>macOS
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
+                <td class="mx mx--yes">
+                  <span class="mx__mark" aria-hidden="true">✓</span><span class="vh">yes</span>
+                </td>
+                <td class="mx mx--no mx--against">
+                  <span class="mx__mark" aria-hidden="true">✗</span
+                  ><span class="vh">no — </span>Linux only
+                </td>
               </tr>
               <tr>
                 <th scope="row">Licence</th>
@@ -185,7 +284,15 @@
             </tbody>
           </table>
         </div>
-        <p class="matrix__hint">Scroll sideways for the full grid.</p>
+        <p class="matrix__hint">
+          <span class="mx mx--yes"><span class="mx__mark" aria-hidden="true">✓</span></span>yes
+          ·
+          <span class="mx mx--partial"><span class="mx__mark" aria-hidden="true">~</span></span
+          >yes, with the caveat named ·
+          <span class="mx mx--no"><span class="mx__mark" aria-hidden="true">✗</span></span>no ·
+          <span class="mx mx--na"><span class="mx__mark" aria-hidden="true">–</span></span
+          >the question doesn't apply. Scroll sideways for the full grid.
+        </p>
       </div>
     </section>
 

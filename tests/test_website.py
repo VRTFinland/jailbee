@@ -265,6 +265,41 @@ def test_every_page_declares_its_own_canonical_url() -> None:
         )
 
 
+VERDICTS = frozenset({"mx--yes", "mx--no", "mx--partial", "mx--na"})
+
+
+def test_every_verdict_cell_is_readable_without_colour_or_sight() -> None:
+    """Green/red ticks are the fastest way to read the grid and the easiest
+    to get wrong. Each cell has to carry its answer three ways: the colour,
+    the glyph shape (for red-green colour deficiency), and text (for a
+    screen reader, which sees neither). This asserts the latter two, since
+    a cell that loses its hidden text still *looks* perfect.
+    """
+    import re
+
+    html = (SITE / "comparison.html").read_text()
+    cells = re.findall(r'<td class="(mx[^"]*)">(.*?)</td>', html, re.DOTALL)
+    assert len(cells) >= 40, f"expected a full verdict grid, found {len(cells)} cells"
+
+    for classes, body in cells:
+        verdict = set(classes.split()) & VERDICTS
+        assert len(verdict) == 1, f"cell must carry exactly one verdict class, got {classes!r}"
+
+        assert 'class="mx__mark" aria-hidden="true"' in body, (
+            f"{classes}: verdict cell has no glyph, so colour is its only carrier"
+        )
+
+        # Whatever is left once the aria-hidden glyph and all markup are
+        # gone is what a screen reader actually announces. `</span\s*>`
+        # rather than `</span>`: the markup breaks the line before the
+        # closing bracket to avoid a space between glyph and text, which is
+        # valid HTML that a stricter pattern silently skips past — taking
+        # the very text this test exists to find with it.
+        readable = re.sub(r'<span class="mx__mark"[^>]*>.*?</span\s*>', "", body, flags=re.DOTALL)
+        readable = re.sub(r"<[^>]+>", "", readable).strip()
+        assert readable, f"{classes}: verdict cell announces nothing to a screen reader"
+
+
 def test_the_stylesheet_makes_no_external_requests() -> None:
     css = (SITE / "assets" / "style.css").read_text()
     assert "http://" not in css
