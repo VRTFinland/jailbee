@@ -45,6 +45,7 @@ def _baseline_incus():
     incus = MagicMock()
     incus.profile_exists.return_value = True
     incus.network_acl_exists.return_value = True
+    incus.client_version.return_value = (7, 3)
     return incus
 
 
@@ -75,6 +76,35 @@ def test_doctor_reports_loose_bridge_missing_when_absent(tmp_path):
     assert bridge[0].ok is False
     assert "missing" in bridge[0].detail
     assert "jailbee init" in bridge[0].detail
+
+
+def test_doctor_reports_incus_client_version(tmp_path):
+    """The client version drives the `profile assign` syntax — surface it."""
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    incus.client_version.return_value = (6, 0, 5)
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    binary = next(r for r in results if r.name == "incus binary")
+    assert binary.ok is True
+    assert binary.detail == "found (client 6.0.5)"
+
+
+def test_doctor_reports_unknown_incus_client_version(tmp_path):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    incus.client_version.return_value = None
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    binary = next(r for r in results if r.name == "incus binary")
+    assert binary.ok is True
+    assert binary.detail == "found (client version unknown)"
 
 
 def test_doctor_reports_registry_running(tmp_path):

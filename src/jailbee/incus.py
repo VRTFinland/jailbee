@@ -7,6 +7,7 @@ this interface, which makes them unit-testable with mocks.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from typing import Any
@@ -88,6 +89,8 @@ class Incus:
     def __init__(self, binary: str = "incus", dry_run: bool = False) -> None:
         self.binary = binary
         self.dry_run = dry_run
+        self._client_version: tuple[int, ...] | None = None
+        self._client_version_probed = False
 
     # ---- Internal helpers ---------------------------------------------------
 
@@ -191,6 +194,56 @@ class Incus:
                 raise
         # Unreachable: the loop either returns or raises on the final attempt.
         raise AssertionError("unreachable")
+
+    # ---- Client version -----------------------------------------------------
+
+    # `incus --version` prints the client version and nothing else (e.g. `7.3`).
+    # MULTILINE + anchored on both ends so a line that is *only* a version is
+    # the match: extra banner lines are tolerated, but a reformatted or
+    # decorated value falls through to None rather than being misparsed.
+    _CLIENT_VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$", re.MULTILINE)
+
+    # `--version` never touches the daemon socket, so this bounds a hung fork
+    # or a stuck binary, not a wedged daemon.
+    _VERSION_PROBE_TIMEOUT = 5
+
+    def client_version(self) -> tuple[int, ...] | None:
+        """Return the `incus` client version (e.g. ``(7, 3)``), or None if unknown.
+
+        Used to pick between CLI syntaxes that changed across Incus releases
+        (see `profile_assign`). The *client* version is the relevant one:
+        `incus` parses command arguments locally, so the answer holds even when
+        the daemon is unreachable.
+
+        Memoized for the lifetime of this wrapper, which is a single `jailbee`
+        process — the binary cannot be swapped underneath a running process, so
+        there is deliberately no on-disk cache to go stale after an Incus
+        upgrade and nothing for a maintenance command to clear. `jailbee doctor`
+        reports the detected version so a mismatch is visible.
+        """
+        if not self._client_version_probed:
+            self._client_version_probed = True
+            self._client_version = self._probe_client_version()
+        return self._client_version
+
+    def _probe_client_version(self) -> tuple[int, ...] | None:
+        # `--version`, not the `version` subcommand: the subcommand also reports
+        # the *server* version and therefore dials the daemon socket, so a
+        # daemon that accepts the connection but never answers would hang every
+        # command that assigns profiles. `--version` answers from the binary
+        # alone.
+        #
+        # stdout is parsed regardless of exit status, and every failure mode
+        # (timeout, missing/non-executable binary) degrades to None: "unknown"
+        # is a supported answer, handled in `_profile_assign_args`.
+        try:
+            result = self._run(["--version"], check=False, timeout=self._VERSION_PROBE_TIMEOUT)
+        except (IncusError, OSError):
+            return None
+        match = self._CLIENT_VERSION_RE.search(result.stdout)
+        if match is None:
+            return None
+        return tuple(int(part) for part in match.group(1).split("."))
 
     # ---- Container queries --------------------------------------------------
 
@@ -401,8 +454,37 @@ class Incus:
         if result.returncode != 0:
             raise IncusError(f"`incus profile edit {name}` failed: {result.stderr.strip()}")
 
+    # `incus profile assign` changed shape in Incus 7.3. Up to 7.2 it took the
+    # profiles as ONE comma-joined argument (upstream: `checkArgs(cmd, args, 2, 2)`
+    # plus `strings.Split(args[1], ",")` in 6.x, `u.Profile.List(1, ",")` in
+    # 7.0-7.2); 7.3 dropped the separator (`u.Profile.List(1)`) and takes them as
+    # separate arguments. Either form fails on the other side of that line: a
+    # comma list on 7.3+ is read as one literal profile name ("Profile not
+    # found"), and extra positional args on <= 7.2 are rejected outright
+    # ("Invalid number of arguments").
+    _PROFILE_ASSIGN_VARIADIC_SINCE = (7, 3)
+
     def profile_assign(self, container: str, profiles: list[str]) -> None:
-        self._run_retrying_on_etag(["profile", "assign", container, ",".join(profiles)])
+        self._run_retrying_on_etag(
+            ["profile", "assign", container, *self._profile_assign_args(profiles)]
+        )
+
+    def _profile_assign_args(self, profiles: list[str]) -> list[str]:
+        """Render `profiles` in the syntax this `incus` client understands."""
+        # A single profile is spelled identically either way, so that call
+        # never pays for the version probe.
+        if len(profiles) == 1:
+            return list(profiles)
+        version = self.client_version()
+        # Unknown version → the comma-joined form. It is correct on the 6.0 LTS
+        # series that docs/installation.md documents as the supported floor, and
+        # was correct on every release up to 7.2, so an unrecognised client (a
+        # source build with no version stamp, a wrapper script named `incus` on
+        # PATH, a reworded `--version` output) degrades to the syntax with the
+        # widest support rather than the newest one.
+        if version is not None and version >= self._PROFILE_ASSIGN_VARIADIC_SINCE:
+            return list(profiles)
+        return [",".join(profiles)]
 
     def profile_show(self, name: str) -> str:
         """Return the profile's current state as YAML (raw stdout)."""

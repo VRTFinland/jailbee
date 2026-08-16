@@ -42,6 +42,13 @@ class CheckResult:
     detail: str
 
 
+def _version_detail(incus: Incus) -> str:
+    version = incus.client_version()
+    if version is None:
+        return "client version unknown"
+    return "client " + ".".join(str(part) for part in version)
+
+
 def _upstream_remote_check(cfg: Config) -> CheckResult:
     """Report which remote jailbee resolved as the upstream, and which branch.
 
@@ -77,7 +84,10 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     # would repeat one root cause a dozen times, burying it.
     incus_available = shutil.which("incus") is not None
     if incus_available:
-        results.append(CheckResult("incus binary", True, "found"))
+        # Report the client version: it selects the `incus profile assign`
+        # syntax (see `Incus.profile_assign`), so a wrong reading here is what
+        # a post-upgrade `jailbee apply` failure would look like.
+        results.append(CheckResult("incus binary", True, f"found ({_version_detail(incus)})"))
     else:
         results.append(
             CheckResult("incus binary", False, "`incus` not found in PATH — install Incus")

@@ -19,6 +19,15 @@
 
 ### Fixed
 
+- **Incus 7.3 and newer are supported.** `incus profile assign` took its
+  profiles as one comma-joined argument up to 7.2 and as separate arguments
+  from 7.3 on; JailBee always sent the comma list, so on a 7.3+ client every
+  multi-profile assignment — `jailbee new`, `jailbee apply`, network-mode
+  switches — failed with `Profile not found`. The wrapper now probes the client
+  version once per process (`incus --version`, bounded by a timeout, no daemon
+  contact) and picks the matching syntax; a version it cannot read falls back
+  to the comma-joined form, which is correct on the documented 6.0 LTS floor
+  and everything up to 7.2. `jailbee doctor` reports the detected version.
 - **Conflicting gitlinks in nested submodules are resolved too.** `git merge`
   exits non-zero when its only conflict is a submodule pointer, so a submodule
   whose *own* gitlink conflicted was classified as a content conflict and left
