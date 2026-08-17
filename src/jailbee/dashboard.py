@@ -440,12 +440,16 @@ class KeyBinding:
 
 
 KEY_BINDINGS: tuple[KeyBinding, ...] = (
-    KeyBinding("up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"),
+    KeyBinding(
+        "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
+    ),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
     KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
     KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
-    KeyBinding("action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"),
+    KeyBinding(
+        "action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"
+    ),
     KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
     KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
     KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),

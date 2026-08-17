@@ -1428,9 +1428,9 @@ def test_quick_reject_note_names_the_key_and_the_container(tmp_path):
 def test_quick_reject_note_prefers_the_view_only_explanation():
     orphan = dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
 
-    assert dashboard.quick_reject_note([orphan], "gamma-x", "action:tmux") == dashboard.view_only_note(
-        [orphan], "gamma-x"
-    )
+    assert dashboard.quick_reject_note(
+        [orphan], "gamma-x", "action:tmux"
+    ) == dashboard.view_only_note([orphan], "gamma-x")
 
 
 def test_quick_reject_note_handles_an_empty_selection():
