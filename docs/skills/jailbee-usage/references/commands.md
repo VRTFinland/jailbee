@@ -247,7 +247,19 @@ ignores `fields` entirely.
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
 `Enter` action menu (tmux/shell/ide/chrome/restart/stop/destroy for Running;
-start/destroy for Stopped), `r` force refresh, `q`/`Ctrl-C` quit. Two-tier
+start/destroy for Stopped), `r` force refresh, `h`/`?` keybinding help,
+`q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
+dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
+menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
+the dashboard).
+
+Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
+open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR. Each one
+fires only when that action is offered for that container — the gate is the
+same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need the
+repo's `jetbrains.enabled`/`chrome.enabled`, `p` needs a known PR, and orphan
+rows have none of them. A declined key prints the reason in the panel footer
+for a couple of seconds. Two-tier
 refresh: base state ~3s, git columns ~10s — tune with `-i` / `--git-interval`, or
 `--no-git` to drop git columns. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.

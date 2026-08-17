@@ -1511,10 +1511,23 @@ jailbee new feat/dashsmoke --background
 # Navigate + act:
 #  ↑/↓ (or j/k) to move the highlight (skips repo headers, spans repos)
 #  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
-#           start/destroy when Stopped). Pick "Open shell" -> lands in the
-#           container; exit -> returns to the dashboard, which refreshes.
+#           start/destroy when Stopped). It opens inline BELOW the table —
+#           expect the container rows to stay on screen and keep refreshing
+#           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
+#           Pick "Open shell" -> lands in the container; exit -> returns to the
+#           dashboard, which refreshes.
+#           On an orphan (view-only) row, Enter opens nothing and prints a
+#           yellow note in the panel footer for ~2.5s instead of going silent.
+#  t -> attaches tmux for the highlighted container without the menu; exit ->
+#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR.
+#       On a row that does not offer the action (Stopped container, IDE/Chrome
+#       disabled in that repo's config, no PR, orphan row) expect NO dispatch
+#       and a yellow footer note naming the key and the reason.
+#  h (or ?) -> keybinding help below the table; h again or Esc closes it.
+#              Pressing h with the action menu open swaps the menu for help.
 #  r -> forces an immediate full refresh (incl. git status)
-#  q (or Ctrl-C) -> quits, restoring the terminal
+#  q -> quits (closes the action menu or help first, if open)
+#  Ctrl-C -> always quits, restoring the terminal, even with an overlay open
 
 # Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
 # (WT/AHEAD/↑/MERGE) update every ~10s. Tune with -i / --git-interval, or

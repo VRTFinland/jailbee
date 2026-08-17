@@ -4,10 +4,25 @@
 
 ### Added
 
+- **Quick-action keys in `jailbee dashboard`.** `t` attaches tmux, `s` opens a
+  shell, `i` the IDE, `c` Chrome and `p` the PR, straight from the highlighted
+  row without going through the action menu. A key only fires when that action
+  is one the row's own menu would offer — a stopped container has no tmux, the
+  IDE and Chrome follow the repo's `jetbrains`/`chrome` config, and orphan rows
+  stay view-only — and when it declines, the footer says why rather than going
+  silent. `h` (or `?`) opens a keybinding help overlay.
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
 
 ### Changed
 
+- **The dashboard's action menu opens inline, under the table.** Pressing
+  `Enter` used to hand the terminal to a separate prompt, which took the whole
+  dashboard off screen — you picked an action for a container you could no
+  longer see. The menu is now drawn below the container rows, which stay
+  visible and keep refreshing behind it; `↑/↓` move the menu cursor, `Enter`
+  runs the entry, `Esc`/`q` closes it. `Ctrl-C` still quits the dashboard
+  outright, even with the menu open. The keybinding hint moved from the panel
+  border into the panel itself, where it can wrap instead of being clipped.
 - **The submodule conflict report is grouped by what you have to do about
   it.** Every unresolved submodule used to be listed the same way, so one that
   was skipped untouched — a dirty sub-repo needing a stash and a re-run — read
