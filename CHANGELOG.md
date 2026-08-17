@@ -19,6 +19,19 @@
 
 ### Fixed
 
+- **The dashboards notice repos registered while they are open.** Both
+  `jailbee dashboard` and `jailbee gui` resolved the list of registered repos
+  once at launch and reused it for the whole session. A repo that registered
+  later — the first `jailbee new` in it, or a re-registration after the pool
+  timer dropped a repo whose config file briefly disappeared — was not merely
+  missing: its containers still showed up, but under a view-only `(orphan)`
+  group, where right-clicking them opened no action menu at all until the
+  window was restarted. The repo list is now re-resolved on every refresh.
+- **A view-only container says why it has no actions.** Right-clicking a
+  container in an `(orphan)` group used to do nothing whatsoever in the Qt
+  dashboard, which is indistinguishable from a broken menu. It now opens with
+  a disabled entry naming the repo whose config could not be loaded — the same
+  sentence the TUI dashboard prints.
 - **Conflicting gitlinks in nested submodules are resolved too.** `git merge`
   exits non-zero when its only conflict is a submodule pointer, so a submodule
   whose *own* gitlink conflicted was classified as a content conflict and left

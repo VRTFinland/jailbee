@@ -308,6 +308,65 @@ def test_context_menu_emits_action_requested(qtbot):
     assert isinstance(verb, str) and verb
 
 
+def _orphan_groups():
+    """A view-only group: gather_rows builds these (config_path=None) for
+    every jailbee container whose repo config it could not load."""
+    c = ContainerInfo(
+        name="gamma-x",
+        state="Running",
+        network="strict",
+        ip="1.2.3.4",
+        memory_limit="2GB",
+        repo="gamma",
+    )
+    return [RepoGroup("gamma", None, None, [c])]
+
+
+def _popup_actions(view, name):
+    """Right-click ``name`` and return its popup's (text, enabled) entries."""
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication
+
+    seen: list[tuple[str, bool]] = []
+
+    def interact():
+        popup = QApplication.activePopupWidget()
+        if popup is None:  # no menu opened at all — leaves `seen` empty
+            return
+        seen.extend((a.text(), a.isEnabled()) for a in popup.actions())
+        popup.close()
+
+    QTimer.singleShot(0, interact)
+    view._on_context(name, QPoint(0, 0))
+    return seen
+
+
+def test_context_menu_on_a_view_only_container_explains_itself(qtbot):
+    """An orphan container has no dispatchable actions, but the right-click
+    must not be a no-op: a popup that never appears is indistinguishable from
+    a broken menu, which is exactly how this was reported."""
+    view = CardView()
+    qtbot.addWidget(view)
+    view.set_groups(_orphan_groups(), now=datetime.now().astimezone())
+
+    entries = _popup_actions(view, "gamma-x")
+
+    assert len(entries) == 1
+    text, enabled = entries[0]
+    assert "gamma" in text
+    assert enabled is False  # nothing to dispatch without a config
+
+
+def test_context_menu_stays_silent_for_an_unknown_container(qtbot):
+    """A stale name (container vanished between refreshes) explains nothing —
+    no popup at all."""
+    view = CardView()
+    qtbot.addWidget(view)
+    view.set_groups(_groups(), now=datetime.now().astimezone())
+
+    assert _popup_actions(view, "ghost") == []
+
+
 def test_grid_style_shows_labels_and_folded_git(qtbot):
     view = CardView()
     qtbot.addWidget(view)

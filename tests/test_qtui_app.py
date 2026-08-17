@@ -150,7 +150,7 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
     off the GUI thread.
     """
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     main_thread = QThread.currentThread()
     handled_on: list[QThread] = []
@@ -168,7 +168,6 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.5,
         git_interval=10.0,
@@ -214,14 +213,13 @@ def test_wire_delivers_interval_and_force_to_a_real_worker_thread(qtbot, mocker)
     helper ``run()`` uses — so production and test wiring are identical.
     """
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     window = MainWindow(git_enabled=True, interval=0.5)
     qtbot.addWidget(window)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.5,
         git_interval=10.0,

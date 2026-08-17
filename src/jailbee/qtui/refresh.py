@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from jailbee.dashboard import _refresh_due, carry_forward_git_status, gather_rows
+from jailbee.dashboard import _refresh_due, carry_forward_git_status, gather_live
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from jailbee.dashboard import RepoGroup
     from jailbee.incus import Incus
 
@@ -30,7 +32,6 @@ class RefreshWorker(QObject):
     def __init__(
         self,
         incus: Incus,
-        config_paths: list[Path],
         cwd_config: Path | None,
         *,
         interval: float,
@@ -39,7 +40,6 @@ class RefreshWorker(QObject):
     ) -> None:
         super().__init__()
         self._incus = incus
-        self._config_paths = config_paths
         self._cwd_config = cwd_config
         self._interval = interval
         self._git_interval = git_interval
@@ -50,11 +50,12 @@ class RefreshWorker(QObject):
         self._prev_groups: list[RepoGroup] = []
 
     def gather_once(self, do_git: bool) -> list[RepoGroup]:
-        """Gather one snapshot (blocking). Wraps ``gather_rows``."""
-        return gather_rows(
+        """Gather one snapshot (blocking). Wraps ``gather_live``, so each
+        gather sees the repos registered *now* — see its docstring for why a
+        launch-time path list leaves new repos menu-less."""
+        return gather_live(
             self._incus,
-            self._config_paths,
-            cwd_config=self._cwd_config,
+            self._cwd_config,
             with_git=do_git and self._git_enabled,
         )
 

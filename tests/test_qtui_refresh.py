@@ -14,11 +14,10 @@ from jailbee.qtui.refresh import RefreshWorker
 
 def test_run_loop_emits_first_snapshot_then_stops(qtbot, mocker):
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.5,
         git_interval=10.0,
@@ -44,13 +43,12 @@ def test_run_loop_survives_gather_failure_and_keeps_polling(qtbot, mocker):
     retry happens once per `interval`, not in a hot spin)."""
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
     mocker.patch(
-        "jailbee.qtui.refresh.gather_rows",
+        "jailbee.qtui.refresh.gather_live",
         side_effect=[RuntimeError("boom"), groups],
     )
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.2,
         git_interval=10.0,
@@ -98,13 +96,12 @@ def test_run_loop_carries_forward_git_status_on_base_refresh(qtbot, mocker):
         RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [_ci("p-one", git_status=None)])
     ]
     mocker.patch(
-        "jailbee.qtui.refresh.gather_rows",
+        "jailbee.qtui.refresh.gather_live",
         side_effect=[git_groups, base_groups],
     )
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.1,
         git_interval=10.0,
@@ -133,7 +130,6 @@ def test_run_loop_carries_forward_git_status_on_base_refresh(qtbot, mocker):
 def test_set_interval_clamps_and_clears_paused(mocker):
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=None,
         interval=3.0,
         git_interval=10.0,
@@ -156,11 +152,10 @@ def test_set_paused_then_force_still_gathers(qtbot, mocker):
     test_refresh_due_paused_gating_unit below for the flake-resistant unit
     version of the same decision."""
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.2,
         git_interval=10.0,
@@ -229,18 +224,47 @@ def test_refresh_due_paused_gating_unit():
     assert do_base2 is True
 
 
-def test_gather_once_delegates_to_gather_rows(mocker):
-    groups = [RepoGroup("p", "/repo", None, [])]
-    gr = mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+def test_gather_once_picks_up_a_repo_registered_after_launch(mocker):
+    """The worker must not carry a config-path list captured at launch.
+
+    A repo that registers mid-session (`jailbee new` in an unregistered repo,
+    or the pool timer re-registering one) was invisible to the running
+    window: its containers landed in a view-only orphan group, so
+    right-clicking them opened no menu until `jb gui` was restarted.
+    """
+    a = Path("/repos/a/.jailbee/config.yaml")
+    b = Path("/repos/b/.jailbee/config.yaml")
+    registered = [a]
+    mocker.patch("jailbee.dashboard.registered_repo_configs", side_effect=lambda: list(registered))
+    gr = mocker.patch("jailbee.dashboard.gather_rows", return_value=[])
+
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/x/config.yaml")],
         cwd_config=None,
         interval=0.5,
         git_interval=10.0,
         git_enabled=False,
     )
-    assert worker.gather_once(do_git=False) == groups
-    gr.assert_called_once()
-    # git disabled -> with_git must be False
-    assert gr.call_args.kwargs["with_git"] is False
+    worker.gather_once(do_git=False)
+    assert gr.call_args.args[1] == [a]
+
+    registered.append(b)
+    worker.gather_once(do_git=False)
+    assert gr.call_args.args[1] == [a, b]
+
+
+def test_gather_once_delegates_to_gather_live(mocker):
+    groups = [RepoGroup("p", "/repo", None, [])]
+    gl = mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
+    incus = mocker.Mock()
+    cwd = Path("/repo/.jailbee/config.yaml")
+    worker = RefreshWorker(
+        incus=incus,
+        cwd_config=cwd,
+        interval=0.5,
+        git_interval=10.0,
+        git_enabled=False,
+    )
+    assert worker.gather_once(do_git=True) == groups
+    # git disabled at the worker level wins over a git-tier tick
+    gl.assert_called_once_with(incus, cwd, with_git=False)

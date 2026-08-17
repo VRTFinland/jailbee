@@ -39,7 +39,13 @@ log = logging.getLogger(__name__)
 
 
 def preflight(cwd_config: Path | None) -> list[Path] | None:
-    """Resolve the config paths the dashboard will show, or None if there are none."""
+    """Resolve the config paths the dashboard would show, or None if there are none.
+
+    A launch-time guard only ("nothing to show, don't open a window") — the
+    returned list is deliberately not handed to the worker, which re-resolves
+    it per gather via ``dashboard.gather_live`` so a repo registered while the
+    window is open stops rendering as a menu-less orphan.
+    """
     config_paths = collect_config_paths(cwd_config)
     return config_paths or None
 
@@ -329,8 +335,7 @@ def run(
     no_git: bool,
 ) -> int:
     """Launch the Qt dashboard. Returns the process exit code."""
-    config_paths = preflight(cwd_config)
-    if config_paths is None:
+    if preflight(cwd_config) is None:
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
@@ -373,7 +378,6 @@ def run(
     thread = QThread()
     worker = RefreshWorker(
         incus,
-        config_paths,
         cwd_config,
         interval=resolved,
         git_interval=git_interval,
