@@ -247,7 +247,10 @@ ignores `fields` entirely.
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
 `Enter` action menu (tmux/shell/ide/chrome/restart/stop/destroy for Running;
-start/destroy for Stopped), `r` force refresh, `q`/`Ctrl-C` quit. Two-tier
+start/destroy for Stopped), `r` force refresh, `q`/`Ctrl-C` quit. The action
+menu opens *inline below the table* — the dashboard stays visible and keeps
+refreshing behind it; `↑/↓` then move the menu cursor, `Enter` runs the entry,
+`Esc`/`q` closes it (`Ctrl-C` always quits the dashboard). Two-tier
 refresh: base state ~3s, git columns ~10s — tune with `-i` / `--git-interval`, or
 `--no-git` to drop git columns. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.

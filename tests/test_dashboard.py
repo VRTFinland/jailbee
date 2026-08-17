@@ -576,43 +576,82 @@ def test_menu_actions_orphan_stays_empty_even_with_pr():
     assert dashboard.menu_actions("Running", has_config=False, pr_number=123) == []
 
 
-def test_open_action_menu_dispatches_the_chosen_verb(mocker, tmp_path):
+def test_open_menu_captures_the_actions_with_the_cursor_at_the_top(tmp_path):
     config_path = tmp_path / "config.yaml"
     group = dashboard.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(dashboard.subprocess, "run")
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = "net loose"
 
-    dashboard._open_action_menu([group], "alpha-x")
+    menu = dashboard.open_menu([group], "alpha-x")
+
+    assert menu is not None
+    assert menu.container == "alpha-x"
+    assert menu.index == 0
+    assert menu.actions == dashboard.actions_for_container([group], "alpha-x")
+    assert ("Attach tmux", "tmux") in menu.actions
+
+
+def test_open_menu_is_none_for_a_view_only_group():
+    """A config-less (orphan) group has no actions, so there is no menu to open.
+
+    The caller shows `view_only_note` instead — an empty menu panel would be
+    indistinguishable from a broken one.
+    """
+    group = dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
+
+    assert dashboard.open_menu([group], "gamma-x") is None
+
+
+def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "config.yaml", [_ci("alpha-x", "alpha")]
+    )
+
+    assert dashboard.open_menu([group], "alpha-nope") is None
+    assert dashboard.open_menu([group], None) is None
+
+
+def test_move_menu_clamps_at_both_edges():
+    menu = dashboard.MenuState("alpha-x", [("A", "a"), ("B", "b"), ("C", "c")], index=0)
+
+    assert dashboard.move_menu(menu, -1).index == 0  # already at the top
+    assert dashboard.move_menu(menu, 1).index == 1
+    assert dashboard.move_menu(dashboard.move_menu(menu, 1), 1).index == 2
+    assert dashboard.move_menu(dashboard.MenuState("alpha-x", [], index=0), 1).index == 0
+
+
+def test_move_menu_returns_a_new_state_and_leaves_the_original_alone():
+    menu = dashboard.MenuState("alpha-x", [("A", "a"), ("B", "b")], index=0)
+
+    moved = dashboard.move_menu(menu, 1)
+
+    assert moved is not menu
+    assert menu.index == 0
+
+
+def test_menu_verb_returns_the_highlighted_verb():
+    menu = dashboard.MenuState("alpha-x", [("A", "a"), ("B", "b")], index=1)
+
+    assert dashboard.menu_verb(menu) == "b"
+    assert dashboard.menu_verb(dashboard.MenuState("alpha-x", [], index=0)) is None
+
+
+def test_dispatch_action_runs_jailbee_with_the_repos_config(mocker, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    rc = dashboard._dispatch_action(config_path, "net loose", "alpha-x")
 
     run.assert_called_once_with(
         ["jailbee", "net", "loose", "alpha-x", "--config", str(config_path)], check=False
     )
+    assert rc == 0
 
 
-def test_open_action_menu_cancel_entry_dispatches_nothing(mocker, tmp_path):
-    """Picking "cancel" must dispatch no command.
-
-    The answer is taken from the real choice list by title, because
-    `questionary.Choice` substitutes the title when `value` is None — a cancel
-    entry built that way answers the string "cancel" and would be dispatched as
-    `gie cancel <name>`.
-    """
-    config_path = tmp_path / "config.yaml"
-    group = dashboard.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
+def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
-    select_mock = mocker.patch("questionary.select")
+    run.return_value.returncode = 2
 
-    def fake_select(_message, choices):
-        cancel_choice = next(c for c in choices if c.title == "cancel")
-        select_mock.return_value.ask.return_value = cancel_choice.value
-        return select_mock.return_value
-
-    select_mock.side_effect = fake_select
-
-    dashboard._open_action_menu([group], "alpha-x")
-
-    run.assert_not_called()
+    assert dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x") == 2
 
 
 def test_actions_for_container_matches_menu_actions():
@@ -1195,6 +1234,82 @@ def test_render_shows_refreshing_indicator(tmp_path):
     assert "⟳" not in out_off
 
 
+def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
+    """The point of the inline menu: the dashboard stays on screen behind it."""
+    g = dashboard.RepoGroup(
+        "alpha",
+        "/repos/alpha",
+        tmp_path / "a.yaml",
+        [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
+    )
+    menu = dashboard.MenuState(
+        "alpha-one", [("Attach tmux", "tmux"), ("Open shell", "shell")], index=1
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected="alpha-one",
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay=menu,
+        )
+    )
+    # Both container rows and the column headers are still rendered.
+    assert "one" in out and "two" in out
+    assert "NAME" in out
+    # The menu lists its actions, titled with the target container.
+    assert "Attach tmux" in out and "Open shell" in out
+    assert "alpha-one" in out
+    # The highlighted entry (index=1) carries the cursor, the other does not.
+    cursor_line = next(ln for ln in out.splitlines() if "Open shell" in ln)
+    other_line = next(ln for ln in out.splitlines() if "Attach tmux" in ln)
+    assert "▸" in cursor_line
+    assert "▸" not in other_line
+
+
+def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    kwargs = {
+        "selected": "alpha-one",
+        "now": datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        "last_refresh_age": 1.0,
+        "interval": 3.0,
+        "git_enabled": True,
+    }
+    browsing = _render_text(dashboard.render([g], **kwargs))
+    menu_open = _render_text(
+        dashboard.render(
+            [g],
+            **kwargs,
+            overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0),
+        )
+    )
+    assert "actions" in browsing and "Esc" not in browsing
+    assert "Esc" in menu_open and "cancel" in menu_open
+
+
+def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    kwargs = {
+        "selected": None,
+        "now": datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        "last_refresh_age": 1.0,
+        "interval": 3.0,
+        "git_enabled": True,
+    }
+    with_notice = _render_text(dashboard.render([g], **kwargs, notice="alpha-one is view-only"))
+    without = _render_text(dashboard.render([g], **kwargs))
+
+    assert "view-only" in with_notice
+    assert "view-only" not in without
+
+
 def test_parse_key_maps_arrows_and_letters():
     assert dashboard.parse_key(b"\x1b[A") == "up"
     assert dashboard.parse_key(b"\x1b[B") == "down"
@@ -1204,9 +1319,18 @@ def test_parse_key_maps_arrows_and_letters():
     assert dashboard.parse_key(b"\n") == "enter"
     assert dashboard.parse_key(b"r") == "refresh"
     assert dashboard.parse_key(b"q") == "quit"
-    assert dashboard.parse_key(b"\x03") == "quit"  # Ctrl-C
-    assert dashboard.parse_key(b"") == "quit"  # EOF (stdin closed)
     assert dashboard.parse_key(b"Z") == ""  # unmapped
+
+
+def test_parse_key_separates_escape_from_interrupt():
+    """Esc/q close an overlay; Ctrl-C and EOF must always end the dashboard.
+
+    A single token for all of them would make Ctrl-C merely close the action
+    menu, leaving no way out while an overlay is open.
+    """
+    assert dashboard.parse_key(b"\x1b") == "cancel"  # bare Esc (arrows are \x1b[…)
+    assert dashboard.parse_key(b"\x03") == "interrupt"  # Ctrl-C
+    assert dashboard.parse_key(b"") == "interrupt"  # EOF (stdin closed)
 
 
 # ---------------------------------------------------------------------------

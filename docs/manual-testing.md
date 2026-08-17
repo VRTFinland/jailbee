@@ -1511,10 +1511,16 @@ jailbee new feat/dashsmoke --background
 # Navigate + act:
 #  ↑/↓ (or j/k) to move the highlight (skips repo headers, spans repos)
 #  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
-#           start/destroy when Stopped). Pick "Open shell" -> lands in the
-#           container; exit -> returns to the dashboard, which refreshes.
+#           start/destroy when Stopped). It opens inline BELOW the table —
+#           expect the container rows to stay on screen and keep refreshing
+#           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
+#           Pick "Open shell" -> lands in the container; exit -> returns to the
+#           dashboard, which refreshes.
+#           On an orphan (view-only) row, Enter opens nothing and prints a
+#           yellow note in the panel footer for ~2.5s instead of going silent.
 #  r -> forces an immediate full refresh (incl. git status)
-#  q (or Ctrl-C) -> quits, restoring the terminal
+#  q -> quits (closes the action menu first, if open)
+#  Ctrl-C -> always quits, restoring the terminal, even with the menu open
 
 # Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
 # (WT/AHEAD/↑/MERGE) update every ~10s. Tune with -i / --git-interval, or

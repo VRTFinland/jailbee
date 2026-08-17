@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich import box
-from rich.console import RenderableType
+from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 
@@ -46,9 +46,11 @@ from jailbee.lifecycle import (
     list_containers,
     ls_field_specs,
 )
-from jailbee.tui import console, error, warn
+from jailbee.tui import console, error
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -410,12 +412,74 @@ def visible_fields(
     return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
 
 
-_FOOTER = (
+_HINT_BROWSE = (
     "[bold]↑/↓[/bold] (j/k) move  ·  [bold]Enter[/bold] actions  ·  "
     "[bold]r[/bold] refresh  ·  [bold]q[/bold] quit"
 )
+_HINT_MENU = "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
 
 _KEY_READ_BYTES = 8  # covers all standard arrow/function-key CSI sequences
+_NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
+
+
+@dataclass
+class MenuState:
+    """An open action menu, rendered inline under the dashboard table.
+
+    ``actions`` is captured when the menu opens rather than recomputed per
+    frame: the dashboard keeps refreshing behind the menu, and a list that
+    re-derived itself from live state would reorder rows under the cursor
+    mid-keystroke. The staleness that buys is bounded — dispatching a verb
+    the container has since outgrown just lets the real ``jailbee`` command
+    report the problem, exactly as the previous questionary menu did.
+    """
+
+    container: str
+    actions: list[tuple[str, str]]
+    index: int = 0
+
+
+def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
+    """The menu for ``name``, or None when there is nothing to show.
+
+    None covers every no-actions case — unknown container, nothing selected,
+    or a view-only (config-less) group. Callers surface :func:`view_only_note`
+    instead, because an empty menu frame is indistinguishable from a broken one.
+    """
+    actions = actions_for_container(groups, name)
+    if name is None or not actions:
+        return None
+    return MenuState(name, actions)
+
+
+def move_menu(menu: MenuState, delta: int) -> MenuState:
+    """Move the menu cursor by ``delta``, clamped at both ends."""
+    last = max(0, len(menu.actions) - 1)
+    return replace(menu, index=max(0, min(last, menu.index + delta)))
+
+
+def menu_verb(menu: MenuState) -> str | None:
+    """The highlighted entry's ``jailbee`` verb (None for an empty menu)."""
+    if not menu.actions:
+        return None
+    return menu.actions[menu.index][1]
+
+
+def _render_menu(menu: MenuState) -> RenderableType:
+    """The action menu as a bordered panel: one row per action, cursor on the
+    highlighted one."""
+    lines = [
+        f"[bold cyan]▸[/] [bold bright_white]{label}[/]" if i == menu.index else f"  {label}"
+        for i, (label, _verb) in enumerate(menu.actions)
+    ]
+    return Panel(
+        "\n".join(lines),
+        title=f"[bold]{menu.container}[/] →",
+        title_align="left",
+        box=box.ROUNDED,
+        padding=(0, 1),
+        expand=False,
+    )
 
 
 def render(
@@ -428,13 +492,21 @@ def render(
     git_enabled: bool,
     refreshing: bool = False,
     columns: ColumnConfig | None = None,
+    overlay: MenuState | None = None,
+    notice: str | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
     One shared table (columns aligned across all repos); each repo is a
     section header row inside it. The selected container is marked with a
     ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel with a
-    title (summary + refresh indicator) and a footer (keybindings).
+    title (summary + refresh indicator) and a subtitle (refresh timing).
+
+    ``overlay`` is an open action menu, drawn *below* the table so the
+    dashboard it acts on stays on screen. ``notice`` is a transient message
+    (a rejected key, a view-only row) shown in the subtitle; the keybinding
+    hint lives in the panel body, where Rich can wrap it instead of the
+    subtitle silently clipping it.
     """
     all_containers = [c for g in groups for c in g.containers]
     # `mem` (used / limit) is a default-table field and `memory_limit` is not,
@@ -474,6 +546,11 @@ def render(
                         cells.append(f.cell(c))
                 table.add_row(*cells, style="bold bright_white" if is_sel else None)
 
+    body: list[RenderableType] = [table, ""]
+    if overlay is not None:
+        body += [_render_menu(overlay), ""]
+    body.append(_HINT_MENU if overlay is not None else _HINT_BROWSE)
+
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
     mark = "  [yellow]⟳[/]" if refreshing else ""
@@ -481,14 +558,19 @@ def render(
         f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers   {now:%H:%M:%S}{mark}"
     )
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
-    subtitle = (
-        f"{_FOOTER}  ·  refreshed {last_refresh_age:.0f}s ago · every {interval:.0f}s{git_note}"
-    )
-    return Panel(table, title=title, subtitle=subtitle, box=box.ROUNDED, padding=(0, 1))
+    note = f"[yellow]{notice}[/yellow]  ·  " if notice else ""
+    subtitle = f"{note}refreshed {last_refresh_age:.0f}s ago · every {interval:.0f}s{git_note}"
+    return Panel(Group(*body), title=title, subtitle=subtitle, box=box.ROUNDED, padding=(0, 1))
 
 
 def parse_key(data: bytes) -> str:
-    """Map a raw stdin read to a dashboard key token ('' if unmapped)."""
+    """Map a raw stdin read to a dashboard key token ('' if unmapped).
+
+    ``cancel`` (bare Esc) and ``quit`` (``q``) close an open overlay, while
+    ``interrupt`` (Ctrl-C, EOF) always ends the dashboard — folding the three
+    into one token would leave Ctrl-C unable to do anything but shut the
+    action menu.
+    """
     if data in (b"\x1b[A", b"k"):
         return "up"
     if data in (b"\x1b[B", b"j"):
@@ -497,9 +579,11 @@ def parse_key(data: bytes) -> str:
         return "enter"
     if data == b"r":
         return "refresh"
-    if data in (b"q", b"\x03"):
+    if data == b"q":
         return "quit"
-    return "quit" if data == b"" else ""  # EOF -> quit
+    if data == b"\x1b":  # bare Esc; arrow keys arrive as \x1b[…
+        return "cancel"
+    return "interrupt" if data in (b"\x03", b"") else ""
 
 
 def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
@@ -546,8 +630,9 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
 
     ``None`` when there is nothing to explain: the container has actions, or
     it isn't on screen at all (a stale selection). Every front-end shows this
-    the way its medium allows — a warning line in the TUI, a disabled entry
-    in the Qt menus — because an action menu that silently declines to open
+    the way its medium allows — a transient subtitle notice in the TUI, a
+    disabled entry in the Qt menus — because an action menu that silently
+    declines to open
     is indistinguishable from a broken one.
     """
     group = _find_group(groups, name)
@@ -556,45 +641,18 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
 
 
-def _open_action_menu(groups: list[RepoGroup], selected: str | None) -> None:
-    """Show the questionary action menu and dispatch the chosen ``jailbee`` command.
+def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
+    """Run ``jailbee <verb> <name> --config <config_path>``; return its exit code.
 
-    ``selected is None`` (or no group found for it — e.g. nothing was
-    highlighted) is silent: there's nothing to show a menu for. Only a
-    genuine view-only case — a group IS found but has no actions, i.e. a
-    config-less/orphan repo — warns and waits for the user to acknowledge.
+    The single dispatch point shared by the inline action menu and the
+    quick-action keys, so both reuse the real command's behaviour and the
+    target repo's own config. ``verb`` may be multi-token (``"net loose"``,
+    ``"pr --open"``).
     """
-    import questionary
-
-    if selected is None:
-        return
-    group = _find_group(groups, selected)
-    if group is None:
-        return
-    actions = actions_for_container(groups, selected)
-    if not actions:
-        # The note covers the only way a *found* container has no actions
-        # (config-less group); the fallback keeps the message honest if
-        # `menu_actions` ever grows another empty case.
-        note = view_only_note(groups, selected)
-        warn(f"{note}." if note else f"No actions available for '{selected}'.")
-        input("Press Enter to continue…")
-        return
-
-    # Explicit sentinel: `questionary.Choice` treats `value=None` as *unset*
-    # and falls back to the title, so a cancel entry with `value=None` would
-    # answer the string "cancel" and dispatch `jailbee cancel <name>`.
-    cancel = "__cancel__"
-    choices = [questionary.Choice(title=label, value=verb) for label, verb in actions]
-    choices.append(questionary.Choice(title="cancel", value=cancel))
-    verb = questionary.select(f"{selected} →", choices=choices).ask()
-    # `None` is Ctrl-C; `cancel` is the menu entry. Both abort.
-    if verb is None or verb == cancel:
-        return
-    assert group.config_path is not None  # has_config guaranteed actions non-empty
-    subprocess.run(
-        ["jailbee", *verb.split(), selected, "--config", str(group.config_path)], check=False
+    proc = subprocess.run(
+        ["jailbee", *verb.split(), name, "--config", str(config_path)], check=False
     )
+    return proc.returncode
 
 
 def _refresh_due(
@@ -718,20 +776,74 @@ def run(
     old_term = termios.tcgetattr(fd)
     selected: str | None = None
     sel_index = 0
+    overlay: MenuState | None = None
+    notice: str | None = None
+    notice_until = 0.0
+
+    def set_notice(text: str) -> None:
+        """Show ``text`` in the panel subtitle for a few seconds.
+
+        The dashboard owns the whole screen while Live is running, so a
+        rejected key or a view-only row has nowhere to print — but staying
+        silent is indistinguishable from being broken, hence this.
+        """
+        nonlocal notice, notice_until
+        notice = text
+        notice_until = time.monotonic() + _NOTICE_SECONDS
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     try:
         tty.setcbreak(fd)
         worker.start()
         with Live(console=console, screen=True, auto_refresh=False) as live:
+
+            def foreground(fn: Callable[[], int]) -> int:
+                """Hand the terminal to a real ``jailbee`` command, then take it back.
+
+                Interactive verbs (``tmux``, ``shell``) need the raw terminal
+                and the normal screen, so Live is stopped for the duration —
+                but only for the *dispatch*. Opening the menu no longer
+                touches the terminal at all, which is what keeps the
+                dashboard on screen behind it.
+                """
+                live.stop()
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
+                try:
+                    return fn()
+                finally:
+                    tty.setcbreak(fd)
+                    live.start(refresh=True)
+
+            def dispatch(target: str, verb: str) -> None:
+                nonlocal notice, notice_until
+                group = _find_group(groups, target)
+                if group is None or group.config_path is None:
+                    return
+                config_path = group.config_path
+                rc = foreground(lambda: _dispatch_action(config_path, verb, target))
+                if rc != 0:
+                    set_notice(f"'jailbee {verb} {target}' exited {rc}")
+                force.set()  # an action likely changed state — refresh ASAP
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
                     last_full = shared_last_full
                     refreshing = shared_refreshing
                 names = selectable_names(groups)
-                selected = reconcile_selection(names, selected, sel_index)
+                if overlay is not None and overlay.container not in names:
+                    # The menu's container vanished under it (destroyed, or its
+                    # repo dropped out of the registry) — close rather than
+                    # dispatch at a name that is no longer there.
+                    set_notice(f"'{overlay.container}' is gone — menu closed")
+                    overlay = None
+                if overlay is not None:
+                    selected = overlay.container  # pinned while the menu is open
+                else:
+                    selected = reconcile_selection(names, selected, sel_index)
                 if selected in names:
                     sel_index = names.index(selected)
+                if notice is not None and time.monotonic() >= notice_until:
+                    notice = None
                 age = (time.monotonic() - last_full) if last_full else 0.0
                 live.update(
                     render(
@@ -743,6 +855,8 @@ def run(
                         git_enabled=git_enabled,
                         refreshing=refreshing,
                         columns=columns,
+                        overlay=overlay,
+                        notice=notice,
                     ),
                     refresh=True,
                 )
@@ -750,6 +864,20 @@ def run(
                 if not ready:
                     continue
                 key = parse_key(os.read(fd, _KEY_READ_BYTES))
+                if key == "interrupt":
+                    break
+                if overlay is not None:
+                    if key in ("cancel", "quit"):
+                        overlay = None
+                    elif key in ("up", "down"):
+                        overlay = move_menu(overlay, -1 if key == "up" else 1)
+                    elif key == "enter":
+                        verb = menu_verb(overlay)
+                        target = overlay.container
+                        overlay = None
+                        if verb is not None:
+                            dispatch(target, verb)
+                    continue
                 if key == "quit":
                     break
                 if key in ("up", "down"):
@@ -757,14 +885,10 @@ def run(
                     if selected in names:
                         sel_index = names.index(selected)
                 elif key == "enter":
-                    live.stop()
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
-                    try:
-                        _open_action_menu(groups, selected)
-                    finally:
-                        tty.setcbreak(fd)
-                        live.start(refresh=True)
-                    force.set()  # an action likely changed state — refresh ASAP
+                    overlay = open_menu(groups, selected)
+                    if overlay is None and selected is not None:
+                        note = view_only_note(groups, selected)
+                        set_notice(note or f"No actions available for '{selected}'")
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:
