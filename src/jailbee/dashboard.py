@@ -21,7 +21,7 @@ import tty
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -412,14 +412,78 @@ def visible_fields(
     return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
 
 
-_HINT_BROWSE = (
-    "[bold]↑/↓[/bold] (j/k) move  ·  [bold]Enter[/bold] actions  ·  "
-    "[bold]r[/bold] refresh  ·  [bold]q[/bold] quit"
-)
-_HINT_MENU = "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
-
 _KEY_READ_BYTES = 8  # covers all standard arrow/function-key CSI sequences
 _NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
+
+
+@dataclass(frozen=True)
+class KeyBinding:
+    """One dashboard key: how it is typed, what it does, how it is described.
+
+    :data:`KEY_BINDINGS` is the single source for all three — :func:`parse_key`
+    is built from ``keys``, the quick-action gate from ``verb``, the help
+    overlay from ``hint``/``label``/``group``, and the always-visible hint line
+    from ``brief``. Three hand-maintained lists would drift.
+
+    ``hint`` is empty for a token whose sibling documents it (``down`` is
+    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is the terse word used in the
+    hint line, or None to keep the key in the help overlay only.
+    """
+
+    token: str
+    keys: tuple[bytes, ...]
+    hint: str
+    label: str
+    group: str
+    verb: str | None = None
+    brief: str | None = None
+
+
+KEY_BINDINGS: tuple[KeyBinding, ...] = (
+    KeyBinding("up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"),
+    KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
+    KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
+    KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
+    KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
+    KeyBinding("action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"),
+    KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
+    KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
+    KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),
+    KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
+    KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
+    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
+    # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
+    KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
+)
+
+_KEY_TOKENS: dict[bytes, str] = {k: b.token for b in KEY_BINDINGS for k in b.keys}
+
+_GATE_NOTE = (
+    "Action keys only fire when that action is offered for the highlighted "
+    "container: a stopped container has no tmux or shell, the IDE and Chrome "
+    "need the repo's own jetbrains/chrome config, the PR key needs a known PR, "
+    "and orphan rows are view-only."
+)
+
+
+def binding_for_token(token: str) -> KeyBinding | None:
+    """The binding a :func:`parse_key` token came from (None if unmapped)."""
+    return next((b for b in KEY_BINDINGS if b.token == token), None)
+
+
+def quick_verb(groups: list[RepoGroup], name: str | None, token: str) -> str | None:
+    """The verb a quick-action key should dispatch for ``name``, else None.
+
+    None covers both "not an action key" and "that action isn't offered here".
+    The gate is :func:`actions_for_container`, so ``menu_actions`` stays the
+    only place that decides what a container allows — a quick key can never
+    reach an action its own menu would not show.
+    """
+    binding = binding_for_token(token)
+    if binding is None or binding.verb is None:
+        return None
+    offered = {verb for _label, verb in actions_for_container(groups, name)}
+    return binding.verb if binding.verb in offered else None
 
 
 @dataclass
@@ -437,6 +501,11 @@ class MenuState:
     container: str
     actions: list[tuple[str, str]]
     index: int = 0
+
+
+# What occupies the slot under the table. Both overlays are mutually exclusive
+# by construction — "menu and help open at once" is not a representable state.
+Overlay = MenuState | Literal["help"]
 
 
 def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
@@ -482,6 +551,63 @@ def _render_menu(menu: MenuState) -> RenderableType:
     )
 
 
+def _render_help() -> RenderableType:
+    """The keybinding help as a bordered panel, grouped as the table declares.
+
+    Rows come from :data:`KEY_BINDINGS`, so a new key documents itself. The
+    closing note explains why an action key can decline to fire — without it
+    a correctly-gated key looks broken.
+    """
+    width = max((len(b.hint) for b in KEY_BINDINGS if b.hint), default=0)
+    lines: list[str] = []
+    for group in dict.fromkeys(b.group for b in KEY_BINDINGS):
+        if lines:
+            lines.append("")
+        lines.append(f"[bold cyan]{group}[/]")
+        lines += [
+            f"  [bold]{b.hint:<{width}}[/]  {b.label}"
+            for b in KEY_BINDINGS
+            if b.group == group and b.hint
+        ]
+    lines += ["", f"[dim]{_GATE_NOTE}[/dim]"]
+    return Panel(
+        "\n".join(lines),
+        title="[bold]keys[/]",
+        title_align="left",
+        box=box.ROUNDED,
+        padding=(0, 1),
+        width=72,
+    )
+
+
+def quick_reject_note(groups: list[RepoGroup], name: str | None, token: str) -> str:
+    """Why a quick-action key did nothing, as one user-facing sentence.
+
+    A key that silently declines is indistinguishable from a broken one, and
+    the reason matters: a view-only row explains itself differently from a
+    stopped container or a repo with the IDE turned off.
+    """
+    if name is None:
+        return "No container is selected"
+    note = view_only_note(groups, name)
+    if note is not None:
+        return note
+    binding = binding_for_token(token)
+    what = f"'{binding.hint}' ({binding.label})" if binding is not None else f"'{token}'"
+    return f"{what} is not available for '{name}'"
+
+
+def _hint_line(overlay: Overlay | None) -> str:
+    """The keybinding hint shown on the last line of the panel body."""
+    if isinstance(overlay, MenuState):
+        return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+    if overlay is not None:  # "help"
+        return "[bold]Esc[/bold] / [bold]h[/bold] close"
+    return "  ·  ".join(
+        f"[bold]{b.hint}[/bold] {b.brief}" for b in KEY_BINDINGS if b.brief is not None
+    )
+
+
 def render(
     groups: list[RepoGroup],
     selected: str | None,
@@ -492,7 +618,7 @@ def render(
     git_enabled: bool,
     refreshing: bool = False,
     columns: ColumnConfig | None = None,
-    overlay: MenuState | None = None,
+    overlay: Overlay | None = None,
     notice: str | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
@@ -502,8 +628,9 @@ def render(
     ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel with a
     title (summary + refresh indicator) and a subtitle (refresh timing).
 
-    ``overlay`` is an open action menu, drawn *below* the table so the
-    dashboard it acts on stays on screen. ``notice`` is a transient message
+    ``overlay`` is an open action menu or the keybinding help, drawn *below*
+    the table so the dashboard it acts on stays on screen. ``notice`` is a
+    transient message
     (a rejected key, a view-only row) shown in the subtitle; the keybinding
     hint lives in the panel body, where Rich can wrap it instead of the
     subtitle silently clipping it.
@@ -548,8 +675,9 @@ def render(
 
     body: list[RenderableType] = [table, ""]
     if overlay is not None:
-        body += [_render_menu(overlay), ""]
-    body.append(_HINT_MENU if overlay is not None else _HINT_BROWSE)
+        panel = _render_menu(overlay) if isinstance(overlay, MenuState) else _render_help()
+        body += [panel, ""]
+    body.append(_hint_line(overlay))
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
@@ -566,24 +694,15 @@ def render(
 def parse_key(data: bytes) -> str:
     """Map a raw stdin read to a dashboard key token ('' if unmapped).
 
-    ``cancel`` (bare Esc) and ``quit`` (``q``) close an open overlay, while
-    ``interrupt`` (Ctrl-C, EOF) always ends the dashboard — folding the three
-    into one token would leave Ctrl-C unable to do anything but shut the
-    action menu.
+    A pure lookup into :data:`KEY_BINDINGS`, so a key cannot be readable
+    without also being documented in the help overlay.
+
+    Note the three ways out: ``cancel`` (bare Esc — arrows arrive as
+    ``\\x1b[…``) and ``quit`` (``q``) close an open overlay first, while
+    ``interrupt`` (Ctrl-C, EOF) always ends the dashboard. Folding them into
+    one token would leave Ctrl-C unable to do anything but shut the menu.
     """
-    if data in (b"\x1b[A", b"k"):
-        return "up"
-    if data in (b"\x1b[B", b"j"):
-        return "down"
-    if data in (b"\r", b"\n"):
-        return "enter"
-    if data == b"r":
-        return "refresh"
-    if data == b"q":
-        return "quit"
-    if data == b"\x1b":  # bare Esc; arrow keys arrive as \x1b[…
-        return "cancel"
-    return "interrupt" if data in (b"\x03", b"") else ""
+    return _KEY_TOKENS.get(data, "")
 
 
 def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
@@ -776,7 +895,7 @@ def run(
     old_term = termios.tcgetattr(fd)
     selected: str | None = None
     sel_index = 0
-    overlay: MenuState | None = None
+    overlay: Overlay | None = None
     notice: str | None = None
     notice_until = 0.0
 
@@ -790,6 +909,7 @@ def run(
         nonlocal notice, notice_until
         notice = text
         notice_until = time.monotonic() + _NOTICE_SECONDS
+
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     try:
         tty.setcbreak(fd)
@@ -830,13 +950,13 @@ def run(
                     last_full = shared_last_full
                     refreshing = shared_refreshing
                 names = selectable_names(groups)
-                if overlay is not None and overlay.container not in names:
+                if isinstance(overlay, MenuState) and overlay.container not in names:
                     # The menu's container vanished under it (destroyed, or its
                     # repo dropped out of the registry) — close rather than
                     # dispatch at a name that is no longer there.
                     set_notice(f"'{overlay.container}' is gone — menu closed")
                     overlay = None
-                if overlay is not None:
+                if isinstance(overlay, MenuState):
                     selected = overlay.container  # pinned while the menu is open
                 else:
                     selected = reconcile_selection(names, selected, sel_index)
@@ -869,14 +989,19 @@ def run(
                 if overlay is not None:
                     if key in ("cancel", "quit"):
                         overlay = None
-                    elif key in ("up", "down"):
-                        overlay = move_menu(overlay, -1 if key == "up" else 1)
-                    elif key == "enter":
-                        verb = menu_verb(overlay)
-                        target = overlay.container
-                        overlay = None
-                        if verb is not None:
-                            dispatch(target, verb)
+                    elif key == "help":
+                        # One slot, so help replaces the menu rather than
+                        # stacking on it — and toggles itself shut.
+                        overlay = None if overlay == "help" else "help"
+                    elif isinstance(overlay, MenuState):
+                        if key in ("up", "down"):
+                            overlay = move_menu(overlay, -1 if key == "up" else 1)
+                        elif key == "enter":
+                            verb = menu_verb(overlay)
+                            target = overlay.container
+                            overlay = None
+                            if verb is not None:
+                                dispatch(target, verb)
                     continue
                 if key == "quit":
                     break
@@ -889,6 +1014,14 @@ def run(
                     if overlay is None and selected is not None:
                         note = view_only_note(groups, selected)
                         set_notice(note or f"No actions available for '{selected}'")
+                elif key == "help":
+                    overlay = "help"
+                elif key.startswith("action:"):
+                    verb = quick_verb(groups, selected, key)
+                    if verb is not None and selected is not None:
+                        dispatch(selected, verb)
+                    else:
+                        set_notice(quick_reject_note(groups, selected, key))
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:

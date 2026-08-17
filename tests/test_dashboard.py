@@ -1288,8 +1288,8 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
             overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0),
         )
     )
-    assert "actions" in browsing and "Esc" not in browsing
-    assert "Esc" in menu_open and "cancel" in menu_open
+    assert "Enter" in browsing and "quit" in browsing and "Esc" not in browsing
+    assert "Esc" in menu_open and "cancel" in menu_open and "quit" not in menu_open
 
 
 def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
@@ -1320,6 +1320,178 @@ def test_parse_key_maps_arrows_and_letters():
     assert dashboard.parse_key(b"r") == "refresh"
     assert dashboard.parse_key(b"q") == "quit"
     assert dashboard.parse_key(b"Z") == ""  # unmapped
+
+
+def test_parse_key_maps_the_quick_action_keys():
+    assert dashboard.parse_key(b"t") == "action:tmux"
+    assert dashboard.parse_key(b"s") == "action:shell"
+    assert dashboard.parse_key(b"i") == "action:ide"
+    assert dashboard.parse_key(b"c") == "action:chrome"
+    assert dashboard.parse_key(b"p") == "action:pr"
+    assert dashboard.parse_key(b"h") == "help"
+    assert dashboard.parse_key(b"?") == "help"
+
+
+def test_key_bindings_are_the_only_source_of_parse_key():
+    """Every declared key sequence parses to its binding's token, and nothing
+    is declared twice — the table is what `parse_key` is built from."""
+    seen: dict[bytes, str] = {}
+    for b in dashboard.KEY_BINDINGS:
+        assert b.keys, f"{b.token} declares no keys"
+        for key in b.keys:
+            assert key not in seen, f"{key!r} bound twice ({seen.get(key)} and {b.token})"
+            seen[key] = b.token
+            assert dashboard.parse_key(key) == b.token
+    tokens = [b.token for b in dashboard.KEY_BINDINGS]
+    assert len(tokens) == len(set(tokens))
+
+
+def test_every_quick_action_verb_is_a_real_menu_verb():
+    """Guards against a typo'd verb in the key table.
+
+    A quick key that dispatches a verb `menu_actions` never offers could never
+    fire (the gate below filters it out), so the bug would be silent.
+    """
+    offered = set()
+    for state in ("Running", "Stopped", "Frozen"):
+        offered |= {
+            verb
+            for _label, verb in dashboard.menu_actions(
+                state,
+                has_config=True,
+                ide_enabled=True,
+                chrome_enabled=True,
+                current_network="strict",
+                pr_number=7,
+                job_clearable=True,
+            )
+        }
+    quick = {b.verb for b in dashboard.KEY_BINDINGS if b.verb is not None}
+    assert quick, "no quick-action keys declared"
+    assert quick <= offered, f"unknown verbs: {quick - offered}"
+
+
+def test_quick_verb_returns_the_verb_when_the_action_is_offered(tmp_path):
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
+    )
+
+    assert dashboard.quick_verb([group], "alpha-x", "action:tmux") == "tmux"
+    assert dashboard.quick_verb([group], "alpha-x", "action:shell") == "shell"
+
+
+def test_quick_verb_is_none_when_the_action_is_not_offered(tmp_path):
+    """The gate is `actions_for_container`, so every rule lives in
+    `menu_actions` alone — no second copy of "when is tmux allowed"."""
+    running = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
+    )
+    stopped = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha", state="Stopped")]
+    )
+    orphan = dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
+
+    assert dashboard.quick_verb([stopped], "alpha-x", "action:tmux") is None  # not running
+    assert dashboard.quick_verb([running], "alpha-x", "action:ide") is None  # jetbrains off
+    assert dashboard.quick_verb([running], "alpha-x", "action:chrome") is None  # chrome off
+    assert dashboard.quick_verb([running], "alpha-x", "action:pr") is None  # no PR known
+    assert dashboard.quick_verb([orphan], "gamma-x", "action:tmux") is None  # view-only
+    assert dashboard.quick_verb([running], "alpha-nope", "action:tmux") is None  # unknown
+    assert dashboard.quick_verb([running], None, "action:tmux") is None
+    assert dashboard.quick_verb([running], "alpha-x", "refresh") is None  # not an action key
+
+
+def test_quick_verb_follows_the_repos_ide_and_chrome_flags(tmp_path):
+    group = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        tmp_path / "c.yaml",
+        [_ci("alpha-x", "alpha")],
+        ide_enabled=True,
+        chrome_enabled=True,
+    )
+
+    assert dashboard.quick_verb([group], "alpha-x", "action:ide") == "ide"
+    assert dashboard.quick_verb([group], "alpha-x", "action:chrome") == "chrome"
+
+
+def test_quick_reject_note_names_the_key_and_the_container(tmp_path):
+    stopped = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha", state="Stopped")]
+    )
+
+    note = dashboard.quick_reject_note([stopped], "alpha-x", "action:tmux")
+
+    assert "'t'" in note and "tmux" in note and "alpha-x" in note
+
+
+def test_quick_reject_note_prefers_the_view_only_explanation():
+    orphan = dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
+
+    assert dashboard.quick_reject_note([orphan], "gamma-x", "action:tmux") == dashboard.view_only_note(
+        [orphan], "gamma-x"
+    )
+
+
+def test_quick_reject_note_handles_an_empty_selection():
+    assert "selected" in dashboard.quick_reject_note([], None, "action:tmux")
+
+
+def test_binding_for_token_finds_the_key_and_its_label():
+    binding = dashboard.binding_for_token("action:tmux")
+
+    assert binding is not None
+    assert binding.hint == "t"
+    assert binding.label
+    assert dashboard.binding_for_token("nope") is None
+
+
+def test_render_help_overlay_documents_every_key(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected="alpha-one",
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay="help",
+        )
+    )
+    for b in dashboard.KEY_BINDINGS:
+        if b.hint:
+            assert b.hint in out, f"{b.token}: hint {b.hint!r} missing from help"
+            assert b.label in out, f"{b.token}: label {b.label!r} missing from help"
+    # Help replaces neither the table nor the hint line, and explains gating.
+    assert "NAME" in out and "one" in out
+    assert "offered" in out or "available" in out
+    assert "close" in out
+
+
+def test_render_hint_line_is_built_from_the_key_table(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+        )
+    )
+    hint_line = next(ln for ln in out.splitlines() if "refresh" in ln and "quit" in ln)
+    for b in dashboard.KEY_BINDINGS:
+        if b.brief:
+            assert b.brief in hint_line, f"{b.token}: {b.brief!r} missing from the hint line"
+            assert b.hint in hint_line
+    # The rarely-used keys stay in help only, so the line cannot grow unbounded.
+    assert "Chrome" not in hint_line
 
 
 def test_parse_key_separates_escape_from_interrupt():
