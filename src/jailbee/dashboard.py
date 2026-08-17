@@ -235,6 +235,29 @@ def gather_rows(
     return groups
 
 
+def gather_live(incus: Incus, cwd_config: Path | None, *, with_git: bool) -> list[RepoGroup]:
+    """One snapshot for a *live* dashboard: config paths re-resolved per gather.
+
+    Both dashboards refresh on a timer, and the set of registered repos moves
+    underneath them: `jailbee new` registers a repo the first time it is used
+    (`cli.py`), and `egress_pool.refresh_all` unregisters — then a later
+    command re-registers — a repo whose config file momentarily disappeared.
+    A path list captured at launch therefore goes stale, and a repo missing
+    from it is not merely absent: `gather_rows`'s ``all_repos`` scan still
+    finds its containers and files them under a view-only orphan group, where
+    ``actions_for_container`` yields no actions and the right-click menu never
+    opens. Re-resolving here is what keeps that self-healing instead of
+    requiring a dashboard restart.
+
+    The registry read is a single indexed SQLite select against a WAL
+    database — cheap next to the `incus list` (and git probes) in the gather
+    it precedes.
+    """
+    return gather_rows(
+        incus, collect_config_paths(cwd_config), cwd_config=cwd_config, with_git=with_git
+    )
+
+
 def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[RepoGroup]) -> None:
     """Copy last-known git_status into a fresh base-refresh snapshot.
 
@@ -599,8 +622,8 @@ def run(
         error("jailbee dashboard requires an interactive terminal.")
         return 1
 
-    config_paths = collect_config_paths(cwd_config)
-    if not config_paths:
+    # Launch-time guard only; `gather_live` re-resolves the list per gather.
+    if not collect_config_paths(cwd_config):
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
@@ -647,9 +670,7 @@ def run(
                 with lock:
                     shared_refreshing = True
                 try:
-                    groups = gather_rows(
-                        incus, config_paths, cwd_config=cwd_config, with_git=do_git
-                    )
+                    groups = gather_live(incus, cwd_config, with_git=do_git)
                 except Exception as exc:  # surface any gather failure to the main thread
                     worker_error.append(exc)
                     stop.set()

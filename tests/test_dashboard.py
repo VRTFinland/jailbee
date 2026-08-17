@@ -270,6 +270,33 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
     assert [g.prefix for g in groups] == ["alpha"]
 
 
+def test_gather_live_reresolves_config_paths_on_every_gather(mocker):
+    """A repo registered while a dashboard is running must be picked up by the
+    next gather.
+
+    `jailbee new` in a not-yet-registered repo registers it mid-session
+    (cli.py), and the 60s pool timer can unregister/re-register a repo whose
+    config file momentarily vanishes (egress_pool.refresh_all). Until the
+    dashboard loads that repo's config, `gather_rows` files its containers
+    under a view-only orphan group, so `actions_for_container` returns [] and
+    the right-click menu silently never opens.
+    """
+    a = Path("/repos/a/.jailbee/config.yaml")
+    b = Path("/repos/b/.jailbee/config.yaml")
+    registered = [a]
+    mocker.patch.object(dashboard, "registered_repo_configs", side_effect=lambda: list(registered))
+    gr = mocker.patch.object(dashboard, "gather_rows", return_value=[])
+    incus = mocker.MagicMock()
+
+    dashboard.gather_live(incus, None, with_git=False)
+    assert gr.call_args.args[1] == [a]
+
+    registered.append(b)  # a `jailbee new` in repo b just registered it
+    dashboard.gather_live(incus, None, with_git=True)
+    assert gr.call_args.args[1] == [a, b]
+    assert gr.call_args.kwargs == {"cwd_config": None, "with_git": True}
+
+
 def test_carry_forward_git_status_fills_in_from_previous_snapshot():
     from jailbee.git_status import GitStatus
 
