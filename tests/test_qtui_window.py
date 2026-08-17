@@ -94,6 +94,38 @@ def test_menu_labels_empty_for_unknown_container(qtbot):
     assert win.menu_labels_for("does-not-exist") == []
 
 
+def test_context_menu_on_a_view_only_row_explains_itself(qtbot):
+    """The table view must match the card view: an orphan row's right-click
+    opens a menu stating why there is nothing to do, instead of nothing."""
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication
+
+    orphan = ContainerInfo(
+        name="gamma-x", state="Running", network="strict", ip=None, memory_limit=None, repo="gamma"
+    )
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups([RepoGroup("gamma", None, None, [orphan])], now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.invisibleRootItem().child(0).child(0))
+
+    seen: list[tuple[str, bool]] = []
+
+    def interact():
+        popup = QApplication.activePopupWidget()
+        if popup is None:
+            return
+        seen.extend((a.text(), a.isEnabled()) for a in popup.actions())
+        popup.close()
+
+    QTimer.singleShot(0, interact)
+    win._on_context_menu(QPoint(0, 0))
+
+    assert len(seen) == 1
+    text, enabled = seen[0]
+    assert "gamma" in text
+    assert enabled is False
+
+
 def test_set_groups_colors_state_column_not_name_column(qtbot):
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)

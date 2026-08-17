@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from jailbee.dashboard import actions_for_container, visible_fields
+from jailbee.dashboard import actions_for_container, view_only_note, visible_fields
 from jailbee.qtui.flow_layout import FlowLayout
 from jailbee.qtui.model import (
     STATE_COLORS,
@@ -458,9 +458,15 @@ class CardView(QScrollArea):
         self._selected = name
         self._apply_selection(name)
         actions = actions_for_container(self._groups, name)
-        if not actions:
-            return
         menu = QMenu(self)
+        if not actions:
+            # View-only container: say so rather than declining to open, which
+            # is what made this look like a broken right-click. `None` means
+            # the container isn't on screen — then there is nothing to say.
+            note = view_only_note(self._groups, name)
+            if note is None:
+                return
+            menu.addAction(note).setEnabled(False)
         for label, verb in actions:
             act = menu.addAction(label)
             act.triggered.connect(

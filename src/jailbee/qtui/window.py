@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from jailbee.dashboard import visible_fields
+from jailbee.dashboard import view_only_note, visible_fields
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
     STATE_COLORS,
@@ -270,9 +270,14 @@ class MainWindow(QMainWindow):
         if name is None:
             return
         actions = self._actions_for(name)
-        if not actions:
-            return
         menu = QMenu(self)
+        if not actions:
+            # Mirrors the card view: a view-only row explains itself, an
+            # unknown one (stale selection) opens nothing at all.
+            note = view_only_note(self._groups, name)
+            if note is None:
+                return
+            menu.addAction(note).setEnabled(False)
         for label, verb in actions:
             act = menu.addAction(label)
             act.triggered.connect(

@@ -541,6 +541,21 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
     )
 
 
+def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
+    """Why ``name`` offers no actions, as one user-facing sentence.
+
+    ``None`` when there is nothing to explain: the container has actions, or
+    it isn't on screen at all (a stale selection). Every front-end shows this
+    the way its medium allows — a warning line in the TUI, a disabled entry
+    in the Qt menus — because an action menu that silently declines to open
+    is indistinguishable from a broken one.
+    """
+    group = _find_group(groups, name)
+    if group is None or group.config_path is not None:
+        return None
+    return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
+
+
 def _open_action_menu(groups: list[RepoGroup], selected: str | None) -> None:
     """Show the questionary action menu and dispatch the chosen ``jailbee`` command.
 
@@ -558,7 +573,11 @@ def _open_action_menu(groups: list[RepoGroup], selected: str | None) -> None:
         return
     actions = actions_for_container(groups, selected)
     if not actions:
-        warn(f"No config loaded for repo '{group.prefix}'; '{selected}' is view-only.")
+        # The note covers the only way a *found* container has no actions
+        # (config-less group); the fallback keeps the message honest if
+        # `menu_actions` ever grows another empty case.
+        note = view_only_note(groups, selected)
+        warn(f"{note}." if note else f"No actions available for '{selected}'.")
         input("Press Enter to continue…")
         return
 

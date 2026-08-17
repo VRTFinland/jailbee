@@ -270,6 +270,28 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
     assert [g.prefix for g in groups] == ["alpha"]
 
 
+def test_view_only_note_explains_a_config_less_group():
+    groups = [dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
+    note = dashboard.view_only_note(groups, "gamma-x")
+    assert note is not None
+    assert "gamma" in note and "view-only" in note
+
+
+def test_view_only_note_is_none_when_the_container_has_actions():
+    groups = [
+        dashboard.RepoGroup(
+            "alpha", "/alpha", Path("/alpha/.jailbee/config.yaml"), [_ci("alpha-1", "alpha")]
+        )
+    ]
+    assert dashboard.view_only_note(groups, "alpha-1") is None
+
+
+def test_view_only_note_is_none_for_an_unknown_container():
+    """Nothing to explain about a container that is not on screen — the
+    caller must stay silent rather than pop up an empty menu."""
+    assert dashboard.view_only_note([], "ghost") is None
+
+
 def test_gather_live_reresolves_config_paths_on_every_gather(mocker):
     """A repo registered while a dashboard is running must be picked up by the
     next gather.
