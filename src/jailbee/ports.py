@@ -334,8 +334,7 @@ def resolve_handle(forwards: Sequence[Forward], handle: str) -> Forward:
         if len(matches) > 1:
             devices = ", ".join(f.device for f in matches)
             raise PortError(
-                f"Port {handle} matches more than one forward ({devices}). "
-                f"Name the device instead."
+                f"Port {handle} matches more than one forward ({devices}). Name the device instead."
             )
     known = ", ".join(f.device for f in forwards) or "none"
     raise PortError(f"There is no forward matching {handle!r}. Present: {known}.")
@@ -484,9 +483,7 @@ def reconcile_config_ports(cfg: Config, incus: Incus, container: str) -> Reconci
     never touched.
     """
     wanted: dict[str, dict[str, str]] = dict(entry_device(e) for e in cfg.host_ports)
-    present = {
-        f.device: f for f in forwards_for(incus, container) if f.source == "config"
-    }
+    present = {f.device: f for f in forwards_for(incus, container) if f.source == "config"}
 
     added: list[str] = []
     replaced: list[str] = []
@@ -518,9 +515,7 @@ def _props_differ(current: Forward, props: Mapping[str, str]) -> bool:
     compared through the direction, because Incus may have stored the
     `container` alias for what we now write as `instance`.
     """
-    wanted_direction: Direction = (
-        "to-container" if props["bind"] == "instance" else "to-host"
-    )
+    wanted_direction: Direction = "to-container" if props["bind"] == "instance" else "to-host"
     if current.direction != wanted_direction:
         return True
     listen, connect = (

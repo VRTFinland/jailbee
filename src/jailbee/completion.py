@@ -280,9 +280,7 @@ def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
             names = [] if full is None else [full]
         else:
             names = [c.name for c in list_containers(cfg, incus, fast=True)]
-        devices = {
-            fwd.device for fwds in list_forwards(incus, names).values() for fwd in fwds
-        }
+        devices = {fwd.device for fwds in list_forwards(incus, names).values() for fwd in fwds}
     except (IncusError, ValueError, OSError):
         return []
     return sorted(d for d in devices if d.startswith(incomplete))

@@ -1,6 +1,7 @@
 """Tests for config models and loader."""
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -3320,7 +3321,7 @@ def test_host_ports_rejects_bad_name(tmp_path, name):
 @pytest.mark.parametrize("port", [0, 70000, -1])
 def test_host_ports_rejects_out_of_range_port(tmp_path, port):
     cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: x\n    port: {port}\n")
-    with pytest.raises(ConfigError, match="1..65535"):
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
         load_config(cfg_path)
 
 
@@ -3329,7 +3330,7 @@ def test_host_ports_rejects_out_of_range_host_port(tmp_path):
         tmp_path,
         "host_ports:\n  - name: x\n    port: 5037\n    host_port: 99999\n",
     )
-    with pytest.raises(ConfigError, match="1..65535"):
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
         load_config(cfg_path)
 
 

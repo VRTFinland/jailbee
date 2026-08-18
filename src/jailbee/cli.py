@@ -5026,8 +5026,7 @@ def _print_port_forward_status() -> None:
     total = sum(len(fwds) for _, fwds in active)
     typer.echo("")
     typer.echo(
-        f"Port forwards: {total} on {len(active)} container(s) — "
-        f"the network ACL does not see these"
+        f"Port forwards: {total} on {len(active)} container(s) — the network ACL does not see these"
     )
     for info_row, fwds in active:
         for fwd in fwds:
@@ -5920,9 +5919,7 @@ def port_to_host_cmd(
                 raise typer.BadParameter(
                     f"--host-port must be a port number or 'auto', got {host_port!r}"
                 )
-            ports.check_host_port(
-                incus, host_address, resolved_host_port, container=name
-            )
+            ports.check_host_port(incus, host_address, resolved_host_port, container=name)
         fwd = ports.add_forward(
             incus,
             name,
@@ -6027,7 +6024,7 @@ def port_ls_cmd(
         rows = [(short, fwd) for fwd in ports.forwards_for(incus, resolved)]
         title = f"Port forwards for {short}"
 
-    Row = tuple[str, ports.Forward]
+    type Row = tuple[str, ports.Forward]
     all_fields: list[table_format.FieldSpec[Row]] = [
         table_format.FieldSpec(
             name="container",

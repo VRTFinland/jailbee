@@ -1077,9 +1077,7 @@ def test_doctor_reports_missing_port_forwards(tmp_path):
     from jailbee.config import HostPort
     from jailbee.lifecycle import ContainerInfo
 
-    cfg = _cfg(tmp_path).model_copy(
-        update={"host_ports": [HostPort(name="adb", port=5037)]}
-    )
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
     incus = _baseline_incus()
     infos = [
         ContainerInfo(
@@ -1111,9 +1109,7 @@ def test_doctor_is_happy_when_forwards_are_attached(tmp_path):
     from jailbee.lifecycle import ContainerInfo
     from jailbee.ports import parse_device
 
-    cfg = _cfg(tmp_path).model_copy(
-        update={"host_ports": [HostPort(name="adb", port=5037)]}
-    )
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
     incus = _baseline_incus()
     infos = [
         ContainerInfo(

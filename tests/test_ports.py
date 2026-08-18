@@ -9,9 +9,11 @@ from jailbee.ports import (
     ADHOC_TO_HOST_PREFIX,
     CONFIG_PREFIX,
     PortError,
+    ReconcileResult,
     add_forward,
     adhoc_device_name,
     allocate_host_port,
+    attach_config_ports,
     check_host_port,
     config_device_name,
     declared_host_ports,
@@ -20,10 +22,12 @@ from jailbee.ports import (
     host_port_free,
     list_forwards,
     parse_device,
+    reconcile_config_ports,
     remove_forward,
     render_device,
     resolve_handle,
 )
+from tests.conftest import make_config
 
 
 def test_device_name_prefixes():
@@ -120,8 +124,12 @@ def test_entry_device_honours_explicit_host_port():
 def test_parse_device_round_trips_to_container():
     fwd = parse_device(
         "port-cfg-adb",
-        {"type": "proxy", "bind": "instance", "listen": "tcp:127.0.0.1:5037",
-         "connect": "tcp:127.0.0.1:5038"},
+        {
+            "type": "proxy",
+            "bind": "instance",
+            "listen": "tcp:127.0.0.1:5037",
+            "connect": "tcp:127.0.0.1:5038",
+        },
     )
     assert fwd is not None
     assert fwd.direction == "to-container"
@@ -134,8 +142,12 @@ def test_parse_device_round_trips_to_container():
 def test_parse_device_treats_lxd_bind_container_as_to_container():
     fwd = parse_device(
         "whatever",
-        {"type": "proxy", "bind": "container", "listen": "tcp:127.0.0.1:5037",
-         "connect": "tcp:127.0.0.1:5037"},
+        {
+            "type": "proxy",
+            "bind": "container",
+            "listen": "tcp:127.0.0.1:5037",
+            "connect": "tcp:127.0.0.1:5037",
+        },
     )
     assert fwd is not None
     assert fwd.direction == "to-container"
@@ -145,8 +157,7 @@ def test_parse_device_treats_lxd_bind_container_as_to_container():
 def test_parse_device_defaults_bind_to_host():
     fwd = parse_device(
         "port-th-tcp-8080",
-        {"type": "proxy", "listen": "tcp:127.0.0.1:18080",
-         "connect": "tcp:127.0.0.1:8080"},
+        {"type": "proxy", "listen": "tcp:127.0.0.1:18080", "connect": "tcp:127.0.0.1:8080"},
     )
     assert fwd is not None
     assert fwd.direction == "to-host"
@@ -162,8 +173,12 @@ def test_parse_device_ignores_non_proxy_devices():
 def test_parse_device_handles_ipv6_and_ranges():
     fwd = parse_device(
         "port-tc-tcp-6000",
-        {"type": "proxy", "bind": "instance", "listen": "tcp:[fd00::1]:6000-6002",
-         "connect": "tcp:127.0.0.1:5037"},
+        {
+            "type": "proxy",
+            "bind": "instance",
+            "listen": "tcp:[fd00::1]:6000-6002",
+            "connect": "tcp:127.0.0.1:5037",
+        },
     )
     assert fwd is not None
     assert fwd.container.address == "fd00::1"
@@ -174,8 +189,12 @@ def test_parse_device_handles_ipv6_and_ranges():
 def test_parse_device_handles_unix_endpoints():
     fwd = parse_device(
         "sock",
-        {"type": "proxy", "bind": "instance", "listen": "unix:/run/x.sock",
-         "connect": "tcp:127.0.0.1:5037"},
+        {
+            "type": "proxy",
+            "bind": "instance",
+            "listen": "unix:/run/x.sock",
+            "connect": "tcp:127.0.0.1:5037",
+        },
     )
     assert fwd is not None
     assert fwd.container.proto == "unix"
@@ -194,10 +213,13 @@ def _proxy(listen: str, connect: str, bind: str = "instance") -> dict:
 def test_list_forwards_indexes_by_container_and_skips_others(mocker):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-a", {
-            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
-            "root": {"type": "disk", "path": "/"},
-        }),
+        _raw(
+            "app-a",
+            {
+                "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+                "root": {"type": "disk", "path": "/"},
+            },
+        ),
         _raw("app-b", {}),
         _raw("other-repo", {"port-cfg-x": _proxy("tcp:127.0.0.1:1", "tcp:127.0.0.1:2")}),
     ]
@@ -210,10 +232,13 @@ def test_list_forwards_indexes_by_container_and_skips_others(mocker):
 def test_forwards_for_sorts_by_device_name(mocker):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-a", {
-            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host"),
-            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
-        })
+        _raw(
+            "app-a",
+            {
+                "port-th-tcp-8080": _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host"),
+                "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+            },
+        )
     ]
     assert [f.device for f in forwards_for(incus, "app-a")] == [
         "port-cfg-adb",
@@ -320,9 +345,7 @@ def test_add_forward_passes_through_an_unrecognised_error(mocker):
 
 
 def test_resolve_handle_by_device_name_config_name_and_port():
-    cfg_fwd = parse_device(
-        "port-cfg-adb", _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037")
-    )
+    cfg_fwd = parse_device("port-cfg-adb", _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"))
     adhoc = parse_device(
         "port-th-tcp-8080", _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host")
     )
@@ -445,13 +468,19 @@ def test_host_port_free_is_false_while_something_listens():
 def test_declared_host_ports_maps_port_to_container(mocker):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-a", {
-            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
-            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
-        }),
-        _raw("app-b", {
-            "port-th-tcp-3000": _proxy("tcp:127.0.0.1:13000", "tcp:127.0.0.1:3000", "host"),
-        }),
+        _raw(
+            "app-a",
+            {
+                "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+                "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+            },
+        ),
+        _raw(
+            "app-b",
+            {
+                "port-th-tcp-3000": _proxy("tcp:127.0.0.1:13000", "tcp:127.0.0.1:3000", "host"),
+            },
+        ),
     ]
     # Only host-bound forwards occupy a host port; a to-container forward's
     # host side is a connect target, not a listener.
@@ -461,9 +490,12 @@ def test_declared_host_ports_maps_port_to_container(mocker):
 def test_declared_host_ports_can_exclude_one_container(mocker):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-a", {
-            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
-        }),
+        _raw(
+            "app-a",
+            {
+                "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+            },
+        ),
     ]
     assert declared_host_ports(incus, exclude="app-a") == {}
 
@@ -483,9 +515,12 @@ def test_allocate_host_port_gives_up_with_a_clear_error(mocker):
 def test_check_host_port_names_the_other_container(mocker):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-b", {
-            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
-        }),
+        _raw(
+            "app-b",
+            {
+                "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+            },
+        ),
     ]
     mocker.patch("jailbee.ports.host_port_free", return_value=True)
     with pytest.raises(PortError, match="app-b"):
@@ -505,11 +540,6 @@ def test_check_host_port_accepts_a_free_port(mocker):
     incus.list_containers.return_value = []
     mocker.patch("jailbee.ports.host_port_free", return_value=True)
     check_host_port(incus, "127.0.0.1", 18080, container="app-a")
-
-
-from tests.conftest import make_config
-
-from jailbee.ports import ReconcileResult, attach_config_ports, reconcile_config_ports
 
 
 def _cfg_with_ports(tmp_path, *entries):
@@ -566,23 +596,24 @@ def test_reconcile_adds_missing_replaces_changed_and_removes_dropped(tmp_path, m
     )
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        _raw("app-a", {
-            # matches config — must be left alone
-            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
-            # host_port changed in config — must be replaced
-            "port-cfg-db": _proxy("tcp:127.0.0.1:5432", "tcp:127.0.0.1:5432"),
-            # no longer in config — must be removed
-            "port-cfg-gone": _proxy("tcp:127.0.0.1:1", "tcp:127.0.0.1:1"),
-            # ad hoc — must never be touched
-            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host"),
-            # someone else's proxy device — must never be touched
-            "hand-made": _proxy("tcp:127.0.0.1:9", "tcp:127.0.0.1:9"),
-        })
+        _raw(
+            "app-a",
+            {
+                # matches config — must be left alone
+                "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+                # host_port changed in config — must be replaced
+                "port-cfg-db": _proxy("tcp:127.0.0.1:5432", "tcp:127.0.0.1:5432"),
+                # no longer in config — must be removed
+                "port-cfg-gone": _proxy("tcp:127.0.0.1:1", "tcp:127.0.0.1:1"),
+                # ad hoc — must never be touched
+                "port-th-tcp-8080": _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host"),
+                # someone else's proxy device — must never be touched
+                "hand-made": _proxy("tcp:127.0.0.1:9", "tcp:127.0.0.1:9"),
+            },
+        )
     ]
     result = reconcile_config_ports(cfg, incus, "app-a")
-    assert result == ReconcileResult(
-        added=[], replaced=["port-cfg-db"], removed=["port-cfg-gone"]
-    )
+    assert result == ReconcileResult(added=[], replaced=["port-cfg-db"], removed=["port-cfg-gone"])
     assert result.changed is True
     removed = [c.args[1] for c in incus.config_device_remove.call_args_list]
     assert removed == ["port-cfg-db", "port-cfg-gone"]
@@ -622,7 +653,10 @@ def test_reconcile_treats_bind_container_alias_as_matching(tmp_path, mocker):
     incus = mocker.MagicMock()
     # Incus stored bind="container" (an alias for "instance"), with matching endpoints
     incus.list_containers.return_value = [
-        _raw("app-a", {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037", "container")})
+        _raw(
+            "app-a",
+            {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037", "container")},
+        )
     ]
     result = reconcile_config_ports(cfg, incus, "app-a")
     # The device should not be considered as needing replacement
