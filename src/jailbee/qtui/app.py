@@ -25,6 +25,7 @@ from jailbee.qtui.actions import (
     build_action,
     resolve_launch,
 )
+from jailbee.qtui.output import CommandOutputDialog
 from jailbee.qtui.refresh import RefreshWorker
 from jailbee.qtui.terminal import detect_terminal
 from jailbee.qtui.window import MainWindow
@@ -286,6 +287,9 @@ class AppController(QObject):
         if action.confirm:
             if not self._confirm_destroy(group, name, verb):
                 return
+        if action.launch == "output":
+            self._open_output(action.argv, f"jailbee {verb} {name}")
+            return
         terminal = detect_terminal(env=_env(), which=shutil.which)
         try:
             argv = resolve_launch(action, terminal)
@@ -298,6 +302,23 @@ class AppController(QObject):
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
         self._worker.force()  # an action likely changed state — refresh ASAP
+
+    def _open_output(self, argv: list[str], title: str) -> None:
+        """Show a command's output in its own window.
+
+        Non-modal and parented to the main window: the dashboard keeps
+        refreshing behind it, and several commands can be watched at once.
+        """
+        dialog = CommandOutputDialog(argv, title, parent=self._window)
+        # Never connect a worker method straight to a signal — the refresh
+        # worker has no Qt event loop of its own. Route through this slot, the
+        # same way on_action does.
+        dialog.view.finished.connect(self._on_output_finished)
+        dialog.show()
+
+    @Slot(int)
+    def _on_output_finished(self, _code: int) -> None:
+        self._worker.force()  # the command likely changed state
 
 
 def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) -> None:

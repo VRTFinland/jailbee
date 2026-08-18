@@ -583,6 +583,21 @@ def test_on_action_net_strict_does_not_open_a_duration_dialog(mocker, tmp_path):
     get_item.assert_not_called()
 
 
+def test_on_action_git_diff_opens_an_output_window_instead_of_spawning(mocker, tmp_path):
+    """`git diff` exists for the text it prints: a detached Popen would throw
+    that away, so the verb must go to the output window instead."""
+    controller = _controller_with_group(mocker, tmp_path)
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch.object(qapp.subprocess, "Popen")
+
+    controller.on_action("git diff", "p-foo")
+
+    popen.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert argv[:4] == ["jailbee", "git", "diff", "p-foo"]
+    assert open_output.call_args.args[1] == "jailbee git diff p-foo"
+
+
 def test_destroy_at_risk_shows_the_summary_with_cancel_defaulted(mocker, tmp_path):
     controller = _controller_with_group(mocker, tmp_path)
     controller._latest[0].containers[0].git_status = GitStatus(
