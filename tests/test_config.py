@@ -3333,10 +3333,11 @@ def test_host_ports_rejects_out_of_range_host_port(tmp_path):
         load_config(cfg_path)
 
 
-def test_host_ports_rejects_hostname_as_address(tmp_path):
+@pytest.mark.parametrize("field", ["host_address", "container_address"])
+def test_host_ports_rejects_hostname_as_address(tmp_path, field):
     cfg_path = _make_config(
         tmp_path,
-        "host_ports:\n  - name: x\n    port: 5037\n    host_address: localhost\n",
+        f"host_ports:\n  - name: x\n    port: 5037\n    {field}: localhost\n",
     )
     with pytest.raises(ConfigError, match="IP literal"):
         load_config(cfg_path)
