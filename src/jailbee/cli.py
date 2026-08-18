@@ -5729,6 +5729,309 @@ def snap_delete_cmd(
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
 
+# ---- Port forwarding commands ----
+
+port_app = typer.Typer(
+    name="port",
+    help="Forward ports between a container and the host.",
+    no_args_is_help=True,
+)
+app.add_typer(port_app)
+
+
+def _parse_port(raw: int) -> int:
+    """Validate a port before anything reaches Incus.
+
+    Incus accepts an out-of-range port at device-add time and fails only when
+    the device starts, so the check has to be here.
+    """
+    if not 1 <= raw <= 65535:
+        raise typer.BadParameter(f"port must be 1..65535, got {raw}")
+    return raw
+
+
+@port_app.command("to-container")
+def port_to_container_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        int | None,
+        typer.Option("--host-port", help="Host-side port. Defaults to PORT."),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to connect to.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to listen on."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a host service reachable inside the container.
+
+    The container listens on PORT; connections land on the host. This is a
+    hole through `net strict` by construction — see docs/security.md.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-container",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(
+        f"{short_name(cfg, name)} can now reach the host's "
+        f"{fwd.host.display} on {fwd.container.display} ({fwd.device})"
+    )
+
+
+@port_app.command("to-host")
+def port_to_host_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        str | None,
+        typer.Option(
+            "--host-port",
+            help="Host-side port, or 'auto' to pick a free one. Defaults to PORT.",
+        ),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to listen on.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to connect to."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a container service reachable on the host.
+
+    The host listens; connections land inside the container. Not available in
+    repo config: a host port is machine-wide, so declaring one per repo would
+    make the repo's containers fight over it.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+
+    try:
+        if host_port == "auto":
+            taken = set(ports.declared_host_ports(incus, exclude=name))
+            resolved_host_port = ports.allocate_host_port(host_address, taken)
+            info(f"Auto-allocated host port {resolved_host_port}")
+        else:
+            if host_port is None:
+                resolved_host_port = container_port
+            elif host_port.isdigit():
+                resolved_host_port = _parse_port(int(host_port))
+            else:
+                raise typer.BadParameter(
+                    f"--host-port must be a port number or 'auto', got {host_port!r}"
+                )
+            ports.check_host_port(
+                incus, host_address, resolved_host_port, container=name
+            )
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-host",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(
+        f"The host can now reach {short_name(cfg, name)}'s "
+        f"{fwd.container.display} on {fwd.host.display} ({fwd.device})"
+    )
+
+
+@port_app.command("rm")
+def port_rm_cmd(
+    handle: Annotated[
+        str,
+        typer.Argument(
+            help="Device name, host_ports name, or container port.",
+            autocompletion=completion.complete_port_handle,
+        ),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Remove one port forward from a container."""
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.remove_forward(incus, name, handle)
+    except ports.PortError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(f"Removed {fwd.device} from {short_name(cfg, name)}")
+
+
+@port_app.command("ls")
+def port_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated fields. Allowed: container, device, "
+                "direction, proto, container_endpoint, host_endpoint, source."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List port forwards. With no container, lists every container of the repo.
+
+    Every proxy device is listed, including one added with `incus` directly —
+    it shows as source `other`. Hiding those would misreport what the
+    container can reach.
+    """
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+
+    rows: list[tuple[str, ports.Forward]] = []
+    if name is None:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+        for info_row in infos:
+            for fwd in by_container.get(info_row.name, []):
+                rows.append((info_row.display_name, fwd))
+        title = f"Port forwards for {cfg.container_prefix}"
+    else:
+        incus, resolved = _resolve_existing(cfg, name)
+        short = short_name(cfg, resolved)
+        rows = [(short, fwd) for fwd in ports.forwards_for(incus, resolved)]
+        title = f"Port forwards for {short}"
+
+    Row = tuple[str, ports.Forward]
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="container",
+            header="CONTAINER",
+            cell=lambda r: r[0],
+            json=lambda r: r[0],
+            show_if=lambda rs: len({r[0] for r in rs}) > 1,
+        ),
+        table_format.FieldSpec(
+            name="device",
+            header="HANDLE",
+            cell=lambda r: r[1].device,
+            json=lambda r: r[1].device,
+        ),
+        table_format.FieldSpec(
+            name="direction",
+            header="DIRECTION",
+            cell=lambda r: r[1].direction,
+            json=lambda r: r[1].direction,
+        ),
+        table_format.FieldSpec(
+            name="proto",
+            header="PROTO",
+            cell=lambda r: r[1].proto,
+            json=lambda r: r[1].proto,
+        ),
+        table_format.FieldSpec(
+            name="container_endpoint",
+            header="CONTAINER",
+            cell=lambda r: r[1].container.display,
+            json=lambda r: r[1].container.display,
+        ),
+        table_format.FieldSpec(
+            name="host_endpoint",
+            header="HOST",
+            cell=lambda r: r[1].host.display,
+            json=lambda r: r[1].host.display,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda r: r[1].source,
+            json=lambda r: r[1].source,
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title=title if fmt == "table" else None,
+        empty_message="No port forwards.",
+    )
+
+
 # ---- GUI launcher commands ----
 
 

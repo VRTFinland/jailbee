@@ -249,6 +249,45 @@ def complete_snapshot(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(t for t in tags if isinstance(t, str) and t.startswith(incomplete))
 
 
+@_never_raises
+def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a `jailbee port rm` handle from one container's forwards.
+
+    Offers device names only — a bare port number also resolves at runtime, but
+    two forwards can share one, so completing it would suggest something that
+    then needs disambiguating.
+
+    Unlike `complete_snapshot`, this does not give up when no container has
+    been typed. `port rm` takes HANDLE first and the optional NAME second, so
+    at completion time the name is usually still missing; with one container in
+    the repo — the common case, and the one `_resolve_existing` auto-picks
+    anyway — the union over every container is exactly the right answer, and
+    with several it is a superset the user can filter by typing.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import list_containers
+    from jailbee.ports import list_forwards
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, incus = loaded
+
+    typed = ctx.params.get("name") if ctx.params else None
+    try:
+        if isinstance(typed, str) and typed:
+            full = _resolve_typed_container(cfg, incus, typed)
+            names = [] if full is None else [full]
+        else:
+            names = [c.name for c in list_containers(cfg, incus, fast=True)]
+        devices = {
+            fwd.device for fwds in list_forwards(incus, names).values() for fwd in fwds
+        }
+    except (IncusError, ValueError, OSError):
+        return []
+    return sorted(d for d in devices if d.startswith(incomplete))
+
+
 def complete_choices(*values: str) -> Callable[[str], list[str]]:
     """Build a completer for a fixed set of values, in declaration order.
 
