@@ -334,6 +334,36 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
                     CheckResult("pre-1.0 gie state", False, f"{detail}; see {MIGRATION_GUIDE}")
                 )
 
+    # 12. Config-declared forwards that never got attached — the container
+    # predates the entry, or an `apply` was skipped. Only meaningful when the
+    # repo declares any.
+    if cfg.host_ports:
+        from jailbee.lifecycle import list_containers as _list_infos
+        from jailbee.ports import entry_device, forwards_for
+
+        wanted = {entry_device(e)[0] for e in cfg.host_ports}
+        missing_forwards: list[str] = []
+        try:
+            for ci in _list_infos(cfg, incus):
+                present = {f.device for f in forwards_for(incus, ci.name)}
+                for device in sorted(wanted - present):
+                    missing_forwards.append(f"{ci.name}:{device}")
+        except Exception as e:
+            results.append(CheckResult("port forwards", False, f"could not inspect: {e}"))
+        else:
+            if missing_forwards:
+                results.append(
+                    CheckResult(
+                        "port forwards",
+                        False,
+                        f"not attached: {', '.join(missing_forwards)} — run `jailbee apply`",
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult("port forwards", True, f"{len(wanted)} declared, all attached")
+                )
+
     return results
 
 

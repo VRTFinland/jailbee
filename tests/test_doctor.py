@@ -1071,3 +1071,89 @@ def test_doctor_reports_missing_incus_binary_instead_of_crashing(tmp_path):
     # prerequisite does not blank out the rest of the diagnosis.
     assert any(r.name == "shared_dir tree" for r in results)
     assert any(r.name == "container_user uid/gid" for r in results)
+
+
+def test_doctor_reports_missing_port_forwards(tmp_path):
+    from jailbee.config import HostPort
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = _cfg(tmp_path).model_copy(
+        update={"host_ports": [HostPort(name="adb", port=5037)]}
+    )
+    incus = _baseline_incus()
+    infos = [
+        ContainerInfo(
+            name="app-a",
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo=cfg.container_prefix,
+        )
+    ]
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.lifecycle.list_containers", return_value=infos),
+        patch("jailbee.ports.forwards_for", return_value=[]),
+    ):
+        results = run_checks(cfg, incus)
+
+    check = [r for r in results if r.name == "port forwards"]
+    assert len(check) == 1
+    assert check[0].ok is False
+    assert "port-cfg-adb" in check[0].detail
+    assert "jailbee apply" in check[0].detail
+
+
+def test_doctor_is_happy_when_forwards_are_attached(tmp_path):
+    from jailbee.config import HostPort
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import parse_device
+
+    cfg = _cfg(tmp_path).model_copy(
+        update={"host_ports": [HostPort(name="adb", port=5037)]}
+    )
+    incus = _baseline_incus()
+    infos = [
+        ContainerInfo(
+            name="app-a",
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo=cfg.container_prefix,
+        )
+    ]
+    attached = [
+        parse_device(
+            "port-cfg-adb",
+            {
+                "type": "proxy",
+                "bind": "instance",
+                "listen": "tcp:127.0.0.1:5037",
+                "connect": "tcp:127.0.0.1:5037",
+            },
+        )
+    ]
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.lifecycle.list_containers", return_value=infos),
+        patch("jailbee.ports.forwards_for", return_value=attached),
+    ):
+        results = run_checks(cfg, incus)
+
+    check = [r for r in results if r.name == "port forwards"]
+    assert len(check) == 1
+    assert check[0].ok is True
+
+
+def test_doctor_omits_the_port_check_without_host_ports(tmp_path):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    assert [r for r in results if r.name == "port forwards"] == []
