@@ -44,6 +44,16 @@ set -euo pipefail
 echo "==> Installing incus-base + incus-client (no VM support)"
 apt-get install -y --no-install-recommends incus-base incus-client dnsmasq-base
 
+# The daemon's socket is root:incus-admin 0660, so without this the dev user
+# gets "You don't have the needed permissions to talk to the incus daemon" —
+# and `jailbee port ...` against the nested daemon, which is the whole point of
+# having it, would need sudo. The group is created by the package postinst, so
+# this has to come after the install above. Group membership is per-session: a
+# shell opened before this ran does not have it.
+echo "==> Adding ${CONTAINER_USER} to incus-admin"
+usermod -aG incus-admin "${CONTAINER_USER}"
+id -nG "${CONTAINER_USER}" | grep -qw incus-admin
+
 # The incus postinst writes `root:1000000:1000000000` into /etc/sub[ug]id.
 # That range is larger than the *outer* container's own idmap can satisfy, and
 # every nested instance then dies in forkstart with

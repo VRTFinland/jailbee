@@ -1879,15 +1879,22 @@ fully mocked by design, so this rig is the only place those answers come from.
 It works because JailBee's base profile already sets `security.nesting: true`
 (`profiles.base_profile_yaml`). `.jailbee/install.d/75-incus.sh` bakes the
 daemon into this repo's golden image with its units disabled, a `default` dir
-pool already created, and root's subuid range capped so instances start
-without per-instance tuning. Two commands from a fresh container:
+pool already created, root's subuid range capped so instances start without
+per-instance tuning, and the `dev` user in `incus-admin` so `incus` — and
+therefore `jailbee` — works without `sudo`. Two commands from a fresh
+container:
 
 ```bash
 sudo systemctl start incus.service
-sudo incus launch images:alpine/edge probe1
-sudo incus list
+incus launch images:alpine/edge probe1
+incus list
 # expect: RUNNING, no IPv4/IPv6 beyond loopback (nothing here creates a NIC)
 ```
+
+Starting the unit needs root; everything after it does not. If `incus` reports
+"You don't have the needed permissions to talk to the incus daemon", the shell
+predates the `incus-admin` grant — group membership is per-session, so reopen
+`jailbee shell`.
 
 A `cgroup2_devices ... Failed to load bpf program` line in the instance log is
 expected under nesting and harmless.
@@ -1900,15 +1907,15 @@ the JailBee container itself:
 python3 -m http.server 5037 --bind 127.0.0.1 &
 
 # instance listens, traffic lands on the host's service (the adb-style case)
-sudo incus config device add probe1 probe-fwd proxy \
+incus config device add probe1 probe-fwd proxy \
     listen=tcp:127.0.0.1:5037 connect=tcp:127.0.0.1:5037 bind=instance
-sudo incus exec probe1 -- wget -qO- http://127.0.0.1:5037/
+incus exec probe1 -- wget -qO- http://127.0.0.1:5037/
 # expect: the host service's response
 
 # the other direction: host listens, traffic lands on the instance's service
-sudo incus exec probe1 -- sh -c \
+incus exec probe1 -- sh -c \
     'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
-sudo incus config device add probe1 probe-pub proxy \
+incus config device add probe1 probe-pub proxy \
     listen=tcp:127.0.0.1:18080 connect=tcp:127.0.0.1:8080 bind=host
 curl -s http://127.0.0.1:18080/
 # expect: OK
@@ -1968,6 +1975,6 @@ Tear the rig down when done; the pool is a plain directory under
 `/var/lib/incus`:
 
 ```bash
-sudo incus delete probe1 --force
+incus delete probe1 --force
 sudo systemctl stop incus.service
 ```
