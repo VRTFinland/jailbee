@@ -530,6 +530,9 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
     KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
     KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),
+    KeyBinding("action:pr-update", (b"P",), "P", "create or update the PR", "Actions", verb="pr"),
+    KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
+    KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
@@ -543,7 +546,8 @@ _GATE_NOTE = (
     "Action keys only fire when that action is offered for the highlighted "
     "container: a stopped container has no tmux or shell, the IDE and Chrome "
     "need the repo's own jetbrains/chrome config, the PR key needs a known PR, "
-    "and orphan rows are view-only."
+    "the workflow keys need a running clone-mode container (and the diff key "
+    "needs something to show), and orphan rows are view-only."
 )
 
 

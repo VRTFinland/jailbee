@@ -1621,6 +1621,46 @@ def test_parse_key_maps_the_quick_action_keys():
     assert dashboard.parse_key(b"?") == "help"
 
 
+def test_parse_key_maps_the_workflow_action_keys():
+    assert dashboard.parse_key(b"P") == "action:pr-update"
+    assert dashboard.parse_key(b"u") == "action:push"
+    assert dashboard.parse_key(b"d") == "action:diff"
+
+
+def test_quick_verb_separates_open_pr_from_update_pr(tmp_path):
+    """`p` opens the PR in a browser, `P` pushes to it — the gate matches the
+    verb exactly, so the two never collapse into one another."""
+    with_pr = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        tmp_path / "c.yaml",
+        [_ci("alpha-x", "alpha", pr_number=7)],
+    )
+
+    assert dashboard.quick_verb([with_pr], "alpha-x", "action:pr") == "pr --open"
+    assert dashboard.quick_verb([with_pr], "alpha-x", "action:pr-update") == "pr"
+
+
+def test_quick_verb_workflow_keys_follow_the_menu_gate(tmp_path):
+    running = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
+    )
+    mounted = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-m", "alpha", mode="mount")]
+    )
+    clean = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        tmp_path / "c.yaml",
+        [_ci("alpha-c", "alpha", git_status=_dirty(wt="clean", ahead_count="0"))],
+    )
+
+    assert dashboard.quick_verb([running], "alpha-x", "action:push") == "git push"
+    assert dashboard.quick_verb([running], "alpha-x", "action:diff") == "git diff"
+    assert dashboard.quick_verb([mounted], "alpha-m", "action:push") is None
+    assert dashboard.quick_verb([clean], "alpha-c", "action:diff") is None
+
+
 def test_key_bindings_are_the_only_source_of_parse_key():
     """Every declared key sequence parses to its binding's token, and nothing
     is declared twice — the table is what `parse_key` is built from."""
