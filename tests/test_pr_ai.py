@@ -197,6 +197,61 @@ def test_prompt_asks_what_the_change_leaves_out_relative_to_its_spec():
     assert "leaves out" in prompt
 
 
+def test_prompt_has_no_project_block_without_a_configured_pr_prompt():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert _PROJECT_BLOCK_HEADER not in prompt
+
+
+def test_prompt_embeds_the_project_prompt_verbatim():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt(
+        "feat/foo", "main", None, None, project_prompt="## Motivation\n## Risk\n"
+    )
+
+    assert _PROJECT_BLOCK_HEADER in prompt
+    assert "## Motivation\n## Risk\n" in prompt
+
+
+def test_project_instructions_are_declared_to_win_over_the_generic_rules():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="Use our template.")
+
+    assert "THESE WIN" in prompt
+
+
+def test_project_block_precedes_the_json_response_contract():
+    """The output contract stays last so project instructions can't displace it."""
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="Use our template.")
+
+    assert prompt.index(_PROJECT_BLOCK_HEADER) < prompt.index("ONLY a JSON object")
+
+
+def test_whitespace_only_project_prompt_is_treated_as_absent():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="  \n\t\n")
+
+    assert _PROJECT_BLOCK_HEADER not in prompt
+
+
+def test_project_prompt_and_fixed_title_clause_coexist():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt(
+        "feat/foo", "main", "feat: fixed", None, project_prompt="Use our template."
+    )
+
+    assert _PROJECT_BLOCK_HEADER in prompt
+    assert "feat: fixed" in prompt
+
+
 # ---------------------------------------------------------------------------
 # generate_pr_text
 # ---------------------------------------------------------------------------
@@ -308,3 +363,20 @@ def test_generate_runs_through_login_shell(mocker, make_cfg, tmp_path):
     # prompt passed via env, never interpolated into the shell string
     assert "$JAILBEE_PR_PROMPT" in argv[2]
     assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
+
+
+def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"claude": cfg.claude.model_copy(update={"pr_prompt": "Always mention the JIRA id."})}
+    )
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    env_prompt = incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
+    assert "Always mention the JIRA id." in env_prompt

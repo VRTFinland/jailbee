@@ -57,7 +57,7 @@ Write a concise, technical pull request in clear English:
     conventional-commit style if you can see one (e.g. `feat(scope): ...`).
   - Body: GitHub-flavored Markdown — short background, then what changed with
     concrete file/symbol references, then how it was tested.
-{fixed_clause}
+{project_clause}{fixed_clause}
 Also choose the branch name to use as this PR's head on the remote. Infer the
 repository's branch-naming convention from `git branch -r`, the names of
 recently merged pull requests, and any CONTRIBUTING.md / CLAUDE.md guidance. If
@@ -66,6 +66,21 @@ unchanged.
 
 Respond with ONLY a JSON object, no prose and no code fences:
 {{"title": "<title>", "body": "<body>", "branch": "<branch>"}}
+"""
+
+_PROJECT_BLOCK_HEADER = "--- PROJECT-SPECIFIC INSTRUCTIONS ---"
+
+# The project block sits after the generic rules and before the JSON contract:
+# a project may dictate the title and body shape, but never the response format
+# `_parse_pr_text` depends on.
+_PROJECT_BLOCK_TEMPLATE = f"""
+{_PROJECT_BLOCK_HEADER}
+The instructions below come from this repository's own jailbee config
+(`claude.pr_prompt`). Where they conflict with any of the generic guidance
+above, THESE WIN. They do not override the JSON response format below.
+
+{{project_prompt}}
+--- END PROJECT-SPECIFIC INSTRUCTIONS ---
 """
 
 
@@ -100,7 +115,7 @@ def generate_pr_text(
     from jailbee.lifecycle import container_repo_dir
 
     repo_dir = container_repo_dir(cfg, incus, full_name)
-    prompt = _build_prompt(branch, base, fixed_title, fixed_body)
+    prompt = _build_prompt(branch, base, fixed_title, fixed_body, cfg.claude.pr_prompt)
     # `claude` lives at ~/.local/bin/claude, which is not on the default
     # `incus exec --user` PATH. Run it through a login shell (`bash -lc`) so
     # ~/.profile puts ~/.local/bin on PATH — the same pattern tmux/autostart
@@ -128,7 +143,16 @@ def generate_pr_text(
     return _parse_pr_text(stdout, fixed_title, fixed_body, current_branch=branch)
 
 
-def _build_prompt(branch: str, base: str, fixed_title: str | None, fixed_body: str | None) -> str:
+def _build_prompt(
+    branch: str,
+    base: str,
+    fixed_title: str | None,
+    fixed_body: str | None,
+    project_prompt: str | None = None,
+) -> str:
+    project_clause = ""
+    if project_prompt is not None and project_prompt.strip():
+        project_clause = _PROJECT_BLOCK_TEMPLATE.format(project_prompt=project_prompt)
     fixed_lines: list[str] = []
     if fixed_title is not None:
         fixed_lines.append(
@@ -140,7 +164,12 @@ def _build_prompt(branch: str, base: str, fixed_title: str | None, fixed_body: s
             "The body is already written — echo it back unchanged and generate only the title."
         )
     fixed_clause = ("\n" + "\n".join(fixed_lines) + "\n") if fixed_lines else ""
-    return _PROMPT_TEMPLATE.format(branch=branch, base=base, fixed_clause=fixed_clause)
+    return _PROMPT_TEMPLATE.format(
+        branch=branch,
+        base=base,
+        project_clause=project_clause,
+        fixed_clause=fixed_clause,
+    )
 
 
 def _parse_pr_text(

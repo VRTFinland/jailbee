@@ -1466,6 +1466,13 @@ def _warn_legacy_skills_key() -> None:
     )
 
 
+# `claude.pr_prompt` ships to the container as an environment variable inside
+# jailbee's own prompt. The cap is a sanity bound, not a model context limit:
+# it turns a pasted-in-by-accident file into a config error instead of a
+# `claude` invocation that fails opaquely and silently falls back.
+_MAX_PR_PROMPT_LEN = 20_000
+
+
 class ClaudeConfig(BaseModel):
     """Claude Code CLI integration inside containers.
 
@@ -1518,6 +1525,14 @@ class ClaudeConfig(BaseModel):
     - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
       the in-container Claude to propose a convention-following PR head branch
       name when opening a new PR; has no effect when `enabled` is false.
+    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
+      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
+      jailbee's own prompt as a delimited section that explicitly outranks the
+      generic guidance, so a project can dictate the title and body shape
+      without having to restate the JSON response contract `_parse_pr_text`
+      depends on. Capped at 20 000 characters so a pathological value fails at
+      config load rather than inside the container. Has no effect when
+      `enabled` or `ai_pr_description` is false.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1532,6 +1547,7 @@ class ClaudeConfig(BaseModel):
     )
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
+    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
 
     @model_validator(mode="before")
     @classmethod
