@@ -125,8 +125,8 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             CheckResult(
                 "Incus-dependent checks",
                 False,
-                "skipped — profiles, ACL, bridge, registry mirror and pre-1.0 "
-                "state all need the `incus` binary",
+                "skipped — profiles, ACL, bridge, registry mirror, pre-1.0 "
+                "state and port forwards all need the `incus` binary",
             )
         )
 
@@ -336,16 +336,23 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
 
     # 12. Config-declared forwards that never got attached — the container
     # predates the entry, or an `apply` was skipped. Only meaningful when the
-    # repo declares any.
-    if cfg.host_ports:
+    # repo declares any. Needs the `incus` binary like every other check in
+    # this block, so it lives inside the same gate — otherwise a host with no
+    # Incus and a declared `host_ports` got a second, redundant red line for
+    # a cause the "Incus-dependent checks" line above already reported once.
+    if incus_available and cfg.host_ports:
         from jailbee.lifecycle import list_containers as _list_infos
-        from jailbee.ports import entry_device, forwards_for
+        from jailbee.ports import entry_device, list_forwards
 
         wanted = {entry_device(e)[0] for e in cfg.host_ports}
         missing_forwards: list[str] = []
         try:
-            for ci in _list_infos(cfg, incus):
-                present = {f.device for f in forwards_for(incus, ci.name)}
+            infos = _list_infos(cfg, incus)
+            # One `incus list` for every container's forwards, instead of one
+            # per container — `list_forwards` exists for exactly this.
+            by_container = list_forwards(incus, [ci.name for ci in infos])
+            for ci in infos:
+                present = {f.device for f in by_container.get(ci.name, [])}
                 for device in sorted(wanted - present):
                     missing_forwards.append(f"{ci.name}:{device}")
         except Exception as e:

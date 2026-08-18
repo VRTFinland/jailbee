@@ -1093,7 +1093,7 @@ def test_doctor_reports_missing_port_forwards(tmp_path):
     with (
         patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
         patch("jailbee.lifecycle.list_containers", return_value=infos),
-        patch("jailbee.ports.forwards_for", return_value=[]),
+        patch("jailbee.ports.list_forwards", return_value={"app-a": []}),
     ):
         results = run_checks(cfg, incus)
 
@@ -1136,7 +1136,7 @@ def test_doctor_is_happy_when_forwards_are_attached(tmp_path):
     with (
         patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
         patch("jailbee.lifecycle.list_containers", return_value=infos),
-        patch("jailbee.ports.forwards_for", return_value=attached),
+        patch("jailbee.ports.list_forwards", return_value={"app-a": attached}),
     ):
         results = run_checks(cfg, incus)
 
@@ -1153,3 +1153,23 @@ def test_doctor_omits_the_port_check_without_host_ports(tmp_path):
         results = run_checks(cfg, incus)
 
     assert [r for r in results if r.name == "port forwards"] == []
+
+
+def test_doctor_skips_the_port_check_without_incus_too(tmp_path):
+    """The port-forward check needs the `incus` binary like every other
+    daemon-dependent check — it must not run standalone when `incus` is
+    missing, nor add a second "skipped" line beyond the one every other
+    Incus-dependent check already shares.
+    """
+    from jailbee.config import HostPort
+
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = _baseline_incus()
+
+    with patch("jailbee.doctor.shutil.which", return_value=None):
+        results = run_checks(cfg, incus)
+
+    assert [r for r in results if r.name == "port forwards"] == []
+    skipped = [r for r in results if "skipped" in r.detail]
+    assert len(skipped) == 1
+    assert "port forwards" in skipped[0].detail
