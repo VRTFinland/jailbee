@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Slot
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from jailbee.dashboard import collect_config_paths, resolve_dashboard_columns
 from jailbee.qtui.actions import (
@@ -26,6 +26,14 @@ from jailbee.qtui.actions import (
     resolve_launch,
 )
 from jailbee.qtui.output import CommandOutputDialog
+from jailbee.qtui.prompts import (
+    PrOptionsDialog,
+    PushOptionsDialog,
+    confirm_text,
+    pr_flags,
+    push_flags,
+    push_questions,
+)
 from jailbee.qtui.refresh import RefreshWorker
 from jailbee.qtui.terminal import detect_terminal
 from jailbee.qtui.window import MainWindow
@@ -35,6 +43,7 @@ if TYPE_CHECKING:
     from jailbee.config import ColumnConfig
     from jailbee.dashboard import RepoGroup
     from jailbee.incus import Incus
+    from jailbee.lifecycle import ContainerInfo
 
 log = logging.getLogger(__name__)
 
@@ -221,13 +230,19 @@ class AppController(QObject):
                 continue
             return value
 
-    def _confirm_destroy(self, group: RepoGroup, name: str, verb: str) -> bool:
-        """Confirm a destroy, naming what it would discard. True to proceed.
+    def _confirm(
+        self, verb: str, name: str, group: RepoGroup, container: ContainerInfo | None
+    ) -> bool:
+        """Confirm a destructive verb before dispatching. True to proceed.
 
-        The launched argv carries ``--force`` (a detached Popen cannot answer
-        the CLI's own prompt), so this dialog is the *only* guard in the GUI
-        — the CLI-side one from `_warn_before_destroy` is bypassed here by
-        construction. "No" (decline) is the default button.
+        Every verb in ``_CONFIRM_VERBS`` lands here, so the question text comes
+        from :func:`confirm_text` — `git pull` writes to the *host* repo and
+        needs to say so. Only `destroy` also gets the destroy guard's detail:
+        it is the one verb whose "⚠ … Destroying loses this" is true, and it
+        launches with ``--force`` (a detached Popen cannot answer the CLI's own
+        prompt), so this dialog is the *only* guard in the GUI — the CLI-side
+        one from `_warn_before_destroy` is bypassed here by construction.
+        "No" (decline) is the default button.
         """
         from jailbee.config import load_config
         from jailbee.destroy_guard import (
@@ -236,57 +251,98 @@ class AppController(QObject):
             unknown_status_warning,
         )
 
-        ci = next((c for c in group.containers if c.name == name), None)
-        if ci is None or group.config_path is None:
+        if container is None or group.config_path is None:
             return False
 
         detail = ""
-        if status_is_unknown(ci):
-            # Same sentence the CLI prints (`tui.confirm_destroy_risk`): one
-            # container must not be described two ways depending on which
-            # front-end asked. A mount-mode container is deliberately not
-            # "unknown" — see `status_is_unknown`.
-            detail = f"\n\n{unknown_status_warning([ci.display_name])}."
-        elif ci.git_status is not None:
-            try:
-                summary = assess(load_config(group.config_path), ci)
-            except Exception:
-                # An unreadable repo config must not block the GUI — the
-                # guard degrades to "no risk shown", same as an unprobed
-                # container — but the failure should still be discoverable
-                # rather than vanishing silently.
-                log.debug("destroy guard: could not assess %s", group.config_path, exc_info=True)
-                summary = None
-            if summary is not None:
-                detail = f"\n\n⚠  {summary.line}\nDestroying loses this."
+        if verb == "destroy":
+            if status_is_unknown(container):
+                # Same sentence the CLI prints (`tui.confirm_destroy_risk`): one
+                # container must not be described two ways depending on which
+                # front-end asked. A mount-mode container is deliberately not
+                # "unknown" — see `status_is_unknown`.
+                detail = f"\n\n{unknown_status_warning([container.display_name])}."
+            elif container.git_status is not None:
+                try:
+                    summary = assess(load_config(group.config_path), container)
+                except Exception:
+                    # An unreadable repo config must not block the GUI — the
+                    # guard degrades to "no risk shown", same as an unprobed
+                    # container — but the failure should still be discoverable
+                    # rather than vanishing silently.
+                    log.debug(
+                        "destroy guard: could not assess %s", group.config_path, exc_info=True
+                    )
+                    summary = None
+                if summary is not None:
+                    detail = f"\n\n⚠  {summary.line}\nDestroying loses this."
 
+        question = confirm_text(verb, name, container.base_branch)
         reply = QMessageBox.question(
             self._window,
             "Confirm",
-            f"{verb} {name}?{detail}",
+            f"{question}{detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
+
+    def _collect_answers(
+        self, verb: str, name: str, group: RepoGroup, container: ContainerInfo | None
+    ) -> list[str] | None:
+        """The flags answering what the CLI would have prompted for.
+
+        Returns the (possibly empty) flag list, or None when the user cancelled
+        a dialog — the caller must then dispatch nothing. Asking happens *only*
+        where the CLI would ask: a repo that pinned its `push:` defaults has
+        already answered, and a flag on top of that would override its policy.
+        """
+        if verb == "git push":
+            ask_action, ask_source = push_questions(
+                group.push_action_default, group.push_source_default
+            )
+            if not (ask_action or ask_source):
+                return []
+            push_dlg = PushOptionsDialog(
+                name,
+                ask_action=ask_action,
+                ask_source=ask_source,
+                base_branch=container.base_branch if container else None,
+                parent=self._window,
+            )
+            if push_dlg.exec() != QDialog.DialogCode.Accepted:
+                return None
+            return push_flags(push_dlg.answers())
+        if verb == "pr":
+            pr_dlg = PrOptionsDialog(name, parent=self._window)
+            if pr_dlg.exec() != QDialog.DialogCode.Accepted:
+                return None
+            return pr_flags(pr_dlg.answers())
+        if verb == "net loose":
+            # A None `loose_ttl_default` means the repo's auto-revert policy is
+            # disabled: there is no TTL to schedule, so skip the dialog and let
+            # `jailbee net loose` run flagless — the same choice the CLI prompt
+            # makes.
+            if group.loose_ttl_default is None:
+                return []
+            duration = self._ask_loose_ttl(name, group.loose_ttl_default)
+            if duration is None:
+                return None
+            return ["--for", duration]
+        return []
 
     @Slot(str, str)
     def on_action(self, verb: str, name: str) -> None:
         group = _group_for(self._latest, name)
         if group is None or group.config_path is None:
             return
-        config_path = group.config_path
-        action = build_action(verb, name, config_path)
-        # A None `loose_ttl_default` means the repo's auto-revert policy is
-        # disabled: there is no TTL to schedule, so skip the dialog and let
-        # `jailbee net loose` run flagless — the same choice the CLI prompt makes.
-        if action.duration_prompt and group.loose_ttl_default is not None:
-            duration = self._ask_loose_ttl(name, group.loose_ttl_default)
-            if duration is None:
-                return
-            action = build_action(verb, name, config_path, duration=duration)
-        if action.confirm:
-            if not self._confirm_destroy(group, name, verb):
-                return
+        container = next((c for c in group.containers if c.name == name), None)
+        extra = self._collect_answers(verb, name, group, container)
+        if extra is None:
+            return  # a dialog was cancelled
+        action = build_action(verb, name, group.config_path, extra_flags=extra)
+        if action.confirm and not self._confirm(verb, name, group, container):
+            return
         if action.launch == "output":
             self._open_output(action.argv, f"jailbee {verb} {name}")
             return

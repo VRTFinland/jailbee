@@ -7,12 +7,23 @@ rule is *ask no more than the CLI would*: a repo that pinned
 override the repo's own policy.
 
 The flag-building functions here are pure, so they can be tested without
-showing a dialog; the dialogs (added separately) only collect answers.
+showing a dialog; the dialogs below only collect answers.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -87,3 +98,105 @@ def confirm_text(verb: str, name: str, base_branch: str | None) -> str:
         target = f"host branch '{base_branch}'" if base_branch else "its recorded base branch"
         return f"Merge '{name}' commits into {target}?"
     return f"{verb} {name}?"
+
+
+_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("Merge the pushed ref into the container's branch", "merge"),
+    ("Rebase the container's branch onto it", "rebase"),
+    ("Transport only — push the ref, run nothing", "plain"),
+)
+
+
+class PushOptionsDialog(QDialog):
+    """Asks `jailbee git push`'s open questions for one container.
+
+    Only the questions the repo left open are shown: `push.default_action`
+    defaults to "ask", so the action combo is the common case, while the source
+    combo appears only for `push.default_source: ask`.
+
+    The source choices are the two this dialog can express as flags without
+    reading the host repo: the container's recorded base branch (`--from
+    <base>`) and the host's checked-out branch (`--current`). A repo that wants
+    the host's default branch instead should pin `push.default_source`.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        ask_action: bool,
+        ask_source: bool,
+        base_branch: str | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Update '{name}' from base")
+        form = QFormLayout()
+        self._action: QComboBox | None = None
+        self._source: QComboBox | None = None
+        if ask_action:
+            self._action = QComboBox(self)
+            for label, value in _ACTIONS:
+                self._action.addItem(label, value)
+            form.addRow("Action", self._action)
+        if ask_source:
+            self._source = QComboBox(self)
+            if base_branch:
+                self._source.addItem(f"Base branch ({base_branch})", base_branch)
+            self._source.addItem("Current host branch", "current")
+            form.addRow("Source", self._source)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def answers(self) -> PushAnswers:
+        """What the user chose (None per question that was not asked)."""
+        return PushAnswers(
+            action=None if self._action is None else str(self._action.currentData()),
+            source=None if self._source is None else str(self._source.currentData()),
+        )
+
+
+class PrOptionsDialog(QDialog):
+    """Asks the three things `jailbee pr` would prompt for on a TTY.
+
+    Off-TTY the CLI accepts the AI-proposed head branch name unchanged and
+    skips the "regenerate the description?" offer, so those are the defaults
+    here too; the adoption confirmation is an *error* off-TTY, which is why it
+    is an explicit checkbox rather than a silent --yes.
+    """
+
+    def __init__(self, name: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Create or update PR for '{name}'")
+        self._ready = QCheckBox("Mark the PR ready for review", self)
+        self._regen = QCheckBox("Regenerate the description with Claude", self)
+        self._adopt = QCheckBox("Confirm publishing to an existing PR's head branch", self)
+        note = QLabel(
+            "A new PR opens as a draft. Leave 'ready' unchecked to leave an "
+            "existing PR's draft state alone.",
+            self,
+        )
+        note.setWordWrap(True)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        for widget in (self._ready, self._regen, self._adopt, note, buttons):
+            layout.addWidget(widget)
+
+    def answers(self) -> PrAnswers:
+        return PrAnswers(
+            ready=True if self._ready.isChecked() else None,
+            regenerate=self._regen.isChecked(),
+            confirm_foreign=self._adopt.isChecked(),
+        )

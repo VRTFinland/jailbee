@@ -65,14 +65,18 @@ def test_build_action_multi_token_verb_splits_into_argv():
     assert ac.confirm is False
 
 
-def test_net_loose_requests_a_duration_prompt():
+def test_net_loose_without_answers_carries_no_duration_flag():
+    """The duration is one of the GUI-collected answers now (see
+    ``AppController._collect_answers``), so ``build_action`` itself never
+    invents one."""
     ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"))
-    assert ac.duration_prompt is True
     assert "--for" not in ac.argv
 
 
-def test_net_loose_with_duration_appends_for_and_stops_prompting():
-    ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"), duration="2h")
+def test_net_loose_duration_arrives_as_extra_flags():
+    ac = a.build_action(
+        "net loose", "p-foo", Path("/x/config.yaml"), extra_flags=["--for", "2h"]
+    )
     assert ac.argv == [
         "jailbee",
         "net",
@@ -83,12 +87,6 @@ def test_net_loose_with_duration_appends_for_and_stops_prompting():
         "--for",
         "2h",
     ]
-    assert ac.duration_prompt is False
-
-
-def test_other_verbs_do_not_request_a_duration():
-    for verb in ("start", "stop", "net strict", "destroy", "shell"):
-        assert a.build_action(verb, "p-foo", Path("/x/config.yaml")).duration_prompt is False
 
 
 def test_launch_mode_classifies_the_verbs():

@@ -43,11 +43,6 @@ _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})
 # means something entirely different there.
 _FORCE_ON_CONFIRM: frozenset[str] = frozenset({"destroy"})
 
-# Verbs whose duration the GUI must ask for before dispatching. The CLI
-# prompts interactively, but the detached Popen child has no stdin, so the
-# question has to be a Qt dialog and the answer an explicit flag.
-ASKS_DURATION_VERBS: frozenset[str] = frozenset({"net loose"})
-
 
 def launch_mode(verb: str) -> LaunchMode:
     """Which launch path ``verb`` needs."""
@@ -70,9 +65,6 @@ class ActionCommand:
     argv: list[str]
     launch: LaunchMode
     confirm: bool
-    # True when the verb needs a duration the caller has not supplied yet:
-    # the GUI asks, then rebuilds the action with `duration=`.
-    duration_prompt: bool = False
 
 
 def build_action(
@@ -80,7 +72,6 @@ def build_action(
     container: str,
     config_path: Path,
     *,
-    duration: str | None = None,
     extra_flags: list[str] | None = None,
 ) -> ActionCommand:
     """Build the jailbee command for ``verb`` on ``container`` under ``config_path``.
@@ -96,13 +87,10 @@ def build_action(
     ``typer.confirm`` prompt would read EOF and abort the operation silently.
     Not every confirm verb is forced — see ``_FORCE_ON_CONFIRM``.
 
-    ``duration`` appends ``--for <duration>`` for the verbs in
-    ``ASKS_DURATION_VERBS``; passing it also clears ``duration_prompt`` so the
-    GUI does not ask twice.
-
     ``extra_flags`` are the answers the GUI collected for the questions the CLI
-    would have prompted for (see :mod:`jailbee.qtui.prompts`); they go last, so
-    nothing lands between the verb and its container name.
+    would have prompted for — `net loose`'s ``--for <duration>``, `git push`'s
+    merge/rebase choice, `pr`'s draft state (see :mod:`jailbee.qtui.prompts`).
+    They go last, so nothing lands between the verb and its container name.
 
     The resolved ``launch`` mode comes from :func:`launch_mode`, so the caller
     never has to know which verbs want a terminal and which want their output
@@ -112,16 +100,9 @@ def build_action(
     argv = ["jailbee", *verb.split(), container, "--config", str(config_path)]
     if verb in _FORCE_ON_CONFIRM:
         argv.append("--force")
-    if duration is not None:
-        argv += ["--for", duration]
     if extra_flags:
         argv += extra_flags
-    return ActionCommand(
-        argv=argv,
-        launch=launch_mode(verb),
-        confirm=confirm,
-        duration_prompt=verb in ASKS_DURATION_VERBS and duration is None,
-    )
+    return ActionCommand(argv=argv, launch=launch_mode(verb), confirm=confirm)
 
 
 def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list[str]:
