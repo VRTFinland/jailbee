@@ -25,11 +25,12 @@ schema deliberately does not expose.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from jailbee.config import HostPort
+from jailbee.incus import Incus, IncusError
 
 CONFIG_PREFIX = "port-cfg-"
 ADHOC_TO_CONTAINER_PREFIX = "port-tc-"
@@ -178,3 +179,169 @@ def parse_device(device: str, props: Mapping[str, object]) -> Forward | None:
         host=host,
         source=_source_of(device),
     )
+
+
+class PortError(Exception):
+    """A port-forwarding failure with a message meant for the user."""
+
+
+def list_forwards(incus: Incus, names: Sequence[str]) -> dict[str, list[Forward]]:
+    """Forwards per container, for the given container names.
+
+    One `incus list` call for the whole set. Containers with no proxy device
+    map to an empty list, so a caller can render "none" without a second
+    lookup. Names that Incus does not report are omitted.
+    """
+    wanted = set(names)
+    by_container: dict[str, list[Forward]] = {}
+    for raw in incus.list_containers():
+        name = str(raw.get("name", ""))
+        if name not in wanted:
+            continue
+        devices = raw.get("devices") or {}
+        rows = [
+            fwd
+            for device, props in sorted(devices.items())
+            if (fwd := parse_device(device, props)) is not None
+        ]
+        by_container[name] = rows
+    return by_container
+
+
+def forwards_for(incus: Incus, container: str) -> list[Forward]:
+    """Forwards on one container, sorted by device name."""
+    return list_forwards(incus, [container]).get(container, [])
+
+
+def add_forward(
+    incus: Incus,
+    container: str,
+    *,
+    direction: Direction,
+    proto: str,
+    container_port: int,
+    host_port: int,
+    container_address: str,
+    host_address: str,
+) -> Forward:
+    """Attach one ad-hoc forward, translating Incus's failures.
+
+    Checks for an existing device of the same name first so the duplicate
+    message can name the endpoints already in place — Incus's own
+    "The device already exists" says nothing about what is there.
+    """
+    device = adhoc_device_name(direction, proto, container_port)
+    existing = {f.device: f for f in forwards_for(incus, container)}
+    if device in existing:
+        clash = existing[device]
+        raise PortError(
+            f"Port {container_port}/{proto} is already forwarded in "
+            f"{container}: {clash.container.display} ↔ {clash.host.display} "
+            f"(device {device}). Remove it first with "
+            f"`jailbee port rm {device}`."
+        )
+    props = render_device(
+        direction,
+        proto=proto,
+        container_port=container_port,
+        host_port=host_port,
+        container_address=container_address,
+        host_address=host_address,
+    )
+    try:
+        incus.config_device_add(container, device, "proxy", props)
+    except IncusError as e:
+        raise _translate(
+            e,
+            container=container,
+            container_port=container_port,
+            host_port=host_port,
+        ) from e
+    return Forward(
+        device=device,
+        direction=direction,
+        proto=proto,
+        container=Endpoint(
+            proto=proto,
+            address=container_address,
+            port=container_port,
+            raw=f"{proto}:{_addr(container_address)}:{container_port}",
+        ),
+        host=Endpoint(
+            proto=proto,
+            address=host_address,
+            port=host_port,
+            raw=f"{proto}:{_addr(host_address)}:{host_port}",
+        ),
+        source="ad-hoc",
+    )
+
+
+def _translate(
+    exc: IncusError,
+    *,
+    container: str,
+    container_port: int,
+    host_port: int,
+) -> PortError:
+    """Turn a known Incus failure into something a user can act on.
+
+    The strings are Incus 6.0.5's, recorded verbatim in
+    docs/manual-testing.md. The third is the one that must never reach a
+    user raw: it names neither the port nor the cause.
+    """
+    message = str(exc)
+    if "already exists" in message.lower():
+        return PortError(
+            f"Port {container_port} is already forwarded in {container}. "
+            f"Remove it first with `jailbee port rm {container_port}`."
+        )
+    if "address already in use" in message:
+        return PortError(
+            f"host port {host_port} is already in use, so it cannot receive "
+            f"{container}'s forward. Pick another with `--host-port N`, or "
+            f"let jailbee choose with `--host-port auto`."
+        )
+    if "Failed to receive fd from listener process" in message:
+        return PortError(
+            f"Could not open port {container_port} inside {container} — "
+            f"something is already listening on port {container_port} inside "
+            f"the container. Stop it, or forward to a different container "
+            f"port."
+        )
+    return PortError(f"Incus refused the forward: {message}")
+
+
+def resolve_handle(forwards: Sequence[Forward], handle: str) -> Forward:
+    """Find one forward by device name, config entry name, or port number.
+
+    Resolution order is exact device name, then `host_ports` entry name, then
+    container-side port. An ambiguous port is an error naming both devices
+    rather than a guess.
+    """
+    for fwd in forwards:
+        if fwd.device == handle:
+            return fwd
+    named = [f for f in forwards if f.device == config_device_name(handle)]
+    if named:
+        return named[0]
+    if handle.isdigit():
+        port = int(handle)
+        matches = [f for f in forwards if f.container.port == port]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            devices = ", ".join(f.device for f in matches)
+            raise PortError(
+                f"Port {handle} matches more than one forward ({devices}). "
+                f"Name the device instead."
+            )
+    known = ", ".join(f.device for f in forwards) or "none"
+    raise PortError(f"There is no forward matching {handle!r}. Present: {known}.")
+
+
+def remove_forward(incus: Incus, container: str, handle: str) -> Forward:
+    """Detach one forward, resolved from a device name, entry name or port."""
+    fwd = resolve_handle(forwards_for(incus, container), handle)
+    incus.config_device_remove(container, fwd.device)
+    return fwd
