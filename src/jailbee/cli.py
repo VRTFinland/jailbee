@@ -322,6 +322,9 @@ def apply(
     for name, err in result.restart_failures:
         error(f"Restart failed: {short_name(cfg, name)}: {err}")
 
+    for name, err in result.port_failures:
+        error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
+
     if not result.fully_successful:
         raise typer.Exit(1)
 

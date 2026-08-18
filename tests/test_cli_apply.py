@@ -144,3 +144,22 @@ def test_cli_apply_nonzero_exit_on_restart_failures(mocker: MockerFixture) -> No
 
     result = runner.invoke(app, ["apply", "-y", "--config", str(FIXTURES / "full_config.yaml")])
     assert result.exit_code == 1
+
+
+def test_cli_apply_nonzero_exit_on_port_failures(mocker: MockerFixture) -> None:
+    """A reconciliation failure on one container is reported and still fails
+    the command's exit code, the same way a restart failure does — the run
+    is not fully successful even though the sweep continued for the rest."""
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(
+            port_failures=[("foo-feat-x", "something is already listening on port 5037")],
+        ),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "-y", "--config", str(FIXTURES / "full_config.yaml")])
+    assert result.exit_code == 1
+    output = result.stdout + (result.stderr or "")
+    assert "foo-feat-x" in output
+    assert "already listening on port 5037" in output
