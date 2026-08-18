@@ -1925,9 +1925,11 @@ curl -s http://127.0.0.1:18080/
 
 Kept here because they are what the mocked tests are written against.
 
-- `bind=instance` is Incus's name; `bind=container` is accepted as an alias
-  from LXD and works, but the daemon stores whichever string it was given, so
-  reads must treat both as the same thing.
+- `bind=instance` is Incus's name; `bind=container` and `bind=guest` are both
+  accepted as LXD aliases and work — the device was accepted and the
+  instance's listener reached the host service exactly as with `instance` —
+  but the daemon stores whichever string it was given, so reads must treat
+  all three as the same thing.
 - `incus list --format json` returns each instance's `devices` and
   `expanded_devices` maps, so reading forwards back needs no new wrapper
   method — `Incus.list_containers()` already carries them.
@@ -1976,5 +1978,69 @@ Tear the rig down when done; the pool is a plain directory under
 
 ```bash
 incus delete probe1 --force
+sudo systemctl stop incus.service
+```
+
+## `jailbee port` against the nested rig (exercising the real commands)
+
+The rig above talks to the nested daemon with raw `incus config device add`.
+This recipe exercises **`jailbee port`** itself against the same daemon:
+`Incus()` shells out to the `incus` CLI, and inside this container that CLI
+resolves to the nested daemon, so `jailbee port to-container`/`ls`/`rm` are
+exactly as real here as they are on the host.
+
+Bring the nested daemon up as above (only `sudo systemctl start
+incus.service` needs root — once that grant is in place, `incus` and
+`jailbee` both reach the nested daemon as the `dev` user; if a shell
+predates the grant, reopen `jailbee shell` rather than reaching for `sudo`
+on the commands below). Launch the instance named to this repo's
+`container_prefix` convention (`<container_prefix>-<name>`) so `jailbee`
+can resolve it by its short name:
+
+```bash
+incus launch images:alpine/edge <prefix>-probe
+
+# host side (this container, from jailbee's point of view): a service to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+jailbee port to-container 5037 probe
+# expect: "... connecting to 127.0.0.1:5037 inside the container now reaches
+#          the host's 127.0.0.1:5037 (port-tc-tcp-5037)"
+jailbee port ls probe
+# expect: one row — HANDLE port-tc-tcp-5037, DIRECTION to-container, SOURCE ad-hoc
+
+incus exec <prefix>-probe -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response (the http.server's directory listing)
+
+jailbee port rm 5037 probe
+jailbee port ls probe
+# expect: No port forwards.
+```
+
+Negative case — the container-side port is already taken, which is the
+scenario JailBee's translation exists for:
+
+```bash
+# Occupy port 5037 *inside* the instance first (its own listener, adb-style).
+incus exec <prefix>-probe -- sh -c 'nc -l -p 5037 >/dev/null 2>&1 &'
+
+jailbee port to-container 5037 probe
+# expect JailBee's translated message, e.g.:
+#   "Could not open port 5037 inside <prefix>-probe — something is already
+#    listening on port 5037 inside the container. Stop it, or forward to a
+#    different container port."
+# NOT Incus's raw "Failed to receive fd from listener process: Failed to
+# receive file descriptor via abstract unix socket".
+
+incus exec <prefix>-probe -- pkill nc
+jailbee port to-container 5037 probe   # now succeeds
+jailbee port rm 5037 probe
+```
+
+Teardown:
+
+```bash
+kill %1   # stop the python http.server
+incus delete <prefix>-probe --force
 sudo systemctl stop incus.service
 ```

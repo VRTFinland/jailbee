@@ -83,6 +83,35 @@ when you need to push or use `gh`, temporarily switch to loose with
 with `jailbee net strict <name>`. This keeps unattended agent runs from
 producing surprise pushes.
 
+### Port forwards
+
+A port forward (`host_ports` in config, or an ad hoc `jailbee port
+to-container`/`jailbee port to-host`) is a deliberate hole through the
+boundary `net strict` otherwise enforces. It works because the traffic
+**never traverses the bridge the network ACL is attached to**: each forward
+is one Incus `proxy` device, and Incus's forkproxy connects directly into
+(or out of) the container's network namespace rather than sending packets
+over the NIC. The ACL — applied in `strict` mode only — is deny-by-default
+on both egress and ingress (see `src/jailbee/network.py`), so neither
+direction of a forward is filtered by it.
+
+Both directions matter, and each bypasses a different half of that
+default-deny: a `to-container` forward (the `host_ports` case, e.g. the adb
+recipe in [project-config.md](project-config.md#talking-to-android-devices-over-adb))
+lets the container reach a host service that the egress deny would
+otherwise have blocked. A `to-host` forward lets something on the host
+reach into the container — traffic the ingress deny would otherwise have
+blocked. The `to-host` direction does **not** give the container any new
+outbound reach: the host is the one initiating the connection, into a port
+the container is already listening on.
+
+It is opt-in either way — a forward exists only because it is declared in
+`host_ports` or because someone ran `jailbee port`. `jailbee net status`
+lists every active forward alongside the strict-mode summary, so the real
+boundary — ACL plus whatever forwards are open — can be read off one
+command, and `jailbee doctor` separately reports `host_ports` entries that
+are declared in config but missing from a running container.
+
 ## Limitations
 
 - Linux host only
