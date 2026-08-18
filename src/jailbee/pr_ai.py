@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
+from jailbee.tui import warn
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -144,7 +145,11 @@ def generate_pr_text(
             env=env,
             timeout=timeout,
         )
-    except IncusError:
+    except IncusError as exc:
+        # The caller only learns that generation failed. Report why here: a
+        # rejected `claude.ai_pr_model`, a missing `claude`, or a timeout are
+        # otherwise indistinguishable from the generic fallback message.
+        warn(f"In-container Claude could not generate the PR text: {exc}")
         return None
     return _parse_pr_text(stdout, fixed_title, fixed_body, current_branch=branch)
 

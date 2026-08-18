@@ -307,6 +307,23 @@ def test_generate_returns_none_on_incus_error(mocker, make_cfg, tmp_path):
     assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
 
 
+def test_generate_reports_why_the_container_claude_failed(mocker, make_cfg, tmp_path):
+    """Without the reason, a bad ai_pr_model reads as an unexplained failure."""
+    from jailbee.incus import IncusError
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("exit 1: error: unknown model 'sonnnet'")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    warn = mocker.patch("jailbee.pr_ai.warn")
+
+    assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+    warn.assert_called_once()
+    assert "unknown model 'sonnnet'" in warn.call_args.args[0]
+
+
 def test_generate_returns_none_on_timeout(mocker, make_cfg, tmp_path):
     from jailbee.incus import IncusError
     from jailbee.pr_ai import generate_pr_text
