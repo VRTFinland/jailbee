@@ -505,3 +505,107 @@ def test_check_host_port_accepts_a_free_port(mocker):
     incus.list_containers.return_value = []
     mocker.patch("jailbee.ports.host_port_free", return_value=True)
     check_host_port(incus, "127.0.0.1", 18080, container="app-a")
+
+
+from tests.conftest import make_config
+
+from jailbee.ports import ReconcileResult, attach_config_ports, reconcile_config_ports
+
+
+def _cfg_with_ports(tmp_path, *entries):
+    return make_config(tmp_path, host_ports=list(entries))
+
+
+def test_attach_config_ports_adds_every_entry(tmp_path, mocker):
+    cfg = _cfg_with_ports(
+        tmp_path,
+        {"name": "adb", "port": 5037},
+        {"name": "db", "port": 5432, "host_port": 15432},
+    )
+    incus = mocker.MagicMock()
+    added = attach_config_ports(cfg, incus, "app-a")
+    assert added == ["port-cfg-adb", "port-cfg-db"]
+    assert [c.args[1] for c in incus.config_device_add.call_args_list] == [
+        "port-cfg-adb",
+        "port-cfg-db",
+    ]
+    assert incus.config_device_add.call_args_list[1].args[3] == {
+        "listen": "tcp:127.0.0.1:5432",
+        "connect": "tcp:127.0.0.1:15432",
+        "bind": "instance",
+    }
+
+
+def test_attach_config_ports_is_a_noop_without_entries(tmp_path, mocker):
+    incus = mocker.MagicMock()
+    assert attach_config_ports(make_config(tmp_path), incus, "app-a") == []
+    incus.config_device_add.assert_not_called()
+    incus.list_containers.assert_not_called()
+
+
+def test_attach_config_ports_tolerates_an_existing_device(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.config_device_add.side_effect = IncusError("Error: The device already exists")
+    assert attach_config_ports(cfg, incus, "app-a") == []
+
+
+def test_attach_config_ports_reraises_other_errors(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.config_device_add.side_effect = IncusError("Error: the daemon is on fire")
+    with pytest.raises(PortError, match="the daemon is on fire"):
+        attach_config_ports(cfg, incus, "app-a")
+
+
+def test_reconcile_adds_missing_replaces_changed_and_removes_dropped(tmp_path, mocker):
+    cfg = _cfg_with_ports(
+        tmp_path,
+        {"name": "adb", "port": 5037},
+        {"name": "db", "port": 5432, "host_port": 15432},
+    )
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {
+            # matches config — must be left alone
+            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+            # host_port changed in config — must be replaced
+            "port-cfg-db": _proxy("tcp:127.0.0.1:5432", "tcp:127.0.0.1:5432"),
+            # no longer in config — must be removed
+            "port-cfg-gone": _proxy("tcp:127.0.0.1:1", "tcp:127.0.0.1:1"),
+            # ad hoc — must never be touched
+            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", "host"),
+            # someone else's proxy device — must never be touched
+            "hand-made": _proxy("tcp:127.0.0.1:9", "tcp:127.0.0.1:9"),
+        })
+    ]
+    result = reconcile_config_ports(cfg, incus, "app-a")
+    assert result == ReconcileResult(
+        added=[], replaced=["port-cfg-db"], removed=["port-cfg-gone"]
+    )
+    assert result.changed is True
+    removed = [c.args[1] for c in incus.config_device_remove.call_args_list]
+    assert removed == ["port-cfg-db", "port-cfg-gone"]
+    assert [c.args[1] for c in incus.config_device_add.call_args_list] == ["port-cfg-db"]
+
+
+def test_reconcile_adds_a_missing_entry(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    result = reconcile_config_ports(cfg, incus, "app-a")
+    assert result == ReconcileResult(added=["port-cfg-adb"], replaced=[], removed=[])
+    assert result.changed is True
+
+
+def test_reconcile_is_quiet_when_everything_matches(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037")})
+    ]
+    result = reconcile_config_ports(cfg, incus, "app-a")
+    assert result == ReconcileResult(added=[], replaced=[], removed=[])
+    assert result.changed is False
+    incus.config_device_add.assert_not_called()
+    incus.config_device_remove.assert_not_called()

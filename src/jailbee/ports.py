@@ -30,7 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from jailbee.config import HostPort
+from jailbee.config import Config, HostPort
 from jailbee.incus import Incus, IncusError
 
 CONFIG_PREFIX = "port-cfg-"
@@ -440,3 +440,92 @@ def check_host_port(
             f"Host port {port} is already in use on the host. Pick another "
             f"with `--host-port N`, or `--host-port auto`."
         )
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    """What `reconcile_config_ports` did to one container."""
+
+    added: list[str]
+    replaced: list[str]
+    removed: list[str]
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.added or self.replaced or self.removed)
+
+
+def attach_config_ports(cfg: Config, incus: Incus, container: str) -> list[str]:
+    """Attach every `host_ports` forward to a freshly created container.
+
+    Returns the device names added. An already-present device is tolerated
+    (the container was created twice, or `apply` got there first) — the
+    existing one is the right one, since reconciliation is what fixes drift.
+    """
+    added: list[str] = []
+    for entry in cfg.host_ports:
+        device, props = entry_device(entry)
+        try:
+            incus.config_device_add(container, device, "proxy", props)
+        except IncusError as e:
+            if "already exists" in str(e).lower():
+                continue
+            raise PortError(f"Could not attach {device} to {container}: {e}") from e
+        added.append(device)
+    return added
+
+
+def reconcile_config_ports(cfg: Config, incus: Incus, container: str) -> ReconcileResult:
+    """Make one container's config-declared forwards match the config.
+
+    Adds what is missing, replaces what differs (remove + add — proxy devices
+    hotplug, so this is invisible), and removes `port-cfg-*` devices whose
+    entry is gone. Ad-hoc forwards and proxy devices JailBee did not name are
+    never touched.
+    """
+    wanted: dict[str, dict[str, str]] = dict(entry_device(e) for e in cfg.host_ports)
+    present = {
+        f.device: f for f in forwards_for(incus, container) if f.source == "config"
+    }
+
+    added: list[str] = []
+    replaced: list[str] = []
+    for device, props in wanted.items():
+        current = present.get(device)
+        if current is None:
+            incus.config_device_add(container, device, "proxy", props)
+            added.append(device)
+            continue
+        if _props_differ(current, props):
+            incus.config_device_remove(container, device)
+            incus.config_device_add(container, device, "proxy", props)
+            replaced.append(device)
+
+    removed: list[str] = []
+    for device in present:
+        if device not in wanted:
+            incus.config_device_remove(container, device)
+            removed.append(device)
+
+    return ReconcileResult(added=added, replaced=replaced, removed=removed)
+
+
+def _props_differ(current: Forward, props: Mapping[str, str]) -> bool:
+    """True if a live forward does not match freshly rendered properties.
+
+    Compares the rendered strings rather than the parsed `Forward`, so a
+    change in address, port or protocol on either side counts. `bind` is
+    compared through the direction, because Incus may have stored the
+    `container` alias for what we now write as `instance`.
+    """
+    wanted_direction: Direction = (
+        "to-container" if props["bind"] == "instance" else "to-host"
+    )
+    if current.direction != wanted_direction:
+        return True
+    listen, connect = (
+        (current.container, current.host)
+        if current.direction == "to-container"
+        else (current.host, current.container)
+    )
+    return listen.raw != props["listen"] or connect.raw != props["connect"]
