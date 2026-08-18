@@ -716,8 +716,7 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
     """Diagnostics first: the corrective and diagnostic entries head the list,
     far from Destroy at the bottom."""
     verbs = [
-        v
-        for _, v in dashboard.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))
+        v for _, v in dashboard.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))
     ]
     assert verbs[:4] == ["job clear", "job log", "pr --open", "pr"]
 
