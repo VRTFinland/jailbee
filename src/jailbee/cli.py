@@ -5022,7 +5022,7 @@ def _print_port_forward_status() -> None:
     typer.echo("")
     typer.echo(
         f"Port forwards: {total} on {len(active)} container(s) — "
-        f"these bypass the egress ACL"
+        f"the network ACL does not see these"
     )
     for info_row, fwds in active:
         for fwd in fwds:

@@ -3730,8 +3730,7 @@ def test_net_status_lists_port_forwards(tmp_path, mocker):
     result = CliRunner().invoke(app, ["net", "status"])
     assert result.exit_code == 0, result.stdout
     out = result.stdout + (result.stderr or "")
-    assert "Port forwards: 1 on 1 container(s)" in out
-    assert "bypass the egress ACL" in out
+    assert "Port forwards: 1 on 1 container(s) — the network ACL does not see these" in out
     assert "feat-x" in out
     assert "to-container" in out
     assert "127.0.0.1:5037" in out
