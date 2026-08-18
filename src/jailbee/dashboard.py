@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from jailbee.config import Config
+    from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)
@@ -305,16 +306,65 @@ def reconcile_selection(names: list[str], current: str | None, last_index: int) 
 _NETWORK_MODES: tuple[str, ...] = ("strict", "loose")
 
 
-def menu_actions(
-    state: str,
-    *,
-    has_config: bool,
-    ide_enabled: bool = False,
-    chrome_enabled: bool = False,
-    current_network: str | None = None,
-    pr_number: int | None = None,
-    job_clearable: bool = False,
-) -> list[tuple[str, str]]:
+@dataclass(frozen=True)
+class MenuContext:
+    """Everything :func:`menu_actions` needs to know about one row.
+
+    Assembled by :func:`actions_for_container` from a ``ContainerInfo`` +
+    ``RepoGroup`` pair. A dataclass rather than a tenth keyword argument: the
+    call sites had already stopped being readable, and every field here is a
+    plain fact about the row rather than an option.
+
+    ``has_job`` is "there is a background-job row at all" (what makes the log
+    worth offering); ``job_running`` is "its worker is still alive" (what makes
+    ``--follow`` the right form); ``job_clearable`` is the failed/stale case
+    that "Clear failed job" corrects.
+    """
+
+    state: str
+    has_config: bool
+    mode: str = "clone"
+    ide_enabled: bool = False
+    chrome_enabled: bool = False
+    current_network: str | None = None
+    pr_number: int | None = None
+    job_clearable: bool = False
+    has_job: bool = False
+    job_running: bool = False
+    git_status: GitStatus | None = None
+
+
+# The GitStatus cell values that mean "there is provably nothing to do". Every
+# other value — including "—" and "?" — means unknown, and an unknown answer
+# never hides an entry.
+_NO_COMMITS = "0"
+_NO_CHANGES = "clean"
+
+
+def _bridge_possible(ctx: MenuContext) -> bool:
+    """Whether the PR and git-bridge verbs can run for this row at all.
+
+    They all read the container's own clone, so they need a running container
+    that has one: ``sync.assert_container_publishable`` rejects a stopped or
+    mount-mode container up front, and offering an entry whose only outcome is
+    that error is worse than not offering it.
+    """
+    return ctx.state == "Running" and ctx.mode != "mount"
+
+
+def _has_commits_for_host(git: GitStatus | None) -> bool:
+    """Whether `jailbee git pull` has commits to send to the host."""
+    return git is None or git.ahead_count != _NO_COMMITS
+
+
+def _has_diff_to_show(git: GitStatus | None) -> bool:
+    """Whether `jailbee git diff` would print anything."""
+    if git is None:
+        return True
+    return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
+
+
+def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
     Empty for orphan rows (no loadable config ⇒ no safe dispatch). "Launch
@@ -324,32 +374,49 @@ def menu_actions(
     `jailbee ide`/`jailbee chrome` when the feature is disabled would just fail.
 
     For running containers, one "Network: <mode>" entry appears per mode
-    other than ``current_network`` (sourced from ``ContainerInfo.network``),
+    other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
-    "Clear failed job" (verb "job clear") heads the list when
-    ``job_clearable`` — it is the corrective action, and it belongs far from
-    "Destroy" at the bottom. "Open PR" (verb "pr --open") follows it when
-    pr_number is not None.
+    The head of the list is the diagnostic/workflow block, deliberately far
+    from "Destroy" at the bottom: "Clear failed job" (the corrective action),
+    "Job log", "Open PR", then the four verbs that carry the actual workflow —
+    create/update the PR, update the container from its base, send its commits
+    back to the host, and read its diff. The last two are hidden when the git
+    status proves they would do nothing; an unknown status (base-tier refresh,
+    ``--no-git``, failed probe) still offers them, because a missing column is
+    not evidence of a clean tree.
+
+    Verbs may carry flags (``"pr --open"``, ``"job log --follow"``): every
+    front-end splits them into argv, and Typer accepts options before the
+    positional container name.
     """
-    if not has_config:
+    if not ctx.has_config:
         return []
     prefix: list[tuple[str, str]] = []
-    if job_clearable:
+    if ctx.job_clearable:
         prefix.append(("Clear failed job", "job clear"))
-    if pr_number is not None:
+    if ctx.has_job:
+        prefix.append(("Job log", "job log --follow" if ctx.job_running else "job log"))
+    if ctx.pr_number is not None:
         prefix.append(("Open PR", "pr --open"))
-    if state == "Running":
+    if _bridge_possible(ctx):
+        prefix.append(("Create/update PR", "pr"))
+        prefix.append(("Update from base (git push)", "git push"))
+        if _has_commits_for_host(ctx.git_status):
+            prefix.append(("Send commits to host (git pull)", "git pull"))
+        if _has_diff_to_show(ctx.git_status):
+            prefix.append(("Show diff (git diff)", "git diff"))
+    if ctx.state == "Running":
         actions = [
             ("Attach tmux", "tmux"),
             ("Open shell", "shell"),
         ]
-        if ide_enabled:
+        if ctx.ide_enabled:
             actions.append(("Launch IDE", "ide"))
-        if chrome_enabled:
+        if ctx.chrome_enabled:
             actions.append(("Launch Chrome", "chrome"))
         for mode in _NETWORK_MODES:
-            if mode != current_network:
+            if mode != ctx.current_network:
                 actions.append((f"Network: {mode}", f"net {mode}"))
         actions += [
             ("Restart", "restart"),
@@ -357,7 +424,7 @@ def menu_actions(
             ("Destroy", "destroy"),
         ]
         return prefix + actions
-    if state == "Stopped":
+    if ctx.state == "Stopped":
         return [*prefix, ("Start", "start"), ("Destroy", "destroy")]
     return [*prefix, ("Destroy", "destroy")]
 
@@ -738,13 +805,21 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
         and background.clearable(container.job_phase, container.job_pid)
     )
     return menu_actions(
-        container.state,
-        has_config=group.config_path is not None,
-        ide_enabled=group.ide_enabled,
-        chrome_enabled=group.chrome_enabled,
-        current_network=container.network,
-        pr_number=container.pr_number,
-        job_clearable=job_clearable,
+        MenuContext(
+            state=container.state,
+            has_config=group.config_path is not None,
+            mode=container.mode,
+            ide_enabled=group.ide_enabled,
+            chrome_enabled=group.chrome_enabled,
+            current_network=container.network,
+            pr_number=container.pr_number,
+            job_clearable=job_clearable,
+            has_job=container.job_phase is not None,
+            # A job row that is not clearable is one whose worker is still
+            # alive — that is what makes `--follow` the right form.
+            job_running=container.job_phase is not None and not job_clearable,
+            git_status=container.git_status,
+        )
     )
 
 
