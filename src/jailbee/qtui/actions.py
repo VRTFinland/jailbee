@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from jailbee.dashboard import PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, build_terminal_command
 
 # How the GUI has to run a verb.
@@ -27,28 +28,27 @@ LaunchMode = Literal["terminal", "output", "detached"]
 
 _TERMINAL_VERBS: frozenset[str] = frozenset({"shell", "tmux"})
 
-# Matched exactly, not by leading token: `pr --open` just opens a browser, and
-# `job log` reaches the GUI in both its plain and its --follow form.
-_OUTPUT_VERBS: frozenset[str] = frozenset(
-    {"pr", "git push", "git pull", "git diff", "job log", "job log --follow"}
-)
-
-
 # Verbs that warrant a confirmation dialog before dispatching.
 _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})
 
-# Confirm verbs whose CLI *also* prompts, and so need --force to proceed
-# without the stdin the GUI's detached child does not have. `git pull` with an
-# explicit container name asks nothing, so it must not be forced — --force
-# means something entirely different there.
+# Confirm verbs whose CLI *also* prompts, and so need --force to proceed without
+# the stdin the GUI's detached child does not have. Only `destroy` is in that
+# position: `jailbee git pull` has no --force option at all — passing one would
+# be a usage error, not a shortcut — and given an explicit container name it
+# asks nothing, so there is no prompt to skip.
 _FORCE_ON_CONFIRM: frozenset[str] = frozenset({"destroy"})
 
 
 def launch_mode(verb: str) -> LaunchMode:
-    """Which launch path ``verb`` needs."""
+    """Which launch path ``verb`` needs.
+
+    The "output" set is :data:`jailbee.dashboard.PRINTING_VERBS`, shared with the
+    TUI rather than copied: a new printing verb must not be able to land in one
+    front-end's list and be forgotten in the other's.
+    """
     if verb in _TERMINAL_VERBS:
         return "terminal"
-    if verb in _OUTPUT_VERBS:
+    if verb in PRINTING_VERBS:
         return "output"
     return "detached"
 

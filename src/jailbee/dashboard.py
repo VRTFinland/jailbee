@@ -853,16 +853,23 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
 
 
-# Verbs whose whole point is the text they print. `Live` repaints the moment
-# the dashboard resumes, so without a pause their output is gone before it can
-# be read. Matched exactly, not by leading token: `pr --open` only opens a
-# browser, and `job log` reaches here in both its plain and its --follow form.
-_OUTPUT_VERBS: frozenset[str] = frozenset(
-    {"pr", "git push", "git pull", "job log", "job log --follow"}
+# Verbs whose whole point is the text they print, rather than the state they
+# change. Both front-ends need to know which those are — the TUI to keep their
+# output on screen, the Qt dashboard to route it into a window of its own
+# (`qtui/actions.py` imports this) — so the list lives here, beside
+# :func:`menu_actions`, which is where the verb vocabulary is defined.
+#
+# Matched exactly, not by leading token: `pr --open` only opens a browser, and
+# `job log` appears in both its plain and its --follow form.
+PRINTING_VERBS: frozenset[str] = frozenset(
+    {"pr", "git push", "git pull", "git diff", "job log", "job log --follow"}
 )
 
-# Output verbs long enough to want a pager instead of a pause.
+# The printing verbs long enough to want a pager instead of a pause. `Live`
+# repaints the moment the dashboard resumes, so the rest get the pause: without
+# one their output is gone before it can be read.
 _PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
+_OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS
 
 DispatchStyle = Literal["paged", "output", "plain"]
 

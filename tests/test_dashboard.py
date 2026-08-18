@@ -824,9 +824,9 @@ def test_dispatch_style_leaves_pr_open_alone():
     assert dashboard.dispatch_style("pr --open") == "plain"
 
 
-def test_every_dispatch_style_verb_is_a_real_menu_verb():
-    """Guards against a typo in the two verb sets: a classified verb the menu
-    never offers would silently never take its own code path."""
+def test_every_printing_verb_is_a_real_menu_verb():
+    """Guards against a typo in PRINTING_VERBS: a classified verb the menu never
+    offers would silently never take its own code path."""
     offered = set()
     for state in ("Running", "Stopped", "Frozen"):
         offered |= {
@@ -848,8 +848,12 @@ def test_every_dispatch_style_verb_is_a_real_menu_verb():
                 _ctx(state=state, has_job=True, job_running=True)
             )
         }
-    classified = dashboard._OUTPUT_VERBS | dashboard._PAGED_VERBS
-    assert classified <= offered, f"unknown verbs: {classified - offered}"
+    assert dashboard.PRINTING_VERBS <= offered, (
+        f"unknown verbs: {dashboard.PRINTING_VERBS - offered}"
+    )
+    # The paged verbs are a subset, so the split cannot drop or invent one.
+    assert dashboard._PAGED_VERBS <= dashboard.PRINTING_VERBS
+    assert dashboard._OUTPUT_VERBS | dashboard._PAGED_VERBS == dashboard.PRINTING_VERBS
 
 
 def test_pager_argv_prefers_the_environment(mocker):
