@@ -460,10 +460,11 @@ exposes at all; use `jailbee port to-host` per container instead (see
 
 **This is a hole through the `net strict` ACL's egress half by construction.** The
 forwarded traffic never traverses the bridge the ACL is attached to — Incus's
-forkproxy connects directly into (or out of) the container's network
-namespace — so a `strict` container's default-deny ACL never sees it, on
-either egress or ingress. See [Security and limitations](security.md) for
-the full picture.
+forkproxy connects directly out of the container's network namespace to the
+host — so a `strict` container's default-deny ACL never sees it, on the
+egress side. (`jailbee port to-host`'s forwards are the ingress-side mirror of
+this same hole; `host_ports` only ever opens the egress one.) See
+[Security and limitations](security.md) for the full picture.
 
 Entries are attached when `jailbee new` creates a container, and reconciled
 by `jailbee apply`: an entry that's new is added, one whose properties
