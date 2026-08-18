@@ -33,13 +33,13 @@ def test_render_to_container_listens_in_the_instance():
         "to-container",
         proto="tcp",
         container_port=5037,
-        host_port=5037,
+        host_port=6037,
         container_address="127.0.0.1",
         host_address="127.0.0.1",
     )
     assert props == {
         "listen": "tcp:127.0.0.1:5037",
-        "connect": "tcp:127.0.0.1:5037",
+        "connect": "tcp:127.0.0.1:6037",
         "bind": "instance",
     }
 
@@ -89,11 +89,11 @@ def test_render_never_sets_nat_or_unix_only_options():
 
 
 def test_entry_device_uses_the_entry_name_and_defaults():
-    name, props = entry_device(HostPort(name="adb", port=5037))
+    name, props = entry_device(HostPort(name="adb", port=5037, host_port=6037))
     assert name == "port-cfg-adb"
     assert props == {
         "listen": "tcp:127.0.0.1:5037",
-        "connect": "tcp:127.0.0.1:5037",
+        "connect": "tcp:127.0.0.1:6037",
         "bind": "instance",
     }
 
