@@ -423,7 +423,9 @@ def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg,
 
     cfg = make_cfg(tmp_path)
     cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"pr_prompt": "Always mention the JIRA id."})}
+        update={
+            "claude": cfg.claude.model_copy(update={"pr_prompt": "Always mention the JIRA id."})
+        }
     )
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
