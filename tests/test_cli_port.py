@@ -60,7 +60,7 @@ def test_to_host_auto_allocates_and_prints_the_port(repo, mocker):
     mocker.patch("jailbee.ports.declared_host_ports", return_value={18080: "app-other"})
     allocate = mocker.patch("jailbee.ports.allocate_host_port", return_value=20001)
     fwd = Forward(
-        device="port-adhoc-to-host-tcp-8080",
+        device="port-th-tcp-8080",
         direction="to-host",
         proto="tcp",
         container=Endpoint(proto="tcp", address="127.0.0.1", port=8080, raw="tcp:127.0.0.1:8080"),
@@ -240,7 +240,7 @@ def test_ls_multi_container_headers_are_distinct(repo, mocker):
             ],
             "app-b": [
                 parse_device(
-                    "port-adhoc-to-host-tcp-8080",
+                    "port-th-tcp-8080",
                     {
                         "type": "proxy",
                         "bind": "host",
