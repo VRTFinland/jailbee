@@ -1071,6 +1071,16 @@ the configured defaults. With `"ask"`, the command opens a `questionary`
 prompt; in a non-TTY environment, the command errors and points at the
 relevant config key.
 
+The dashboards follow the same rule from the other side. `jailbee dashboard`
+hands over the real terminal, so the `questionary` prompt appears exactly as it
+would on the command line. The Qt dashboard cannot — its child process has no
+stdin — so it asks in a dialog instead and passes the answer as a flag, and
+**only** for a key that is `"ask"`: pin `default_action` or `default_source` and
+the GUI stops asking about it. Its source dialog offers the container's recorded
+base branch and the host's checked-out branch, the two choices it can express
+without reading the host repo; for `"default-branch"`, set `default_source` in
+the config rather than answering per push.
+
 #### Why `push_from` defaults to `origin`
 
 `git fetch` updates `refs/remotes/origin/<branch>`; the local
