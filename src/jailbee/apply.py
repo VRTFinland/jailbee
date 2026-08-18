@@ -43,6 +43,8 @@ class ApplyResult:
     # Containers moved off the removed `<prefix>-net-offline` profile by
     # this run. Empty on every apply after the first one.
     offline_migrated: list[str] = field(default_factory=list)
+    # Containers whose port forwards this run added, replaced or removed.
+    ports_changed: list[str] = field(default_factory=list)
 
     @property
     def fully_successful(self) -> bool:
@@ -248,7 +250,24 @@ def run_apply(
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
 
     running_names: list[str] = []
+    ports_changed: list[str] = []
     for ci in _list_containers(cfg, incus):
+        # Reconcile forwards first, and for stopped containers too: a proxy
+        # device on a stopped container takes effect on its next boot, so
+        # skipping it would leave drift that only shows up later. This is
+        # unconditional — even an empty `host_ports` must still clean up a
+        # stale `port-cfg-*` device left behind after an entry is deleted.
+        from jailbee.ports import reconcile_config_ports
+
+        port_result = reconcile_config_ports(cfg, incus, ci.name)
+        if port_result.changed:
+            info(
+                f"  Port forwards on {short_name(cfg, ci.name)}: "
+                f"+{len(port_result.added)} ~{len(port_result.replaced)} "
+                f"-{len(port_result.removed)}"
+            )
+            ports_changed.append(ci.name)
+
         if ci.state != "Running":
             continue
         running_names.append(ci.name)
@@ -306,6 +325,7 @@ def run_apply(
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,
+        ports_changed=ports_changed,
     )
 
 

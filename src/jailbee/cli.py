@@ -312,6 +312,7 @@ def apply(
             result.hosts_repinned,
             result.docker_proxy_reapplied,
             result.offline_migrated,
+            result.ports_changed,
         ]
     ):
         info("Configuration already up to date.")

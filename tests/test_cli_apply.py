@@ -25,6 +25,7 @@ def _fake_result(**overrides):
         restarted=[],
         restart_failures=[],
         offline_migrated=[],
+        ports_changed=[],
     )
     defaults.update(overrides)
     return ApplyResult(**defaults)  # type: ignore[arg-type]
@@ -103,6 +104,23 @@ def test_cli_apply_offline_migration_counts_as_a_change(mocker: MockerFixture) -
     mocker.patch(
         "jailbee.apply.run_apply",
         return_value=_fake_result(offline_migrated=["foo-feat-x"]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    assert "already up to date" not in result.output
+    assert "Apply complete" in result.output
+
+
+def test_cli_apply_ports_changed_counts_as_a_change(mocker: MockerFixture) -> None:
+    """A run whose only effect was reconciling port forwards must not claim
+    nothing happened — the per-container info() lines above the summary
+    say otherwise."""
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(ports_changed=["foo-feat-x"]),
     )
     mocker.patch("jailbee.incus.Incus")
 
