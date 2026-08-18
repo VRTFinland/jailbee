@@ -4995,8 +4995,12 @@ def _print_port_forward_status() -> None:
 
     Best-effort, like `_print_loose_status`: silent when no repo config is
     reachable from cwd or Incus is unavailable. Forwards belong in this
-    command because each one is a path out of the container that the egress
-    ACL does not see — `net strict` alone no longer tells the whole story.
+    command because Incus's forkproxy connects directly into (or out of)
+    the container's network namespace, so a forward's traffic never
+    traverses the bridge the ACL is attached to. The ACL is deny-by-default
+    on both egress and ingress (see `network.py`), so neither direction of
+    a forward is filtered by it — which means `net strict` alone no longer
+    describes the whole boundary.
     """
     from jailbee import ports
     from jailbee.incus import Incus
