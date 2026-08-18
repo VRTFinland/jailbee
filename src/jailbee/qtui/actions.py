@@ -42,6 +42,7 @@ def launch_mode(verb: str) -> LaunchMode:
         return "output"
     return "detached"
 
+
 # Verbs that mutate irreversibly and warrant a confirmation dialog first.
 _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy"})
 
