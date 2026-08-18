@@ -8,7 +8,6 @@ from pathlib import Path
 from rich.console import Console, RenderableType
 
 from jailbee import dashboard
-from jailbee.config import PushConfig
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
@@ -177,6 +176,44 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
     groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
 
     assert groups[0].loose_ttl_default is None
+
+
+def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg):
+    """The Qt dashboard asks the merge/rebase question itself, and only when
+    the repo left it unanswered — so the group has to carry the answer."""
+    cfg = make_cfg(
+        tmp_path / "alpha",
+        push={"default_action": "rebase", "default_source": "current"},
+    )
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].push_action_default == "rebase"
+    assert groups[0].push_source_default == "current"
+
+
+def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mocker, make_cfg):
+    """PushConfig's own defaults: 'ask' is why the GUI has a dialog at all."""
+    cfg = make_cfg(tmp_path / "alpha")
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].push_action_default == "ask"
+    assert groups[0].push_source_default == "base"
 
 
 def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg):

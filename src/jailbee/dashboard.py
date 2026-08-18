@@ -70,7 +70,11 @@ class RepoGroup:
     ``loose_ttl_default`` is the repo's effective ``loose_auto_revert.after``
     as prompt-ready text — what the GUI's duration dialog pre-selects — or
     None when auto-revert is disabled, which tells the GUI not to ask at all
-    (there is no TTL to schedule). Orphan groups keep None."""
+    (there is no TTL to schedule). Orphan groups keep None.
+    ``push_action_default``/``push_source_default`` mirror the repo's effective
+    ``push.default_action``/``default_source``, so a front-end can tell whether
+    `jailbee git push` would stop to ask a question its own child process
+    cannot answer. Orphan groups keep ``PushConfig``'s defaults."""
 
     prefix: str
     repo_root: str | None
@@ -79,6 +83,8 @@ class RepoGroup:
     ide_enabled: bool = False
     chrome_enabled: bool = False
     loose_ttl_default: str | None = None
+    push_action_default: str = "ask"
+    push_source_default: str = "base"
 
 
 def registered_repo_configs() -> list[Path]:
@@ -209,6 +215,8 @@ def gather_rows(
                     ide_enabled=cfg.jetbrains.enabled,
                     chrome_enabled=cfg.chrome.enabled,
                     loose_ttl_default=_loose_ttl_default(cfg, gcfg),
+                    push_action_default=cfg.push.default_action,
+                    push_source_default=cfg.push.default_source,
                 )
             )
 
