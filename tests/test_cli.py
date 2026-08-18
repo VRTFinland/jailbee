@@ -3768,6 +3768,47 @@ def test_git_diff_stat_flag_passes_through(tmp_path, mocker):
     assert diff_mock.call_args.kwargs["stat_only"] is True
 
 
+def test_git_diff_color_flag_overrides_tty_detection(tmp_path, mocker):
+    """`jailbee dashboard` pipes the diff into a pager, which makes stdout a
+    pipe and would silence the colour the pager is there to render."""
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(mocker.MagicMock(), "myrepo-feat"),
+    )
+    diff_mock = mocker.patch("jailbee.sync.diff_from_container", return_value="")
+
+    CliRunner().invoke(app, ["git", "diff", "feat", "--color"])
+    assert diff_mock.call_args.kwargs["color"] is True
+
+    CliRunner().invoke(app, ["git", "diff", "feat", "--no-color"])
+    assert diff_mock.call_args.kwargs["color"] is False
+
+
+def test_git_diff_without_the_flag_follows_stdout(tmp_path, mocker):
+    """CliRunner's stdout is not a TTY, so the default must resolve to False —
+    the behaviour every existing caller already had."""
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(mocker.MagicMock(), "myrepo-feat"),
+    )
+    diff_mock = mocker.patch("jailbee.sync.diff_from_container", return_value="")
+
+    CliRunner().invoke(app, ["git", "diff", "feat"])
+    assert diff_mock.call_args.kwargs["color"] is False
+
+
 def test_ls_renders_base_and_git_columns(tmp_path, mocker):
     """`gie ls` table includes BASE / WT / AHEAD ± / ↑ columns."""
     from jailbee.git_status import GitStatus
