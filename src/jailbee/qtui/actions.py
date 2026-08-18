@@ -34,6 +34,21 @@ _OUTPUT_VERBS: frozenset[str] = frozenset(
 )
 
 
+# Verbs that warrant a confirmation dialog before dispatching.
+_CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})
+
+# Confirm verbs whose CLI *also* prompts, and so need --force to proceed
+# without the stdin the GUI's detached child does not have. `git pull` with an
+# explicit container name asks nothing, so it must not be forced — --force
+# means something entirely different there.
+_FORCE_ON_CONFIRM: frozenset[str] = frozenset({"destroy"})
+
+# Verbs whose duration the GUI must ask for before dispatching. The CLI
+# prompts interactively, but the detached Popen child has no stdin, so the
+# question has to be a Qt dialog and the answer an explicit flag.
+ASKS_DURATION_VERBS: frozenset[str] = frozenset({"net loose"})
+
+
 def launch_mode(verb: str) -> LaunchMode:
     """Which launch path ``verb`` needs."""
     if verb in _TERMINAL_VERBS:
@@ -41,15 +56,6 @@ def launch_mode(verb: str) -> LaunchMode:
     if verb in _OUTPUT_VERBS:
         return "output"
     return "detached"
-
-
-# Verbs that mutate irreversibly and warrant a confirmation dialog first.
-_CONFIRM_VERBS: frozenset[str] = frozenset({"destroy"})
-
-# Verbs whose duration the GUI must ask for before dispatching. The CLI
-# prompts interactively, but the detached Popen child has no stdin, so the
-# question has to be a Qt dialog and the answer an explicit flag.
-ASKS_DURATION_VERBS: frozenset[str] = frozenset({"net loose"})
 
 
 class TerminalNotFoundError(RuntimeError):
@@ -75,6 +81,7 @@ def build_action(
     config_path: Path,
     *,
     duration: str | None = None,
+    extra_flags: list[str] | None = None,
 ) -> ActionCommand:
     """Build the jailbee command for ``verb`` on ``container`` under ``config_path``.
 
@@ -83,14 +90,19 @@ def build_action(
     entries either way, so ``jailbee net loose <container> --config <path>``
     dispatches correctly.
 
-    Confirm verbs (``destroy``) get ``--force`` appended: the GUI has already
-    shown its own confirmation dialog, and the detached ``Popen`` child has no
-    interactive stdin, so the CLI's own ``typer.confirm`` prompt would read
-    EOF and abort the operation silently.
+    Verbs in ``_FORCE_ON_CONFIRM`` (``destroy``) get ``--force`` appended: the
+    GUI has already shown its own confirmation dialog, and the detached
+    ``Popen`` child has no interactive stdin, so the CLI's own
+    ``typer.confirm`` prompt would read EOF and abort the operation silently.
+    Not every confirm verb is forced — see ``_FORCE_ON_CONFIRM``.
 
     ``duration`` appends ``--for <duration>`` for the verbs in
     ``ASKS_DURATION_VERBS``; passing it also clears ``duration_prompt`` so the
     GUI does not ask twice.
+
+    ``extra_flags`` are the answers the GUI collected for the questions the CLI
+    would have prompted for (see :mod:`jailbee.qtui.prompts`); they go last, so
+    nothing lands between the verb and its container name.
 
     The resolved ``launch`` mode comes from :func:`launch_mode`, so the caller
     never has to know which verbs want a terminal and which want their output
@@ -98,10 +110,12 @@ def build_action(
     """
     confirm = verb in _CONFIRM_VERBS
     argv = ["jailbee", *verb.split(), container, "--config", str(config_path)]
-    if confirm:
+    if verb in _FORCE_ON_CONFIRM:
         argv.append("--force")
     if duration is not None:
         argv += ["--for", duration]
+    if extra_flags:
+        argv += extra_flags
     return ActionCommand(
         argv=argv,
         launch=launch_mode(verb),

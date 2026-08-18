@@ -136,3 +136,42 @@ def test_resolve_launch_only_wraps_terminal_verbs():
     assert a.resolve_launch(interactive, spec)[:2] == ["xterm", "-e"]
     # An output verb needs no terminal at all, so a host without one still works
     assert a.resolve_launch(output, None) == output.argv
+
+
+def test_build_action_appends_the_answers_as_flags():
+    ac = a.build_action(
+        "git push",
+        "alpha-x",
+        Path("/repo/.jailbee/config.yaml"),
+        extra_flags=["--merge", "--current"],
+    )
+    assert ac.argv == [
+        "jailbee",
+        "git",
+        "push",
+        "alpha-x",
+        "--config",
+        "/repo/.jailbee/config.yaml",
+        "--merge",
+        "--current",
+    ]
+
+
+def test_git_pull_needs_confirmation_but_no_force():
+    """--force is destroy's way of skipping a prompt the detached child cannot
+    answer. `jailbee git pull <name>` has no such prompt, and --force there
+    means something else entirely."""
+    pull = a.build_action("git pull", "alpha-x", Path("/c.yaml"))
+    destroy = a.build_action("destroy", "alpha-x", Path("/c.yaml"))
+
+    assert pull.confirm is True
+    assert "--force" not in pull.argv
+    assert destroy.confirm is True
+    assert "--force" in destroy.argv
+
+
+def test_extra_flags_come_after_the_force_flag():
+    """Order matters only for readability, but a flag landing between the verb
+    and its container name would be a parse hazard, so pin it."""
+    ac = a.build_action("destroy", "alpha-x", Path("/c.yaml"), extra_flags=["--quiet"])
+    assert ac.argv[-2:] == ["--force", "--quiet"]
