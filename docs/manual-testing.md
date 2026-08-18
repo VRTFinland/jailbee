@@ -359,33 +359,44 @@ jailbee new feat/waitsmoke2 --background
 jailbee shell            # no name → picker lists feat-waitsmoke2 with JOB=cloning/...
 # pick it → waits, then opens the shell.
 
-# Failure path: a backgrounded op that fails surfaces in the wait.
-jailbee new feat/waitfail nonexistent-base --background
+# Failure path: an autostart step fails, so the container is created and
+# running but the job row is `failed`. The attach reports it and offers to go
+# in anyway — no flag needed. Works on shell/tmux/ide/chrome.
+jailbee new feat/waitfail --background   # let it fail in an autostart step
 jailbee tmux feat-waitfail
-# expect: "background creation of 'feat-waitfail' failed: ..." and exit 1.
-# When the container is up (autostart failed), the error is followed by a
-# hint naming the command you ran, e.g.:
-#   "  Inspect it anyway with:  jailbee tmux feat-waitfail --force"
-
-# --force escape hatch: after an autostart step fails, the container is left
-# created and running, so --force attaches anyway to inspect it. (Only the
-# `failed` job row was blocking the plain attach.) Works on shell/tmux/ide/chrome.
-jailbee new feat/waitforce --background   # let it fail in an autostart step
-jailbee tmux feat-waitforce --force
-# expect: "⚠ 'feat-waitforce': background creation failed (...) — attaching anyway."
-#         then the tmux session with the failed window.
+# expect: "⚠ background creation of 'feat-waitfail' failed: ...",
+#         "  The container itself is up — 'jailbee tmux' can still reach it."
+#         "  Once you're done, clear the stale job record: jailbee job clear feat-waitfail"
+#         then "Continue anyway? [Y/n]" — Enter drops you into the tmux
+#         session with the failed window. Answering `n` exits 1.
 # (The job row stays `failed` until you acknowledge it:
-#    jailbee job clear feat-waitforce
+#    jailbee job clear feat-waitfail
 #  — the container is left alone. `jailbee job ls` shows the recorded error and
-#  the worker log path first; `jailbee job log feat-waitforce` prints the log.)
+#  the worker log path first; `jailbee job log feat-waitfail` prints the log.)
 
-# --force does not bypass the container's existence: when the create failed
-# before `incus init` there is nothing to attach to.
+# --force only skips the question, so scripts and the dashboards don't stall.
+# A non-interactive stdin (a script, a cron job) is treated the same way.
+jailbee tmux feat-waitfail --force        # same warning, no prompt
+
+# From the dashboard, `t`/`s`/`i`/`c` (and the Enter menu) dispatch with
+# --force: the JOB column already showed `failed`.
+jailbee dashboard                         # highlight feat-waitfail, press t
+
+# Nothing to attach to: when the create failed before `incus init` there is no
+# container, so the attach refuses without asking.
 jailbee new feat/nosuchbase nonexistent-base --background   # fails before creating
-jailbee tmux feat-nosuchbase --force
-# expect: "✗ 'feat-nosuchbase': no such container — there is nothing to attach
-#          to.", the creation error that explains it, and the
-#          `jailbee job clear feat-nosuchbase` hint. Exit 1, no traceback.
+jailbee tmux feat-nosuchbase
+# expect: "✗ background creation of 'feat-nosuchbase' failed: ...", the
+#          "Nothing was created; clear the job record: jailbee job clear
+#          feat-nosuchbase" hint, exit 1, no prompt and no traceback.
+
+# Ctrl-C out of a healthy wait, once the container exists: same offer.
+jailbee new feat/waitslow --background
+jailbee tmux feat-waitslow                # Ctrl-C while the spinner runs
+# expect: "⚠ 'feat-waitslow' is still being created in the background — its
+#          setup is unfinished." then "Attach anyway? [y/N]" — defaulting to
+#          no, and asked even under --force, because Ctrl-C means cancel.
+#          Before the container exists you get the "check `jailbee ls`" exit.
 
 jailbee destroy --all --force
 ```

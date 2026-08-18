@@ -647,6 +647,38 @@ def test_dispatch_action_runs_jailbee_with_the_repos_config(mocker, tmp_path):
     assert rc == 0
 
 
+def test_dispatch_action_forces_the_attach_verbs(mocker, tmp_path):
+    """The JOB column already shows a failed background job, so the CLI's
+    "continue anyway?" question would only ask what the operator just read.
+
+    Covers every verb routed through the CLI's attach guard, not just the
+    interactive two: `ide`/`chrome` would otherwise block on a prompt in
+    whatever terminal the dashboard was started from.
+    """
+    config_path = tmp_path / "config.yaml"
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    for verb in ("tmux", "shell", "ide", "chrome"):
+        run.reset_mock()
+        dashboard._dispatch_action(config_path, verb, "alpha-x")
+        run.assert_called_once_with(
+            ["jailbee", verb, "alpha-x", "--config", str(config_path), "--force"],
+            check=False,
+        )
+
+
+def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
+    """`--force` means different things per command (and most don't take it
+    at all), so only the attach verbs get it appended."""
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "restart", "alpha-x")
+
+    assert "--force" not in run.call_args[0][0]
+
+
 def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 2

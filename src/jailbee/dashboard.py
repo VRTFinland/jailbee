@@ -764,6 +764,14 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
 
 
+# Verbs routed through the CLI's attach guard, which asks "continue anyway?"
+# when the container's background job failed or is unfinished. The dashboard
+# has already shown that state in the JOB column, so the question would only
+# ask the operator to re-read what they were looking at when they pressed the
+# key.
+_ASSUME_YES_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
+
+
 def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     """Run ``jailbee <verb> <name> --config <config_path>``; return its exit code.
 
@@ -771,10 +779,15 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     quick-action keys, so both reuse the real command's behaviour and the
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
     ``"pr --open"``).
+
+    Verbs in :data:`_ASSUME_YES_VERBS` gain ``--force``; ``--force`` means
+    something different on every other command (and most don't accept it),
+    so nothing else gets it.
     """
-    proc = subprocess.run(
-        ["jailbee", *verb.split(), name, "--config", str(config_path)], check=False
-    )
+    argv = ["jailbee", *verb.split(), name, "--config", str(config_path)]
+    if verb in _ASSUME_YES_VERBS:
+        argv.append("--force")
+    proc = subprocess.run(argv, check=False)
     return proc.returncode
 
 

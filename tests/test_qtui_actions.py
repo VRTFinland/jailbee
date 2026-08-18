@@ -41,6 +41,28 @@ def test_build_action_destroy_passes_force():
     ]
 
 
+def test_build_action_attach_verbs_pass_force_without_confirming():
+    """The attach verbs skip the CLI's "continue anyway?" question — the card
+    the operator clicked already showed the failed job — but they are not
+    confirm verbs: no Qt dialog stands between the click and the launch.
+
+    `ide`/`chrome` need this as much as the interactive two: their detached
+    child inherits the GUI's stdin, which is a TTY whenever the dashboard was
+    started from a terminal, so the prompt would hang unseen.
+    """
+    for verb in ("shell", "tmux", "ide", "chrome"):
+        ac = a.build_action(verb, "p-foo", Path("/repo/.gie/config.yaml"))
+        assert ac.confirm is False
+        assert ac.argv == [
+            "jailbee",
+            verb,
+            "p-foo",
+            "--config",
+            "/repo/.gie/config.yaml",
+            "--force",
+        ]
+
+
 def test_resolve_launch_non_interactive_returns_argv_unchanged():
     ac = a.build_action("stop", "p-foo", Path("/x/config.yaml"))
     assert a.resolve_launch(ac, None) == ac.argv

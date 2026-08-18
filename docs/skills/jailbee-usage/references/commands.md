@@ -306,6 +306,23 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec NAME CMD...` | Run a command as the dev user. `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 
+**Attaching over a failed background job.** `shell`, `tmux`, `ide` and
+`chrome` all wait on an in-flight `jailbee new --background`. When that job
+ended badly — an autostart step failed, or its worker died — but the
+container is up, the command reports the failure, points at `jailbee job
+clear NAME`, and asks `Continue anyway? [Y/n]` before going in: the failed
+container is exactly what you asked to look at. `--force` (and a
+non-interactive stdin) skips the question; both dashboards pass it, since
+they already show the job state in the JOB column. Ctrl-C out of the wait
+gets a similar offer for a container that exists but is still unfinished —
+on stricter terms, since the interrupt is an explicit cancel: `Attach
+anyway?` defaults to no, is asked even under `--force`, and is skipped
+(exit 1) without a TTY.
+
+The command still refuses, without asking, when there is nothing to attach
+to (a create that died before the container existed) or when a destroy is
+actively tearing the container down.
+
 ## Git bridge
 
 All refuse on mount-mode containers. `jailbee pull`/`push`/`diff` are top-level

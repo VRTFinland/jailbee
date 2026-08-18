@@ -1273,9 +1273,8 @@ def shell(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1305,9 +1304,8 @@ def tmux(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1512,6 +1510,23 @@ def _resolve_existing_detailed(
     return incus, resolved
 
 
+def _confirm_attach(*, force: bool) -> bool:
+    """Whether to attach over a background job that failed or is unfinished.
+
+    Defaults to yes: the user typed ``jailbee shell``/``tmux`` precisely to
+    look at a container that misbehaved, and looking changes nothing. The
+    question exists only so the warning above it is read before ``tmux
+    attach`` takes over the screen.
+
+    ``force`` is an explicit "don't ask". A non-interactive stdin answers the
+    same way, because :func:`typer.confirm` would read EOF there and abort an
+    attach the caller explicitly requested.
+    """
+    if force or not sys.stdin.isatty():
+        return True
+    return typer.confirm("Continue anyway?", default=True)
+
+
 def _resolve_attachable(
     cfg: "Config",
     name: str | None,
@@ -1523,20 +1538,22 @@ def _resolve_attachable(
 
     Like :func:`_resolve_existing`, but in-flight ``jailbee new --background``
     containers resolve by name and appear in the picker; once resolved, the
-    call blocks on a spinner until the background op finishes. Fails fast
-    (Exit 1) on a failed op or a dead worker; Ctrl-C cancels the wait (not
-    the background build).
+    call blocks on a spinner until the background op finishes.
 
-    When ``force`` is set, the background job guard is bypassed entirely: the
-    call skips :func:`wait_for_background_ready` and attaches to the resolved
-    container regardless of op state, warning first if the op is ``failed``
-    or its worker died. This is the escape hatch for inspecting a container
-    whose autostart step failed (the container is created and running; only
-    the ``failed`` job row was blocking the attach).
+    A broken job never blocks the attach on its own. When the wait ends badly
+    but the container is up — the common autostart-failure case, where only
+    the ``failed`` job row stands between the user and the tmux window they
+    want to read — the failure is reported and :func:`_confirm_attach` asks
+    whether to go in anyway (default yes; ``force`` skips the question).
 
-    ``force`` bypasses the job guard, not the container's existence: a create
-    that failed before ``incus init`` leaves a job row and no container, and
-    "attaching anyway" to that can only produce an Incus error.
+    Ctrl-C out of the wait gets a similar offer, on stricter terms: an
+    unfinished container is still worth looking inside, but the interrupt is
+    an explicit cancel, so the question is asked even under ``force``,
+    defaults to no, and is not asked at all without a TTY.
+
+    Exits 1 without asking when attaching cannot help: no container exists
+    yet (a create that died before ``incus init``), or a destroy is actively
+    tearing this one down.
     """
     from jailbee import background
     from jailbee.incus import Incus
@@ -1557,28 +1574,6 @@ def _resolve_attachable(
 
     short = short_name(cfg, resolved)
 
-    if force:
-        row = lookup_background_job(cfg, resolved)
-        dead_job = row is not None and background.clearable(row.phase, row.pid)
-        if not incus.exists(resolved):
-            error(f"'{short}': no such container — there is nothing to attach to.")
-            if dead_job:
-                assert row is not None  # narrowed by dead_job
-                info(
-                    f"  Its background creation failed before the container was created: "
-                    f"{row.error_msg or 'unknown error'}"
-                )
-                info(f"  Clear the leftover job record with: jailbee job clear {short}")
-            raise typer.Exit(1)
-        if dead_job:
-            assert row is not None  # narrowed by dead_job
-            warn(
-                f"'{short}': background creation failed "
-                f"({row.error_msg or 'unknown error'}) — attaching anyway."
-            )
-            info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
-        return incus, resolved
-
     try:
         with console.status(f"⏳ waiting for '{short}' …") as status:
             wait_for_background_ready(
@@ -1587,21 +1582,33 @@ def _resolve_attachable(
                 on_phase=lambda p: status.update(f"⏳ waiting for '{short}' — {p}…"),
             )
     except KeyboardInterrupt:
-        warn(f"'{short}' is still building in the background; check `jailbee ls`.")
-        raise typer.Exit(1) from None
+        if not incus.exists(resolved):
+            warn(f"'{short}' is still building in the background; check `jailbee ls`.")
+            raise typer.Exit(1) from None
+        warn(f"'{short}' is still being created in the background — its setup is unfinished.")
+        # Ctrl-C is an explicit cancel, so neither `force` nor a missing TTY
+        # answers this one on the user's behalf: offer the unfinished
+        # container only when someone is at the keyboard to accept it, and
+        # default to no, since they just interrupted.
+        if not (sys.stdin.isatty() and typer.confirm("Attach anyway?", default=False)):
+            raise typer.Exit(1) from None
     except ValueError as e:
-        text = str(e)
-        error(text)
-        # If the op failed (or its worker died) but the container is up —
-        # the common autostart-failure case — point at --force so the user
-        # can attach and inspect it. Skip only when the error text already
-        # carries a --force hint (a freshly-rendered autostart failure);
-        # older stored error_msgs predate --force, so we still add ours.
+        # A dead job (terminal phase, or a worker that vanished) over a
+        # container that exists is recoverable by looking inside it. A live
+        # destroy job is not — nor is a create that never got as far as a
+        # container.
         row = lookup_background_job(cfg, resolved)
-        blocked = row is not None and background.clearable(row.phase, row.pid)
-        if blocked and incus.exists(resolved) and "--force" not in text:
-            info(f"  Inspect it anyway with:  jailbee {attach_cmd} {short} --force")
-        raise typer.Exit(1) from e
+        dead_job = row is not None and background.clearable(row.phase, row.pid)
+        if not (dead_job and incus.exists(resolved)):
+            error(str(e))
+            if dead_job:
+                info(f"  Nothing was created; clear the job record: jailbee job clear {short}")
+            raise typer.Exit(1) from e
+        warn(str(e))
+        info(f"  The container itself is up — 'jailbee {attach_cmd}' can still reach it.")
+        info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
+        if not _confirm_attach(force=force):
+            raise typer.Exit(1) from e
     return incus, resolved
 
 
@@ -5750,8 +5757,8 @@ def ide_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -5782,8 +5789,8 @@ def chrome_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,

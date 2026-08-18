@@ -75,7 +75,7 @@ class AutostartStepError(RuntimeError):
             cause = self.reason
         return (
             f"Autostart step '{self.step_name}' failed in '{self.container}': {cause}.\n"
-            f"  Inspect the failed window:  jailbee tmux {self.container} --force"
+            f"  Inspect the failed window:  jailbee tmux {self.container}"
         )
 
 

@@ -19,6 +19,16 @@ INTERACTIVE_VERBS: frozenset[str] = frozenset({"shell", "tmux"})
 # Verbs that mutate irreversibly and warrant a confirmation dialog first.
 _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy"})
 
+# Verbs routed through the CLI's attach guard. Not the same set as
+# INTERACTIVE_VERBS: `ide`/`chrome` need no terminal but do hit the guard.
+_ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
+
+# Verbs dispatched with `--force`, i.e. with the CLI's own question already
+# answered. Two unrelated reasons land here: a confirm verb has been through
+# the Qt dialog, and an attach verb's "continue anyway?" would only repeat the
+# failed-job state the card already showed.
+_ASSUME_YES_VERBS: frozenset[str] = _CONFIRM_VERBS | _ATTACH_VERBS
+
 # Verbs whose duration the GUI must ask for before dispatching. The CLI
 # prompts interactively, but the detached Popen child has no stdin, so the
 # question has to be a Qt dialog and the answer an explicit flag.
@@ -56,10 +66,15 @@ def build_action(
     entries either way, so ``jailbee net loose <container> --config <path>``
     dispatches correctly.
 
-    Confirm verbs (``destroy``) get ``--force`` appended: the GUI has already
-    shown its own confirmation dialog, and the detached ``Popen`` child has no
-    interactive stdin, so the CLI's own ``typer.confirm`` prompt would read
-    EOF and abort the operation silently.
+    Verbs in ``_ASSUME_YES_VERBS`` get ``--force`` appended, for two
+    unrelated reasons. ``destroy`` has already been through the GUI's own
+    confirmation dialog, and the detached ``Popen`` child has no interactive
+    stdin, so the CLI's ``typer.confirm`` would read EOF and abort the
+    operation silently. The attach verbs are forced for a different reason:
+    their "continue anyway?" question would only restate the failed background
+    job the card was already showing when the operator clicked.
+    ``shell``/``tmux`` do get a real terminal, but ``ide``/``chrome`` would
+    hang on the prompt in whatever terminal launched the GUI.
 
     ``duration`` appends ``--for <duration>`` for the verbs in
     ``ASKS_DURATION_VERBS``; passing it also clears ``duration_prompt`` so the
@@ -67,7 +82,7 @@ def build_action(
     """
     confirm = verb in _CONFIRM_VERBS
     argv = ["jailbee", *verb.split(), container, "--config", str(config_path)]
-    if confirm:
+    if verb in _ASSUME_YES_VERBS:
         argv.append("--force")
     if duration is not None:
         argv += ["--for", duration]

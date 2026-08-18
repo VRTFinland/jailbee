@@ -15,6 +15,24 @@
 
 ### Changed
 
+- **A failed background job no longer locks you out of the container.**
+  `jailbee shell`/`tmux`/`ide`/`chrome` used to refuse outright when the
+  container's `jailbee new --background` job had ended in `failed` — the
+  common case being an autostart step that errored — and demanded `--force`
+  to get in. That inverted the point: the failed container is exactly what
+  you asked to look at. The commands now report what failed, name
+  `jailbee job clear`, and ask `Continue anyway? [Y/n]` (default yes) before
+  attaching. Ctrl-C out of the wait gets a similar offer once the container
+  exists, replacing the other half of what `--force` used to do — on stricter
+  terms, since an interrupt is an explicit cancel: that one defaults to no,
+  is asked even under `--force`, and is skipped without a TTY. `--force`
+  survives as "don't ask", the same meaning it already has on
+  `jailbee destroy`; a non-interactive stdin is treated the same way. Both
+  dashboards pass it, since their JOB column already showed the failure.
+  Attaching is still refused, without a prompt, when there is no container to
+  attach to or a destroy is actively tearing it down. The autostart failure
+  message drops its `--force` hint — it rendered for foreground failures too,
+  where no background job exists and the flag never did anything.
 - **The dashboard's action menu opens inline, under the table.** Pressing
   `Enter` used to hand the terminal to a separate prompt, which took the whole
   dashboard off screen — you picked an action for a container you could no
