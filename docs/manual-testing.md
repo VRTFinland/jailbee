@@ -1953,6 +1953,14 @@ Kept here because they are what the mocked tests are written against.
     protocol is not supported`
 - An out-of-range port (`70000`) passes validation and fails only at device
   start, so range checking belongs on JailBee's side.
+- IPv6 endpoints are stored byte-identically, brackets included. Adding a device
+  with `listen='tcp:[::1]:5099' connect='tcp:127.0.0.1:5037' bind=instance` and
+  reading back with `incus config device get` returned both values unchanged —
+  no normalisation of the bracket form. This matters because `ports._props_differ`
+  compares the rendered strings verbatim to detect drift; had Incus normalised,
+  every `jailbee apply` would see permanent drift and replace the device on every
+  run. The forward itself worked: `wget -qO- http://[::1]:5099/` from inside the
+  instance reached the host-side service.
 
 ### What is not verified yet
 
