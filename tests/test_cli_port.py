@@ -77,10 +77,82 @@ def test_to_host_auto_allocates_and_prints_the_port(repo, mocker):
     assert "20001" in result.output
 
 
+def test_to_container_success_line_keeps_ipv6_brackets(repo, mocker):
+    """Rich reads a bracketed IPv6 endpoint (`[fd00::1]:5037`) as a style tag
+    and silently deletes it from a plain `console.print` — pinned here so a
+    future refactor away from `success_plain` loses this the loud way (a
+    failing test), not the silent way (a vanished address in the terminal).
+    """
+    from jailbee.ports import Endpoint, Forward
+
+    fwd = Forward(
+        device="port-tc-tcp-5037",
+        direction="to-container",
+        proto="tcp",
+        container=Endpoint(proto="tcp", address="fd00::1", port=5037, raw="tcp:[fd00::1]:5037"),
+        host=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        source="ad-hoc",
+    )
+    mocker.patch("jailbee.ports.add_forward", return_value=fwd)
+    result = runner.invoke(app, ["port", "to-container", "5037"])
+    assert result.exit_code == 0, result.output
+    assert "[fd00::1]:5037" in result.output
+
+
+def test_to_host_success_line_keeps_ipv6_brackets(repo, mocker):
+    from jailbee.ports import Endpoint, Forward
+
+    mocker.patch("jailbee.ports.check_host_port")
+    fwd = Forward(
+        device="port-th-tcp-5037",
+        direction="to-host",
+        proto="tcp",
+        container=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        host=Endpoint(proto="tcp", address="fd00::2", port=5037, raw="tcp:[fd00::2]:5037"),
+        source="ad-hoc",
+    )
+    mocker.patch("jailbee.ports.add_forward", return_value=fwd)
+    result = runner.invoke(app, ["port", "to-host", "5037"])
+    assert result.exit_code == 0, result.output
+    assert "[fd00::2]:5037" in result.output
+
+
+def test_to_container_duplicate_error_keeps_ipv6_brackets(repo, mocker):
+    """The duplicate-forward `PortError` message embeds both endpoints; it
+    must survive to the terminal via `error_plain`, not `error` (which
+    would silently drop the bracketed side)."""
+    mocker.patch(
+        "jailbee.ports.add_forward",
+        side_effect=PortError(
+            "Port 5037/tcp is already forwarded in app-feat-x: "
+            "[fd00::1]:5037 ↔ 127.0.0.1:9999 (device port-tc-tcp-5037). "
+            "Remove it first with `jailbee port rm port-tc-tcp-5037`."
+        ),
+    )
+    result = runner.invoke(app, ["port", "to-container", "5037"])
+    assert result.exit_code == 1
+    assert "[fd00::1]:5037" in (result.stdout + (result.stderr or ""))
+
+
 def test_to_host_rejects_a_non_numeric_host_port(repo):
     result = runner.invoke(app, ["port", "to-host", "8080", "--host-port", "nope"])
     assert result.exit_code == 2
     assert "auto" in result.stdout + (result.stderr or "")
+
+
+def test_to_host_negative_host_port_gets_the_range_message(repo, mocker):
+    """A numeric-but-out-of-range --host-port (e.g. `-1`) must report the
+    same "1..65535" range message as `to-container`, not the "or 'auto'"
+    message — which is misleading once the value has already parsed as a
+    number. `"-1".isdigit()` is False, so this used to fall into the wrong
+    branch entirely."""
+    add = mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", "to-host", "8080", "--host-port", "-1"])
+    assert result.exit_code == 2
+    output = result.stdout + (result.stderr or "")
+    assert "1..65535" in output
+    assert "or 'auto'" not in output
+    add.assert_not_called()
 
 
 def test_port_out_of_range_is_rejected_before_incus(repo, mocker):
@@ -90,6 +162,43 @@ def test_port_out_of_range_is_rejected_before_incus(repo, mocker):
     # typer.BadParameter goes to stderr; tui.error uses a stderr Console too,
     # so every error assertion in this file reads both streams.
     assert "1..65535" in result.stdout + (result.stderr or "")
+    add.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_invalid_proto_is_rejected_before_incus(repo, mocker, command):
+    """The config schema restricts `host_ports.proto` to tcp/udp; the ad-hoc
+    commands must enforce the same restriction rather than letting an
+    unsupported value (e.g. `sctp`) reach Incus."""
+    add = mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command, "5037", "--proto", "sctp"])
+    assert result.exit_code == 2
+    output = result.stdout + (result.stderr or "")
+    assert "tcp" in output and "udp" in output
+    add.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("command", "option"),
+    [
+        ("to-container", "--host-address"),
+        ("to-container", "--container-address"),
+        ("to-host", "--host-address"),
+        ("to-host", "--container-address"),
+    ],
+)
+def test_hostname_address_is_rejected_before_incus(repo, mocker, command, option):
+    """A hostname (rather than an IP literal) must be rejected here, before
+    it reaches `ports._probe_free_port`/`ports.host_port_free` — which open a
+    raw socket and either let an uncaught `OSError`/`gaierror` escape
+    (`--host-port auto`) or swallow it into a confidently wrong "already in
+    use" diagnosis (an explicit `--host-port N`, via `host_port_free`'s
+    `except OSError: return False`)."""
+    add = mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command, "5037", option, "example.invalid"])
+    assert result.exit_code == 2
+    output = result.stdout + (result.stderr or "")
+    assert "example.invalid" in output
     add.assert_not_called()
 
 
@@ -126,6 +235,29 @@ def test_ls_one_container_shows_direction_and_source(repo, mocker):
     assert "port-cfg-adb" in result.output
     assert "to-container" in result.output
     assert "config" in result.output
+
+
+def test_ls_ipv6_endpoint_survives_the_table(repo, mocker):
+    """Rich's Table.add_row reads `[fd00::1]:5037` as a style tag and
+    silently drops it, rendering the cell as `:5037` — verified empirically
+    against a bare Table before this fix. `port ls`'s endpoint cells must
+    escape the value so the real address survives."""
+    from jailbee.ports import parse_device
+
+    fwd = parse_device(
+        "port-cfg-adb",
+        {
+            "type": "proxy",
+            "bind": "instance",
+            "listen": "tcp:[fd00::1]:5037",
+            "connect": "tcp:[fd00::2]:6037",
+        },
+    )
+    mocker.patch("jailbee.ports.forwards_for", return_value=[fwd])
+    result = runner.invoke(app, ["port", "ls", "feat-x"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "[fd00::1]:5037" in result.output
+    assert "[fd00::2]:6037" in result.output
 
 
 def test_ls_lists_a_hand_made_proxy_device_as_other(repo, mocker):

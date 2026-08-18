@@ -19,7 +19,7 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
-from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, warn
+from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, success_plain, warn
 
 app = typer.Typer(
     name="jailbee",
@@ -5804,6 +5804,39 @@ def _parse_port(raw: int) -> int:
     return raw
 
 
+def _parse_proto(raw: str) -> str:
+    """Validate a forward's protocol before anything reaches Incus.
+
+    `config.HostPort.proto` restricts `host_ports` entries to tcp/udp; the
+    ad-hoc `jailbee port` commands must enforce the same restriction, or a
+    value like `sctp` reaches Incus and surfaces only as `ports._translate`'s
+    generic fallback error.
+    """
+    if raw not in ("tcp", "udp"):
+        raise typer.BadParameter(f"--proto must be 'tcp' or 'udp', got {raw!r}")
+    return raw
+
+
+def _parse_ip_literal(raw: str, *, option: str) -> str:
+    """Validate a forward endpoint address before anything reaches Incus.
+
+    Mirrors `config.HostPort`'s own `_validate_address`. Without this, a
+    hostname (or any other non-IP value) reaches `ports._probe_free_port` /
+    `ports.host_port_free`, which open a raw socket and let the resulting
+    `OSError`/`gaierror` escape uncaught for `--host-port auto`, or get
+    swallowed by `host_port_free`'s `except OSError: return False` into a
+    confidently wrong "already in use" diagnosis for an explicit
+    `--host-port N`.
+    """
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(raw)
+    except ValueError as e:
+        raise typer.BadParameter(f"{option} must be an IP literal, not a hostname: {raw!r}") from e
+    return raw
+
+
 @port_app.command("to-container")
 def port_to_container_cmd(
     port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
@@ -5842,6 +5875,9 @@ def port_to_container_cmd(
 
     container_port = _parse_port(port)
     resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
     try:
@@ -5856,9 +5892,12 @@ def port_to_container_cmd(
             host_address=host_address,
         )
     except ports.PortError as e:
-        error(str(e))
+        error_plain(str(e))
         raise typer.Exit(1) from e
-    success(
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
         f"{short_name(cfg, name)}: connecting to {fwd.container.display} "
         f"inside the container now reaches the host's {fwd.host.display} "
         f"({fwd.device})"
@@ -5906,6 +5945,9 @@ def port_to_host_cmd(
     from jailbee.lifecycle import short_name
 
     container_port = _parse_port(port)
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
 
@@ -5916,12 +5958,18 @@ def port_to_host_cmd(
         else:
             if host_port is None:
                 resolved_host_port = container_port
-            elif host_port.isdigit():
-                resolved_host_port = _parse_port(int(host_port))
             else:
-                raise typer.BadParameter(
-                    f"--host-port must be a port number or 'auto', got {host_port!r}"
-                )
+                try:
+                    numeric_host_port = int(host_port)
+                except ValueError:
+                    raise typer.BadParameter(
+                        f"--host-port must be a port number or 'auto', got {host_port!r}"
+                    ) from None
+                # Route through `_parse_port` so a numeric-but-out-of-range value
+                # (e.g. `-1`) gets the same "port must be 1..65535" message as
+                # `to-container`, instead of the "or 'auto'" message above, which
+                # is misleading once the value has already parsed as a number.
+                resolved_host_port = _parse_port(numeric_host_port)
             ports.check_host_port(incus, host_address, resolved_host_port, container=name)
         fwd = ports.add_forward(
             incus,
@@ -5934,9 +5982,12 @@ def port_to_host_cmd(
             host_address=host_address,
         )
     except ports.PortError as e:
-        error(str(e))
+        error_plain(str(e))
         raise typer.Exit(1) from e
-    success(
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
         f"{short_name(cfg, name)}: connecting to {fwd.host.display} on the "
         f"host now reaches {fwd.container.display} inside the container "
         f"({fwd.device})"
@@ -6005,6 +6056,8 @@ def port_ls_cmd(
     it shows as source `other`. Hiding those would misreport what the
     container can reach.
     """
+    from rich.markup import escape
+
     from jailbee import ports
     from jailbee.incus import Incus
     from jailbee.lifecycle import list_containers, short_name
@@ -6057,13 +6110,18 @@ def port_ls_cmd(
         table_format.FieldSpec(
             name="container_endpoint",
             header="IN CONTAINER",
-            cell=lambda r: r[1].container.display,
+            # Escaped for the table cell: an IPv6 endpoint's bracketed display
+            # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and
+            # silently deleted. `json` stays unescaped — it is unstyled,
+            # pipeable output (see table_format.emit), not passed through
+            # Rich's markup parser.
+            cell=lambda r: escape(r[1].container.display),
             json=lambda r: r[1].container.display,
         ),
         table_format.FieldSpec(
             name="host_endpoint",
             header="ON HOST",
-            cell=lambda r: r[1].host.display,
+            cell=lambda r: escape(r[1].host.display),
             json=lambda r: r[1].host.display,
         ),
         table_format.FieldSpec(
