@@ -57,13 +57,29 @@ def test_to_host_pre_flights_an_explicit_host_port(repo, mocker):
 
 
 def test_to_host_auto_allocates_and_prints_the_port(repo, mocker):
+    from jailbee.ports import Endpoint, Forward
+
     mocker.patch("jailbee.ports.declared_host_ports", return_value={18080: "app-other"})
     allocate = mocker.patch("jailbee.ports.allocate_host_port", return_value=20001)
-    add = mocker.patch("jailbee.ports.add_forward")
+    fwd = Forward(
+        device="port-adhoc-to-host-tcp-8080",
+        direction="to-host",
+        proto="tcp",
+        container=Endpoint(
+            proto="tcp", address="127.0.0.1", port=8080, raw="tcp:127.0.0.1:8080"
+        ),
+        host=Endpoint(
+            proto="tcp", address="127.0.0.1", port=20001, raw="tcp:127.0.0.1:20001"
+        ),
+        source="ad-hoc",
+    )
+    add = mocker.patch("jailbee.ports.add_forward", return_value=fwd)
     result = runner.invoke(app, ["port", "to-host", "8080", "--host-port", "auto"])
     assert result.exit_code == 0, result.output
     assert allocate.call_args.args[1] == {18080}
     assert add.call_args.kwargs["host_port"] == 20001
+    # The port appears via the success message's real endpoint, not a
+    # separate announcement that could contradict a later failure.
     assert "20001" in result.output
 
 
@@ -157,6 +173,60 @@ def test_ls_without_a_container_lists_the_repo(repo, mocker):
     result = runner.invoke(app, ["port", "ls"])
     assert result.exit_code == 0, result.output
     assert "port-cfg-adb" in result.output
+
+
+def test_ls_multi_container_headers_are_distinct(repo, mocker):
+    """Regression test: `container` and `container_endpoint` both used to
+    render the header CONTAINER, so a multi-container listing showed two
+    identically-labelled columns — one holding the container's name, the
+    other its in-container endpoint. This is exactly the misread the
+    to-container/to-host vocabulary exists to prevent.
+    """
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import parse_device
+
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[
+            ContainerInfo(name="app-a", state="Running", network="strict", ip=None,
+                          memory_limit=None, repo="app"),
+            ContainerInfo(name="app-b", state="Running", network="strict", ip=None,
+                          memory_limit=None, repo="app"),
+        ],
+    )
+    mocker.patch(
+        "jailbee.ports.list_forwards",
+        return_value={
+            "app-a": [
+                parse_device(
+                    "port-cfg-adb",
+                    {"type": "proxy", "bind": "instance",
+                     "listen": "tcp:127.0.0.1:5037", "connect": "tcp:127.0.0.1:5037"},
+                )
+            ],
+            "app-b": [
+                parse_device(
+                    "port-adhoc-to-host-tcp-8080",
+                    {"type": "proxy", "bind": "host",
+                     "listen": "tcp:127.0.0.1:20001", "connect": "tcp:127.0.0.1:8080"},
+                )
+            ],
+        },
+    )
+    result = runner.invoke(app, ["port", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    header_line = next(line for line in result.output.splitlines() if "HANDLE" in line)
+    headers = [cell.strip() for cell in header_line.strip("┃").split("┃")]
+    assert headers == [
+        "CONTAINER",
+        "HANDLE",
+        "DIRECTION",
+        "PROTO",
+        "IN CONTAINER",
+        "ON HOST",
+        "SOURCE",
+    ]
+    assert len(headers) == len(set(headers)), f"duplicate header in {headers}"
 
 
 def test_ls_json_format(repo, mocker):

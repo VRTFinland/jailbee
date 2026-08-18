@@ -5805,8 +5805,9 @@ def port_to_container_cmd(
         error(str(e))
         raise typer.Exit(1) from e
     success(
-        f"{short_name(cfg, name)} can now reach the host's "
-        f"{fwd.host.display} on {fwd.container.display} ({fwd.device})"
+        f"{short_name(cfg, name)}: connecting to {fwd.container.display} "
+        f"inside the container now reaches the host's {fwd.host.display} "
+        f"({fwd.device})"
     )
 
 
@@ -5858,7 +5859,6 @@ def port_to_host_cmd(
         if host_port == "auto":
             taken = set(ports.declared_host_ports(incus, exclude=name))
             resolved_host_port = ports.allocate_host_port(host_address, taken)
-            info(f"Auto-allocated host port {resolved_host_port}")
         else:
             if host_port is None:
                 resolved_host_port = container_port
@@ -5885,8 +5885,9 @@ def port_to_host_cmd(
         error(str(e))
         raise typer.Exit(1) from e
     success(
-        f"The host can now reach {short_name(cfg, name)}'s "
-        f"{fwd.container.display} on {fwd.host.display} ({fwd.device})"
+        f"{short_name(cfg, name)}: connecting to {fwd.host.display} on the "
+        f"host now reaches {fwd.container.display} inside the container "
+        f"({fwd.device})"
     )
 
 
@@ -6003,13 +6004,13 @@ def port_ls_cmd(
         ),
         table_format.FieldSpec(
             name="container_endpoint",
-            header="CONTAINER",
+            header="IN CONTAINER",
             cell=lambda r: r[1].container.display,
             json=lambda r: r[1].container.display,
         ),
         table_format.FieldSpec(
             name="host_endpoint",
-            header="HOST",
+            header="ON HOST",
             cell=lambda r: r[1].host.display,
             json=lambda r: r[1].host.display,
         ),
