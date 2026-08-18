@@ -265,7 +265,6 @@ def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
     with several it is a superset the user can filter by typing.
     """
     from jailbee.incus import IncusError
-    from jailbee.lifecycle import list_containers
     from jailbee.ports import list_forwards
 
     loaded = _load()
@@ -279,8 +278,12 @@ def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
             full = _resolve_typed_container(cfg, incus, typed)
             names = [] if full is None else [full]
         else:
-            names = [c.name for c in list_containers(cfg, incus, fast=True)]
-        devices = {fwd.device for fwds in list_forwards(incus, names).values() for fwd in fwds}
+            names = _container_names(cfg, incus)
+        devices = {
+            fwd.device
+            for fwds in list_forwards(incus, names, timeout=QUERY_TIMEOUT).values()
+            for fwd in fwds
+        }
     except (IncusError, ValueError, OSError):
         return []
     return sorted(d for d in devices if d.startswith(incomplete))
