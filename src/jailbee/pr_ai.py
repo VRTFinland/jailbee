@@ -119,14 +119,20 @@ def generate_pr_text(
     # `claude` lives at ~/.local/bin/claude, which is not on the default
     # `incus exec --user` PATH. Run it through a login shell (`bash -lc`) so
     # ~/.profile puts ~/.local/bin on PATH — the same pattern tmux/autostart
-    # use. The prompt is passed via an env var (not interpolated into the
-    # shell string) so its content can never be parsed as shell.
-    shell_cmd = 'claude -p "$JAILBEE_PR_PROMPT" --output-format json --dangerously-skip-permissions'
+    # use. The prompt and the model are passed via env vars (not interpolated
+    # into the shell string) so their content can never be parsed as shell.
+    # `${VAR:+...}` drops the whole --model flag when the var is empty, which
+    # is how `ai_pr_model: null` inherits the container's own default model.
+    shell_cmd = (
+        'claude ${JAILBEE_PR_MODEL:+--model "$JAILBEE_PR_MODEL"} '
+        '-p "$JAILBEE_PR_PROMPT" --output-format json --dangerously-skip-permissions'
+    )
     env = {
         "HOME": f"/home/{CONTAINER_USERNAME}",
         "USER": CONTAINER_USERNAME,
         "LOGNAME": CONTAINER_USERNAME,
         "JAILBEE_PR_PROMPT": prompt,
+        "JAILBEE_PR_MODEL": cfg.claude.ai_pr_model or "",
     }
     try:
         stdout = incus.exec(

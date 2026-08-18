@@ -277,7 +277,8 @@ def test_generate_happy_path_builds_exec_and_parses(mocker, make_cfg, tmp_path):
     assert argv[0] == "bash"
     assert argv[1] == "-lc"
     shell_cmd = argv[2]
-    assert "claude -p" in shell_cmd
+    assert shell_cmd.startswith("claude ")
+    assert '-p "$JAILBEE_PR_PROMPT"' in shell_cmd
     assert "--output-format json" in shell_cmd
     assert "--dangerously-skip-permissions" in shell_cmd
     # prompt is passed via env var, never interpolated into the shell string
@@ -359,10 +360,45 @@ def test_generate_runs_through_login_shell(mocker, make_cfg, tmp_path):
     argv = incus.exec.call_args.args[1]
     assert argv[0] == "bash"
     assert argv[1] == "-lc"
-    assert "claude -p" in argv[2]
+    assert argv[2].startswith("claude ")
     # prompt passed via env, never interpolated into the shell string
-    assert "$JAILBEE_PR_PROMPT" in argv[2]
+    assert '-p "$JAILBEE_PR_PROMPT"' in argv[2]
     assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
+
+
+def test_generate_selects_the_configured_model_via_env(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"claude": cfg.claude.model_copy(update={"ai_pr_model": "claude-haiku-4-5"})}
+    )
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    shell_cmd = incus.exec.call_args.args[1][2]
+    assert '${JAILBEE_PR_MODEL:+--model "$JAILBEE_PR_MODEL"}' in shell_cmd
+    # the model name goes through the environment, never into the shell string
+    assert "claude-haiku-4-5" not in shell_cmd
+    assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_MODEL"] == "claude-haiku-4-5"
+
+
+def test_generate_drops_the_model_flag_when_ai_pr_model_is_null(mocker, make_cfg, tmp_path):
+    """An empty env var makes the `${VAR:+...}` expansion vanish entirely."""
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"ai_pr_model": None})})
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_MODEL"] == ""
 
 
 def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg, tmp_path):

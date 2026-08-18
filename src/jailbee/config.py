@@ -1533,6 +1533,15 @@ class ClaudeConfig(BaseModel):
       depends on. Capped at 20 000 characters so a pathological value fails at
       config load rather than inside the container. Has no effect when
       `enabled` or `ai_pr_description` is false.
+    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
+      generating the PR text. Defaults to `sonnet`: writing a PR description is
+      a bounded summarisation job, and pinning it means the generation does not
+      compete for the same budget as the coding work that just happened in the
+      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
+      ID; `null` omits the flag entirely so the container's own default model
+      applies. `haiku` is a valid choice but has a smaller context window than
+      the alternatives, so a large cumulative diff may not fit. Has no effect
+      when `enabled` or `ai_pr_description` is false.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1548,6 +1557,29 @@ class ClaudeConfig(BaseModel):
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
     pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
+    ai_pr_model: str | None = "sonnet"
+
+    @field_validator("ai_pr_model")
+    @classmethod
+    def _reject_non_model_value(cls, v: str | None) -> str | None:
+        """A model name is a single token — reject anything that isn't one.
+
+        The value reaches `claude --model` through an environment variable, so
+        embedded flags could never be executed as such. The check exists to
+        turn a typo or a misunderstanding into a config error, rather than a
+        non-zero `claude` exit that `generate_pr_text` reports only as a failed
+        generation. Use `null`, not an empty string, to inherit the container's
+        own default model.
+        """
+        if v is None:
+            return None
+        if not v.strip() or len(v.split()) != 1:
+            raise ValueError(
+                f"must be a single model name or alias (e.g. 'sonnet', "
+                f"'claude-haiku-4-5'), or null to inherit the container "
+                f"default; got {v!r}"
+            )
+        return v.strip()
 
     @model_validator(mode="before")
     @classmethod
