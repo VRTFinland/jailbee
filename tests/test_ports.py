@@ -587,6 +587,12 @@ def test_reconcile_adds_missing_replaces_changed_and_removes_dropped(tmp_path, m
     removed = [c.args[1] for c in incus.config_device_remove.call_args_list]
     assert removed == ["port-cfg-db", "port-cfg-gone"]
     assert [c.args[1] for c in incus.config_device_add.call_args_list] == ["port-cfg-db"]
+    # Verify the properties written for the replaced device are correct
+    assert incus.config_device_add.call_args_list[0].args[3] == {
+        "listen": "tcp:127.0.0.1:5432",
+        "connect": "tcp:127.0.0.1:15432",
+        "bind": "instance",
+    }
 
 
 def test_reconcile_adds_a_missing_entry(tmp_path, mocker):
@@ -605,6 +611,21 @@ def test_reconcile_is_quiet_when_everything_matches(tmp_path, mocker):
         _raw("app-a", {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037")})
     ]
     result = reconcile_config_ports(cfg, incus, "app-a")
+    assert result == ReconcileResult(added=[], replaced=[], removed=[])
+    assert result.changed is False
+    incus.config_device_add.assert_not_called()
+    incus.config_device_remove.assert_not_called()
+
+
+def test_reconcile_treats_bind_container_alias_as_matching(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    # Incus stored bind="container" (an alias for "instance"), with matching endpoints
+    incus.list_containers.return_value = [
+        _raw("app-a", {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037", "container")})
+    ]
+    result = reconcile_config_ports(cfg, incus, "app-a")
+    # The device should not be considered as needing replacement
     assert result == ReconcileResult(added=[], replaced=[], removed=[])
     assert result.changed is False
     incus.config_device_add.assert_not_called()
