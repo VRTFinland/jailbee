@@ -186,16 +186,23 @@ class PortError(Exception):
     """A port-forwarding failure with a message meant for the user."""
 
 
-def list_forwards(incus: Incus, names: Sequence[str]) -> dict[str, list[Forward]]:
+def list_forwards(
+    incus: Incus, names: Sequence[str], *, timeout: int | None = None
+) -> dict[str, list[Forward]]:
     """Forwards per container, for the given container names.
 
     One `incus list` call for the whole set. Containers with no proxy device
     map to an empty list, so a caller can render "none" without a second
     lookup. Names that Incus does not report are omitted.
+
+    ``timeout`` bounds the underlying `incus list` call — see
+    `Incus.list_containers`. Shell completion (`completion.complete_port_handle`)
+    passes it so a wedged daemon costs a bounded pause instead of hanging the
+    user's shell; other callers leave it unset.
     """
     wanted = set(names)
     by_container: dict[str, list[Forward]] = {}
-    for raw in incus.list_containers():
+    for raw in incus.list_containers(timeout=timeout):
         name = str(raw.get("name", ""))
         if name not in wanted:
             continue
@@ -299,7 +306,7 @@ def _translate(
         )
     if "address already in use" in message:
         return PortError(
-            f"host port {host_port} is already in use, so it cannot receive "
+            f"Host port {host_port} is already in use, so it cannot receive "
             f"{container}'s forward. Pick another with `--host-port N`, or "
             f"let jailbee choose with `--host-port auto`."
         )
@@ -469,39 +476,84 @@ def attach_config_ports(cfg: Config, incus: Incus, container: str) -> list[str]:
         except IncusError as e:
             if "already exists" in str(e).lower():
                 continue
-            raise PortError(f"Could not attach {device} to {container}: {e}") from e
+            raise _translate(
+                e,
+                container=container,
+                container_port=entry.port,
+                host_port=entry.effective_host_port,
+            ) from e
         added.append(device)
     return added
 
 
-def reconcile_config_ports(cfg: Config, incus: Incus, container: str) -> ReconcileResult:
+def reconcile_config_ports(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    forwards: Sequence[Forward] | None = None,
+) -> ReconcileResult:
     """Make one container's config-declared forwards match the config.
 
     Adds what is missing, replaces what differs (remove + add — proxy devices
     hotplug, so this is invisible), and removes `port-cfg-*` devices whose
     entry is gone. Ad-hoc forwards and proxy devices JailBee did not name are
     never touched.
+
+    ``forwards`` lets a caller reconciling many containers (`jailbee apply`)
+    pass this container's slice of one prefetched `list_forwards` call
+    instead of paying for a fresh `incus list` per container. Defaults to
+    fetching it here, for callers reconciling just one.
     """
     wanted: dict[str, dict[str, str]] = dict(entry_device(e) for e in cfg.host_ports)
-    present = {f.device: f for f in forwards_for(incus, container) if f.source == "config"}
+    entries_by_device = {config_device_name(e.name): e for e in cfg.host_ports}
+    if forwards is None:
+        forwards = forwards_for(incus, container)
+    present = {f.device: f for f in forwards if f.source == "config"}
 
     added: list[str] = []
     replaced: list[str] = []
     for device, props in wanted.items():
         current = present.get(device)
+        entry = entries_by_device[device]
         if current is None:
-            incus.config_device_add(container, device, "proxy", props)
+            try:
+                incus.config_device_add(container, device, "proxy", props)
+            except IncusError as e:
+                raise _translate(
+                    e,
+                    container=container,
+                    container_port=entry.port,
+                    host_port=entry.effective_host_port,
+                ) from e
             added.append(device)
             continue
         if _props_differ(current, props):
-            incus.config_device_remove(container, device)
-            incus.config_device_add(container, device, "proxy", props)
+            try:
+                incus.config_device_remove(container, device)
+                incus.config_device_add(container, device, "proxy", props)
+            except IncusError as e:
+                raise _translate(
+                    e,
+                    container=container,
+                    container_port=entry.port,
+                    host_port=entry.effective_host_port,
+                ) from e
             replaced.append(device)
 
     removed: list[str] = []
     for device in present:
         if device not in wanted:
-            incus.config_device_remove(container, device)
+            current = present[device]
+            try:
+                incus.config_device_remove(container, device)
+            except IncusError as e:
+                raise _translate(
+                    e,
+                    container=container,
+                    container_port=current.container.port or 0,
+                    host_port=current.host.port or 0,
+                ) from e
             removed.append(device)
 
     return ReconcileResult(added=added, replaced=replaced, removed=removed)
