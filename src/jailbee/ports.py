@@ -25,6 +25,7 @@ schema deliberately does not expose.
 
 from __future__ import annotations
 
+import socket
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -345,3 +346,97 @@ def remove_forward(incus: Incus, container: str, handle: str) -> Forward:
     fwd = resolve_handle(forwards_for(incus, container), handle)
     incus.config_device_remove(container, fwd.device)
     return fwd
+
+
+# How many times `--host-port auto` asks the OS for a port before giving up.
+# Each attempt returns an OS-chosen free port; the loop only repeats when that
+# port is already claimed by another container's declared forward, which is
+# rare enough that a handful of tries is plenty.
+_AUTO_ALLOCATE_ATTEMPTS = 10
+
+
+def host_port_free(host_address: str, port: int) -> bool:
+    """True if nothing is listening on ``host_address:port`` right now.
+
+    A bind test, not a connect test: a port with a listener refuses the bind
+    even when it accepts connections, and a port with nothing on it binds
+    cleanly. The result is inherently a snapshot — Incus may still lose the
+    race — which is why the caller also translates Incus's own
+    "address already in use".
+    """
+    family = socket.AF_INET6 if ":" in host_address else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host_address, port))
+        except OSError:
+            return False
+    return True
+
+
+def _probe_free_port(host_address: str) -> int:
+    """Ask the OS for a free port by binding port 0 and reading it back."""
+    family = socket.AF_INET6 if ":" in host_address else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        probe.bind((host_address, 0))
+        port: int = probe.getsockname()[1]
+    return port
+
+
+def declared_host_ports(incus: Incus, *, exclude: str | None = None) -> dict[int, str]:
+    """Host ports claimed by `to-host` forwards, mapped to their container.
+
+    Includes stopped containers on purpose: their forwards want the port back
+    on boot, so handing it to someone else now only moves the failure.
+    Only `to-host` forwards are listeners; a `to-container` forward's host
+    side is a connect target and occupies nothing.
+    """
+    claimed: dict[int, str] = {}
+    for raw in incus.list_containers():
+        name = str(raw.get("name", ""))
+        if not name or name == exclude:
+            continue
+        for device, props in (raw.get("devices") or {}).items():
+            fwd = parse_device(device, props)
+            if fwd is None or fwd.direction != "to-host" or fwd.host.port is None:
+                continue
+            claimed.setdefault(fwd.host.port, name)
+    return claimed
+
+
+def allocate_host_port(host_address: str, taken: set[int]) -> int:
+    """Pick a free host port the OS offers and no other container claims."""
+    for _ in range(_AUTO_ALLOCATE_ATTEMPTS):
+        port = _probe_free_port(host_address)
+        if port not in taken:
+            return port
+    raise PortError(
+        f"could not find a free host port on {host_address} after "
+        f"{_AUTO_ALLOCATE_ATTEMPTS} attempts — pass `--host-port N` instead."
+    )
+
+
+def check_host_port(
+    incus: Incus,
+    host_address: str,
+    port: int,
+    *,
+    container: str,
+) -> None:
+    """Refuse an explicit host port that is taken, before calling Incus.
+
+    Two ways it can be taken: another container declared a forward on it, or
+    something on the host is listening. The first is worth naming, because it
+    is ours and the user can move it.
+    """
+    claimed = declared_host_ports(incus, exclude=container)
+    if port in claimed:
+        raise PortError(
+            f"Host port {port} is already forwarded to container "
+            f"{claimed[port]}. Pick another with `--host-port N`, or "
+            f"`--host-port auto`."
+        )
+    if not host_port_free(host_address, port):
+        raise PortError(
+            f"Host port {port} is already in use on the host. Pick another "
+            f"with `--host-port N`, or `--host-port auto`."
+        )

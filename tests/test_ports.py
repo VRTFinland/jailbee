@@ -11,9 +11,13 @@ from jailbee.ports import (
     PortError,
     add_forward,
     adhoc_device_name,
+    allocate_host_port,
+    check_host_port,
     config_device_name,
+    declared_host_ports,
     entry_device,
     forwards_for,
+    host_port_free,
     list_forwards,
     parse_device,
     remove_forward,
@@ -415,3 +419,89 @@ def test_add_forward_brackets_ipv6_in_raw_but_not_address(mocker):
     assert fwd.host.raw == "tcp:[fd00::2]:6037"
     assert fwd.host.address == "fd00::2"
     assert fwd.host.port == 6037
+
+
+def test_host_port_free_is_true_for_an_unbound_port():
+    # Port 0 asks the OS for a free one, so binding it always succeeds; use a
+    # real bind to find a port that is definitely free right now.
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert host_port_free("127.0.0.1", port) is True
+
+
+def test_host_port_free_is_false_while_something_listens():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert host_port_free("127.0.0.1", port) is False
+
+
+def test_declared_host_ports_maps_port_to_container(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {
+            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+            "port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+        }),
+        _raw("app-b", {
+            "port-th-tcp-3000": _proxy("tcp:127.0.0.1:13000", "tcp:127.0.0.1:3000", "host"),
+        }),
+    ]
+    # Only host-bound forwards occupy a host port; a to-container forward's
+    # host side is a connect target, not a listener.
+    assert declared_host_ports(incus) == {18080: "app-a", 13000: "app-b"}
+
+
+def test_declared_host_ports_can_exclude_one_container(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {
+            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+        }),
+    ]
+    assert declared_host_ports(incus, exclude="app-a") == {}
+
+
+def test_allocate_host_port_skips_taken_ports(mocker):
+    calls = iter([5000, 5001, 5002])
+    mocker.patch("jailbee.ports._probe_free_port", side_effect=lambda addr: next(calls))
+    assert allocate_host_port("127.0.0.1", {5000, 5001}) == 5002
+
+
+def test_allocate_host_port_gives_up_with_a_clear_error(mocker):
+    mocker.patch("jailbee.ports._probe_free_port", return_value=5000)
+    with pytest.raises(PortError, match="could not find a free host port"):
+        allocate_host_port("127.0.0.1", {5000})
+
+
+def test_check_host_port_names_the_other_container(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-b", {
+            "port-th-tcp-8080": _proxy("tcp:127.0.0.1:18080", "tcp:127.0.0.1:8080", "host"),
+        }),
+    ]
+    mocker.patch("jailbee.ports.host_port_free", return_value=True)
+    with pytest.raises(PortError, match="app-b"):
+        check_host_port(incus, "127.0.0.1", 18080, container="app-a")
+
+
+def test_check_host_port_reports_a_foreign_listener(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.ports.host_port_free", return_value=False)
+    with pytest.raises(PortError, match="already in use on the host"):
+        check_host_port(incus, "127.0.0.1", 18080, container="app-a")
+
+
+def test_check_host_port_accepts_a_free_port(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.ports.host_port_free", return_value=True)
+    check_host_port(incus, "127.0.0.1", 18080, container="app-a")
