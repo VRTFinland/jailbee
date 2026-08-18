@@ -352,3 +352,66 @@ def test_remove_forward_removes_the_resolved_device(mocker):
     fwd = remove_forward(incus, "app-a", "adb")
     assert incus.config_device_remove.call_args.args == ("app-a", "port-cfg-adb")
     assert fwd.device == "port-cfg-adb"
+
+
+def test_add_forward_returns_correct_endpoints_to_container(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    fwd = add_forward(
+        incus,
+        "app-a",
+        direction="to-container",
+        proto="udp",
+        container_port=5353,
+        host_port=53,
+        container_address="127.0.0.1",
+        host_address="192.168.1.100",
+    )
+    assert fwd.container.raw == "udp:127.0.0.1:5353"
+    assert fwd.container.address == "127.0.0.1"
+    assert fwd.container.port == 5353
+    assert fwd.host.raw == "udp:192.168.1.100:53"
+    assert fwd.host.address == "192.168.1.100"
+    assert fwd.host.port == 53
+
+
+def test_add_forward_returns_correct_endpoints_to_host(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    fwd = add_forward(
+        incus,
+        "app-a",
+        direction="to-host",
+        proto="tcp",
+        container_port=8080,
+        host_port=18080,
+        container_address="127.0.0.1",
+        host_address="192.168.1.50",
+    )
+    assert fwd.container.raw == "tcp:127.0.0.1:8080"
+    assert fwd.container.address == "127.0.0.1"
+    assert fwd.container.port == 8080
+    assert fwd.host.raw == "tcp:192.168.1.50:18080"
+    assert fwd.host.address == "192.168.1.50"
+    assert fwd.host.port == 18080
+
+
+def test_add_forward_brackets_ipv6_in_raw_but_not_address(mocker):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    fwd = add_forward(
+        incus,
+        "app-a",
+        direction="to-container",
+        proto="tcp",
+        container_port=5037,
+        host_port=6037,
+        container_address="fd00::1",
+        host_address="fd00::2",
+    )
+    assert fwd.container.raw == "tcp:[fd00::1]:5037"
+    assert fwd.container.address == "fd00::1"
+    assert fwd.container.port == 5037
+    assert fwd.host.raw == "tcp:[fd00::2]:6037"
+    assert fwd.host.address == "fd00::2"
+    assert fwd.host.port == 6037
