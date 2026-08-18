@@ -300,7 +300,7 @@ def test_add_forward_refuses_a_duplicate_before_calling_incus(mocker):
             'Error: Failed to start device "x": Error occurred when starting '
             "proxy device: Error: Failed to listen on 127.0.0.1:5037: listen "
             "tcp 127.0.0.1:5037: bind: address already in use",
-            "host port 5037 is already in use",
+            "Host port 5037 is already in use",
         ),
         (
             'Error: Failed to start device "x": Error occurred when starting '
@@ -664,3 +664,102 @@ def test_reconcile_treats_bind_container_alias_as_matching(tmp_path, mocker):
     assert result.changed is False
     incus.config_device_add.assert_not_called()
     incus.config_device_remove.assert_not_called()
+
+
+def test_reconcile_uses_prefetched_forwards_without_querying_incus(tmp_path, mocker):
+    """`apply` prefetches forwards for every container in one `incus list`
+    call; passing them in must skip `forwards_for`'s own query entirely."""
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    fwd = parse_device("port-cfg-adb", _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"))
+    assert fwd is not None
+    result = reconcile_config_ports(cfg, incus, "app-a", forwards=[fwd])
+    assert result == ReconcileResult(added=[], replaced=[], removed=[])
+    incus.list_containers.assert_not_called()
+
+
+def test_reconcile_translates_incus_errors_on_add(tmp_path, mocker):
+    """A device-add failure while adding a missing entry must not leak a raw
+    Incus error — `reconcile_config_ports` is on `jailbee apply`'s path."""
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    incus.config_device_add.side_effect = IncusError(
+        'Error: Failed to start device "x": Error occurred when starting proxy '
+        "device: Error: Failed to receive fd from listener process: Failed to "
+        "receive file descriptor via abstract unix socket"
+    )
+    with pytest.raises(PortError, match="something is already listening on port 5037"):
+        reconcile_config_ports(cfg, incus, "app-a")
+
+
+def test_reconcile_translates_incus_errors_on_replace(tmp_path, mocker):
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037, "host_port": 15037})
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {"port-cfg-adb": _proxy("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037")})
+    ]
+    incus.config_device_add.side_effect = IncusError("Error: the daemon is on fire")
+    with pytest.raises(PortError, match="the daemon is on fire"):
+        reconcile_config_ports(cfg, incus, "app-a")
+
+
+def test_reconcile_translates_incus_errors_on_remove(tmp_path, mocker):
+    """A stale `port-cfg-*` device (its entry was deleted from config) that
+    Incus refuses to remove must also come back translated."""
+    cfg = _cfg_with_ports(tmp_path)  # no host_ports entries left
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("app-a", {"port-cfg-gone": _proxy("tcp:127.0.0.1:1", "tcp:127.0.0.1:1")})
+    ]
+    incus.config_device_remove.side_effect = IncusError("Error: the daemon is on fire")
+    with pytest.raises(PortError, match="the daemon is on fire"):
+        reconcile_config_ports(cfg, incus, "app-a")
+
+
+def test_attach_config_ports_translates_incus_errors(tmp_path, mocker):
+    """Mirrors `test_attach_config_ports_reraises_other_errors`, but pins the
+    translated (not raw) message for a recognised Incus failure."""
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037})
+    incus = mocker.MagicMock()
+    incus.config_device_add.side_effect = IncusError(
+        'Error: Failed to start device "x": Error occurred when starting proxy '
+        "device: Error: Failed to receive fd from listener process: Failed to "
+        "receive file descriptor via abstract unix socket"
+    )
+    with pytest.raises(PortError, match="something is already listening on port 5037"):
+        attach_config_ports(cfg, incus, "app-a")
+
+
+def test_list_forwards_passes_the_timeout_through(mocker):
+    """`complete_port_handle` relies on this to bound a wedged daemon."""
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    list_forwards(incus, ["app-a"], timeout=2)
+    incus.list_containers.assert_called_once_with(timeout=2)
+
+
+def test_add_forward_duplicate_message_keeps_ipv6_brackets(mocker):
+    """The duplicate-forward message embeds both endpoints verbatim; an IPv6
+    endpoint's brackets must survive intact (see `error_plain`, the CLI's
+    remedy for the surrounding Rich-markup hazard — this test only pins that
+    `ports.py` itself hands back the real, bracketed text)."""
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw(
+            "app-a",
+            {"port-tc-tcp-5037": _proxy("tcp:[fd00::1]:5037", "tcp:127.0.0.1:9999")},
+        )
+    ]
+    with pytest.raises(PortError) as excinfo:
+        add_forward(
+            incus,
+            "app-a",
+            direction="to-container",
+            proto="tcp",
+            container_port=5037,
+            host_port=5037,
+            container_address="127.0.0.1",
+            host_address="127.0.0.1",
+        )
+    assert "[fd00::1]:5037" in str(excinfo.value)
