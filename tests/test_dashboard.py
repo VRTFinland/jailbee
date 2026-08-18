@@ -808,6 +808,147 @@ def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     assert dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x") == 2
 
 
+def test_dispatch_style_classifies_every_menu_verb():
+    """`git diff` is long enough to want a pager; the other printing verbs get
+    a keypress pause, because Live repaints over their output on return."""
+    assert dashboard.dispatch_style("git diff") == "paged"
+    for verb in ("pr", "git push", "git pull", "job log", "job log --follow"):
+        assert dashboard.dispatch_style(verb) == "output", verb
+    for verb in ("tmux", "shell", "ide", "chrome", "net loose", "restart", "destroy"):
+        assert dashboard.dispatch_style(verb) == "plain", verb
+
+
+def test_dispatch_style_leaves_pr_open_alone():
+    """`pr --open` only opens a browser — pausing on it would be noise, and it
+    is why the classification is exact rather than by leading token."""
+    assert dashboard.dispatch_style("pr --open") == "plain"
+
+
+def test_every_dispatch_style_verb_is_a_real_menu_verb():
+    """Guards against a typo in the two verb sets: a classified verb the menu
+    never offers would silently never take its own code path."""
+    offered = set()
+    for state in ("Running", "Stopped", "Frozen"):
+        offered |= {
+            verb
+            for _label, verb in dashboard.menu_actions(
+                _ctx(
+                    state=state,
+                    ide_enabled=True,
+                    chrome_enabled=True,
+                    pr_number=7,
+                    job_clearable=True,
+                    has_job=True,
+                )
+            )
+        }
+        offered |= {
+            verb
+            for _label, verb in dashboard.menu_actions(
+                _ctx(state=state, has_job=True, job_running=True)
+            )
+        }
+    classified = dashboard._OUTPUT_VERBS | dashboard._PAGED_VERBS
+    assert classified <= offered, f"unknown verbs: {classified - offered}"
+
+
+def test_pager_argv_prefers_the_environment(mocker):
+    mocker.patch.dict(dashboard.os.environ, {"PAGER": "bat -p"}, clear=False)
+    assert dashboard.pager_argv() == ["bat", "-p"]
+
+
+def test_pager_argv_falls_back_to_less_then_more(mocker):
+    mocker.patch.dict(dashboard.os.environ, {}, clear=True)
+    which = mocker.patch.object(dashboard.shutil, "which", return_value=None)
+    assert dashboard.pager_argv() is None
+
+    which.side_effect = lambda n: "/usr/bin/more" if n == "more" else None
+    assert dashboard.pager_argv() == ["more"]
+
+    which.side_effect = lambda n: f"/usr/bin/{n}"
+    assert dashboard.pager_argv() == ["less", "-R"]
+
+
+def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.return_value.wait.return_value = 0
+    run = mocker.patch.object(dashboard.subprocess, "run")
+
+    rc = dashboard._dispatch_action(config_path, "git diff", "alpha-x")
+
+    assert rc == 0
+    producer_argv, viewer_argv = (c.args[0] for c in popen.call_args_list)
+    assert producer_argv == [
+        "jailbee",
+        "git",
+        "diff",
+        "alpha-x",
+        "--config",
+        str(config_path),
+        "--color",
+    ]
+    assert viewer_argv == ["less", "-R"]
+    run.assert_not_called()  # the paged path replaces the plain run entirely
+
+
+def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "git push", "alpha-x")
+
+    wait.assert_called_once_with()
+
+
+def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_path):
+    """tmux and shell end when the user leaves them; there is nothing left to
+    read, and an extra keypress would just be in the way."""
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x")
+
+    wait.assert_not_called()
+
+
+def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tmp_path):
+    mocker.patch.object(dashboard, "pager_argv", return_value=None)
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 3
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+
+    assert rc == 3
+    wait.assert_called_once_with()
+    assert "--color" not in run.call_args.args[0]  # no pager, so no forced colour
+
+
+def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp_path):
+    """`which` said yes and `exec` said no. The command still has to run, and
+    its output still has to be readable."""
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    producer = mocker.MagicMock()
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.side_effect = [producer, OSError("no less")]
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+
+    assert rc == 0
+    # Nothing will ever read the pipe, so the first process must not be left
+    # blocked on a full one.
+    producer.kill.assert_called_once_with()
+    run.assert_called_once()
+    wait.assert_called_once_with()
+
+
 def test_actions_for_container_matches_menu_actions():
     from pathlib import Path
 

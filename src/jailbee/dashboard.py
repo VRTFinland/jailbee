@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import os
 import select
+import shlex
+import shutil
 import subprocess
 import sys
 import termios
@@ -847,18 +849,116 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
 
 
+# Verbs whose whole point is the text they print. `Live` repaints the moment
+# the dashboard resumes, so without a pause their output is gone before it can
+# be read. Matched exactly, not by leading token: `pr --open` only opens a
+# browser, and `job log` reaches here in both its plain and its --follow form.
+_OUTPUT_VERBS: frozenset[str] = frozenset(
+    {"pr", "git push", "git pull", "job log", "job log --follow"}
+)
+
+# Output verbs long enough to want a pager instead of a pause.
+_PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
+
+DispatchStyle = Literal["paged", "output", "plain"]
+
+
+def dispatch_style(verb: str) -> DispatchStyle:
+    """How the TUI should run ``verb``: through a pager, with a pause, or bare."""
+    if verb in _PAGED_VERBS:
+        return "paged"
+    if verb in _OUTPUT_VERBS:
+        return "output"
+    return "plain"
+
+
+def pager_argv() -> list[str] | None:
+    """The pager to page long output through, or None when the host has none.
+
+    ``$PAGER`` wins (split as a shell word list, so ``PAGER="bat -p"`` works);
+    otherwise ``less -R``, which renders the ANSI colour the diff is asked to
+    emit, then ``more``.
+    """
+    env = os.environ.get("PAGER")
+    if env:
+        return shlex.split(env)
+    for candidate in (["less", "-R"], ["more"]):
+        if shutil.which(candidate[0]):
+            return candidate
+    return None
+
+
+def _wait_for_return() -> None:
+    """Hold the terminal until the user has read the output.
+
+    Called only from inside ``run``'s ``foreground`` helper, where ``Live`` is
+    stopped and the terminal is back in cooked mode — so a plain read is
+    enough. EOF (piped stdin, Ctrl-D) and Ctrl-C return immediately rather
+    than propagating: neither is a reason to take the dashboard down.
+    """
+    console.print("\n[dim]── press Enter to return to the dashboard ──[/dim]")
+    try:
+        sys.stdin.readline()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def _run_paged(argv: list[str], pager: list[str]) -> int:
+    """Pipe ``argv``'s stdout into ``pager``; return the command's exit code.
+
+    Two processes rather than a shell string, so there is no quoting to get
+    wrong. Stderr stays attached to the terminal: an error message must not be
+    swallowed by the pager. The pager owns the terminal until the user quits
+    it, which is why the paged path needs no keypress pause of its own.
+    """
+    producer = subprocess.Popen(argv, stdout=subprocess.PIPE)
+    out = producer.stdout
+    if out is None:  # unreachable with stdout=PIPE; keeps mypy honest
+        return producer.wait()
+    try:
+        viewer = subprocess.Popen(pager, stdin=out)
+    except OSError:
+        # The pager vanished between which() and exec. Nothing will ever read
+        # the pipe, so kill the producer rather than leaving it blocked on a
+        # full one, and let the caller fall back to the unpaged path.
+        producer.kill()
+        producer.wait()
+        raise
+    finally:
+        # The viewer owns the read end now. Keeping this copy open would stop
+        # the pager ever seeing EOF, so it would hang on a finished command.
+        out.close()
+    viewer.wait()
+    return producer.wait()
+
+
 def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     """Run ``jailbee <verb> <name> --config <config_path>``; return its exit code.
 
     The single dispatch point shared by the inline action menu and the
     quick-action keys, so both reuse the real command's behaviour and the
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
-    ``"pr --open"``).
+    ``"pr --open"``, ``"job log --follow"``).
+
+    The verb's :func:`dispatch_style` decides what happens to its output: a
+    pager for the diff (with ``--color`` forced, because the pipe would
+    otherwise turn colour off), a keypress pause for the other printing verbs,
+    and nothing at all for the rest. A missing or unstartable pager degrades to
+    the pause rather than losing the output.
     """
-    proc = subprocess.run(
-        ["jailbee", *verb.split(), name, "--config", str(config_path)], check=False
-    )
-    return proc.returncode
+    argv = ["jailbee", *verb.split(), name, "--config", str(config_path)]
+    style = dispatch_style(verb)
+    if style == "paged":
+        pager = pager_argv()
+        if pager is not None:
+            try:
+                return _run_paged([*argv, "--color"], pager)
+            except OSError as exc:
+                log.debug("pager %s failed: %s", pager, exc)
+    rc = subprocess.run(argv, check=False).returncode
+    if style != "plain":
+        _wait_for_return()
+    return rc
 
 
 def _refresh_due(
