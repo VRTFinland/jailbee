@@ -74,9 +74,7 @@ def test_net_loose_without_answers_carries_no_duration_flag():
 
 
 def test_net_loose_duration_arrives_as_extra_flags():
-    ac = a.build_action(
-        "net loose", "p-foo", Path("/x/config.yaml"), extra_flags=["--for", "2h"]
-    )
+    ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"), extra_flags=["--for", "2h"])
     assert ac.argv == [
         "jailbee",
         "net",

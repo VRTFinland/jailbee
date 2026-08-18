@@ -69,18 +69,14 @@ def test_confirm_text_stays_honest_when_the_base_is_unknown():
 def test_push_dialog_returns_the_default_action_and_no_source(qtbot):
     """`push.default_source` was pinned, so no source combo exists and the
     answer must stay None — a `--from`/`--current` flag would override it."""
-    dlg = PushOptionsDialog(
-        "alpha-x", ask_action=True, ask_source=False, base_branch="main"
-    )
+    dlg = PushOptionsDialog("alpha-x", ask_action=True, ask_source=False, base_branch="main")
     qtbot.addWidget(dlg)
 
     assert dlg.answers() == PushAnswers(action="merge", source=None)
 
 
 def test_push_dialog_offers_the_recorded_base_branch_as_a_source(qtbot):
-    dlg = PushOptionsDialog(
-        "alpha-x", ask_action=False, ask_source=True, base_branch="main"
-    )
+    dlg = PushOptionsDialog("alpha-x", ask_action=False, ask_source=True, base_branch="main")
     qtbot.addWidget(dlg)
     dlg._source.setCurrentIndex(0)
 

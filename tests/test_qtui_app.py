@@ -643,9 +643,7 @@ def test_on_action_git_push_asks_when_the_config_says_ask(mocker, tmp_path):
     controller = _controller_with_group(
         mocker, tmp_path, push_action_default="ask", base_branch="main"
     )
-    dialog = _stub_dialog(
-        mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None)
-    )
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None))
     open_output = mocker.patch.object(qapp.AppController, "_open_output")
 
     controller.on_action("git push", "p-foo")
