@@ -458,7 +458,7 @@ exposes at all; use `jailbee port to-host` per container instead (see
 `host_ports` entry is rejected with this same explanation, not a generic
 "unknown field" error.
 
-**This is a hole through the `net strict` egress ACL by construction.** The
+**This is a hole through the `net strict` ACL's egress half by construction.** The
 forwarded traffic never traverses the bridge the ACL is attached to — Incus's
 forkproxy connects directly into (or out of) the container's network
 namespace — so a `strict` container's default-deny ACL never sees it, on

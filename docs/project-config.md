@@ -84,7 +84,9 @@ host_ports:
 That's the whole recipe. The host's adb server already listens on
 `127.0.0.1:5037` by default, so once the forward is attached, plain
 `adb devices` inside the container lists whatever the host has plugged
-in — no `ADB_SERVER_SOCKET`, no mount. See
+in — no `ADB_SERVER_SOCKET`, no mount. For existing containers, run
+`jailbee apply` to attach the forward (proxy devices hotplug, so no
+restart is needed). See
 [`host_ports`](config.md#host_ports) for the full field grammar.
 
 If something inside the container is already listening on 5037 — most

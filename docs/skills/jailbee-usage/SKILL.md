@@ -269,7 +269,7 @@ refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 ## Port forwarding — `jailbee port`
 
 A forward is an Incus proxy device wired directly into (or out of) the
-container's network namespace — it bypasses the egress ACL by construction,
+container's network namespace — it bypasses the network ACL by construction,
 so it works identically in **both** `strict` and `loose`, and doesn't need
 `net loose` to set up or to use. `jailbee net status` prints an active
 forward's own section ("Port forwards: N on M container(s) — the network ACL
