@@ -37,7 +37,20 @@ The branch is named `{branch}`.
 Inspect the change yourself using your shell tools:
   - `git log {base}..HEAD` for the commits on this branch
   - `git diff {base}...HEAD` for the cumulative diff
-  - any obviously relevant spec, plan, or README file in this repository
+  - `.github/pull_request_template.md`, or a file under
+    `.github/PULL_REQUEST_TEMPLATE/`. If the repository ships a PR template,
+    follow its headings and fill in every section it asks for — it is this
+    project's own definition of a complete description.
+  - the spec, plan, or issue this branch implements. Look for it in `docs/`,
+    `specs/`, and the commit messages. When you find one, describe the change
+    against that stated intent, and say plainly what it deliberately leaves out.
+  - `CONTRIBUTING.md`, `CLAUDE.md`, or `AGENTS.md` for this repository's own
+    rules on how commits and pull requests are written.
+
+If the branch name or a commit message references an issue number, read it with
+`gh issue view <number>` and use it for the background section. Add a
+`Closes #<number>` line when merging this PR really does close that issue. Skip
+this silently when `gh` is missing or cannot reach GitHub.
 
 Write a concise, technical pull request in clear English:
   - Title: imperative, <= 72 characters, matching the repository's

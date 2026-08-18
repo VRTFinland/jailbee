@@ -168,6 +168,36 @@ def test_parse_bad_titlebody_still_none_even_with_branch():
 
 
 # ---------------------------------------------------------------------------
+# _build_prompt
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_points_at_the_repo_pr_template():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "pull_request_template" in prompt
+
+
+def test_prompt_asks_for_a_closes_line_when_an_issue_is_referenced():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "gh issue view" in prompt
+    assert "Closes #" in prompt
+
+
+def test_prompt_asks_what_the_change_leaves_out_relative_to_its_spec():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "leaves out" in prompt
+
+
+# ---------------------------------------------------------------------------
 # generate_pr_text
 # ---------------------------------------------------------------------------
 
