@@ -3267,3 +3267,112 @@ def test_load_config_from_text_rejects_github_block(tmp_path, mocker):
     )
     with pytest.raises(ConfigError, match="github"):
         load_config_from_text("github:\n  enabled: true\n", tmp_path / ".jailbee" / "config.yaml")
+
+
+def test_host_ports_defaults(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n",
+    )
+    cfg = load_config(cfg_path)
+    entry = cfg.host_ports[0]
+    assert entry.name == "adb"
+    assert entry.port == 5037
+    assert entry.host_port is None
+    assert entry.effective_host_port == 5037
+    assert entry.proto == "tcp"
+    assert entry.host_address == "127.0.0.1"
+    assert entry.container_address == "127.0.0.1"
+
+
+def test_host_ports_explicit_host_port_and_udp(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n"
+        "  - name: dns\n"
+        "    port: 5353\n"
+        "    host_port: 53\n"
+        "    proto: udp\n"
+        "    host_address: 10.0.0.1\n"
+        "    container_address: 127.0.0.2\n",
+    )
+    entry = load_config(cfg_path).host_ports[0]
+    assert entry.effective_host_port == 53
+    assert entry.proto == "udp"
+    assert entry.host_address == "10.0.0.1"
+    assert entry.container_address == "127.0.0.2"
+
+
+def test_host_ports_default_is_empty(tmp_path):
+    assert load_config(_make_config(tmp_path, "{}\n")).host_ports == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Adb", "-adb", "adb_server", "adb server", "a" * 41],
+)
+def test_host_ports_rejects_bad_name(tmp_path, name):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: {name!r}\n    port: 5037\n")
+    with pytest.raises(ConfigError, match="host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("port", [0, 70000, -1])
+def test_host_ports_rejects_out_of_range_port(tmp_path, port):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: x\n    port: {port}\n")
+    with pytest.raises(ConfigError, match="1..65535"):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_out_of_range_host_port(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: x\n    port: 5037\n    host_port: 99999\n",
+    )
+    with pytest.raises(ConfigError, match="1..65535"):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_hostname_as_address(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: x\n    port: 5037\n    host_address: localhost\n",
+    )
+    with pytest.raises(ConfigError, match="IP literal"):
+        load_config(cfg_path)
+
+
+def test_host_ports_accepts_ipv6_literal(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        'host_ports:\n  - name: x\n    port: 5037\n    host_address: "::1"\n',
+    )
+    assert load_config(cfg_path).host_ports[0].host_address == "::1"
+
+
+def test_host_ports_rejects_duplicate_names(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n  - name: adb\n    port: 5038\n",
+    )
+    with pytest.raises(ConfigError, match="duplicate host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("key", ["direction", "to_host", "bind"])
+def test_host_ports_rejects_direction_keys_with_explanation(tmp_path, key):
+    cfg_path = _make_config(
+        tmp_path,
+        f"host_ports:\n  - name: web\n    port: 8080\n    {key}: to_host\n",
+    )
+    with pytest.raises(ConfigError, match="jailbee port to-host"):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_unknown_key(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: web\n    port: 8080\n    nat: true\n",
+    )
+    with pytest.raises(ConfigError):
+        load_config(cfg_path)
