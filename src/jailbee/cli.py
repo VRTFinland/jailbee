@@ -4944,6 +4944,7 @@ def net_status_cmd() -> None:
 
     # Auto-revert: list each loose-mode container, with or without TTL.
     _print_loose_status()
+    _print_port_forward_status()
 
 
 def _print_loose_status() -> None:
@@ -4987,6 +4988,52 @@ def _print_loose_status() -> None:
         typer.echo(
             f"  {short:<14}expires in {format_duration_short(delta):<10}(→ strict)",
         )
+
+
+def _print_port_forward_status() -> None:
+    """Render the port-forward section of `jailbee net status`.
+
+    Best-effort, like `_print_loose_status`: silent when no repo config is
+    reachable from cwd or Incus is unavailable. Forwards belong in this
+    command because each one is a path out of the container that the egress
+    ACL does not see — `net strict` alone no longer tells the whole story.
+    """
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers
+
+    try:
+        cfg = _load_or_exit(None)
+    except typer.Exit:
+        return
+    try:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+    except Exception:
+        return
+
+    rows = [(i, by_container.get(i.name, [])) for i in infos]
+    active = [(i, fwds) for i, fwds in rows if fwds]
+    if not active:
+        return
+
+    total = sum(len(fwds) for _, fwds in active)
+    typer.echo("")
+    typer.echo(
+        f"Port forwards: {total} on {len(active)} container(s) — "
+        f"these bypass the egress ACL"
+    )
+    for info_row, fwds in active:
+        for fwd in fwds:
+            # The direction word, not an arrow: it is the same word the
+            # commands use, and an arrow would raise the very "which way?"
+            # question the vocabulary exists to settle.
+            typer.echo(
+                f"  {info_row.display_name:<14}{fwd.direction:<14}"
+                f"{fwd.proto} container {fwd.container.display}  "
+                f"host {fwd.host.display}  ({fwd.source})"
+            )
 
 
 @net_app.command("unregister")
