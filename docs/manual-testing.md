@@ -1867,3 +1867,107 @@ sha256sum ~/.local/share/jailbee/registry/ca/ca.crt
 jailbee registry status
 # expect: running
 ```
+
+## Nested Incus probe rig (verifying device behaviour from inside a container)
+
+Every recipe above needs the host's daemon. This one does not: it brings up a
+second Incus daemon *inside* a JailBee container, so questions of the form
+"does Incus really accept these device properties, and what does it say when
+it doesn't?" can be answered without leaving the container. The unit suite is
+fully mocked by design, so this rig is the only place those answers come from.
+
+It works because JailBee's base profile already sets `security.nesting: true`
+(`profiles.base_profile_yaml`). `.jailbee/install.d/75-incus.sh` bakes the
+daemon into this repo's golden image with its units disabled, a `default` dir
+pool already created, and root's subuid range capped so instances start
+without per-instance tuning. Two commands from a fresh container:
+
+```bash
+sudo systemctl start incus.service
+sudo incus launch images:alpine/edge probe1
+sudo incus list
+# expect: RUNNING, no IPv4/IPv6 beyond loopback (nothing here creates a NIC)
+```
+
+A `cgroup2_devices ... Failed to load bpf program` line in the instance log is
+expected under nesting and harmless.
+
+With that up, a proxy device round-trip takes two commands. The "host" side is
+the JailBee container itself:
+
+```bash
+# host side: something to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+# instance listens, traffic lands on the host's service (the adb-style case)
+sudo incus config device add probe1 probe-fwd proxy \
+    listen=tcp:127.0.0.1:5037 connect=tcp:127.0.0.1:5037 bind=instance
+sudo incus exec probe1 -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response
+
+# the other direction: host listens, traffic lands on the instance's service
+sudo incus exec probe1 -- sh -c \
+    'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
+sudo incus config device add probe1 probe-pub proxy \
+    listen=tcp:127.0.0.1:18080 connect=tcp:127.0.0.1:8080 bind=host
+curl -s http://127.0.0.1:18080/
+# expect: OK
+```
+
+### Findings (Incus 6.0.5, 2026-08-18)
+
+Kept here because they are what the mocked tests are written against.
+
+- `bind=instance` is Incus's name; `bind=container` is accepted as an alias
+  from LXD and works, but the daemon stores whichever string it was given, so
+  reads must treat both as the same thing.
+- `incus list --format json` returns each instance's `devices` and
+  `expanded_devices` maps, so reading forwards back needs no new wrapper
+  method — `Incus.list_containers()` already carries them.
+- Adding a device to a **stopped** instance succeeds and starts working on the
+  next boot; devices survive restarts.
+- `nat=true` is unusable for this purpose: instance-bound proxies are refused
+  outright (`Only host-bound proxies can use NAT`) and host-bound ones require
+  the connect address to be one of the instance's static IPs.
+- A forward whose target has nothing listening is added without complaint —
+  connections are refused at connect time, not at add time. So no pre-flight
+  check on the target service is needed, or possible.
+- Conflicts and typos, verbatim:
+  - duplicate device name → `The device already exists`
+  - host port taken → `Failed to listen on 127.0.0.1:5037: ... bind: address already in use`
+  - port already bound *inside* the instance → `Failed to receive fd from
+    listener process: Failed to receive file descriptor via abstract unix
+    socket`, which names neither the port nor the cause and needs translating
+    before a user sees it
+  - missing protocol prefix → `Unknown protocol type "127.0.0.1"`
+  - `udp:` listen with a `tcp:` connect → `Proxying from udp to non-udp
+    protocol is not supported`
+- An out-of-range port (`70000`) passes validation and fails only at device
+  start, so range checking belongs on JailBee's side.
+
+### What is not verified yet
+
+Running JailBee itself inside a container (`jailbee init`, `jailbee new`) is a
+separate question and remains open. What is known:
+
+- A nested bridge comes up: `incus network create incusbr0` succeeds, dnsmasq
+  serves the range, nft masquerade rules are installed, and an instance on it
+  reaches the bridge gateway.
+- A DHCP lease did **not** arrive in a hotplugged instance (`udhcpc` hung);
+  static addressing on the same bridge worked, so this is a client/hotplug
+  detail rather than a broken bridge.
+- Egress *out* of the nested bridge was never actually tested: the container
+  it was tried in was in `strict` mode with an empty allowlist at the time, so
+  it had no egress of its own to forward. Re-test from a `loose` container
+  before drawing any conclusion.
+- Untouched beyond that: whether network ACLs enforce correctly two levels
+  deep, and whether `jailbee base build` can publish an image from inside a
+  container (that needs a full apt provision at nesting depth two).
+
+Tear the rig down when done; the pool is a plain directory under
+`/var/lib/incus`:
+
+```bash
+sudo incus delete probe1 --force
+sudo systemctl stop incus.service
+```
