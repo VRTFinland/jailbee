@@ -12,8 +12,43 @@
   stay view-only — and when it declines, the footer says why rather than going
   silent. `h` (or `?`) opens a keybinding help overlay.
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
+- **`claude.pr_prompt` — a project's own PR standard.** `jailbee pr` generated
+  its title and body from a prompt hardcoded in JailBee, so a repo with its own
+  conventions had no way to reach the model. Set `claude.pr_prompt` in the
+  repo's `.jailbee/config.yaml` (a YAML block scalar) and those instructions
+  are embedded in JailBee's prompt as a delimited section that **outranks** the
+  generic title/body guidance. It is placed before the JSON response contract,
+  which it cannot override — so a project can dictate the shape of its
+  descriptions without having to restate, and risk breaking, the format
+  JailBee has to parse back.
+- **`claude.ai_pr_model`** selects the model used for PR-text generation. An
+  alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` inherits the
+  container's own default.
 
 ### Changed
+
+- **`jailbee pr` now generates its description on Sonnet**, not on whatever
+  model the container defaults to (typically Opus). Writing a PR description is
+  a bounded job — read a diff, follow a template, emit JSON — and pinning it
+  means the generation no longer competes for the same budget as the coding
+  work that just happened in that container. Set `claude.ai_pr_model: null` to
+  restore the previous inherit-the-default behaviour, or name any model you
+  prefer. `haiku` works, but its smaller context window may not hold a large
+  cumulative diff.
+- **The AI PR prompt now looks at what the project already documents.** Its
+  only nod to project context used to be a single line asking Claude to read
+  "any obviously relevant spec, plan, or README file". It now names
+  `.github/pull_request_template.md` (and `.github/PULL_REQUEST_TEMPLATE/`) as
+  the required shape when the repo ships one, searches named locations for the
+  spec or plan the branch implements — describing the change against that
+  intent and stating what it deliberately leaves out — reads `CONTRIBUTING.md`
+  / `CLAUDE.md` / `AGENTS.md` for PR-writing rules rather than only for branch
+  naming, and looks up an issue referenced by the branch name or a commit
+  message to add a `Closes #N` line.
+- **A failed PR-text generation says why.** "Claude PR-text generation failed;
+  using a placeholder" was printed whether `claude` was missing, the run timed
+  out, or the configured model does not exist. The underlying reason is now
+  reported alongside it.
 
 - **The dashboard's action menu opens inline, under the table.** Pressing
   `Enter` used to hand the terminal to a separate prompt, which took the whole

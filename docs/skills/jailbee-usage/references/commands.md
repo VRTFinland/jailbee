@@ -448,6 +448,14 @@ description is left untouched unless you pass `--description`, `--title`/`--body
 or accept the interactive prompt — which is only offered for a PR JailBee itself
 created.
 
+Generation reads the commits and cumulative diff, `.github/pull_request_template.md`,
+the spec or issue the branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` /
+`AGENTS.md`, and links a referenced issue with `Closes #N` when it can reach
+`gh`. It runs on `claude.ai_pr_model` (default `sonnet`; `null` inherits the
+container's default). `claude.pr_prompt` adds project-specific instructions that
+outrank JailBee's generic title/body rules — see the config-schema reference in
+the `jailbee-repo-setup` skill.
+
 ## Submodules
 
 ### `jailbee submodule checkout [NAME] [-b BRANCH]`

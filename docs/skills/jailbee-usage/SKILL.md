@@ -431,6 +431,13 @@ unless you pass `--description` (regenerate with Claude), `--title`/`--body`, or
 accept the prompt — which is offered only for a PR JailBee itself created.
 `--force` force-pushes (with lease) a rebased/amended branch.
 
+The generation reads the branch's commits and cumulative diff, plus
+`.github/pull_request_template.md`, the spec or issue the branch implements, and
+`CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`. It runs on `claude.ai_pr_model`
+(default `sonnet`; `null` inherits the container's default model). A repo can
+state its own PR conventions in `claude.pr_prompt` — those instructions outrank
+JailBee's generic guidance about the title and body.
+
 ## Using `gh` / `git push` to GitHub from inside a container
 
 `gh` is baked into every container. For it to authenticate, the `github` block
