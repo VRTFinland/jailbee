@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=0539adfe" />
+    <link rel="stylesheet" href="assets/style.css?v=901709aa" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -176,6 +176,138 @@
             </p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- The answer to #problem, in one picture: the same three branches,
+         each with a container of its own. Copy first so the section leads
+         with its heading when stacked; at 800px up the comb sits right,
+         which alternates with #network's image-left below. -->
+    <section id="parallel">
+      <div class="wrap split">
+        <div class="split__body">
+          <h2>Three agents, three branches, three of everything.</h2>
+          <p>
+            Point a coding agent at a branch and it gets a container to itself: its own
+            working tree, its own services, its own <code>:8080</code>. Two more run beside
+            it on the same host without having to agree on anything, because none of them
+            shares a port, a database or a file with the others.
+          </p>
+          <p>
+            The work stays one project the whole time. Each container is a branch of your
+            repository, commits travel straight back to it when a run is worth keeping, and
+            a container that goes wrong is thrown away rather than untangled.
+          </p>
+        </div>
+        <!-- Inline rather than a file: the labels want IBM Plex Mono and the
+             token palette, and neither reaches an SVG loaded through <img>.
+             Every colour here is a var(), so the diagram cannot drift from
+             the rest of the page. Styles live in style.css under `.comb`. -->
+        <svg
+          class="comb"
+          viewBox="0 0 560 410"
+          role="img"
+          aria-labelledby="combTitle combDesc"
+        >
+          <title id="combTitle">Three branch containers running in parallel</title>
+          <desc id="combDesc">
+            A branch line labelled main runs down the left. Three branches lead off it into
+            three hexagonal cells, one each for feat/parser, fix/upload and pull request
+            482. Every cell holds an agent and the same port 8080, and every branch line is
+            two-way, because commits travel back to the repository the containers came from.
+          </desc>
+
+          <defs>
+            <!-- One bee, used three times. The stripes are filled shapes whose
+                 corners sit on the body ellipse (rx 13, ry 9.5) rather than
+                 strokes clipped to it: at the ~17px this renders at, a clipped
+                 hairline is the difference between a bee and a smudge, and a
+                 shape that is already inside the body needs no clip path. -->
+            <g id="combBee">
+              <ellipse
+                class="comb__wing"
+                cx="-2"
+                cy="-10"
+                rx="10"
+                ry="6"
+                transform="rotate(-24 -2 -10)"
+              />
+              <ellipse
+                class="comb__wing comb__wing--back"
+                cx="8"
+                cy="-9"
+                rx="8.5"
+                ry="5"
+                transform="rotate(-6 8 -9)"
+              />
+              <ellipse class="comb__body" cx="0" cy="0" rx="13" ry="9.5" />
+              <path class="comb__stripe" d="M-2.2 -9.36 L2.2 -9.36 L2.2 9.36 L-2.2 9.36 Z" />
+              <path class="comb__stripe" d="M3.8 -9.08 L8.2 -7.37 L8.2 7.37 L3.8 9.08 Z" />
+              <circle class="comb__head" cx="-13" cy="-2" r="5.5" />
+            </g>
+            <marker
+              id="combArrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path class="comb__arrowhead" d="M0 1 L9 5 L0 9 Z" />
+            </marker>
+          </defs>
+
+          <text class="comb__trunk-label" x="54" y="28" text-anchor="middle">main</text>
+          <path class="comb__trunk" d="M54 44 L54 400" />
+
+          <!-- Each branch line is one path with a head at both ends: out to
+               the container at `jailbee new`, back to the host over the git
+               bridge. Both ends leave horizontally so the heads point along
+               the axis rather than into the curve. No dot marks the branch
+               point — the inbound head lands exactly there, and a dot behind
+               it reads as a smudge rather than as two arrows. -->
+          <path
+            class="comb__line"
+            d="M54 90 C112 90 92 120 150 120"
+            marker-start="url(#combArrow)"
+            marker-end="url(#combArrow)"
+          />
+          <path
+            class="comb__line"
+            d="M54 200 C112 200 92 230 150 230"
+            marker-start="url(#combArrow)"
+            marker-end="url(#combArrow)"
+          />
+          <path
+            class="comb__line"
+            d="M54 310 C112 310 92 340 150 340"
+            marker-start="url(#combArrow)"
+            marker-end="url(#combArrow)"
+          />
+
+          <g>
+            <path class="comb__cell" d="M150 120 L176 76 L498 76 L524 120 L498 164 L176 164 Z" />
+            <circle class="comb__ok" cx="196" cy="112" r="5" />
+            <text class="comb__branch" x="212" y="119">feat/parser</text>
+            <text class="comb__meta" x="212" y="146">:8080</text>
+            <use class="comb__bee" href="#combBee" x="460" y="120" />
+          </g>
+          <g>
+            <path class="comb__cell" d="M150 230 L176 186 L498 186 L524 230 L498 274 L176 274 Z" />
+            <circle class="comb__ok" cx="196" cy="222" r="5" />
+            <text class="comb__branch" x="212" y="229">fix/upload</text>
+            <text class="comb__meta" x="212" y="256">:8080</text>
+            <use class="comb__bee comb__bee--2" href="#combBee" x="460" y="230" />
+          </g>
+          <g>
+            <path class="comb__cell" d="M150 340 L176 296 L498 296 L524 340 L498 384 L176 384 Z" />
+            <circle class="comb__ok" cx="196" cy="332" r="5" />
+            <text class="comb__branch" x="212" y="339">pr/482</text>
+            <text class="comb__meta" x="212" y="366">:8080</text>
+            <use class="comb__bee comb__bee--3" href="#combBee" x="460" y="340" />
+          </g>
+        </svg>
       </div>
     </section>
 

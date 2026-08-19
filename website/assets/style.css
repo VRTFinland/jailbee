@@ -895,3 +895,113 @@ footer p {
 .page-header__brand:focus-visible .page-header__word em {
   color: var(--amber);
 }
+
+/* -----------------------------------------------------------------------
+   The comb — the inline SVG in #parallel. Sized a little wider than
+   .split__img because it carries labels: below ~380px the branch names
+   stop being readable, and a diagram nobody can read is worse than no
+   diagram. Every colour is a token, so the illustration cannot drift
+   from the palette the rest of the page uses.
+   ----------------------------------------------------------------------- */
+.comb {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+}
+
+.comb text {
+  font-family: var(--mono);
+}
+
+.comb__branch {
+  fill: var(--text);
+  font-size: 24px;
+}
+
+.comb__meta,
+.comb__trunk-label {
+  fill: var(--muted);
+  font-size: 19px;
+}
+
+.comb__cell {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.comb__trunk {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+}
+
+.comb__line {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 1.75;
+}
+
+.comb__arrowhead {
+  fill: var(--amber);
+}
+
+.comb__ok {
+  fill: var(--green);
+}
+
+.comb__body {
+  fill: var(--amber);
+}
+
+/* The head is the ground colour, not amber-dim: against the amber body a
+   dim-amber head merges into it and the glyph stops reading as a bee. */
+.comb__head {
+  fill: var(--ground);
+}
+
+.comb__wing {
+  fill: var(--text);
+  opacity: 0.5;
+}
+
+.comb__wing--back {
+  opacity: 0.38;
+}
+
+.comb__stripe {
+  fill: var(--ground);
+}
+
+/* One hover per bee, offset so the three don't rise and fall as a block.
+   A CSS animation rather than SMIL on purpose: the global
+   prefers-reduced-motion rule above switches CSS animation off, and would
+   not have touched an <animate> element. */
+.comb__bee {
+  animation: comb-hover 3.2s ease-in-out infinite;
+}
+
+.comb__bee--2 {
+  animation-delay: -1.1s;
+}
+
+.comb__bee--3 {
+  animation-delay: -2.2s;
+}
+
+@keyframes comb-hover {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+@media (min-width: 800px) {
+  .comb {
+    flex: 0 0 400px;
+  }
+}
