@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=901709aa" />
+    <link rel="stylesheet" href="assets/style.css?v=aaaf4494" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -186,12 +186,17 @@
     <section id="parallel">
       <div class="wrap split">
         <div class="split__body">
-          <h2>Three agents, three branches, three of everything.</h2>
+          <!-- The heading deliberately does not echo #problem's "one of
+               everything": the section above just made that joke, and the
+               numbers stumbling from two to three drew attention to the
+               repetition rather than to the point. The port, the database and
+               the file are not re-listed here either — the cards above name
+               them, and the illustration shows the same :8080 three times. -->
+          <h2>Parallel agents that can't step on each other.</h2>
           <p>
-            Point a coding agent at a branch and it gets a container to itself: its own
-            working tree, its own services, its own <code>:8080</code>. Two more run beside
-            it on the same host without having to agree on anything, because none of them
-            shares a port, a database or a file with the others.
+            Point a coding agent at a branch and it gets a container to itself. Three can be
+            working at once, each against its own copy of the stack, and none of them can
+            reach what the others are doing.
           </p>
           <p>
             The work stays one project the whole time. Each container is a branch of your
