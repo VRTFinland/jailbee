@@ -2003,11 +2003,24 @@ Kept here because they are what the mocked tests are written against.
   check on the target service is needed, or possible.
 - Conflicts and typos, verbatim:
   - duplicate device name → `The device already exists`
-  - host port taken → `Failed to listen on 127.0.0.1:5037: ... bind: address already in use`
-  - port already bound *inside* the instance → `Failed to receive fd from
-    listener process: Failed to receive file descriptor via abstract unix
-    socket`, which names neither the port nor the cause and needs translating
-    before a user sees it
+  - **a port already taken on the side that must listen** → one of two strings,
+    for the one same cause. Usually `Failed to listen on 127.0.0.1:5037:
+    listen tcp 127.0.0.1:5037: bind: address already in use`; sometimes
+    `Failed to receive fd from listener process: Failed to receive file
+    descriptor via abstract unix socket`, when the forkproxy handshake is what
+    notices first. Both were produced against one occupied port in a single
+    session (2026-08-19), the first reproducibly, so **handling only one of
+    them is a bug** — see `ports._LISTEN_FAILURE_MARKERS`.
+
+    Neither string says *whose* port it is, and the address is no help:
+    `Failed to listen on 127.0.0.1:5037` names the **listen** side, which for
+    `bind=instance` is inside the instance. Only the forward's direction
+    disambiguates, which is why `ports._translate` takes a `direction`. Reading
+    that address as the host's is what made `to-container` answer a
+    container-side collision with "Host port 5037 is already in use — pick
+    another with `--host-port N`": advice that cannot help, since a
+    `to-container` forward's host end is a *connect* target where a listener is
+    exactly what is wanted.
   - missing protocol prefix → `Unknown protocol type "127.0.0.1"`
   - `udp:` listen with a `tcp:` connect → `Proxying from udp to non-udp
     protocol is not supported`
@@ -2025,7 +2038,16 @@ Kept here because they are what the mocked tests are written against.
 ### What is not verified yet
 
 Running JailBee itself inside a container (`jailbee init`, `jailbee new`) is a
-separate question and remains open. What is known:
+separate question and remains open. The `jailbee port` recipe below needs none
+of it — proxy devices are per-instance and want no profile, bridge or ACL — but
+anything that reconciles the *whole repo* does: against a daemon that was never
+`jailbee init`ed, `jailbee doctor` fails every profile/ACL/network/shared-dir
+check with "run `jailbee init`" (the checks above it — `incus binary`,
+`container_user`, `upstream remote` — pass, so a red `doctor` here says nothing
+about the install), and `jailbee apply` exits at `jailbee-registry-mirror
+container not found` long before its port-forward loop. Verified 2026-08-19.
+
+What is known about the rest:
 
 - A nested bridge comes up: `incus network create incusbr0` succeeds, dnsmasq
   serves the range, nft masquerade rules are installed, and an instance on it
@@ -2085,30 +2107,119 @@ jailbee port ls probe
 # expect: No port forwards.
 ```
 
+`jailbee port ls` **with no container argument** lists the whole repo, and that
+path goes through `lifecycle.list_containers`, which selects on the
+`<prefix>-base` *profile* — not on the name prefix. A bare `images:alpine/edge`
+instance therefore shows nothing there however it is named, which is correct
+rather than a bug. Give it an empty stand-in profile to exercise the repo-wide
+path (and `jailbee ls`):
+
+```bash
+incus profile create <prefix>-base
+incus profile add <prefix>-probe <prefix>-base
+jailbee port ls          # expect: the probe's rows, titled "Port forwards for <prefix>"
+```
+
+The other direction, with real traffic — a service *inside* the instance
+reachable on the host. This is the half `host_ports` cannot declare, so the
+ad-hoc command is the only way to it:
+
+```bash
+# a service inside the instance
+incus exec <prefix>-probe -- sh -c \
+    'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
+
+jailbee port to-host 8080 probe --host-port 18080
+# expect: "... connecting to 127.0.0.1:18080 on the host now reaches
+#          127.0.0.1:8080 inside the container (port-th-tcp-8080)"
+curl -s http://127.0.0.1:18080/
+# expect: OK
+
+jailbee port to-host 8081 probe --host-port auto
+# expect: an OS-chosen high port in the success line; nothing listens on
+#         container 8081, and the device is still added — see the finding above
+jailbee port rm port-th-tcp-8081 probe
+```
+
 Negative case — the container-side port is already taken, which is the
-scenario JailBee's translation exists for:
+scenario JailBee's translation exists for. Note the host's own
+`http.server` is still on 5037, so this is exactly the case that used to be
+misdiagnosed as a host-port clash:
 
 ```bash
 # Occupy port 5037 *inside* the instance first (its own listener, adb-style).
-incus exec <prefix>-probe -- sh -c 'nc -l -p 5037 >/dev/null 2>&1 &'
+incus exec <prefix>-probe -- sh -c 'nc -l -p 5037 -s 127.0.0.1 >/dev/null 2>&1 &'
 
 jailbee port to-container 5037 probe
 # expect JailBee's translated message, e.g.:
 #   "Could not open port 5037 inside <prefix>-probe — something is already
 #    listening on port 5037 inside the container. Stop it, or forward to a
 #    different container port."
-# NOT Incus's raw "Failed to receive fd from listener process: Failed to
-# receive file descriptor via abstract unix socket".
+# NOT "Host port 5037 is already in use ... pick another with --host-port N",
+# and NOT either of Incus's two raw strings for this (see the finding above).
 
 incus exec <prefix>-probe -- pkill nc
 jailbee port to-container 5037 probe   # now succeeds
 jailbee port rm 5037 probe
 ```
 
+The mirror image, to keep the two directions honest: with the host's 5037 taken
+and nothing listening inside the instance, `to-host` must blame the *host*.
+
+```bash
+jailbee port to-host 9000 probe --host-port 5037
+# expect: "Host port 5037 is already in use on the host. Pick another with
+#          `--host-port N`, or `--host-port auto`."
+```
+
+### The `host_ports` (declarative) half
+
+`jailbee apply` is the shipped entry point for this, and it cannot run here (it
+exits at the registry-mirror check — see "What is not verified yet" above). Its
+port work is one prefetched `list_forwards` plus a `reconcile_config_ports` per
+container, with `PortError` collected instead of raised, so driving that shape
+directly covers everything the wrapper does not:
+
+```bash
+# Put entries in .jailbee/config.yaml first, e.g.
+#   host_ports:
+#     - name: adb
+#       port: 5037
+python3 - <<'PY'
+from jailbee.config import load_config
+from jailbee.incus import Incus
+from jailbee.paths import find_repo_config
+from jailbee.ports import PortError, list_forwards, reconcile_config_ports
+
+cfg, incus = load_config(find_repo_config()), Incus()
+names = ["<prefix>-probe", "<prefix>-probe2"]
+prefetched = list_forwards(incus, names)
+for name in names:
+    try:
+        r = reconcile_config_ports(cfg, incus, name, forwards=prefetched.get(name, []))
+    except PortError as e:
+        print(name, "FAILED:", e)      # apply collects this into port_failures
+    else:
+        print(name, "+", r.added, "~", r.replaced, "-", r.removed)
+PY
+```
+
+Worth checking here, all confirmed 2026-08-19:
+
+- a second run reports nothing changed — including for an entry with IPv6
+  addresses, which is what the byte-identity finding above predicts
+- editing an entry replaces its device, deleting one removes it, and ad-hoc
+  (`port-tc-*`/`port-th-*`) plus hand-made devices are left alone throughout
+- `jailbee port rm adb` resolves a `host_ports` entry by name, and the next
+  reconcile puts it straight back
+- one container refusing a device does not stop the sweep: the other still
+  reconciles
+
 Teardown:
 
 ```bash
 kill %1   # stop the python http.server
 incus delete <prefix>-probe --force
+incus profile delete <prefix>-base
 sudo systemctl stop incus.service
 ```

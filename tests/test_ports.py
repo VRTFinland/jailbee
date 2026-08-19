@@ -292,25 +292,38 @@ def test_add_forward_refuses_a_duplicate_before_calling_incus(mocker):
     incus.config_device_add.assert_not_called()
 
 
+# Both strings Incus 6.0.5 was observed to produce for one and the same cause —
+# a listener already occupying the port the proxy device wants to open. Neither
+# says which side of the forward that port is on, which is exactly why
+# `_translate` has to be told the direction.
+_LISTEN_IN_USE = (
+    'Error: Failed to start device "x": Error occurred when starting '
+    "proxy device: Error: Failed to listen on 127.0.0.1:5037: listen "
+    "tcp 127.0.0.1:5037: bind: address already in use"
+)
+_RECEIVE_FD = (
+    'Error: Failed to start device "x": Error occurred when starting '
+    "proxy device: Error: Failed to receive fd from listener process: "
+    "Failed to receive file descriptor via abstract unix socket"
+)
+
+
 @pytest.mark.parametrize(
-    ("incus_message", "expected"),
+    ("direction", "incus_message", "expected"),
     [
-        ("Error: The device already exists", "already forwarded"),
-        (
-            'Error: Failed to start device "x": Error occurred when starting '
-            "proxy device: Error: Failed to listen on 127.0.0.1:5037: listen "
-            "tcp 127.0.0.1:5037: bind: address already in use",
-            "Host port 5037 is already in use",
-        ),
-        (
-            'Error: Failed to start device "x": Error occurred when starting '
-            "proxy device: Error: Failed to receive fd from listener process: "
-            "Failed to receive file descriptor via abstract unix socket",
-            "something is already listening on port 5037 inside",
-        ),
+        ("to-container", "Error: The device already exists", "already forwarded"),
+        # `to-container` is `bind=instance`: the listener is inside the
+        # container, so a listen failure is never about the host port — whose
+        # listener is what the forward exists to reach.
+        ("to-container", _LISTEN_IN_USE, "already listening on port 5037 inside"),
+        ("to-container", _RECEIVE_FD, "already listening on port 5037 inside"),
+        # `to-host` is the mirror image: the host holds the listener, so the
+        # same two strings name the host port instead.
+        ("to-host", _LISTEN_IN_USE, "Host port 15037 is already in use"),
+        ("to-host", _RECEIVE_FD, "Host port 15037 is already in use"),
     ],
 )
-def test_add_forward_translates_incus_errors(mocker, incus_message, expected):
+def test_add_forward_translates_incus_errors(mocker, direction, incus_message, expected):
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [_raw("app-a", {})]
     incus.config_device_add.side_effect = IncusError(incus_message)
@@ -318,10 +331,13 @@ def test_add_forward_translates_incus_errors(mocker, incus_message, expected):
         add_forward(
             incus,
             "app-a",
-            direction="to-container",
-            proto="tcp",
+            direction=direction,
+            # Deliberately different ports: with both at 5037 either message
+            # matches either expectation, and a direction-blind translation
+            # passes the test it is supposed to fail.
             container_port=5037,
-            host_port=5037,
+            host_port=15037,
+            proto="tcp",
             container_address="127.0.0.1",
             host_address="127.0.0.1",
         )
@@ -691,6 +707,38 @@ def test_reconcile_translates_incus_errors_on_add(tmp_path, mocker):
     )
     with pytest.raises(PortError, match="something is already listening on port 5037"):
         reconcile_config_ports(cfg, incus, "app-a")
+
+
+def test_reconcile_blames_the_container_side_for_a_listen_failure(tmp_path, mocker):
+    """`host_ports` is to-container only, so a listen failure is the
+    container's port — never the host's.
+
+    The regression this pins reached the user through `jailbee apply`, which
+    collects this message into `port_failures`: it used to advise
+    `--host-port N`, an option only the ad-hoc CLI has, for a forward declared
+    in config where no such flag exists. `host_port` differs from `port` here
+    so the two diagnoses cannot be confused for one another.
+    """
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037, "host_port": 15037})
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("app-a", {})]
+    incus.config_device_add.side_effect = IncusError(_LISTEN_IN_USE)
+    with pytest.raises(PortError) as excinfo:
+        reconcile_config_ports(cfg, incus, "app-a")
+    assert "already listening on port 5037 inside" in str(excinfo.value)
+    assert "15037" not in str(excinfo.value)
+    assert "--host-port" not in str(excinfo.value)
+
+
+def test_attach_config_ports_blames_the_container_side_for_a_listen_failure(tmp_path, mocker):
+    """The `jailbee new` counterpart of the reconcile case above."""
+    cfg = _cfg_with_ports(tmp_path, {"name": "adb", "port": 5037, "host_port": 15037})
+    incus = mocker.MagicMock()
+    incus.config_device_add.side_effect = IncusError(_LISTEN_IN_USE)
+    with pytest.raises(PortError) as excinfo:
+        attach_config_ports(cfg, incus, "app-a")
+    assert "already listening on port 5037 inside" in str(excinfo.value)
+    assert "--host-port" not in str(excinfo.value)
 
 
 def test_reconcile_translates_incus_errors_on_replace(tmp_path, mocker):
