@@ -49,7 +49,7 @@ def mermaid_blocks() -> list[tuple[Path, int, list[str]]]:
                 if line.strip() == "```mermaid":
                     start = number
             elif line.strip() == "```":
-                blocks.append((path, start, lines[start:number - 1]))
+                blocks.append((path, start, lines[start : number - 1]))
                 start = None
         assert start is None, f"{path.name}:{start} mermaid fence is never closed"
     return blocks
@@ -95,9 +95,7 @@ def test_block_closes_every_subgraph(path: Path, line: int, body: list[str]) -> 
 
 
 @pytest.mark.parametrize(("path", "line", "body"), BLOCKS, ids=block_ids())
-def test_label_text_uses_no_markup_but_line_breaks(
-    path: Path, line: int, body: list[str]
-) -> None:
+def test_label_text_uses_no_markup_but_line_breaks(path: Path, line: int, body: list[str]) -> None:
     """`<placeholder>` in a label is parsed as HTML and vanishes when rendered."""
     for offset, raw in enumerate(body, start=line + 1):
         texts = _QUOTED.findall(raw)
