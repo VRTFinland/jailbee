@@ -668,6 +668,43 @@ def test_menu_actions_workflow_labels_name_their_verb():
     assert labels["git diff"] == "Show diff (git diff)"
 
 
+def test_menu_actions_offers_pr_refresh_on_a_review_container():
+    """A container built from someone else's PR can pull in commits the author
+    pushed since, so the entry sits right after the base-update it mirrors."""
+    actions = dashboard.menu_actions(_ctx(pr_number=123))
+    verbs = [v for _, v in actions]
+    assert verbs[verbs.index("git push") + 1] == "git push --pr"
+    labels = {verb: label for label, verb in actions}
+    assert labels["git push --pr"] == "Refresh from PR head (git push --pr)"
+
+
+def test_menu_actions_omits_pr_refresh_on_an_authored_pr():
+    """`pr_author` means jailbee opened the PR from this container's branch, so
+    its head is downstream of the container and a refresh is a no-op."""
+    actions = dashboard.menu_actions(_ctx(pr_number=123, pr_author=True))
+    verbs = [v for _, v in actions]
+    assert "git push --pr" not in verbs
+    assert "pr --open" in verbs  # the PR itself is still reachable
+
+
+def test_menu_actions_omits_pr_refresh_without_a_pr():
+    assert "git push --pr" not in [v for _, v in dashboard.menu_actions(_ctx())]
+
+
+def test_menu_actions_omits_pr_refresh_when_the_bridge_is_impossible():
+    """No clone to push into: `jailbee git push` would fail in
+    `sync.assert_container_publishable` on either of these."""
+    for ctx in (_ctx(state="Stopped", pr_number=5), _ctx(mode="mount", pr_number=5)):
+        assert "git push --pr" not in [v for _, v in dashboard.menu_actions(ctx)]
+
+
+def test_pr_refresh_is_dispatched_as_a_printing_verb():
+    """PRINTING_VERBS is matched exactly, not by leading token — without its
+    own entry the refresh would lose its output in both front-ends."""
+    assert "git push --pr" in dashboard.PRINTING_VERBS
+    assert dashboard.dispatch_style("git push --pr") == "output"
+
+
 def test_menu_actions_mount_mode_has_no_workflow_verbs():
     """A mount-mode container has no clone of its own, so every one of these
     would fail in `sync.assert_container_publishable`."""
