@@ -33,11 +33,24 @@ scope.
   unattended agent cannot surprise-push.
 - **The container is a git remote.** `jailbee git push/pull/fetch/checkout/diff`
   move commits between host and container without a round trip through GitHub.
-  Submodules travel with the superproject.
+  Submodules travel with the superproject. `jailbee pr` opens or updates the
+  GitHub PR from a container's branch, with the title and body written by the
+  in-container Claude — to the project's own standard when the repo states one
+  in `claude.pr_prompt`.
+- **Host services reach in, opt-in.** A declared forward
+  (`host_ports: [{ name: adb, port: 5037 }]`) makes a host service reachable on
+  every container's own localhost — an adb server with a phone attached, a
+  database — and `jailbee port` adds or removes one ad hoc, in either
+  direction. Forwards are Incus proxy devices, so they bypass the egress ACL by
+  construction; `jailbee net status` lists the open ones next to the allowlist.
+- **One dashboard across every repo.** A live TUI (`jailbee dashboard`) or Qt
+  GUI (`jailbee gui`) lists every container on the host and acts on it — shell,
+  tmux, IDE, create or update the PR, update from base, read the diff, follow a
+  background job's log — each offered only when it would do something.
 - **GUI passthrough.** A JetBrains IDE and Chrome run *inside* the container
   and render on the host's Wayland session, reaching the container's own
-  `localhost:3000`. Five containers can each serve port 3000 with no
-  forwarding and no collisions.
+  `localhost:3000`. Five containers can each serve port 3000 with nothing to
+  forward and no collisions.
 - **Snapshots** before an agent run, restore after.
 
 ## When not to use it

@@ -197,6 +197,14 @@
             for a set time and reverts on its own, so nobody leaves it open by forgetting. It
             shields the host from what runs inside — not the code inside from the world.
           </p>
+          <p>
+            Some of what a container needs sits on the host rather than out on the network —
+            an adb server with a phone plugged into it, a database you already run. One line of
+            config makes it reachable on every container's own localhost, and
+            <code>jailbee port</code> opens or closes one on the spot. A forward goes around the
+            allowlist by design, so <code>jailbee net status</code> lists the open ones next to it:
+            the real size of the opening stays one command to read.
+          </p>
         </div>
       </div>
     </section>
@@ -272,9 +280,10 @@
           </div>
           <div class="card">
             <p>
-              <strong>Fast to spin up, easy to watch.</strong> New containers start in about a
+              <strong>Fast to spin up, easy to run.</strong> New containers start in about a
               minute because they're cheap copies of one shared image, and a live dashboard shows
-              every one of them across every project.
+              every one of them across every project — and works them from there: a shell, the
+              IDE, the pull request, a diff, without going to look the command up.
             </p>
           </div>
           <div class="card">
