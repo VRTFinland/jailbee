@@ -1422,6 +1422,43 @@ def test_claude_ai_pr_model_rejects_an_empty_string():
         ClaudeConfig(enabled=True, ai_pr_model="   ")
 
 
+def test_claude_ai_pr_timeout_defaults_to_600(tmp_path, mocker):
+    """Generation is an agentic run: 129s in this repo on a 21-file diff.
+
+    The old hard-coded 180s left no room for a larger tree, and there was no
+    config key to raise it.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_timeout == 600
+
+
+def test_claude_ai_pr_timeout_is_raisable_from_repo_yaml(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_timeout: 1200\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_timeout == 1200
+
+
+@pytest.mark.parametrize("bad", [0, -30])
+def test_claude_ai_pr_timeout_rejects_non_positive_values(bad):
+    """`timeout=0` expires instantly — a config error, not a way to disable AI.
+
+    Turning generation off is `ai_pr_description: false`.
+    """
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_timeout"):
+        ClaudeConfig(enabled=True, ai_pr_timeout=bad)
+
+
 def test_claude_accepts_legacy_install_gie_skills_key_with_warning(mocker):
     from jailbee import config as config_mod
     from jailbee.config import ClaudeConfig

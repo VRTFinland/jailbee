@@ -156,6 +156,35 @@
 
 ### Fixed
 
+- **`jailbee pr` no longer runs your test suite to write a PR description.** The
+  prompt asked the body to say "how it was tested", and since the generation gets
+  an unrestricted shell it answered that by running the project's tests. Measured
+  in JailBee's own repo on a 21-file diff: 59 s of a 165 s run went to
+  `uv run pytest`, against a hard-coded 180 s cap — so a repo whose suite is
+  slower than JailBee's fully-mocked one could not finish at all, and the only
+  symptom was `In-container Claude could not generate the PR text: ... timed out
+  after 180s` followed by a placeholder description. The prompt now forbids
+  running tests, builds, linters and installers, and asks it to describe testing
+  from the commits and the CI config; the same run takes 109 s. A project that
+  genuinely wants more can still ask for it in `claude.pr_prompt`, which outranks
+  the guard.
+- **A timed-out PR-text generation now says where to look.** Because
+  `--output-format json` emits nothing until the run finishes, an expiry reached
+  the user as a bare "timed out" with no output on either stream — while Claude's
+  own transcript of the attempt sat in the container the whole time, unmentioned
+  and hard to find (`claude --resume` lists only the sessions of the directory it
+  is run from). `jailbee pr` now pins the session id up front and names it, the
+  container and the effective budget on expiry, so `jailbee shell <name>` +
+  `claude --resume <id>` shows how far the run actually got. Failures that leave
+  nothing to resume — a missing `claude`, a rejected `claude.ai_pr_model` — say
+  nothing about a transcript, which is why `incus.py` now raises an
+  `IncusTimeoutError` subclass rather than making callers pattern-match the message.
+- **The PR-text timeout is configurable** as `claude.ai_pr_timeout`, default
+  600 s (was hard-coded at 180 s, with neither `jailbee pr` call site able to
+  override it). Generation is an agentic run of a dozen-plus turns over the log,
+  the diff, the PR template, the branch's spec and the CI config, so its cost
+  scales with the repository rather than with the diff alone. Raise it for a
+  large tree; `ai_pr_description: false` is still how you switch generation off.
 - **The dashboards notice repos registered while they are open.** Both
   `jailbee dashboard` and `jailbee gui` resolved the list of registered repos
   once at launch and reused it for the whole session. A repo that registered
