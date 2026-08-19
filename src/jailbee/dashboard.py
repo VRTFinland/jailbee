@@ -329,6 +329,10 @@ class MenuContext:
     worth offering); ``job_running`` is "its worker is still alive" (what makes
     ``--follow`` the right form); ``job_clearable`` is the failed/stale case
     that "Clear failed job" corrects.
+
+    ``pr_author`` splits the PR containers the way the PR column's ``↓`` marker
+    already does: False is a container built from someone else's PR (a review),
+    True one whose PR jailbee opened from the container's own branch.
     """
 
     state: str
@@ -338,6 +342,7 @@ class MenuContext:
     chrome_enabled: bool = False
     current_network: str | None = None
     pr_number: int | None = None
+    pr_author: bool = False
     job_clearable: bool = False
     has_job: bool = False
     job_running: bool = False
@@ -396,6 +401,13 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     ``--no-git``, failed probe) still offers them, because a missing column is
     not evidence of a clean tree.
 
+    A review container — one carrying a PR that jailbee did not open from its
+    own branch (``pr_number`` set, ``pr_author`` false) — gains "Refresh from
+    PR head" beside the base update: the same `git push`, sourced from the PR
+    instead of the base branch. It is withheld from an authored PR, whose head
+    the container's branch is upstream of, so the refresh could only be a
+    no-op.
+
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``): every
     front-end splits them into argv, and Typer accepts options before the
     positional container name.
@@ -412,6 +424,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     if _bridge_possible(ctx):
         prefix.append(("Create/update PR", "pr"))
         prefix.append(("Update from base (git push)", "git push"))
+        if ctx.pr_number is not None and not ctx.pr_author:
+            prefix.append(("Refresh from PR head (git push --pr)", "git push --pr"))
         if _has_commits_for_host(ctx.git_status):
             prefix.append(("Send commits to host (git pull)", "git pull"))
         if _has_diff_to_show(ctx.git_status):
@@ -827,6 +841,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
             chrome_enabled=group.chrome_enabled,
             current_network=container.network,
             pr_number=container.pr_number,
+            pr_author=container.pr_author,
             job_clearable=job_clearable,
             has_job=container.job_phase is not None,
             # A job row that is not clearable is one whose worker is still
@@ -868,9 +883,17 @@ ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
 # :func:`menu_actions`, which is where the verb vocabulary is defined.
 #
 # Matched exactly, not by leading token: `pr --open` only opens a browser, and
-# `job log` appears in both its plain and its --follow form.
+# `job log` and `git push` each appear in two forms.
 PRINTING_VERBS: frozenset[str] = frozenset(
-    {"pr", "git push", "git pull", "git diff", "job log", "job log --follow"}
+    {
+        "pr",
+        "git push",
+        "git push --pr",
+        "git pull",
+        "git diff",
+        "job log",
+        "job log --follow",
+    }
 )
 
 # The printing verbs long enough to want a pager instead of a pause. `Live`

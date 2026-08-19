@@ -390,6 +390,19 @@ fetch runs **on the host**, so no `jailbee net loose` is needed:
 jailbee git push <name> --pr --rebase    # or --merge
 ```
 
+The container name is required here — `--pr` reads the container's own
+`user.jailbee.pr` label, so there is no picker to fall back on. The action
+flag is not: drop it and the merge/rebase/plain choice follows
+`push.default_action`, which defaults to `ask` (see
+[Configuration](config.md#push)) — a prompt on a TTY, and an error naming
+the config key off one. Pass the flag in scripts.
+
+Both dashboards offer this as **"Refresh from PR head"** in the action
+menu, on review containers only: a PR JailBee opened from the container's
+own branch has its head downstream of the container, where the refresh
+could only be a no-op. The Qt dashboard asks the action in a dialog and
+never asks for a source, because `--pr` already is one.
+
 Push your own commits back to the PR's head branch:
 
 ```bash

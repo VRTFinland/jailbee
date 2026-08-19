@@ -402,6 +402,7 @@ def _controller_with_group(
     push_action_default="ask",
     push_source_default="base",
     base_branch=None,
+    pr_number=None,
 ):
     """An AppController holding one snapshot row, so on_action can resolve a config."""
     from jailbee.dashboard import RepoGroup
@@ -417,6 +418,7 @@ def _controller_with_group(
         ip=None,
         memory_limit=None,
         base_branch=base_branch,
+        pr_number=pr_number,
     )
     config_path = tmp_path / ".gie" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -668,6 +670,68 @@ def test_on_action_git_push_cancelled_dispatches_nothing(mocker, tmp_path):
 
     open_output.assert_not_called()
     popen.assert_not_called()
+
+
+def test_on_action_pr_refresh_never_asks_for_a_source(mocker, tmp_path):
+    """`--pr` fixes the source to the PR head and the CLI rejects `--from` /
+    `--current` alongside it, so answering that question would be a usage
+    error — even in a repo whose `push.default_source` is 'ask'."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(
+        mocker,
+        tmp_path,
+        push_action_default="ask",
+        push_source_default="ask",
+        base_branch="main",
+        pr_number=42,
+    )
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None))
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    assert dialog.call_args.kwargs["ask_action"] is True
+    assert dialog.call_args.kwargs["ask_source"] is False
+    assert dialog.call_args.kwargs["title"] == "Refresh 'p-foo' from PR #42"
+    argv = open_output.call_args.args[0]
+    assert argv[:5] == ["jailbee", "git", "push", "--pr", "p-foo"]
+    assert not {"--from", "--current"} & set(argv)
+    assert argv[-1] == "--rebase"
+
+
+def test_on_action_pr_refresh_with_a_pinned_action_asks_nothing(mocker, tmp_path):
+    """The source question is the only one 'ask' would still have left open,
+    and `--pr` has already answered it — so no dialog is worth showing."""
+    controller = _controller_with_group(
+        mocker,
+        tmp_path,
+        push_action_default="merge",
+        push_source_default="ask",
+        pr_number=42,
+    )
+    dialog = mocker.patch("jailbee.qtui.app.PushOptionsDialog")
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    dialog.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert not {"--merge", "--rebase", "--plain", "--from", "--current"} & set(argv)
+
+
+def test_on_action_pr_refresh_without_a_known_number_stays_honest(mocker, tmp_path):
+    """The menu only offers this on a container with a PR, but the dispatch is
+    by verb string — an unknown number must not become a fabricated one."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(mocker, tmp_path, push_action_default="ask")
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="merge", source=None))
+    mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    assert dialog.call_args.kwargs["title"] == "Refresh 'p-foo' from its PR head"
 
 
 def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):

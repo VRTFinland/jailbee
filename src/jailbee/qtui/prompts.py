@@ -61,6 +61,19 @@ def push_questions(action_default: str, source_default: str) -> tuple[bool, bool
     return action_default == "ask", source_default == "ask"
 
 
+def pr_refresh_title(name: str, pr_number: int | None) -> str:
+    """The `git push --pr` dialog's title.
+
+    Names the PR when the row knows its number. It always should — the menu
+    entry exists only on a container carrying one — but the dispatch is by verb
+    string, so a missing number stays a missing number rather than becoming a
+    fabricated one.
+    """
+    if pr_number is None:
+        return f"Refresh '{name}' from its PR head"
+    return f"Refresh '{name}' from PR #{pr_number}"
+
+
 def push_flags(answers: PushAnswers) -> list[str]:
     """The `jailbee git push` flags for ``answers`` (empty when nothing was asked)."""
     flags: list[str] = []
@@ -118,6 +131,11 @@ class PushOptionsDialog(QDialog):
     reading the host repo: the container's recorded base branch (`--from
     <base>`) and the host's checked-out branch (`--current`). A repo that wants
     the host's default branch instead should pin `push.default_source`.
+
+    ``title`` overrides the window title for the caller that reuses this dialog
+    for something other than a base update — `git push --pr`, whose source is
+    the PR head rather than the base branch (and which therefore never asks the
+    source question at all).
     """
 
     def __init__(
@@ -127,10 +145,11 @@ class PushOptionsDialog(QDialog):
         ask_action: bool,
         ask_source: bool,
         base_branch: str | None,
+        title: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Update '{name}' from base")
+        self.setWindowTitle(title or f"Update '{name}' from base")
         form = QFormLayout()
         self._action: QComboBox | None = None
         self._source: QComboBox | None = None

@@ -70,7 +70,8 @@ jailbee destroy feat-foo --force
 
 `jailbee dashboard` is the live, cross-repo version of `jailbee ls` — an
 auto-refreshing TUI where you navigate containers and press Enter to act
-(shell/ide/chrome/restart/stop/destroy). Reach for it when juggling several
+(shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
+"Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).
 `jailbee gui` (== `jailbee dashboard --gui`) opens the same dashboard as a graphical Qt
 window instead of a terminal TUI. Its **View** menu switches between a wide
@@ -416,6 +417,14 @@ Neither step needs `jailbee net loose`: `jailbee git push --pr` fetches the PR h
 **host** and moves it in over the bridge, and `jailbee pr` publishes host-side too.
 The first `jailbee pr` asks for confirmation and records it (`user.jailbee.pr_adopted`);
 `--yes` skips the prompt for non-interactive use.
+
+`git push --pr` needs the container named explicitly (it reads the container's
+own `user.jailbee.pr` label, so there is nothing for a picker to offer), but the
+action flag is optional: without it the merge/rebase/plain choice follows
+`push.default_action`, which is `ask` by default — a prompt on a TTY, an error
+off one. Both dashboards carry it as **"Refresh from PR head"**, shown only on a
+review container (a PR JailBee opened from the container's own branch has its
+head downstream of the container, so refreshing could only be a no-op).
 
 `jailbee new --pr` never touches your branches: the head is fetched into JailBee's own
 `refs/jailbee/pr/<N>/head` and the container's clone is checked out at that exact
