@@ -13,6 +13,12 @@ Design rules this module obeys:
   - It is strictly best-effort: every expected failure (Claude missing,
     timeout, unparseable output) returns None so the caller falls back to a
     placeholder. It does not raise for those cases.
+  - The prompt must never invite work whose cost the repository controls. The
+    run has a fixed timeout, and Claude has an unrestricted shell
+    (`--dangerously-skip-permissions`), so asking it to describe "how it was
+    tested" made it run the project's own test suite — 59s of a 165s run in
+    jailbee's repo, more than the whole budget in a larger one. Hence the
+    explicit do-not-run clause in `_PROMPT_TEMPLATE`: keep it there.
 """
 
 from __future__ import annotations
@@ -58,6 +64,11 @@ Write a concise, technical pull request in clear English:
     conventional-commit style if you can see one (e.g. `feat(scope): ...`).
   - Body: GitHub-flavored Markdown — short background, then what changed with
     concrete file/symbol references, then how it was tested.
+
+Do NOT run this project's tests, build, linters, formatters or installers, and
+do not start any long-running command. Describe how the change was tested from
+the commits, the diff and the repository's CI config — you are writing a
+description, not verifying the branch.
 {project_clause}{fixed_clause}
 Also choose the branch name to use as this PR's head on the remote. Infer the
 repository's branch-naming convention from `git branch -r`, the names of

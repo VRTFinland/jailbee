@@ -197,6 +197,37 @@ def test_prompt_asks_what_the_change_leaves_out_relative_to_its_spec():
     assert "leaves out" in prompt
 
 
+def test_prompt_forbids_running_the_projects_test_suite():
+    """The run has a fixed timeout but the test suite's cost is the repo's.
+
+    Without this clause the model answers "how it was tested" by running the
+    suite — measured at 59s of a 165s run in this repo, and more than the whole
+    180s budget in a larger one.
+    """
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "Do NOT run" in prompt
+    for forbidden in ("tests", "build", "linters", "installers"):
+        assert forbidden in prompt.split("Do NOT run", 1)[1]
+
+
+def test_prompt_cost_guard_precedes_the_project_block():
+    """A project that really wants its suite run can say so in `pr_prompt`.
+
+    The project block outranks the generic guidance, so the guard has to sit
+    above it for that override to be possible — and it must stay above the JSON
+    contract, which nothing may override.
+    """
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="Run the suite.")
+
+    assert prompt.index("Do NOT run") < prompt.index(_PROJECT_BLOCK_HEADER)
+    assert prompt.index(_PROJECT_BLOCK_HEADER) < prompt.index('{"title"')
+
+
 def test_prompt_has_no_project_block_without_a_configured_pr_prompt():
     from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
 
