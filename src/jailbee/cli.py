@@ -6425,9 +6425,17 @@ def exec_cmd(
     # Route through `incus exec --user` instead of `sudo -u`: sudo
     # silently filters env vars not in env_keep, dropping any
     # `container.env` entries set on the base profile.
+    #
+    # A LOGIN shell (`-lc`), like `jailbee shell` and the PR-text bridge use:
+    # `incus exec` supplies a bare default PATH, and tools installed per-user
+    # live in ~/.local/bin, which only `/etc/profile.d/local-bin.sh` adds.
+    # Under plain `bash -c` nothing sources it, so this command's own
+    # documented example — `jailbee exec smoke -- claude` — died with
+    # "claude: command not found". Verified not to pollute stdout: a
+    # non-interactive login shell here emits nothing of its own.
     rc = incus.exec_interactive(
         resolved,
-        ["bash", "-c", f"cd {shlex.quote(target)} && exec {shell_cmd}"],
+        ["bash", "-lc", f"cd {shlex.quote(target)} && exec {shell_cmd}"],
         uid=cfg.container_user.uid,
         gid=cfg.container_user.gid,
         env={
