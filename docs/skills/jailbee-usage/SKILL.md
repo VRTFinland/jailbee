@@ -242,6 +242,26 @@ scripting.
   superproject's branch when they land on a detached HEAD after clone/push/pull.
   No name → fixes the host repo; a name → fixes that container.
 
+**Recipe — merging several containers through one.** Three features built in
+parallel become one branch without resolving anything on the host, which is the
+one place with no tests, no lint gate and no agent:
+
+```bash
+jailbee git checkout feat-a          # host HEAD → feat/a, taken from its container
+jailbee git push feat-c --current    # feat/a into container c, merged into its branch
+#   conflict? resolve inside container c, run the gates there, commit the merge
+jailbee git checkout feat-b          # repeat per feature
+jailbee git push feat-c --current
+git checkout main
+jailbee git pull feat-c --current    # all three land on main at once
+```
+
+`--current` is load-bearing: `push`'s default source is the container's *base*
+branch, so without it you would send `main` into c. The action must be a merge
+or rebase — `plain` transports the ref without applying it, so no conflict ever
+appears. Containers a and b survive the last pull and are destroyed by hand.
+Full version with the cleanup rules: [Git bridge](../../git-bridge.md#merging-several-containers-through-one).
+
 ## Network modes — `jailbee net`
 
 ```bash

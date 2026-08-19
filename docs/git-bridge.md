@@ -256,6 +256,65 @@ jailbee destroy feat-a --force
 For longer chains, repeat the propagation per link: `jailbee git checkout
 feat-b && git push`, then `jailbee git push feat-c --merge`.
 
+## Merging several containers through one
+
+Three features built in parallel in three containers eventually have to become
+one branch. The obvious way is three merges on the host — but the host is the
+one place with no test suite running, no lint gate and no agent. Send each
+branch into *one* of the containers instead and resolve every conflict there,
+where those things already are. The host stays what it is everywhere else in
+this document: a transport hub that resolves nothing.
+
+```bash
+jailbee new feat/a
+jailbee new feat/b
+jailbee new feat/c
+#   ... work in each container ...
+
+jailbee git checkout feat-a          # host HEAD → feat/a, ff-only, from the container
+jailbee git push feat-c --current    # feat/a into container c, merged into its branch
+jailbee shell feat-c                 # resolve, run the gates, commit the merge
+
+jailbee git checkout feat-b
+jailbee git push feat-c --current
+jailbee shell feat-c
+
+git checkout main
+jailbee git pull feat-c --current    # all three features land on main
+```
+
+`--current` is what makes this work. `push`'s default source is
+`default_source: base` — the container's *base* branch — so a bare
+`jailbee git push feat-c` would send `main` into container c, not `feat/a`.
+`--current` (like `--pr`) also resolves the source locally and skips the host
+fetch, which matters here because `feat/a` may exist nowhere but the host and
+its own container.
+
+The action comes from `push.default_action`. Its built-in default is `ask`, so
+the commands above open a picker and you choose *merge*; with
+`default_action: merge` configured they merge with nothing extra typed. `ask`
+needs a terminal, though — run this recipe from a script and it exits with
+*"push.default_action is 'ask' but no TTY is available"*, so a scripted version
+has to spell the flag out. Either way it must be a merge or a rebase — `plain`
+only transports
+`refs/jailbee/host/<branch>` into the container and never attempts to apply it,
+so no conflict ever surfaces to resolve. Spelling the flag out
+(`jailbee git push feat-c --current --merge`, as `## Stacked PRs` above does)
+is always unambiguous.
+
+A conflict leaves container c in merge state, exactly as it would on the host.
+Resolve it in `jailbee shell feat-c` or `jailbee tmux feat-c` and commit there.
+
+Two things the last `pull` does not cover:
+
+- Cleanup of container c and the merged `feat/c` branch follows
+  `pull.destroy_container` and `pull.delete_branch` (`prompt | always | never`
+  each), so it may ask, act, or do nothing depending on config.
+- Containers a and b are untouched — their commits reached `main` through c,
+  not through their own pull. Destroy them yourself when the branch is merged:
+  `jailbee destroy feat-a`, then `jailbee destroy feat-b` (one name per
+  invocation; with no name and a TTY you get a picker).
+
 ## Choosing the starting point for `jailbee new`
 
 `<base>` always names the container's **base branch** — the
