@@ -156,6 +156,15 @@
 
 ### Fixed
 
+- **`jailbee exec` finds per-user tools again.** It ran the command under a
+  non-login `bash -c`, and `incus exec` supplies only a bare default PATH, so
+  anything installed per-user was invisible: `~/.local/bin` (added by
+  `/etc/profile.d/local-bin.sh`) and `~/.npm-global/bin` (added by the nodejs
+  install.d snippet) are both login-shell-only. Both examples the command
+  documents — `jailbee exec smoke -- claude` and `jailbee exec smoke -- pnpm
+  test` — therefore died with "command not found". It now uses `bash -lc`, the
+  shell `jailbee shell` and the PR-text bridge already use; a non-interactive
+  login shell adds nothing of its own to stdout, so piped output is unchanged.
 - **`jailbee pr` no longer runs your test suite to write a PR description.** The
   prompt asked the body to say "how it was tested", and since the generation gets
   an unrestricted shell it answered that by running the project's tests. Measured

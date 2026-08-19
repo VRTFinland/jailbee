@@ -1788,12 +1788,41 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
 
     incus.exec_interactive.assert_called_once_with(
         "myrepo-feat-x",
-        ["bash", "-c", "cd /home/dev/myrepo && exec claude"],
+        ["bash", "-lc", "cd /home/dev/myrepo && exec claude"],
         uid=os.getuid(),
         gid=os.getgid(),
         env={"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev"},
         init_groups=True,
     )
+
+
+def test_exec_uses_a_login_shell_so_local_bin_is_on_path(mocker, tmp_path):
+    """`jailbee exec X -- claude` found no binary under a non-login `bash -c`.
+
+    `incus exec` supplies a bare default PATH and per-user tools live in
+    ~/.local/bin, which only `/etc/profile.d/local-bin.sh` adds — so the
+    command's own documented example failed with "command not found".
+    `jailbee shell` and the PR-text bridge both already use a login shell.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus = incus_mock.return_value
+    incus.exists.side_effect = lambda n: n == "myrepo-feat-x"
+    incus.exec_interactive.return_value = 0
+
+    result = CliRunner().invoke(app, ["exec", "feat-x", "--", "claude", "--version"])
+    assert result.exit_code == 0, result.stdout
+
+    argv = incus.exec_interactive.call_args.args[1]
+    assert argv[:2] == ["bash", "-lc"]
 
 
 def test_exec_cwd_home(mocker, tmp_path):
