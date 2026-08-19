@@ -1560,6 +1560,13 @@ def _warn_legacy_skills_key() -> None:
     )
 
 
+# `claude.pr_prompt` ships to the container as an environment variable inside
+# jailbee's own prompt. The cap is a sanity bound, not a model context limit:
+# it turns a pasted-in-by-accident file into a config error instead of a
+# `claude` invocation that fails opaquely and silently falls back.
+_MAX_PR_PROMPT_LEN = 20_000
+
+
 class ClaudeConfig(BaseModel):
     """Claude Code CLI integration inside containers.
 
@@ -1612,6 +1619,23 @@ class ClaudeConfig(BaseModel):
     - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
       the in-container Claude to propose a convention-following PR head branch
       name when opening a new PR; has no effect when `enabled` is false.
+    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
+      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
+      jailbee's own prompt as a delimited section that explicitly outranks the
+      generic guidance, so a project can dictate the title and body shape
+      without having to restate the JSON response contract `_parse_pr_text`
+      depends on. Capped at 20 000 characters so a pathological value fails at
+      config load rather than inside the container. Has no effect when
+      `enabled` or `ai_pr_description` is false.
+    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
+      generating the PR text. Defaults to `sonnet`: writing a PR description is
+      a bounded summarisation job, and pinning it means the generation does not
+      compete for the same budget as the coding work that just happened in the
+      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
+      ID; `null` omits the flag entirely so the container's own default model
+      applies. `haiku` is a valid choice but has a smaller context window than
+      the alternatives, so a large cumulative diff may not fit. Has no effect
+      when `enabled` or `ai_pr_description` is false.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1626,6 +1650,30 @@ class ClaudeConfig(BaseModel):
     )
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
+    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
+    ai_pr_model: str | None = "sonnet"
+
+    @field_validator("ai_pr_model")
+    @classmethod
+    def _reject_non_model_value(cls, v: str | None) -> str | None:
+        """A model name is a single token — reject anything that isn't one.
+
+        The value reaches `claude --model` through an environment variable, so
+        embedded flags could never be executed as such. The check exists to
+        turn a typo or a misunderstanding into a config error, rather than a
+        non-zero `claude` exit that `generate_pr_text` reports only as a failed
+        generation. Use `null`, not an empty string, to inherit the container's
+        own default model.
+        """
+        if v is None:
+            return None
+        if not v.strip() or len(v.split()) != 1:
+            raise ValueError(
+                f"must be a single model name or alias (e.g. 'sonnet', "
+                f"'claude-haiku-4-5'), or null to inherit the container "
+                f"default; got {v!r}"
+            )
+        return v.strip()
 
     @model_validator(mode="before")
     @classmethod

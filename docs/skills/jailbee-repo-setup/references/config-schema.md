@@ -31,7 +31,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch}` | `enabled: false`, rest see below | global |
+| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch, ai_pr_model, pr_prompt}` | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
 | `github` | `{enabled, api_tokens}` | `enabled: false` (opt-in) | global |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
@@ -515,6 +515,8 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the **in-container Claude understands JailBee** and can help edit `.jailbee/config.yaml`. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` generates a new PR's title and body with the container's Claude CLI (opt out per-invocation with `jailbee pr --no-ai`). |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` asks Claude to propose a convention-following PR head branch name (confirmed interactively; `--as` / `--no-ai` override). |
+| `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` for PR-text generation. An alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` inherits the container's own default model. Must be a single whitespace-free token or config load fails. |
+| `claude.pr_prompt` | string \| null | `null` | Project-specific PR-writing instructions, embedded in JailBee's prompt as a section that outranks its generic title/body guidance. A repo-level key — this is where a project's PR standard belongs. Max 20 000 characters. |
 
 Example global config:
 
@@ -522,6 +524,23 @@ Example global config:
 claude:
   enabled: true
 ```
+
+Example repo-level PR standard in `.jailbee/config.yaml`:
+
+```yaml
+claude:
+  pr_prompt: |
+    Body sections, in this order and with these exact headings:
+      ## Why      — the user-visible problem, one paragraph
+      ## What     — bullets, each naming the file or symbol it changed
+      ## Testing  — the commands you actually ran, verbatim
+```
+
+`jailbee pr` already reads `.github/pull_request_template.md`, the spec or
+issue the branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` /
+`AGENTS.md` on its own. Reach for `pr_prompt` only for rules that live in
+none of those files, and never restate the JSON response format in it —
+JailBee owns that and states it after the project block.
 
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when

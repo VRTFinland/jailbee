@@ -1334,6 +1334,94 @@ def test_claude_install_jailbee_skills_override_false_via_yaml(tmp_path, mocker)
     assert cfg.claude.install_jailbee_skills is False
 
 
+def test_claude_pr_prompt_defaults_to_none(tmp_path, mocker):
+    """No `claude.pr_prompt` means jailbee's own prompt is used unchanged."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt is None
+
+
+def test_claude_pr_prompt_reads_a_multiline_block_from_repo_yaml(tmp_path, mocker):
+    """A repo encodes its PR standard as a YAML block scalar."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml=(
+            "claude:\n"
+            "  enabled: true\n"
+            "  pr_prompt: |\n"
+            "    Use these headings:\n"
+            "    ## Motivation\n"
+            "    ## Risk\n"
+        ),
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt == "Use these headings:\n## Motivation\n## Risk\n"
+
+
+def test_claude_pr_prompt_rejects_an_oversized_value():
+    """A pathological value fails loudly at load instead of inside the container."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError):
+        ClaudeConfig(enabled=True, pr_prompt="x" * 20_001)
+
+
+def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
+    """PR text is a bounded summarisation job — it does not need the Opus default."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "sonnet"
+
+
+def test_claude_ai_pr_model_accepts_a_pinned_model_id(tmp_path, mocker):
+    """The value passes through to `claude --model`, so full IDs must survive."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: claude-haiku-4-5\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "claude-haiku-4-5"
+
+
+def test_claude_ai_pr_model_null_inherits_the_container_default(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: null\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model is None
+
+
+def test_claude_ai_pr_model_rejects_extra_flags():
+    """A model name never contains whitespace; smuggling flags in must not work."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeConfig(enabled=True, ai_pr_model="sonnet --dangerously-skip-permissions")
+
+
+def test_claude_ai_pr_model_rejects_an_empty_string():
+    """Empty means "inherit the container default" — spell that `null`, not ''."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeConfig(enabled=True, ai_pr_model="   ")
+
+
 def test_claude_accepts_legacy_install_gie_skills_key_with_warning(mocker):
     from jailbee import config as config_mod
     from jailbee.config import ClaudeConfig
