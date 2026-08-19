@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from jailbee import completion
+from tests.conftest import _raw_container
 
 # The `completion_repo` fixture (fabricated repo config + MagicMock Incus) and
 # the `_raw_container` payload helper live in tests/conftest.py — shared with
@@ -268,6 +269,101 @@ def test_complete_container_empty_when_incus_payload_is_missing_name(completion_
     ]
 
     assert completion.complete_container(_ctx(), "") == []
+
+
+# ---- port handles ----------------------------------------------------------
+#
+# A whole-branch review found this completer wrote its own untimed
+# `[c.name for c in list_containers(...)]` instead of reusing
+# `_container_names`, and `list_forwards` had no `timeout` at all — so
+# `jailbee port rm <TAB>` against a wedged daemon could hang the shell
+# indefinitely, breaking the module's own "never blocks" contract.
+
+
+def _proxy_device(listen: str, connect: str, bind: str = "instance") -> dict:
+    return {"type": "proxy", "bind": bind, "listen": listen, "connect": connect}
+
+
+def test_complete_port_handle_lists_devices_for_the_typed_container(completion_repo):
+    _cfg, incus = completion_repo
+    incus.list_containers.return_value = [
+        {
+            **_raw_container("myrepo-feat-foo", "myrepo-base", "myrepo-net-strict"),
+            "devices": {
+                "port-cfg-adb": _proxy_device("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+            },
+        },
+    ]
+    assert completion.complete_port_handle(_ctx(name="feat-foo"), "") == ["port-cfg-adb"]
+
+
+def test_complete_port_handle_filters_by_what_was_typed(completion_repo):
+    _cfg, incus = completion_repo
+    incus.list_containers.return_value = [
+        {
+            **_raw_container("myrepo-feat-foo", "myrepo-base", "myrepo-net-strict"),
+            "devices": {
+                "port-cfg-adb": _proxy_device("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+                "port-th-tcp-8080": _proxy_device(
+                    "tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", bind="host"
+                ),
+            },
+        },
+    ]
+    assert completion.complete_port_handle(_ctx(name="feat-foo"), "port-c") == ["port-cfg-adb"]
+
+
+def test_complete_port_handle_without_a_container_unions_every_container(completion_repo):
+    """No NAME typed yet on the command line: offer the union of every
+    forward across this repo's containers, same as the module docstring
+    describes."""
+    _cfg, incus = completion_repo
+    incus.list_containers.return_value = [
+        {
+            **_raw_container("myrepo-feat-foo", "myrepo-base", "myrepo-net-strict"),
+            "devices": {
+                "port-cfg-adb": _proxy_device("tcp:127.0.0.1:5037", "tcp:127.0.0.1:5037"),
+            },
+        },
+        {
+            **_raw_container("myrepo-bugfix", "myrepo-base", "myrepo-net-strict"),
+            "devices": {
+                "port-th-tcp-8080": _proxy_device(
+                    "tcp:127.0.0.1:8080", "tcp:127.0.0.1:8080", bind="host"
+                ),
+            },
+        },
+    ]
+    assert completion.complete_port_handle(_ctx(), "") == ["port-cfg-adb", "port-th-tcp-8080"]
+
+
+def test_complete_port_handle_uses_the_shared_bounded_name_lookup(completion_repo):
+    """Must reuse `_container_names` (fast + timeout), not a bespoke query
+    that drops the timeout completely."""
+    _cfg, incus = completion_repo
+    completion.complete_port_handle(_ctx(), "")
+    assert incus.list_containers.call_args_list[0].kwargs == {
+        "fast": True,
+        "timeout": completion.QUERY_TIMEOUT,
+    }
+
+
+def test_complete_port_handle_bounds_the_forwards_query_too(completion_repo):
+    """The forwards lookup itself must also carry a timeout — previously
+    `list_forwards` accepted none at all."""
+    _cfg, incus = completion_repo
+    completion.complete_port_handle(_ctx(), "")
+    assert incus.list_containers.call_args_list[-1].kwargs == {
+        "timeout": completion.QUERY_TIMEOUT,
+    }
+
+
+def test_complete_port_handle_empty_when_incus_fails(completion_repo):
+    from jailbee.incus import IncusError
+
+    _cfg, incus = completion_repo
+    incus.list_containers.side_effect = IncusError("`incus list` timed out after 2s")
+    assert completion.complete_port_handle(_ctx(), "") == []
 
 
 # ---- fixed choices --------------------------------------------------------

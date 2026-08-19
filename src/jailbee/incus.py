@@ -219,11 +219,6 @@ class Incus:
         result = self._run(args, timeout=timeout)
         return json.loads(result.stdout) if result.stdout else []
 
-    def info(self, name: str) -> dict[str, Any]:
-        """Return container info as a dict."""
-        result = self._run(["info", name, "--format", "json"])
-        return json.loads(result.stdout) if result.stdout else {}
-
     def exists(self, name: str) -> bool:
         """Return True if a container with this name exists."""
         return any(c["name"] == name for c in self.list_containers())

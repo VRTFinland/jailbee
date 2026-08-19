@@ -97,6 +97,21 @@ def success(msg: str) -> None:
     console.print(f"[green]✓[/green] {msg}")
 
 
+def success_plain(msg: str) -> None:
+    """Like `success`, but the body is never reinterpreted as Rich markup.
+
+    The `warn` / `warn_plain` hazard, on the success path: a port-forward
+    endpoint's bracketed IPv6 display (``[fd00::1]:5037``) is read as a style
+    tag and *silently deleted*, so a `jailbee port to-container`/`to-host`
+    success line reports connecting to ``:5037`` instead of the real address.
+    Highlighting is off too, so Rich doesn't recolour paths or numbers inside
+    the body.
+
+    Only the ``✓`` marker is styled; the body is emitted verbatim.
+    """
+    console.print(Text.assemble(("✓ ", "green"), msg), highlight=False)
+
+
 def warn(msg: str) -> None:
     console.print(f"[yellow]⚠[/yellow] {msg}")
 

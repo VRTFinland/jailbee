@@ -78,6 +78,15 @@ host_devices: []
 #   - { path: /dev/kvm }                          # Android emulator / KVM VMs
 #   - { source: /dev/bus/usb/001/004, path: /dev/bus/usb/001/004 }
 
+# Host services made reachable inside every container. Each entry becomes an
+# Incus proxy device: the container listens on `port`, and connections land on
+# `host_port` on the host. Only this direction is configurable — for the
+# reverse, use `jailbee port to-host` on one container.
+host_ports: []
+# host_ports:
+#   - { name: adb, port: 5037 }               # host adb server, same port
+#   - { name: db, port: 5432, host_port: 15432 }
+
 # Egress allowlist applied in strict mode. Each entry is either a literal
 # IP/CIDR (e.g. 10.0.0.0/8) or a hostname optionally followed by :PORT
 # (e.g. github.com, archive.ubuntu.com:443). Hostnames are resolved to

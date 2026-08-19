@@ -46,6 +46,33 @@
   to the host's own working tree, and the second's command varies with
   `--follow`. `h` (or `?`) opens a keybinding help overlay.
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
+- **`host_ports` config for forwarding a host service into every container.**
+  A `.jailbee/config.yaml` block like `host_ports: [{ name: adb, port: 5037 }]`
+  attaches an Incus proxy device to every container of the repo, so e.g. a
+  host adb server on `127.0.0.1:5037` is reachable inside the container
+  without an `ADB_SERVER_SOCKET` override. Only the host-to-container
+  direction is configurable here — a host-side listener is machine-wide, so
+  declaring the reverse per repo would make the repo's containers fight over
+  it; that direction is `jailbee port to-host`, run per container instead.
+  Entries are attached at `jailbee new` and reconciled by `jailbee apply` —
+  no image rebuild, no container restart. This supersedes the
+  adb-over-a-bind-mounted-socket recipe in
+  [`project-config.md`](docs/project-config.md#sharing-host-sockets) for the
+  common case (a TCP adb server), which remains the way to reach a host adb
+  server that only ever speaks over a unix socket — `host_ports` forwards
+  TCP/UDP only.
+- **`jailbee port` command group.** `jailbee port to-container PORT [NAME]`
+  makes a host service reachable inside the container (the adb case);
+  `jailbee port to-host PORT [NAME]` is the mirror, making a container
+  service reachable on the host (`--host-port auto` picks a free host port
+  and prints it). Both take the container-side port as the positional
+  argument and `--host-port` for the host side — there is no `HOST:CONTAINER`
+  syntax. `jailbee port ls [NAME]` lists every forward on a container (or
+  every container of the repo), including one added directly with `incus`.
+  `jailbee port rm HANDLE [NAME]` removes one by device name, config entry
+  name, or container port. A forward bypasses the network ACL by
+  construction, so it works the same in `strict` and `loose`, and shows up
+  in its own section of `jailbee net status`.
 
 ### Changed
 

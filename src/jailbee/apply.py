@@ -43,10 +43,16 @@ class ApplyResult:
     # Containers moved off the removed `<prefix>-net-offline` profile by
     # this run. Empty on every apply after the first one.
     offline_migrated: list[str] = field(default_factory=list)
+    # Containers whose port forwards this run added, replaced or removed.
+    ports_changed: list[str] = field(default_factory=list)
+    # (container, message) for containers whose port-forward reconciliation
+    # failed. Reported and skipped rather than aborting the sweep — see
+    # `run_apply`'s port-forward loop.
+    port_failures: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def fully_successful(self) -> bool:
-        return not self.restart_failures
+        return not self.restart_failures and not self.port_failures
 
 
 def _profile_differs(incus: Incus, name: str, new_yaml: str) -> bool:
@@ -138,7 +144,7 @@ def run_apply(
 ) -> ApplyResult:
     """Apply current config to profiles, ACL, and live container state."""
     from jailbee.lifecycle import short_name
-    from jailbee.tui import info
+    from jailbee.tui import info, warn
 
     info("Applying configuration...")
 
@@ -171,8 +177,6 @@ def run_apply(
 
         raise IncusError(refresh_result.error or "ACL write failed")
     if refresh_result.status == "partial":
-        from jailbee.tui import warn
-
         warn(f"Some hostnames failed to resolve: {refresh_result.error}")
 
     if refresh_result.added or refresh_result.removed:
@@ -204,7 +208,6 @@ def run_apply(
     # Refresh jailbee's bundled skills in the shared ~/.claude/skills so existing
     # containers pick up a newer jailbee without recreation. Non-fatal.
     from jailbee.claude_skills import sync_jailbee_skills
-    from jailbee.tui import warn
 
     try:
         sync_jailbee_skills(cfg)
@@ -247,8 +250,53 @@ def run_apply(
     docker_proxy_reapplied: list[str] = []
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
 
+    containers = _list_containers(cfg, incus)
+
+    from jailbee.ports import PortError, list_forwards, reconcile_config_ports
+
+    # One `incus list` for every container's forwards, instead of one per
+    # container inside the loop below — `reconcile_config_ports`'s `forwards`
+    # kwarg exists for exactly this caller.
+    port_forwards_by_container = list_forwards(incus, [ci.name for ci in containers])
+
     running_names: list[str] = []
-    for ci in _list_containers(cfg, incus):
+    ports_changed: list[str] = []
+    port_failures: list[tuple[str, str]] = []
+    for ci in containers:
+        # Reconcile forwards first, and for stopped containers too: a proxy
+        # device on a stopped container takes effect on its next boot, so
+        # skipping it would leave drift that only shows up later. This is
+        # unconditional — even an empty `host_ports` must still clean up a
+        # stale `port-cfg-*` device left behind after an entry is deleted.
+        #
+        # A translated failure here is reported and the sweep continues,
+        # rather than aborting `jailbee apply` outright: this loop exists to
+        # reconcile every container of the repo, and one container refusing a
+        # proxy device (e.g. something already listening on its container-side
+        # port) must not block the profile/ACL/hosts work already done this
+        # run for the rest. Mirrors `restart_failures` below.
+        try:
+            port_result = reconcile_config_ports(
+                cfg,
+                incus,
+                ci.name,
+                forwards=port_forwards_by_container.get(ci.name, []),
+            )
+        except PortError as e:
+            # Collected, not printed here: `cli.py`'s `apply` command reports
+            # `port_failures` the same way it reports `restart_failures`, and
+            # `fully_successful` (which gates the process exit code) already
+            # accounts for it.
+            port_failures.append((ci.name, str(e)))
+        else:
+            if port_result.changed:
+                info(
+                    f"  Port forwards on {short_name(cfg, ci.name)}: "
+                    f"+{len(port_result.added)} ~{len(port_result.replaced)} "
+                    f"-{len(port_result.removed)}"
+                )
+                ports_changed.append(ci.name)
+
         if ci.state != "Running":
             continue
         running_names.append(ci.name)
@@ -306,6 +354,8 @@ def run_apply(
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,
+        ports_changed=ports_changed,
+        port_failures=port_failures,
     )
 
 

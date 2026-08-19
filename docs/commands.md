@@ -28,6 +28,10 @@
 | `jailbee net loose <name> [--for <dur>\|--no-revert]` | Switch to full NAT. `--for` sets the auto-revert TTL for this switch only (`30s`, `45m`, `4h`; max 24h; `never` = no auto-revert, same as `--no-revert`). With neither flag on a TTY, JailBee asks; otherwise `loose_auto_revert.after` applies. See [Configuration](config.md#loose_auto_revert) |
 | `jailbee net refresh/status/unregister/install` | Egress-pool refresh timer + allowlist management |
 | `jailbee snapshot create/restore/ls/delete <name> [tag]` | Snapshots |
+| `jailbee port ls [NAME]` | List port forwards; with no NAME, every container of the repo (includes forwards added with `incus` directly, shown as source `other`) |
+| `jailbee port to-container PORT [NAME] [--host-port N] [--proto tcp\|udp] [--host-address IP] [--container-address IP]` | Make a host service reachable inside the container. `PORT` is always the container-side port; `--host-port` names the host side (default: `PORT`) |
+| `jailbee port to-host PORT [NAME] [--host-port N\|auto] [--proto tcp\|udp] [--host-address IP] [--container-address IP]` | Make a container service reachable on the host. `PORT` is always the container-side port; `--host-port auto` picks a free host port not already claimed by another container (stopped ones included) |
+| `jailbee port rm HANDLE [NAME]` | Remove one port forward. `HANDLE` is a device name, a `host_ports` name, or a container-side port |
 | `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` | Optional mounts |
 | `jailbee ide <name> [--app idea\|webstorm]` | Launch JetBrains IDE |
 | `jailbee chrome <name> [URL]` | Launch Chrome |

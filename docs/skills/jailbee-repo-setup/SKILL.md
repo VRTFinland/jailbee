@@ -66,7 +66,13 @@ host_mounts:
   - { host: ~/.docker, container: /home/dev/.docker, readonly: true }   # if you need host docker auth
 ```
 
-Android repos: to let `adb` inside the container drive a device attached to the host, mount the host adb server's socket **read-write** and point the client at it (a read-only socket cannot be talked on). The host must run its adb server on that socket (`adb -L localfilesystem:$HOME/.android/adb.sock start-server`):
+Android repos, adb over a **unix socket**: if the host's adb server listens on
+a unix socket rather than its default TCP port, mount that socket
+**read-write** and point the client at it (a read-only socket cannot be
+talked on) — this is the one adb setup `host_ports` below cannot cover,
+since the config schema only forwards TCP/UDP. The host must run its adb
+server on that socket (`adb -L localfilesystem:$HOME/.android/adb.sock
+start-server`):
 
 ```yaml
 host_mounts:
@@ -95,6 +101,49 @@ autostart:
       run: "aws ecr get-login-password | docker login --password-stdin ..."
       mounts: [aws]
 ```
+
+### `host_ports` — forwarding a host TCP/UDP service into every container
+
+For a host service the container needs to reach over TCP/UDP — the adb
+server, a database, a media daemon, a device bridge — `host_ports` is
+usually simpler than a socket mount:
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+Full schema, one entry per forward:
+
+| Key | Required | Default | Notes |
+|---|---|---|---|
+| `name` | yes | — | `^[a-z0-9][a-z0-9-]*$`, max 40 chars, unique. Becomes the Incus device name and the `jailbee port rm <name>` key. |
+| `port` | yes | — | 1..65535. The **container**-side port — the container listens here. |
+| `host_port` | no | same as `port` | The host-side port Incus connects to. |
+| `proto` | no | `tcp` | `tcp` or `udp`. |
+| `host_address` | no | `127.0.0.1` | IP literal only — a hostname is rejected (it would have to be resolved once, at device-add time, and silently pinned). |
+| `container_address` | no | `127.0.0.1` | Same restriction. |
+
+Only the **to-container** direction (a host service reachable inside the
+container) is configurable here — a host-side listener is a machine-wide
+resource, so a repo declaring one in `host_ports` would make every branch
+container of that repo fight over the same host port, breaking the "many
+containers coexist" property the whole tool is built on. Config rejects
+`direction`/`to_host`/`bind` keys with that explanation. The mirror
+(a container service reachable on the host) is `jailbee port to-host`,
+run per container — see the jailbee-usage skill.
+
+Offer `host_ports` when the repo's stack suggests one: an Android project
+(the adb example above — the host's default adb server already listens on
+`127.0.0.1:5037`, so no `ADB_SERVER_SOCKET` override is needed once this
+forward exists), or any stack where the container needs a host-run service —
+a database, a media daemon, a device bridge — over TCP/UDP. It doesn't
+replace the `host_mounts` adb-socket recipe above for a host adb server that
+only ever speaks over a unix socket; `host_ports` can't forward those.
+
+Entries are attached when `jailbee new` creates a container and kept in sync
+by `jailbee apply` (added/replaced/removed to match the file) — no image
+rebuild, no container restart, on either command.
 
 ### `golden.extra_apt_packages` — repo-level system deps
 
@@ -294,6 +343,9 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - Reserved `provision_env` keys
 - Duplicate autostart step names within a trigger
 - Non-existent `optional_mounts` referenced from a step
+- Bad `host_ports` entries — name regex/length, an out-of-range port, a
+  non-IP `host_address`/`container_address`, or a `direction`/`to_host`/
+  `bind` key (only the to-container direction is configurable)
 
 `jailbee doctor` is host-level — failures there mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows.
 

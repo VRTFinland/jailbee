@@ -1273,3 +1273,227 @@ def test_run_apply_warns_but_continues_when_offline_profile_delete_fails(
 
     assert result.fully_successful is True
     assert any("net-offline" in str(c.args[0]) for c in warn.call_args_list)
+
+
+def test_run_apply_reconciles_port_forwards_on_every_container(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Stopped containers are reconciled too: a proxy device on a stopped
+    container takes effect on its next boot, so skipping it hides drift."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import ReconcileResult
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Running",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-b",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        side_effect=[
+            ReconcileResult(added=["port-cfg-adb"], replaced=[], removed=[]),
+            ReconcileResult(added=[], replaced=[], removed=[]),
+        ],
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert reconcile.call_count == 2
+    assert [c.args[2] for c in reconcile.call_args_list] == [
+        f"{cfg.container_prefix}-a",
+        f"{cfg.container_prefix}-b",
+    ]
+    assert result.ports_changed == [f"{cfg.container_prefix}-a"]
+
+
+def test_run_apply_reconciles_even_with_no_host_ports(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Deleting the last host_ports entry must still clean up its device.
+
+    So reconciliation is unconditional: gating it on `cfg.host_ports` would
+    strand a `port-cfg-*` device forever.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import ReconcileResult
+
+    cfg = make_cfg(tmp_path)  # no host_ports at all
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        return_value=ReconcileResult(added=[], replaced=[], removed=["port-cfg-gone"]),
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert reconcile.call_count == 1
+    assert result.ports_changed == [f"{cfg.container_prefix}-a"]
+
+
+def test_run_apply_reports_and_continues_on_a_port_forward_failure(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A translated port-forward failure on one container must not abort the
+    rest of the sweep: `apply` is asked to reconcile every container of the
+    repo, and one container's proxy device being refused (e.g. something
+    already listening on its container-side port) must not block the
+    profile/ACL/hosts work already done this run for the others. Mirrors
+    `restart_failures`'s report-and-continue behaviour below.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import PortError, ReconcileResult
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-b",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.ports.list_forwards", return_value={})
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        side_effect=[
+            PortError("something is already listening on port 5037 inside the container"),
+            ReconcileResult(added=["port-cfg-adb"], replaced=[], removed=[]),
+        ],
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    # Both containers were attempted — the first's failure did not stop
+    # the loop before it reached the second.
+    assert reconcile.call_count == 2
+    assert result.port_failures == [
+        (
+            f"{cfg.container_prefix}-a",
+            "something is already listening on port 5037 inside the container",
+        )
+    ]
+    assert result.ports_changed == [f"{cfg.container_prefix}-b"]
+    assert result.fully_successful is False
+
+
+def test_run_apply_reconciles_ports_from_one_prefetched_call(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`apply` fetches every container's forwards in a single `list_forwards`
+    call and hands each container its own slice via `reconcile_config_ports`'s
+    `forwards` kwarg — instead of that function re-querying Incus (via
+    `forwards_for`) once per container.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import Endpoint, Forward
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    fwd = Forward(
+        device="port-cfg-adb",
+        direction="to-container",
+        proto="tcp",
+        container=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        host=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        source="config",
+    )
+    list_forwards = mocker.patch(
+        "jailbee.ports.list_forwards",
+        return_value={f"{cfg.container_prefix}-a": [fwd]},
+    )
+    forwards_for = mocker.patch("jailbee.ports.forwards_for")
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    list_forwards.assert_called_once_with(incus, [f"{cfg.container_prefix}-a"])
+    # The already-matching forward was handed in directly, so
+    # `reconcile_config_ports` never fell back to its own per-container query.
+    forwards_for.assert_not_called()
+    assert result.ports_changed == []

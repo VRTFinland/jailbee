@@ -409,6 +409,73 @@ dev box where the host user already runs VMs this is the same trust boundary the
 already extend to their own account. Treat every `host_devices` entry as
 attack-surface-widening and list only what the repo's workflow needs.
 
+### `host_ports`
+
+Make a host service reachable **inside** every container of the repo — the
+classic case is an adb server: with the forward in place, plain `adb devices`
+works inside the container, and no `ADB_SERVER_SOCKET` juggling is needed,
+because the host's adb server already listens on `127.0.0.1:5037` by default.
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+Each entry becomes one Incus `proxy` device (named `port-cfg-<name>`): the
+container listens on `container_address:port`, and Incus's forkproxy connects
+to `host_address:host_port` on the host whenever something inside the
+container connects to that listener. So `port`/`container_address` name the
+container-side listener, and `host_port`/`host_address` name the host
+service it reaches.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Handle for this forward. Must match `[a-z0-9][a-z0-9-]*`, max 40 chars, unique within `host_ports`. Becomes the Incus device name `port-cfg-<name>` and the `jailbee port rm` key. |
+| `port` | int | required | Container-side port (1–65535) — what listens inside the container. |
+| `host_port` | int | `port` | Host-side port the container connects to. Set this when the container-side port and the host-side port differ. |
+| `proto` | `tcp` \| `udp` | `tcp` | Protocol. |
+| `host_address` | string | `127.0.0.1` | Host address the container connects to. Must be an IP literal — a hostname is rejected, because resolving one at device-add time would silently pin a single IP into the device. |
+| `container_address` | string | `127.0.0.1` | Container address the proxy listens on. Must also be an IP literal. |
+
+A worked example with the two ports differing — forwarding a host service on
+port 9000 to port 3000 inside the container:
+
+```yaml
+host_ports:
+  - { name: api, port: 3000, host_port: 9000 }
+```
+
+Here the container listens on `127.0.0.1:3000`; anything the container
+connects to at `3000` actually lands on the host's `127.0.0.1:9000`.
+
+**Only this direction is configurable.** A host-side listener is a
+machine-wide resource: if a repo's config declared one, every container of
+that repo would fight over the same host port, breaking the property that
+many branch containers of the same repo coexist. The reverse direction — a
+container service reachable on the host — is not something `host_ports`
+exposes at all; use `jailbee port to-host` per container instead (see
+[Commands](commands.md)). A `direction:`/`to_host:`/`bind:` key in a
+`host_ports` entry is rejected with this same explanation, not a generic
+"unknown field" error.
+
+**This is a hole through the `net strict` ACL's egress half by construction.** The
+forwarded traffic never traverses the bridge the ACL is attached to — Incus's
+forkproxy connects directly out of the container's network namespace to the
+host — so a `strict` container's default-deny ACL never sees it, on the
+egress side. (`jailbee port to-host`'s forwards are the ingress-side mirror of
+this same hole; `host_ports` only ever opens the egress one.) See
+[Security and limitations](security.md) for the full picture.
+
+Entries are attached when `jailbee new` creates a container, and reconciled
+by `jailbee apply`: an entry that's new is added, one whose properties
+changed is replaced, and one that's been deleted from the config is removed.
+There's no rebuild and no restart — proxy devices hotplug on a running
+container. Reconciliation only ever touches `port-cfg-*` devices; a forward
+you added by hand with `jailbee port` is never modified or removed by it.
+
+Layered like `host_mounts`/`host_devices`: per-repo entries append to global
+ones; `[]` resets.
+
 ### `shared_caches`
 
 The state layer every container of this repo has in common. Each entry is

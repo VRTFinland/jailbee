@@ -3661,6 +3661,96 @@ def test_net_status_shows_loose_ttl_section(tmp_path, mocker):
     assert "--no-revert" in result.stdout
 
 
+def test_net_status_lists_port_forwards(tmp_path, mocker):
+    """`jailbee net status` names every active forward and says they bypass the ACL."""
+    from sqlmodel import create_engine
+
+    from jailbee.db import _ensure_schema
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+    )
+    _ensure_schema(engine)
+    mocker.patch("jailbee.db.get_engine", return_value=engine)
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(stdout="active\n", returncode=0),
+    )
+
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "myrepo-feat-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+            "state": None,
+            "config": {"user.jailbee.mode": "clone"},
+            "devices": {
+                "port-cfg-adb": {
+                    "type": "proxy",
+                    "bind": "instance",
+                    "listen": "tcp:127.0.0.1:5037",
+                    "connect": "tcp:127.0.0.1:5037",
+                },
+            },
+        },
+    ]
+
+    result = CliRunner().invoke(app, ["net", "status"])
+    assert result.exit_code == 0, result.stdout
+    out = result.stdout + (result.stderr or "")
+    assert "Port forwards: 1 on 1 container(s) — the network ACL does not see these" in out
+    assert "feat-x" in out
+    assert "to-container" in out
+    assert "127.0.0.1:5037" in out
+    assert "(config)" in out
+
+
+def test_net_status_omits_the_forward_section_when_there_are_none(tmp_path, mocker):
+    """No forwards → no section at all, rather than an empty header."""
+    from sqlmodel import create_engine
+
+    from jailbee.db import _ensure_schema
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+    )
+    _ensure_schema(engine)
+    mocker.patch("jailbee.db.get_engine", return_value=engine)
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(stdout="active\n", returncode=0),
+    )
+
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "myrepo-feat-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+            "state": None,
+            "config": {"user.jailbee.mode": "clone"},
+            "devices": {"root": {"type": "disk", "path": "/"}},
+        },
+    ]
+
+    result = CliRunner().invoke(app, ["net", "status"])
+    assert result.exit_code == 0, result.stdout
+    assert "Port forwards" not in result.stdout
+
+
 def test_git_diff_invokes_committed_by_default(tmp_path, mocker):
     repo = _setup_repo(tmp_path, "myrepo")
     mocker.patch(

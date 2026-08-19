@@ -99,6 +99,12 @@ golden:
   # plus a system Chrome, are installed by .jailbee/install.d/65-vhs.sh —
   # neither can come from apt here, and that snippet explains why.
   #
+  # Nor does the nested Incus daemon used to verify jailbee's device and
+  # command generation against a real daemon from inside a container: that is
+  # .jailbee/install.d/75-incus.sh, which installs `incus-base` instead of
+  # `incus` (the metapackage drags in qemu for VM support) and leaves the
+  # units disabled. docs/manual-testing.md carries the rig recipe.
+  #
   # Nothing else website-related belongs in this list either. ImageMagick is
   # installed by .jailbee/install.d/70-imagemagick.sh, because it needs
   # `dpkg --path-exclude=/usr/share/fonts/*` to install at all: its font
