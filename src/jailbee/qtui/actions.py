@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from jailbee.dashboard import PRINTING_VERBS
+from jailbee.dashboard import ATTACH_VERBS, PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, build_terminal_command
 
 # How the GUI has to run a verb.
@@ -38,15 +38,13 @@ _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})
 # asks nothing, so there is no prompt to skip.
 _FORCE_ON_CONFIRM: frozenset[str] = frozenset({"destroy"})
 
-# Verbs routed through the CLI's attach guard. Not the same set as
-# _TERMINAL_VERBS: `ide`/`chrome` need no terminal but do hit the guard.
-_ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
-
 # Verbs dispatched with `--force`, i.e. with the CLI's own question already
 # answered. Two unrelated reasons land here: a confirm verb has been through
 # the Qt dialog, and an attach verb's "continue anyway?" would only repeat the
-# failed-job state the card already showed.
-_ASSUME_YES_VERBS: frozenset[str] = _FORCE_ON_CONFIRM | _ATTACH_VERBS
+# failed-job state the card already showed. :data:`ATTACH_VERBS` is not the same
+# set as ``_TERMINAL_VERBS``: `ide`/`chrome` need no terminal but do hit the
+# guard.
+_ASSUME_YES_VERBS: frozenset[str] = _FORCE_ON_CONFIRM | ATTACH_VERBS
 
 
 def launch_mode(verb: str) -> LaunchMode:

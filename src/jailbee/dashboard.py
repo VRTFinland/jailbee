@@ -854,11 +854,12 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
 
 
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"
-# when the container's background job failed or is unfinished. The dashboard
-# has already shown that state in the JOB column, so the question would only
-# ask the operator to re-read what they were looking at when they pressed the
-# key.
-_ASSUME_YES_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
+# when the container's background job failed or is unfinished. Both dashboards
+# have already shown that state in the JOB column, so the question would only
+# ask the operator to re-read what they were looking at when they acted on the
+# row — hence both dispatch these with `--force`. Shared rather than copied, for
+# the same reason as :data:`PRINTING_VERBS` (`qtui/actions.py` imports this).
+ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
 
 # Verbs whose whole point is the text they print, rather than the state they
 # change. Both front-ends need to know which those are — the TUI to keep their
@@ -958,7 +959,7 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
     ``"pr --open"``, ``"job log --follow"``).
 
-    Verbs in :data:`_ASSUME_YES_VERBS` gain ``--force``; ``--force`` means
+    Verbs in :data:`ATTACH_VERBS` gain ``--force``; ``--force`` means
     something different on every other command (and most don't accept it),
     so nothing else gets it.
 
@@ -969,7 +970,7 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     the pause rather than losing the output.
     """
     argv = ["jailbee", *verb.split(), name, "--config", str(config_path)]
-    if verb in _ASSUME_YES_VERBS:
+    if verb in ATTACH_VERBS:
         argv.append("--force")
     style = dispatch_style(verb)
     if style == "paged":
