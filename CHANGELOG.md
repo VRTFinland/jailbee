@@ -34,6 +34,15 @@
   is `ask`), `pr`'s draft/description/adoption choices, and a confirmation for
   `git pull`, which is the one bridge command that writes to the host's own
   working tree.
+- **"Refresh from PR head" in both dashboards' action menus.** A container
+  created with `jailbee new --pr N` falls behind whenever the PR's author
+  pushes; the entry dispatches `jailbee git push <name> --pr`, which catches it
+  up. It appears only on a review container — one whose PR JailBee did not open
+  from its own branch, the `#123↓` case in the PR column — because an authored
+  PR's head is downstream of the container and the refresh could only be a
+  no-op. Like the base update it sits beside, it needs a running clone-mode
+  container. The Qt dialog asks only the merge/rebase/plain question here: `--pr`
+  is itself the source, so there is nothing to ask about `push.default_source`.
 - **Quick-action keys in `jailbee dashboard`.** `t` attaches tmux, `s` opens a
   shell, `i` the IDE, `c` Chrome, `p` the PR, `P` creates or updates the PR,
   `u` updates the container from its base and `d` shows the diff, straight from

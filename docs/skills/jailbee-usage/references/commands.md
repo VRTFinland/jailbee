@@ -253,15 +253,20 @@ menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
 the dashboard).
 
 The menu, in order: `job clear`, `job log`, `pr --open`, `pr`, `git push`,
-`git pull`, `git diff`, then tmux/shell/ide/chrome/net/restart/stop/destroy for
-Running (start/destroy for Stopped). Each entry appears only when it would do
-something:
+`git push --pr`, `git pull`, `git diff`, then
+tmux/shell/ide/chrome/net/restart/stop/destroy for Running (start/destroy for
+Stopped). Each entry appears only when it would do something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live
   worker's log and prints a finished one once);
 - `pr --open` needs a known PR;
-- `pr`, `git push`, `git pull` and `git diff` need a **running clone-mode**
-  container (a stopped or `--mount` container has no clone to publish from);
+- `pr`, `git push`, `git push --pr`, `git pull` and `git diff` need a **running
+  clone-mode** container (a stopped or `--mount` container has no clone to
+  publish from);
+- `git push --pr` ("Refresh from PR head") also needs a **review** PR — one
+  JailBee did not open from the container's own branch, the `#123↓` case in the
+  PR column. On an authored PR the head is downstream of the container, so the
+  refresh could only be a no-op;
 - `git pull` also needs commits ahead of the base, and `git diff` something to
   show. A git status that is merely *unknown* — under `--no-git`, or before the
   first git-tier refresh — hides nothing: a missing column is not evidence of a
@@ -307,6 +312,9 @@ first in a dialog and passed as a flag — and only where the CLI would ask:
 asks about draft/ready, regenerating the description and publishing to an
 existing PR's head, and `git pull` asks for confirmation because it merges into
 the host's own branch. Cancelling any of those dispatches nothing.
+`git push --pr` asks the action the same way but never the source — the PR head
+*is* the source, and the CLI rejects `--from`/`--current` alongside `--pr` — so
+a repo with a pinned `push.default_action` sees no dialog there at all.
 
 The Qt GUI has a **View** menu to switch between a wide **Table** layout and
 a width-adaptive **Cards** layout (cards re-wrap to fill the window). Within
@@ -420,7 +428,7 @@ are `ask`. CLI flags always win.
 | `--current` | Send the host's current branch. Implies the local ref (no fetch). |
 | `--merge` / `--rebase` | After transport, merge/rebase the pushed ref into the container's branch. Refuse on a dirty container tree; conflicts leave the container mid-op → resolve in `jailbee shell`. |
 | `--plain` | Transport only, no apply. |
-| `--pr` | PR containers only: re-fetch the PR head from GitHub into `refs/jailbee/pr/<N>/head` and push that exact ref. The fetch runs host-side, so the container needs no `jailbee net loose`. Refused on non-PR containers. Mutually exclusive with `--from`, `--current`, `--from-origin` and `--from-local` (the ref is fixed). |
+| `--pr` | PR containers only: re-fetch the PR head from GitHub into `refs/jailbee/pr/<N>/head` and push that exact ref. The fetch runs host-side, so the container needs no `jailbee net loose`. Refused on non-PR containers, and requires an explicit NAME (the label it reads is the container's, so there is no picker). Mutually exclusive with `--from`, `--current`, `--from-origin` and `--from-local` (the ref is fixed). Both dashboards expose it as "Refresh from PR head". |
 | `--from-local` | Push the host's local `refs/heads/<source>` and skip the host fetch. Use when the host has commits not yet pushed to origin. |
 | `--from-origin` | Force `refs/remotes/origin/<source>` (overrides `push.push_from: local` and the `--current` default). |
 | `--fetch` / `--no-fetch` | Run/skip `git fetch origin <source>` on the host before resolving. Default: `push.autofetch` (true). Only applies when pushing the origin ref. |
