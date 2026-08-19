@@ -1025,7 +1025,7 @@ footer p {
    Section labels — the two turns of the argument, #problem and #parallel.
 
    Colleagues skimming the page could not tell which section stated the
-   problem and which stated the answer, and the reason was structural: every
+   problem and which stated the solution, and the reason was structural: every
    h2 is the same size and colour, and the three pain items used the very
    same .card component as #features' six benefit cards. So a skimmer saw
    nine equal headings and two identical sets of cards.
@@ -1048,7 +1048,7 @@ footer p {
   color: var(--red);
 }
 
-.eyebrow--answer {
+.eyebrow--solution {
   color: var(--amber);
 }
 
