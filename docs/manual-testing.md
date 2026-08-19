@@ -1530,10 +1530,31 @@ jailbee new feat/dashsmoke --background
 #           On an orphan (view-only) row, Enter opens nothing and prints a
 #           yellow note in the panel footer for ~2.5s instead of going silent.
 #  t -> attaches tmux for the highlighted container without the menu; exit ->
-#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR.
+#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR,
+#       P = create/update the PR, u = update from base, d = show the diff.
 #       On a row that does not offer the action (Stopped container, IDE/Chrome
 #       disabled in that repo's config, no PR, orphan row) expect NO dispatch
 #       and a yellow footer note naming the key and the reason.
+
+# Workflow entries (the menu block above tmux/shell). Make a commit inside the
+# container first, so there is something for git pull and git diff to show:
+jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git commit -am wip'
+#  d (or the "Show diff (git diff)" entry) -> the diff opens in $PAGER
+#     (less -R) WITH colour, not as a plain scroll-past dump; q in less returns
+#     to the dashboard with the table intact.
+#  u ("Update from base (git push)") -> in a repo with push.default_action:
+#     ask, the CLI's own merge/rebase picker appears (the TUI hands over the
+#     real terminal); after it finishes, expect a
+#     "── press Enter to return to the dashboard ──" line and the output still
+#     readable until you press Enter.
+#  "Send commits to host (git pull)" -> same pause behaviour. On a container
+#     with nothing ahead of its base, expect the entry to be ABSENT from the
+#     menu (and `git pull` to have no quick key at all — by design).
+#  "Job log" -> present only while a job row exists; on a live background job
+#     it follows the worker log (Ctrl-C ends it), on a finished one it prints
+#     once. Not bound to a quick key.
+#  A --mount container offers none of pr/git push/git pull/git diff (no clone
+#     of its own): jailbee new feat/mnt --mount, then Enter on that row.
 #  h (or ?) -> keybinding help below the table; h again or Esc closes it.
 #              Pressing h with the action menu open swaps the menu for help.
 #  r -> forces an immediate full refresh (incl. git status)
@@ -1643,6 +1664,34 @@ Requires a real Incus daemon, at least one JailBee container, and PySide6
    (that's left to the window manager).
 9. Relaunch with `jailbee gui --interval 7`: the explicit flag should win over
    whatever cadence was persisted in step 8.
+
+### Workflow commands in the Qt dashboard
+
+The point of these checks is that nothing opens a terminal emulator and no
+output disappears. Use a container with a commit of its own (see the
+`git diff`/`git pull` recipes above).
+
+1. Right-click a running container → **Show diff (git diff)**. Expect a JailBee
+   window (not a terminal) with the diff in a monospace font, `exited 0` on its
+   status line, and a working **Copy** button. The dashboard behind it keeps
+   refreshing.
+2. Open a second output window while the first is up (e.g. **Job log** on a
+   container mid-`jailbee new`). Both should stay usable — the windows are
+   non-modal.
+3. On that live job, press **Stop**: the status line must say `stopped`, not
+   `exited 0`, and `pgrep -f "jailbee job log"` must find nothing afterwards.
+   Closing the window with the command still running must do the same.
+4. **Update from base (git push)** in a repo whose `push.default_action` is
+   `ask` → a dialog asks merge/rebase/plain first, then the output window shows
+   the push. **Cancel** in the dialog must dispatch nothing at all. In a repo
+   that pins `push.default_action`, expect no dialog.
+5. **Send commits to host (git pull)** → a confirmation naming the host branch
+   the merge lands on; declining dispatches nothing.
+6. **Create/update PR** → a dialog for draft/ready, description regeneration
+   and the existing-PR-head confirmation, then the output window (AI generation
+   takes a while — expect `running…` for a bit, not a frozen window).
+7. A `--mount` container offers none of these entries; a stopped one offers
+   only `start`/`destroy` (plus `Open PR` when it has a PR).
 
 ### Clearing a failed job from the dashboards
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import os
 import select
+import shlex
+import shutil
 import subprocess
 import sys
 import termios
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from jailbee.config import Config
+    from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)
@@ -69,7 +72,11 @@ class RepoGroup:
     ``loose_ttl_default`` is the repo's effective ``loose_auto_revert.after``
     as prompt-ready text — what the GUI's duration dialog pre-selects — or
     None when auto-revert is disabled, which tells the GUI not to ask at all
-    (there is no TTL to schedule). Orphan groups keep None."""
+    (there is no TTL to schedule). Orphan groups keep None.
+    ``push_action_default``/``push_source_default`` mirror the repo's effective
+    ``push.default_action``/``default_source``, so a front-end can tell whether
+    `jailbee git push` would stop to ask a question its own child process
+    cannot answer. Orphan groups keep ``PushConfig``'s defaults."""
 
     prefix: str
     repo_root: str | None
@@ -78,6 +85,8 @@ class RepoGroup:
     ide_enabled: bool = False
     chrome_enabled: bool = False
     loose_ttl_default: str | None = None
+    push_action_default: str = "ask"
+    push_source_default: str = "base"
 
 
 def registered_repo_configs() -> list[Path]:
@@ -208,6 +217,8 @@ def gather_rows(
                     ide_enabled=cfg.jetbrains.enabled,
                     chrome_enabled=cfg.chrome.enabled,
                     loose_ttl_default=_loose_ttl_default(cfg, gcfg),
+                    push_action_default=cfg.push.default_action,
+                    push_source_default=cfg.push.default_source,
                 )
             )
 
@@ -305,16 +316,65 @@ def reconcile_selection(names: list[str], current: str | None, last_index: int) 
 _NETWORK_MODES: tuple[str, ...] = ("strict", "loose")
 
 
-def menu_actions(
-    state: str,
-    *,
-    has_config: bool,
-    ide_enabled: bool = False,
-    chrome_enabled: bool = False,
-    current_network: str | None = None,
-    pr_number: int | None = None,
-    job_clearable: bool = False,
-) -> list[tuple[str, str]]:
+@dataclass(frozen=True)
+class MenuContext:
+    """Everything :func:`menu_actions` needs to know about one row.
+
+    Assembled by :func:`actions_for_container` from a ``ContainerInfo`` +
+    ``RepoGroup`` pair. A dataclass rather than a tenth keyword argument: the
+    call sites had already stopped being readable, and every field here is a
+    plain fact about the row rather than an option.
+
+    ``has_job`` is "there is a background-job row at all" (what makes the log
+    worth offering); ``job_running`` is "its worker is still alive" (what makes
+    ``--follow`` the right form); ``job_clearable`` is the failed/stale case
+    that "Clear failed job" corrects.
+    """
+
+    state: str
+    has_config: bool
+    mode: str = "clone"
+    ide_enabled: bool = False
+    chrome_enabled: bool = False
+    current_network: str | None = None
+    pr_number: int | None = None
+    job_clearable: bool = False
+    has_job: bool = False
+    job_running: bool = False
+    git_status: GitStatus | None = None
+
+
+# The GitStatus cell values that mean "there is provably nothing to do". Every
+# other value — including "—" and "?" — means unknown, and an unknown answer
+# never hides an entry.
+_NO_COMMITS = "0"
+_NO_CHANGES = "clean"
+
+
+def _bridge_possible(ctx: MenuContext) -> bool:
+    """Whether the PR and git-bridge verbs can run for this row at all.
+
+    They all read the container's own clone, so they need a running container
+    that has one: ``sync.assert_container_publishable`` rejects a stopped or
+    mount-mode container up front, and offering an entry whose only outcome is
+    that error is worse than not offering it.
+    """
+    return ctx.state == "Running" and ctx.mode != "mount"
+
+
+def _has_commits_for_host(git: GitStatus | None) -> bool:
+    """Whether `jailbee git pull` has commits to send to the host."""
+    return git is None or git.ahead_count != _NO_COMMITS
+
+
+def _has_diff_to_show(git: GitStatus | None) -> bool:
+    """Whether `jailbee git diff` would print anything."""
+    if git is None:
+        return True
+    return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
+
+
+def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
     Empty for orphan rows (no loadable config ⇒ no safe dispatch). "Launch
@@ -324,32 +384,49 @@ def menu_actions(
     `jailbee ide`/`jailbee chrome` when the feature is disabled would just fail.
 
     For running containers, one "Network: <mode>" entry appears per mode
-    other than ``current_network`` (sourced from ``ContainerInfo.network``),
+    other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
-    "Clear failed job" (verb "job clear") heads the list when
-    ``job_clearable`` — it is the corrective action, and it belongs far from
-    "Destroy" at the bottom. "Open PR" (verb "pr --open") follows it when
-    pr_number is not None.
+    The head of the list is the diagnostic/workflow block, deliberately far
+    from "Destroy" at the bottom: "Clear failed job" (the corrective action),
+    "Job log", "Open PR", then the four verbs that carry the actual workflow —
+    create/update the PR, update the container from its base, send its commits
+    back to the host, and read its diff. The last two are hidden when the git
+    status proves they would do nothing; an unknown status (base-tier refresh,
+    ``--no-git``, failed probe) still offers them, because a missing column is
+    not evidence of a clean tree.
+
+    Verbs may carry flags (``"pr --open"``, ``"job log --follow"``): every
+    front-end splits them into argv, and Typer accepts options before the
+    positional container name.
     """
-    if not has_config:
+    if not ctx.has_config:
         return []
     prefix: list[tuple[str, str]] = []
-    if job_clearable:
+    if ctx.job_clearable:
         prefix.append(("Clear failed job", "job clear"))
-    if pr_number is not None:
+    if ctx.has_job:
+        prefix.append(("Job log", "job log --follow" if ctx.job_running else "job log"))
+    if ctx.pr_number is not None:
         prefix.append(("Open PR", "pr --open"))
-    if state == "Running":
+    if _bridge_possible(ctx):
+        prefix.append(("Create/update PR", "pr"))
+        prefix.append(("Update from base (git push)", "git push"))
+        if _has_commits_for_host(ctx.git_status):
+            prefix.append(("Send commits to host (git pull)", "git pull"))
+        if _has_diff_to_show(ctx.git_status):
+            prefix.append(("Show diff (git diff)", "git diff"))
+    if ctx.state == "Running":
         actions = [
             ("Attach tmux", "tmux"),
             ("Open shell", "shell"),
         ]
-        if ide_enabled:
+        if ctx.ide_enabled:
             actions.append(("Launch IDE", "ide"))
-        if chrome_enabled:
+        if ctx.chrome_enabled:
             actions.append(("Launch Chrome", "chrome"))
         for mode in _NETWORK_MODES:
-            if mode != current_network:
+            if mode != ctx.current_network:
                 actions.append((f"Network: {mode}", f"net {mode}"))
         actions += [
             ("Restart", "restart"),
@@ -357,7 +434,7 @@ def menu_actions(
             ("Destroy", "destroy"),
         ]
         return prefix + actions
-    if state == "Stopped":
+    if ctx.state == "Stopped":
         return [*prefix, ("Start", "start"), ("Destroy", "destroy")]
     return [*prefix, ("Destroy", "destroy")]
 
@@ -453,6 +530,9 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
     KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
     KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),
+    KeyBinding("action:pr-update", (b"P",), "P", "create or update the PR", "Actions", verb="pr"),
+    KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
+    KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
@@ -466,7 +546,8 @@ _GATE_NOTE = (
     "Action keys only fire when that action is offered for the highlighted "
     "container: a stopped container has no tmux or shell, the IDE and Chrome "
     "need the repo's own jetbrains/chrome config, the PR key needs a known PR, "
-    "and orphan rows are view-only."
+    "the workflow keys need a running clone-mode container (and the diff key "
+    "needs something to show), and orphan rows are view-only."
 )
 
 
@@ -738,13 +819,21 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
         and background.clearable(container.job_phase, container.job_pid)
     )
     return menu_actions(
-        container.state,
-        has_config=group.config_path is not None,
-        ide_enabled=group.ide_enabled,
-        chrome_enabled=group.chrome_enabled,
-        current_network=container.network,
-        pr_number=container.pr_number,
-        job_clearable=job_clearable,
+        MenuContext(
+            state=container.state,
+            has_config=group.config_path is not None,
+            mode=container.mode,
+            ide_enabled=group.ide_enabled,
+            chrome_enabled=group.chrome_enabled,
+            current_network=container.network,
+            pr_number=container.pr_number,
+            job_clearable=job_clearable,
+            has_job=container.job_phase is not None,
+            # A job row that is not clearable is one whose worker is still
+            # alive — that is what makes `--follow` the right form.
+            job_running=container.job_phase is not None and not job_clearable,
+            git_status=container.git_status,
+        )
     )
 
 
@@ -771,6 +860,95 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
 # key.
 _ASSUME_YES_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
 
+# Verbs whose whole point is the text they print, rather than the state they
+# change. Both front-ends need to know which those are — the TUI to keep their
+# output on screen, the Qt dashboard to route it into a window of its own
+# (`qtui/actions.py` imports this) — so the list lives here, beside
+# :func:`menu_actions`, which is where the verb vocabulary is defined.
+#
+# Matched exactly, not by leading token: `pr --open` only opens a browser, and
+# `job log` appears in both its plain and its --follow form.
+PRINTING_VERBS: frozenset[str] = frozenset(
+    {"pr", "git push", "git pull", "git diff", "job log", "job log --follow"}
+)
+
+# The printing verbs long enough to want a pager instead of a pause. `Live`
+# repaints the moment the dashboard resumes, so the rest get the pause: without
+# one their output is gone before it can be read.
+_PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
+_OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS
+
+DispatchStyle = Literal["paged", "output", "plain"]
+
+
+def dispatch_style(verb: str) -> DispatchStyle:
+    """How the TUI should run ``verb``: through a pager, with a pause, or bare."""
+    if verb in _PAGED_VERBS:
+        return "paged"
+    if verb in _OUTPUT_VERBS:
+        return "output"
+    return "plain"
+
+
+def pager_argv() -> list[str] | None:
+    """The pager to page long output through, or None when the host has none.
+
+    ``$PAGER`` wins (split as a shell word list, so ``PAGER="bat -p"`` works);
+    otherwise ``less -R``, which renders the ANSI colour the diff is asked to
+    emit, then ``more``.
+    """
+    env = os.environ.get("PAGER")
+    if env:
+        return shlex.split(env)
+    for candidate in (["less", "-R"], ["more"]):
+        if shutil.which(candidate[0]):
+            return candidate
+    return None
+
+
+def _wait_for_return() -> None:
+    """Hold the terminal until the user has read the output.
+
+    Called only from inside ``run``'s ``foreground`` helper, where ``Live`` is
+    stopped and the terminal is back in cooked mode — so a plain read is
+    enough. EOF (piped stdin, Ctrl-D) and Ctrl-C return immediately rather
+    than propagating: neither is a reason to take the dashboard down.
+    """
+    console.print("\n[dim]── press Enter to return to the dashboard ──[/dim]")
+    try:
+        sys.stdin.readline()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def _run_paged(argv: list[str], pager: list[str]) -> int:
+    """Pipe ``argv``'s stdout into ``pager``; return the command's exit code.
+
+    Two processes rather than a shell string, so there is no quoting to get
+    wrong. Stderr stays attached to the terminal: an error message must not be
+    swallowed by the pager. The pager owns the terminal until the user quits
+    it, which is why the paged path needs no keypress pause of its own.
+    """
+    producer = subprocess.Popen(argv, stdout=subprocess.PIPE)
+    out = producer.stdout
+    if out is None:  # unreachable with stdout=PIPE; keeps mypy honest
+        return producer.wait()
+    try:
+        viewer = subprocess.Popen(pager, stdin=out)
+    except OSError:
+        # The pager vanished between which() and exec. Nothing will ever read
+        # the pipe, so kill the producer rather than leaving it blocked on a
+        # full one, and let the caller fall back to the unpaged path.
+        producer.kill()
+        producer.wait()
+        raise
+    finally:
+        # The viewer owns the read end now. Keeping this copy open would stop
+        # the pager ever seeing EOF, so it would hang on a finished command.
+        out.close()
+    viewer.wait()
+    return producer.wait()
+
 
 def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     """Run ``jailbee <verb> <name> --config <config_path>``; return its exit code.
@@ -778,17 +956,33 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     The single dispatch point shared by the inline action menu and the
     quick-action keys, so both reuse the real command's behaviour and the
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
-    ``"pr --open"``).
+    ``"pr --open"``, ``"job log --follow"``).
 
     Verbs in :data:`_ASSUME_YES_VERBS` gain ``--force``; ``--force`` means
     something different on every other command (and most don't accept it),
     so nothing else gets it.
+
+    The verb's :func:`dispatch_style` decides what happens to its output: a
+    pager for the diff (with ``--color`` forced, because the pipe would
+    otherwise turn colour off), a keypress pause for the other printing verbs,
+    and nothing at all for the rest. A missing or unstartable pager degrades to
+    the pause rather than losing the output.
     """
     argv = ["jailbee", *verb.split(), name, "--config", str(config_path)]
     if verb in _ASSUME_YES_VERBS:
         argv.append("--force")
-    proc = subprocess.run(argv, check=False)
-    return proc.returncode
+    style = dispatch_style(verb)
+    if style == "paged":
+        pager = pager_argv()
+        if pager is not None:
+            try:
+                return _run_paged([*argv, "--color"], pager)
+            except OSError as exc:
+                log.debug("pager %s failed: %s", pager, exc)
+    rc = subprocess.run(argv, check=False).returncode
+    if style != "plain":
+        _wait_for_return()
+    return rc
 
 
 def _refresh_due(

@@ -3165,6 +3165,17 @@ def git_diff_cmd(
         bool,
         typer.Option("--stat", help="Use --stat instead of full patch."),
     ] = False,
+    color: Annotated[
+        bool | None,
+        typer.Option(
+            "--color/--no-color",
+            help=(
+                "Force ANSI colour on or off. Default: colour when stdout is a "
+                "TTY. `jailbee dashboard` passes --color because it pipes the "
+                "diff into a pager."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Show diff between container and host.
@@ -3173,6 +3184,10 @@ def git_diff_cmd(
     `jailbee git pull` (3-dot diff against the container's base branch:
     origin/<base_branch>; fallback origin/<default_branch>).
     Use --wt for working-tree-only, --all for both.
+
+    Colour follows stdout by default. `--color` forces it on for a consumer
+    that pages the output (a pipe is not a TTY, so autodetection would drop
+    exactly the colour a pager can render); `--no-color` forces it off.
     """
     import sys
 
@@ -3203,7 +3218,7 @@ def git_diff_cmd(
             branch=branch,
             mode=mode,
             stat_only=stat,
-            color=sys.stdout.isatty(),
+            color=sys.stdout.isatty() if color is None else color,
         )
     except sync.SyncError as e:
         error(str(e))

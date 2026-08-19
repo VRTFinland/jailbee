@@ -4,13 +4,47 @@
 
 ### Added
 
+- **The workflow commands are in both dashboards' action menus.** `pr` (create
+  or update the PR — not just `pr --open`, which only views one), `git push`
+  ("update from base"), `git pull` ("send commits to host"), `git diff` and
+  `job log` were reachable only from the command line, which meant leaving the
+  view that told you they were needed. Every entry is gated on whether it would
+  do something: the PR and git-bridge verbs need a running clone-mode container,
+  `git pull` needs commits ahead of the base, `git diff` needs something to
+  show, `job log` needs a job row. A git status that is merely unknown — under
+  `--no-git`, or before the first git-tier refresh — hides nothing, because a
+  missing column is not evidence of a clean tree.
+- **Output from those commands survives long enough to read.** In the TUI
+  `git diff` opens in `$PAGER` (`less -R`, then `more`) with colour forced past
+  the pipe, and `pr`/`git push`/`git pull`/`job log` wait for Enter before the
+  dashboard repaints over them. Their own prompts keep working, since the TUI
+  hands over the real terminal.
+- **`jailbee git diff --color/--no-color`** to force colour either way. The
+  default still follows stdout; the dashboard's pager path needs the override
+  because a pipe is not a TTY.
+- **The Qt dashboard runs those commands as a GUI, not in a terminal.** Only
+  `shell` and `tmux` still open a host terminal emulator, because they need a
+  real TTY. The printing verbs stream into a JailBee window with Stop and Copy
+  buttons and the exit code on its status line — non-modal, so the dashboard
+  keeps refreshing behind it and several commands can be watched at once. Stop
+  exists because `job log` on a live job follows the worker's log until it is
+  stopped. The questions those commands would ask on a TTY are asked up front in
+  Qt dialogs and passed as flags, since the GUI's child process has no stdin:
+  `git push`'s merge/rebase choice (only when the repo's `push.default_action`
+  is `ask`), `pr`'s draft/description/adoption choices, and a confirmation for
+  `git pull`, which is the one bridge command that writes to the host's own
+  working tree.
 - **Quick-action keys in `jailbee dashboard`.** `t` attaches tmux, `s` opens a
-  shell, `i` the IDE, `c` Chrome and `p` the PR, straight from the highlighted
-  row without going through the action menu. A key only fires when that action
-  is one the row's own menu would offer — a stopped container has no tmux, the
-  IDE and Chrome follow the repo's `jetbrains`/`chrome` config, and orphan rows
+  shell, `i` the IDE, `c` Chrome, `p` the PR, `P` creates or updates the PR,
+  `u` updates the container from its base and `d` shows the diff, straight from
+  the highlighted row without going through the action menu. A key only fires
+  when that action is one the row's own menu would offer — a stopped container
+  has no tmux, the IDE and Chrome follow the repo's `jetbrains`/`chrome` config,
+  `P`/`u`/`d` need a running clone-mode container, and orphan rows
   stay view-only — and when it declines, the footer says why rather than going
-  silent. `h` (or `?`) opens a keybinding help overlay.
+  silent. `git pull` and `job log` are deliberately menu-only: the first writes
+  to the host's own working tree, and the second's command varies with
+  `--follow`. `h` (or `?`) opens a keybinding help overlay.
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
 
 ### Changed
