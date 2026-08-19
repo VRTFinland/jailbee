@@ -116,7 +116,15 @@ def test_launch_mode_classifies_the_verbs():
     to say."""
     for verb in ("shell", "tmux"):
         assert a.launch_mode(verb) == "terminal", verb
-    for verb in ("pr", "git push", "git pull", "git diff", "job log", "job log --follow"):
+    for verb in (
+        "pr",
+        "git push",
+        "git push --pr",
+        "git pull",
+        "git diff",
+        "job log",
+        "job log --follow",
+    ):
         assert a.launch_mode(verb) == "output", verb
     for verb in (
         "ide",
@@ -173,6 +181,29 @@ def test_build_action_appends_the_answers_as_flags():
         "--merge",
         "--current",
     ]
+
+
+def test_pr_refresh_keeps_its_flag_ahead_of_the_container_name():
+    """`--pr` is part of the verb, not an answer: it must stay where Typer
+    reads it as an option, with the container name still the sole positional."""
+    ac = a.build_action(
+        "git push --pr",
+        "alpha-x",
+        Path("/repo/.jailbee/config.yaml"),
+        extra_flags=["--rebase"],
+    )
+    assert ac.argv == [
+        "jailbee",
+        "git",
+        "push",
+        "--pr",
+        "alpha-x",
+        "--config",
+        "/repo/.jailbee/config.yaml",
+        "--rebase",
+    ]
+    assert ac.launch == "output"
+    assert ac.confirm is False
 
 
 def test_git_pull_needs_confirmation_but_no_force():

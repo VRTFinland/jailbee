@@ -31,6 +31,7 @@ from jailbee.qtui.prompts import (
     PushOptionsDialog,
     confirm_text,
     pr_flags,
+    pr_refresh_title,
     push_flags,
     push_questions,
 )
@@ -297,10 +298,16 @@ class AppController(QObject):
         where the CLI would ask: a repo that pinned its `push:` defaults has
         already answered, and a flag on top of that would override its policy.
         """
-        if verb == "git push":
+        if verb in ("git push", "git push --pr"):
+            pr_refresh = verb == "git push --pr"
             ask_action, ask_source = push_questions(
                 group.push_action_default, group.push_source_default
             )
+            if pr_refresh:
+                # `--pr` *is* the source: the CLI pushes `refs/jailbee/pr/<N>/head`
+                # and rejects --from/--current alongside it, so the answer this
+                # dialog could give would be a usage error, not a choice.
+                ask_source = False
             if not (ask_action or ask_source):
                 return []
             push_dlg = PushOptionsDialog(
@@ -308,6 +315,11 @@ class AppController(QObject):
                 ask_action=ask_action,
                 ask_source=ask_source,
                 base_branch=container.base_branch if container else None,
+                title=(
+                    pr_refresh_title(name, container.pr_number if container else None)
+                    if pr_refresh
+                    else None
+                ),
                 parent=self._window,
             )
             if push_dlg.exec() != QDialog.DialogCode.Accepted:

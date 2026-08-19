@@ -94,6 +94,28 @@ def test_push_dialog_without_a_known_base_only_offers_the_current_branch(qtbot):
     assert dlg.answers() == PushAnswers(action=None, source="current")
 
 
+def test_push_dialog_titles_itself_after_the_base_update_by_default(qtbot):
+    dlg = PushOptionsDialog("alpha-x", ask_action=True, ask_source=False, base_branch="main")
+    qtbot.addWidget(dlg)
+
+    assert dlg.windowTitle() == "Update 'alpha-x' from base"
+
+
+def test_push_dialog_takes_a_caller_supplied_title(qtbot):
+    """The same dialog serves the PR refresh, which does not update from base —
+    a title saying it did would describe the wrong operation."""
+    dlg = PushOptionsDialog(
+        "alpha-x",
+        ask_action=True,
+        ask_source=False,
+        base_branch="main",
+        title="Refresh 'alpha-x' from PR #42",
+    )
+    qtbot.addWidget(dlg)
+
+    assert dlg.windowTitle() == "Refresh 'alpha-x' from PR #42"
+
+
 def test_pr_dialog_unchecked_leaves_every_choice_at_the_cli_default(qtbot):
     dlg = PrOptionsDialog("alpha-x")
     qtbot.addWidget(dlg)
