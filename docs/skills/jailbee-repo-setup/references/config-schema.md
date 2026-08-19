@@ -23,6 +23,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `host_mounts` | list of `{host, container, readonly}` | `[]` | global for personal, repo for stack |
 | `optional_mounts` | dict of name → `{host, container, readonly, description}` | `{}` | repo |
 | `host_devices` | list of `{path, source, type, mode, gid, uid, group}` | `[]` | repo |
+| `host_ports` | list of `{name, port, host_port, proto, host_address, container_address}` | `[]` | repo |
 | `shared_caches` | list of `{name, host_subpath, container_path}` | bundled defaults (see below) | repo (rarely overridden) |
 | `share_local` | bool | `true` | repo |
 | `egress_allow` | list of strings | `[]` | global for cross-cutting, repo appends |
@@ -37,6 +38,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
 | `ls` / `dashboard` | `{fields, hide}` | `fields: null`, `hide: []` (`dashboard.hide` defaults to `[repo, full_name, git_status, created, ttl]`) | global (personal display preference) |
 | `pull` | `{destroy_container, delete_branch}` | both `prompt` | mixed |
+| `confirm` | `{auto_target}` | `auto_target: true` | global (personal preference) |
 | `push` | `{default_action, default_source, push_from, autofetch}` | `ask` / `base` / `origin` / `true` | mixed |
 | `new` | `{clone_from, autofetch, background, submodules}` | `origin/true/false/true` | repo |
 | `destroy` | `{background}` | `background: false` | repo |
@@ -110,6 +112,22 @@ A device whose host `source` is absent is **skipped** (JailBee does not fail); `
 **Access is via group membership, not `mode`.** Devices with a udev `static_node` rule (`/dev/kvm`, `/dev/net/tun`, `/dev/fuse`, …) get reset to their distro default (e.g. `root:kvm 0660`) by the container's `systemd-udevd` on every boot, overriding the profile `mode`. So JailBee adds the `dev` user to the device's owning group — auto-derived from the host node (`/dev/kvm` → `kvm`), or set `group:` to override. Applied on `jailbee new` and `jailbee apply`; a new `jailbee shell`/`jailbee tmux` session picks the group up (an already-open shell must be reopened — check with `id`). `mode`/`gid`/`uid` still apply to the profile device and matter for non-`static_node` devices (e.g. render nodes keep `0666`).
 
 **Security:** opt-in, default empty. Containers are unprivileged, so `/dev/kvm` doesn't grant escape on its own, but each device widens the host-kernel attack surface (KVM ioctls run in host-kernel context). List only what the repo needs.
+
+## `host_ports`
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }                  # host adb server, reachable inside
+  # - { name: api, port: 3000, host_port: 9000 }
+```
+
+Make a host TCP/UDP service reachable **inside** every container of the repo. Each entry becomes one Incus `proxy` device named `port-cfg-<name>`: the container listens on `container_address:port` and Incus's forkproxy connects to `host_address:host_port` on the host. So `port`/`container_address` describe the container-side listener, `host_port`/`host_address` the host service it reaches. Fields: `name` (handle, `[a-z0-9][a-z0-9-]*`, max 40 chars, unique — also the `jailbee port rm` key), `port` (container-side, 1–65535, required), `host_port` (defaults to `port`), `proto` (`tcp` default, or `udp`), `host_address` (default `127.0.0.1`), `container_address` (default `127.0.0.1`). Both addresses must be IP literals — a hostname is rejected rather than resolved once and pinned into the device. Layered like `host_mounts`; `[]` resets.
+
+**Only this direction is configurable.** A host-side listener is machine-wide, so a repo declaring one would make every branch container of that repo fight over the same host port. The reverse — a container service reachable on the host — is `jailbee port to-host`, run per container. A `direction:`/`to_host:`/`bind:` key in an entry is rejected with that explanation, not a generic "unknown field".
+
+Entries are attached by `jailbee new` and reconciled by `jailbee apply` (added / replaced / removed to match the config) — proxy devices hotplug, so no image rebuild and no restart. Reconciliation only touches `port-cfg-*` devices; a forward added by hand with `jailbee port` is left alone.
+
+**Security:** a forward is a hole through the `net strict` ACL's egress half by construction — forkproxy connects straight out of the container's netns, so the bridge ACL never sees the traffic. Opt-in, default empty; list only what the repo's workflow needs.
 
 ## `shared_caches`
 
