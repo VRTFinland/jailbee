@@ -71,6 +71,15 @@ against. `jailbee apply --no-restart` re-resolves and refreshes both live,
 without a container restart. `loose` mode (a dedicated bridge with no ACL)
 is the other selectable state.
 
+Port forwards sit outside this mechanism by construction. A forward
+(`host_ports` in config, or an ad hoc `jailbee port`) is one Incus `proxy`
+device, and Incus's forkproxy connects directly into or out of the container's
+network namespace instead of sending packets over the NIC — so the traffic
+never traverses the bridge the ACL is attached to, and neither direction is
+filtered by it. `jailbee net status` lists the active forwards next to the
+strict-mode summary for that reason; see
+[Security and limitations](security.md#port-forwards).
+
 ## Host <-> container git bridge
 
 Containers clone the source repo with `git clone --shared`, so a container's

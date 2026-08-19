@@ -40,8 +40,14 @@ its origin, not its scope.
 - **Host sockets, shared** — Wayland, PulseAudio, D-Bus and the gpg-agent are
   attached to every container, so `git commit -S` and `ssh` work inside while
   the private key never leaves the host (a smartcard still asks for its
-  touch). Mount any other host socket the same way — an adb server, a
-  database — and use it from inside.
+  touch). Mount any other host socket the same way and use it from inside.
+- **Host services, forwarded in** — declare
+  `host_ports: [{ name: adb, port: 5037 }]` and every container of the repo
+  reaches that host service on its own localhost, so plain `adb devices` works
+  inside with no `ADB_SERVER_SOCKET` juggling. `jailbee port` adds or removes a
+  forward on one container without touching the config, in either direction —
+  `to-host` for the rarer case where you do want a container's service on the
+  host.
 - **Network modes** — per-container egress allowlist with `strict` and
   `loose` policies (`jailbee net`), safe for unattended agent runs. Entries are
   hostnames and ports (`api.example.com:443`), not IP addresses: JailBee
@@ -54,7 +60,8 @@ its origin, not its scope.
   directory across the repo's containers while your host `~/.claude` is
   never read. The Anthropic hosts are added to the strict-mode allowlist
   automatically, JailBee's own skills teach the in-container Claude to drive
-  `jailbee`, and `jailbee pr` writes the PR title and body. Start it
+  `jailbee`, and `jailbee pr` writes the PR title and body — to your repo's own
+  standard, if you state one in `claude.pr_prompt`. Start it
   automatically in a tmux window and the container is ready for an
   unattended run the moment it boots — with permission prompts turned off
   (`--dangerously-skip-permissions`), because the boundary is the container
@@ -70,7 +77,10 @@ its origin, not its scope.
   `jailbee destroy` / `jailbee new` — while nothing a container does reaches
   your host's own dotfiles.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
-  TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans every repo.
+  TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans
+  every repo, and acts on what it shows: attach a shell or tmux, open the IDE,
+  create or update the PR, update a container from its base, read its diff —
+  without leaving the view that told you it was needed.
 
 ## Getting started
 

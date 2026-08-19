@@ -171,7 +171,9 @@ What turning it on gets you:
   `jailbee-repo-setup` skills are copied into the shared skills directory,
   so the in-container Claude can drive `jailbee` commands for you.
 - **AI-written PRs.** `jailbee pr <name>` asks the in-container Claude for
-  the title, body, and branch name (`--no-ai` opts out per call).
+  the title, body, and branch name (`--no-ai` opts out per call). It runs on
+  Sonnet by default (`claude.ai_pr_model`), and follows your project's own
+  PR-writing rules if you state them in `claude.pr_prompt`.
 
 With `autostart: true`, every container comes up with Claude already
 running in a tmux window; `jailbee tmux <name>` drops you straight into it.
