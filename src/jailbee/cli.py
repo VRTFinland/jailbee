@@ -140,7 +140,11 @@ def config_validate(config: ConfigOption = None) -> None:
         # raw, unrecovered blocks.
         cfg = load_config_unsanitized(path)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     success(f"Schema OK: {path}")
 
@@ -155,7 +159,11 @@ def config_validate(config: ConfigOption = None) -> None:
     try:
         issues += global_config_issues(default_global_config_path())
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
 
     if not issues:
@@ -5487,7 +5495,11 @@ def _load_or_exit(config_path: Path | None) -> "Config":
         path = _resolve_config_path(config_path)
         cfg = load_config(path)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     for w in cfg.column_warnings():
         warn(f"{path}: {w}")
@@ -5513,7 +5525,11 @@ def _load_global() -> GlobalConfig:
     try:
         gcfg, warnings = load_global_config(gpath)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     for w in warnings:
         warn(f"{gpath}: {w}")

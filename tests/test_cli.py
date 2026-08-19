@@ -106,6 +106,25 @@ def test_config_validate_passes_with_a_valid_global_column_block(tmp_path, monke
     assert result.exit_code == 0, result.stdout
 
 
+def test_config_validate_keeps_bracketed_text_in_a_validator_message(tmp_path) -> None:
+    """A validation message's square brackets must survive to the terminal.
+
+    `host_ports`'s name rule quotes its regex, `[a-z0-9][a-z0-9-]*`. Printed
+    through `error` (Rich markup on), Rich reads each bracket group as a style
+    tag and silently deletes it, so the user is told the name "must match *" —
+    the rule the message exists to state, gone. `error_plain` is what keeps it.
+    """
+    repo = _setup_repo_with_columns(tmp_path, "host_ports:\n  - name: ADB\n    port: 5037\n")
+
+    result = CliRunner().invoke(
+        app, ["config", "validate", "--config", str(repo / ".jailbee" / "config.yaml")]
+    )
+
+    assert result.exit_code == 1
+    # stderr, not stdout: `error`/`error_plain` print to `tui.err_console`.
+    assert "[a-z0-9][a-z0-9-]*" in result.stderr
+
+
 def test_config_validate_fails_on_a_repo_column_typo(tmp_path) -> None:
     """The repo-layer mirror of `test_config_validate_fails_on_a_global_column_typo`:
     ordinary loading (`load_config`) now recovers from a typo in a repo's
