@@ -527,7 +527,10 @@ The prompt forbids running the project's tests, build, linters or installers —
 testing is described from the commits and the CI config, because the run's budget
 is fixed while a suite's cost is the repository's. `claude.ai_pr_timeout`
 (default 600 s) bounds the run; on expiry you get a warning plus a placeholder
-description, fixable afterwards with `jailbee pr --description`.
+description, fixable afterwards with `jailbee pr --description`. The warning also
+names the container and the session id of the attempt, so you can see how far it
+got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
+transcript as it works, so a run that ran out of budget is still on disk.
 
 ## Submodules
 

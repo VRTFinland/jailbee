@@ -356,15 +356,82 @@ def test_generate_reports_why_the_container_claude_failed(mocker, make_cfg, tmp_
 
 
 def test_generate_returns_none_on_timeout(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusTimeoutError
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusTimeoutError("`incus exec c` timed out after 600s")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+
+def test_generate_pins_the_session_id_it_can_later_name(mocker, make_cfg, tmp_path):
+    """Read from the reply it would be unavailable exactly when it is needed.
+
+    `--output-format json` emits nothing until the run ends, so on a timeout the
+    reply — and the session id inside it — never arrive. Pinning it up front is
+    what lets the timeout warning point at a transcript.
+    """
+    import uuid as uuid_mod
+
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    call = incus.exec.call_args
+    assert '--session-id "$JAILBEE_PR_SESSION"' in call.args[1][2]
+    # A real UUID: `claude --session-id` rejects anything else.
+    uuid_mod.UUID(call.kwargs["env"]["JAILBEE_PR_SESSION"])
+
+
+def test_timeout_warning_names_the_container_session_and_budget(mocker, make_cfg, tmp_path):
+    """A timeout used to be a dead end: no bytes, no hint that a transcript exists."""
+    from jailbee.incus import IncusTimeoutError
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusTimeoutError("timed out after 600s")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    warn = mocker.patch("jailbee.pr_ai.warn")
+
+    full = f"{cfg.container_prefix}-feat-foo"
+    assert generate_pr_text(cfg, incus, full, branch="feat/foo", base="main") is None
+
+    hint = " ".join(c.args[0] for c in warn.call_args_list)
+    session_id = incus.exec.call_args.kwargs["env"]["JAILBEE_PR_SESSION"]
+    assert f"claude --resume {session_id}" in hint
+    assert "jailbee shell feat-foo" in hint  # short name, not the prefixed one
+    assert f"{cfg.claude.ai_pr_timeout}s" in hint
+
+
+def test_non_timeout_failure_does_not_promise_a_transcript(mocker, make_cfg, tmp_path):
+    """A missing `claude` or a rejected model leaves nothing to resume.
+
+    Sending the user into the container after a session that was never created
+    is worse than saying nothing.
+    """
     from jailbee.incus import IncusError
     from jailbee.pr_ai import generate_pr_text
 
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
-    incus.exec.side_effect = IncusError("`incus exec c` timed out after 180s")
+    incus.exec.side_effect = IncusError("bash: line 1: claude: command not found")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    warn = mocker.patch("jailbee.pr_ai.warn")
 
     assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+    everything = " ".join(c.args[0] for c in warn.call_args_list)
+    assert "--resume" not in everything
+    assert "transcript" not in everything
 
 
 def test_generate_returns_none_on_unparseable_output(mocker, make_cfg, tmp_path):
@@ -401,9 +468,7 @@ def test_generate_uses_the_configured_ai_pr_timeout(mocker, make_cfg, tmp_path):
     from jailbee.pr_ai import generate_pr_text
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"ai_pr_timeout": 900})}
-    )
+    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"ai_pr_timeout": 900})})
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")

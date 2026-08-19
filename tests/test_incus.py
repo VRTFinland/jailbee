@@ -216,6 +216,44 @@ def test_timeout_is_normalized_to_incus_error(incus, mocker):
     assert "feat-foo" in str(exc.value)
 
 
+def test_timeout_is_an_incus_error_subclass_callers_can_single_out(incus, mocker):
+    """`IncusTimeoutError` must stay catchable as `IncusError`.
+
+    Every other caller catches the base class and must keep catching expiries
+    unchanged; only code with something specific to say about running out of
+    budget — `pr_ai`, which points at the transcript Claude left behind —
+    catches the subclass first.
+    """
+    from jailbee.incus import IncusTimeoutError
+
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["incus", "exec"], timeout=3),
+    )
+    with pytest.raises(IncusTimeoutError):
+        incus.exec("feat-foo", ["bash", "-c", "true"], timeout=3)
+    assert issubclass(IncusTimeoutError, IncusError)
+
+
+def test_non_timeout_failure_is_not_an_incus_timeout(incus, mocker):
+    """A non-zero exit must not be mistaken for an expiry.
+
+    `pr_ai` decides whether a resumable transcript exists from the exception
+    type alone, so a plain failure has to stay a plain `IncusError`.
+    """
+    from jailbee.incus import IncusTimeoutError
+
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["incus", "exec"], returncode=127, stdout="", stderr="claude: not found"
+        ),
+    )
+    with pytest.raises(IncusError) as exc:
+        incus.exec("feat-foo", ["bash", "-c", "claude"])
+    assert not isinstance(exc.value, IncusTimeoutError)
+
+
 def test_dry_run_does_not_call_subprocess(mocker):
     incus = Incus(dry_run=True)
     run = _mock_run(mocker)

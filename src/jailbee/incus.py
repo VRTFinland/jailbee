@@ -16,6 +16,17 @@ class IncusError(Exception):
     """Raised when an `incus` CLI invocation fails."""
 
 
+class IncusTimeoutError(IncusError):
+    """Raised when an `incus` CLI invocation exceeded its ``timeout``.
+
+    A subclass so that every existing ``except IncusError`` keeps catching
+    timeouts unchanged. Callers that can say something useful *specifically*
+    about an expiry — as opposed to a missing binary or a non-zero exit —
+    catch this first; `pr_ai` does, to point at the transcript the timed-out
+    Claude run left behind in the container.
+    """
+
+
 # An argument longer than this, or one spanning lines, is summarised rather
 # than echoed in an error message.
 _ARG_ECHO_LIMIT = 160
@@ -142,7 +153,7 @@ class Incus:
             # be told apart from a DNS failure in its first second.
             detail = _partial_output(e)
             message = f"`incus {_render_args(args)}` timed out after {timeout}s"
-            raise IncusError(f"{message}: {detail}" if detail else message) from e
+            raise IncusTimeoutError(f"{message}: {detail}" if detail else message) from e
         if check and result.returncode != 0:
             # Include stdout AND stderr — `incus exec` runs scripts whose
             # progress (echo) goes to stdout, while errors (set -u traps,

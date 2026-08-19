@@ -24,10 +24,11 @@ Design rules this module obeys:
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jailbee.incus import IncusError
+from jailbee.incus import IncusError, IncusTimeoutError
 from jailbee.tui import warn
 
 if TYPE_CHECKING:
@@ -127,7 +128,7 @@ def generate_pr_text(
     the configured budget.
     """
     from jailbee.config import CONTAINER_USERNAME
-    from jailbee.lifecycle import container_repo_dir
+    from jailbee.lifecycle import container_repo_dir, short_name
 
     repo_dir = container_repo_dir(cfg, incus, full_name)
     prompt = _build_prompt(branch, base, fixed_title, fixed_body, cfg.claude.pr_prompt)
@@ -138,8 +139,18 @@ def generate_pr_text(
     # into the shell string) so their content can never be parsed as shell.
     # `${VAR:+...}` drops the whole --model flag when the var is empty, which
     # is how `ai_pr_model: null` inherits the container's own default model.
+    #
+    # The session id is chosen HERE rather than read from Claude's reply: with
+    # `--output-format json` nothing reaches stdout until the run ends, so a
+    # timeout — the one failure where the transcript is worth reading — is
+    # exactly the case where the reply, and the id in it, never arrive.
+    # Pre-assigning it means the warning below can name a session that is
+    # already on disk in the container.
+    session_id = str(uuid.uuid4())
+    budget = cfg.claude.ai_pr_timeout if timeout is None else timeout
     shell_cmd = (
         'claude ${JAILBEE_PR_MODEL:+--model "$JAILBEE_PR_MODEL"} '
+        '--session-id "$JAILBEE_PR_SESSION" '
         '-p "$JAILBEE_PR_PROMPT" --output-format json --dangerously-skip-permissions'
     )
     env = {
@@ -148,6 +159,7 @@ def generate_pr_text(
         "LOGNAME": CONTAINER_USERNAME,
         "JAILBEE_PR_PROMPT": prompt,
         "JAILBEE_PR_MODEL": cfg.claude.ai_pr_model or "",
+        "JAILBEE_PR_SESSION": session_id,
     }
     try:
         stdout = incus.exec(
@@ -157,12 +169,27 @@ def generate_pr_text(
             gid=cfg.container_user.gid,
             cwd=repo_dir,
             env=env,
-            timeout=cfg.claude.ai_pr_timeout if timeout is None else timeout,
+            timeout=budget,
         )
+    except IncusTimeoutError as exc:
+        # A timeout is the one failure that leaves something to read: Claude
+        # writes its transcript as it goes, so the run that ran out of budget
+        # is on disk and resumable even though jailbee received no bytes.
+        # Naming the container and the session is the difference between a
+        # dead end and a diagnosis — `claude --resume` alone lists only the
+        # sessions of whatever directory it is run from.
+        warn(f"In-container Claude could not generate the PR text: {exc}")
+        warn(
+            f"That attempt left a transcript in the container. To see how far it got: "
+            f"`jailbee shell {short_name(cfg, full_name)}`, then "
+            f"`claude --resume {session_id}`. Raise `claude.ai_pr_timeout` "
+            f"(currently {budget}s) if it was simply still working."
+        )
+        return None
     except IncusError as exc:
         # The caller only learns that generation failed. Report why here: a
-        # rejected `claude.ai_pr_model`, a missing `claude`, or a timeout are
-        # otherwise indistinguishable from the generic fallback message.
+        # rejected `claude.ai_pr_model` or a missing `claude` are otherwise
+        # indistinguishable from the generic fallback message.
         warn(f"In-container Claude could not generate the PR text: {exc}")
         return None
     return _parse_pr_text(stdout, fixed_title, fixed_body, current_branch=branch)
