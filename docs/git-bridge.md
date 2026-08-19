@@ -75,7 +75,7 @@ sequenceDiagram
     H->>C: git push over ext::incus exec --user uid ... git receive-pack
     Note over C: written to refs/jailbee/host/main
     C->>C: --merge / --rebase applies it to feat/foo
-    Note over C: --plain stops at the ref; conflicts<br>are left for jailbee shell
+    Note over C: --plain stops at the ref — conflicts<br>are left for jailbee shell
 ```
 
 ### Confirming an auto-picked container

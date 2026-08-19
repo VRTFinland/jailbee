@@ -22,7 +22,7 @@ whatever base they were cloned from until destroyed.
 ```mermaid
 flowchart TB
     UB["upstream Ubuntu image<br>golden.ubuntu_version"]
-    BUILD["prefix-base-build<br>temporary, on the loose bridge"]
+    BUILD["prefix-base-build<br>temporary, on the loose bridge<br>runs install.sh and the enabled install.d snippets"]
     IMG["prefix-base<br>golden image"]
     C1["prefix-feat-a"]
     C2["prefix-feat-b"]
@@ -30,7 +30,6 @@ flowchart TB
     OLD["prefix-base-YYYY-MM-DD<br>archived alias"]
 
     UB -->|"jailbee base build"| BUILD
-    BUILD -->|"install.sh + enabled install.d snippets"| BUILD
     BUILD -->|"publish, then delete the build container"| IMG
     IMG -->|"jailbee new feat/a — copy-on-write"| C1
     IMG -->|"jailbee new feat/b"| C2
@@ -117,11 +116,11 @@ The two paths out of a strict-mode container, and why only one of them meets
 the ACL:
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph CT["container, strict mode"]
         APP["build, agent, dev server"]
         HOSTS["/etc/hosts<br>pinned to the IPs the ACL allows"]
-        APP -.->|"resolves names via"| HOSTS
+        APP -.->|"resolves via"| HOSTS
     end
 
     NIC{"incusbr0<br>prefix-allowlist ACL<br>default-deny egress"}
@@ -132,7 +131,7 @@ flowchart LR
     APP -->|"eth0"| NIC
     NIC -->|"allow rule matches"| OK
     NIC -->|"implicit default"| NO
-    APP <-->|"proxy device: forkproxy enters the<br>network namespace directly, never eth0"| SVC
+    APP <-->|"proxy device, never eth0"| SVC
 ```
 
 ## Host <-> container git bridge

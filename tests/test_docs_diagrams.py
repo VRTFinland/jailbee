@@ -108,3 +108,24 @@ def test_label_text_uses_no_markup_but_line_breaks(path: Path, line: int, body: 
                 f"{path.name}:{offset} label {text!r} contains markup other than <br>; "
                 f"an unknown tag is dropped silently when the diagram renders"
             )
+
+
+@pytest.mark.parametrize(("path", "line", "body"), BLOCKS, ids=block_ids())
+def test_sequence_text_carries_no_statement_separator(
+    path: Path, line: int, body: list[str]
+) -> None:
+    """A `;` in sequence-diagram text ends the statement and fails the parse.
+
+    Found the hard way: `Note over C: --plain stops at the ref; conflicts…`
+    parsed as two statements, the second of which is not valid sequence
+    syntax, and mermaid rendered an error box instead of the diagram. Use a
+    dash. Scoped to sequence diagrams, which is where it was observed.
+    """
+    first = next((raw.strip() for raw in body if raw.strip()), "")
+    if not first.startswith("sequenceDiagram"):
+        return
+    for offset, raw in enumerate(body, start=line + 1):
+        assert ";" not in raw, (
+            f"{path.name}:{offset} contains a ';', which mermaid reads as a "
+            f"statement separator rather than as punctuation — use a dash"
+        )
