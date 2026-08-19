@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=aaaf4494" />
+    <link rel="stylesheet" href="assets/style.css?v=a69e50c2" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -153,10 +153,15 @@
       </div>
     </section>
 
-    <section id="problem">
+    <section id="problem" class="section--paired">
       <div class="wrap">
-        <h2>Two branches, one host, one of everything.</h2>
-        <div class="cards">
+        <!-- The label lives inside the h2, not above it: a reader hears
+             "The problem: two branches…" as one heading, and a skimmer sees
+             where the argument turns. Only these two sections carry one —
+             everything after #parallel is elaboration on the answer, and
+             labelling all nine headings would flatten the pair again. -->
+        <h2><span class="eyebrow eyebrow--problem">The problem</span>Two branches, one host, one of everything.</h2>
+        <div class="cards cards--problem">
           <div class="card">
             <p>
               <strong>Port 8080 is taken.</strong> The second branch's dev server, database and
@@ -192,7 +197,7 @@
                repetition rather than to the point. The port, the database and
                the file are not re-listed here either — the cards above name
                them, and the illustration shows the same :8080 three times. -->
-          <h2>Parallel agents that can't step on each other.</h2>
+          <h2><span class="eyebrow eyebrow--solution">The solution</span>Parallel agents that can't step on each other.</h2>
           <p>
             Point a coding agent at a branch and it gets a container to itself. Three can be
             working at once, each against its own copy of the stack, and none of them can

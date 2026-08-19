@@ -1020,3 +1020,52 @@ footer p {
     flex: 0 0 400px;
   }
 }
+
+/* -----------------------------------------------------------------------
+   Section labels — the two turns of the argument, #problem and #parallel.
+
+   Colleagues skimming the page could not tell which section stated the
+   problem and which stated the solution, and the reason was structural: every
+   h2 is the same size and colour, and the three pain items used the very
+   same .card component as #features' six benefit cards. So a skimmer saw
+   nine equal headings and two identical sets of cards.
+
+   The signal is a word, not a colour. Red already means "no" in the
+   comparison matrix and it means the same here, but the label reads "The
+   problem" whether or not the reader sees the hue — same rule as .mx__mark.
+   ----------------------------------------------------------------------- */
+.eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-bottom: 0.7rem;
+}
+
+.eyebrow--problem {
+  color: var(--red);
+}
+
+.eyebrow--solution {
+  color: var(--amber);
+}
+
+/* The pain items are not cards. Dropping the fill and the box leaves three
+   columns behind a red rule, which cannot be mistaken for the filled cards
+   in #features — the confusion this exists to remove. */
+.cards--problem .card {
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--red);
+  border-radius: 0;
+  padding: 0.15rem 0 0.15rem 1.1rem;
+}
+
+/* The pair reads as one unit: the answer follows the problem directly, with
+   the full section rhythm resuming at #network. A class rather than
+   `#problem`, which would be this stylesheet's only ID selector. */
+.section--paired {
+  padding-bottom: 0;
+}
