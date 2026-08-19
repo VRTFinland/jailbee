@@ -261,6 +261,7 @@ def add_forward(
     except IncusError as e:
         raise _translate(
             e,
+            direction=direction,
             container=container,
             container_port=container_port,
             host_port=host_port,
@@ -285,9 +286,23 @@ def add_forward(
     )
 
 
+# Incus reports a listener it could not open in two different ways for the very
+# same cause — both observed on 6.0.5 against one occupied port: usually
+# `Failed to listen on <addr>:<port>: ... bind: address already in use`, and
+# sometimes `Failed to receive fd from listener process: ...` when the
+# forkproxy handshake is what notices first. Neither names which side of the
+# forward the address belongs to, so both translate the same way: as a failure
+# to open the *listen* side, whichever side `direction` puts it on.
+_LISTEN_FAILURE_MARKERS = (
+    "address already in use",
+    "Failed to receive fd from listener process",
+)
+
+
 def _translate(
     exc: IncusError,
     *,
+    direction: Direction,
     container: str,
     container_port: int,
     host_port: int,
@@ -295,8 +310,14 @@ def _translate(
     """Turn a known Incus failure into something a user can act on.
 
     The strings are Incus 6.0.5's, recorded verbatim in
-    docs/manual-testing.md. The third is the one that must never reach a
-    user raw: it names neither the port nor the cause.
+    docs/manual-testing.md.
+
+    ``direction`` is what decides whose port a listen failure names, and it is
+    not recoverable from the message: Incus reports the address it could not
+    bind, and for ``to-container`` (``bind=instance``) that address is *inside*
+    the container. Sending such a user off to pick another host port is doubly
+    wrong — the host end of a ``to-container`` forward is a connect target, so
+    something listening there is exactly what the forward exists to reach.
     """
     message = str(exc)
     if "already exists" in message.lower():
@@ -304,18 +325,18 @@ def _translate(
             f"Port {container_port} is already forwarded in {container}. "
             f"Remove it first with `jailbee port rm {container_port}`."
         )
-    if "address already in use" in message:
+    if any(marker in message for marker in _LISTEN_FAILURE_MARKERS):
+        if direction == "to-container":
+            return PortError(
+                f"Could not open port {container_port} inside {container} — "
+                f"something is already listening on port {container_port} inside "
+                f"the container. Stop it, or forward to a different container "
+                f"port."
+            )
         return PortError(
             f"Host port {host_port} is already in use, so it cannot receive "
             f"{container}'s forward. Pick another with `--host-port N`, or "
             f"let jailbee choose with `--host-port auto`."
-        )
-    if "Failed to receive fd from listener process" in message:
-        return PortError(
-            f"Could not open port {container_port} inside {container} — "
-            f"something is already listening on port {container_port} inside "
-            f"the container. Stop it, or forward to a different container "
-            f"port."
         )
     return PortError(f"Incus refused the forward: {message}")
 
@@ -476,8 +497,11 @@ def attach_config_ports(cfg: Config, incus: Incus, container: str) -> list[str]:
         except IncusError as e:
             if "already exists" in str(e).lower():
                 continue
+            # `host_ports` entries are to-container by construction — see
+            # `entry_device` and `config.HostPort`.
             raise _translate(
                 e,
+                direction="to-container",
                 container=container,
                 container_port=entry.port,
                 host_port=entry.effective_host_port,
@@ -520,8 +544,13 @@ def reconcile_config_ports(
             try:
                 incus.config_device_add(container, device, "proxy", props)
             except IncusError as e:
+                # `host_ports` entries are to-container by construction — see
+                # `entry_device` and `config.HostPort`. Getting this wrong is
+                # what made `jailbee apply` advise `--host-port N` for a
+                # config-declared forward, a flag only the ad-hoc CLI has.
                 raise _translate(
                     e,
+                    direction="to-container",
                     container=container,
                     container_port=entry.port,
                     host_port=entry.effective_host_port,
@@ -535,6 +564,7 @@ def reconcile_config_ports(
             except IncusError as e:
                 raise _translate(
                     e,
+                    direction="to-container",
                     container=container,
                     container_port=entry.port,
                     host_port=entry.effective_host_port,
@@ -548,8 +578,12 @@ def reconcile_config_ports(
             try:
                 incus.config_device_remove(container, device)
             except IncusError as e:
+                # The live device's own direction, not the config's: this
+                # branch removes a device whose entry is gone, so there is no
+                # entry left to read a direction from.
                 raise _translate(
                     e,
+                    direction=current.direction,
                     container=container,
                     container_port=current.container.port or 0,
                     host_port=current.host.port or 0,
