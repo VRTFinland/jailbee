@@ -63,10 +63,13 @@ follow them in any change:
 - **`src/jailbee/incus.py` is the only module that calls
   `subprocess` for `incus` CLI operations.** Every other module calls
   `Incus` wrapper methods instead, so it can be unit-tested with a mocked
-  wrapper rather than a mocked subprocess call. (`registry.py`, `gui.py`,
-  and `maintenance.py` are the deliberate exception: they shell out
-  directly for *non*-Incus operations — host Docker, GUI launches via
-  `subprocess.Popen`, `du` for disk usage.)
+  wrapper rather than a mocked subprocess call. (`gui.py` is the deliberate
+  exception: it spawns a *detached* `incus exec` via `subprocess.Popen` so a
+  GUI app outlives the CLI process.) Shelling out to *other* host binaries
+  is fine and stays in one module per concern: `git.py` (`git`), `pr.py`
+  (`git`, `gh`), `doctor.py` (`docker`, `systemctl`),
+  `init_command.py`/`migrate.py` (`systemctl`), `maintenance.py` (`du`),
+  `chrome_pool.py` (`rsync`), `macos.py` (`sh`).
 - **`config.py` is read-only after load.** No module mutates the loaded
   `Config` object once `load_config()` has returned it.
 - **`cli.py` stays thin.** It only parses arguments and delegates; business
@@ -74,6 +77,30 @@ follow them in any change:
   explicit inputs.
 - **No global state.** Command functions take their dependencies as
   parameters rather than reaching for module-level singletons.
+
+The same rules as a picture — every arrow that reaches a real process goes
+through exactly one module:
+
+```mermaid
+flowchart TB
+    CLI["cli.py<br>parses arguments and delegates, no business logic"]
+    MOD["command modules: lifecycle, sync, apply, ports, golden, ...<br>plain functions taking Config and Incus as arguments"]
+    CFG["config.py<br>read-only once load_config has returned"]
+    INC["incus.py<br>the only module that runs the incus CLI"]
+    OTH["one module per other host binary<br>git.py, pr.py, doctor.py, init_command.py,<br>migrate.py, maintenance.py, chrome_pool.py, macos.py"]
+    GUI["gui.py<br>detached incus exec via Popen"]
+    SP["subprocess"]
+
+    CLI --> MOD
+    CFG -.->|"injected"| CLI
+    CFG -.->|"injected"| MOD
+    MOD --> INC
+    MOD --> OTH
+    MOD --> GUI
+    INC --> SP
+    OTH --> SP
+    GUI --> SP
+```
 
 See [`CLAUDE.md`](CLAUDE.md) for the fuller set of conventions (import
 style, config fixtures, manual smoke-test recipes, etc.) used when working
