@@ -317,7 +317,7 @@ def test_generate_happy_path_builds_exec_and_parses(mocker, make_cfg, tmp_path):
     assert call.kwargs["uid"] == cfg.container_user.uid
     assert call.kwargs["gid"] == cfg.container_user.gid
     assert call.kwargs["cwd"] == "/home/dev/repo"
-    assert call.kwargs["timeout"] == 180
+    assert call.kwargs["timeout"] == cfg.claude.ai_pr_timeout
     # base branch and feature branch name appear in the env prompt
     env_prompt = call.kwargs["env"]["JAILBEE_PR_PROMPT"]
     assert "main" in env_prompt
@@ -389,6 +389,28 @@ def test_generate_forwards_custom_timeout(mocker, make_cfg, tmp_path):
     generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main", timeout=42)
 
     assert incus.exec.call_args.kwargs["timeout"] == 42
+
+
+def test_generate_uses_the_configured_ai_pr_timeout(mocker, make_cfg, tmp_path):
+    """The budget has to come from config, not from a literal in this module.
+
+    It was hard-coded at 180s and neither `cli.py` call site passed a value, so
+    a repository whose generation legitimately needs longer had no knob at all
+    — the only symptom was a timeout warning and a placeholder description.
+    """
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"claude": cfg.claude.model_copy(update={"ai_pr_timeout": 900})}
+    )
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    assert incus.exec.call_args.kwargs["timeout"] == 900
 
 
 def test_generate_runs_through_login_shell(mocker, make_cfg, tmp_path):

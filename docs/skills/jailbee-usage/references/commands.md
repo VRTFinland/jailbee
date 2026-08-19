@@ -523,6 +523,12 @@ container's default). `claude.pr_prompt` adds project-specific instructions that
 outrank JailBee's generic title/body rules — see the config-schema reference in
 the `jailbee-repo-setup` skill.
 
+The prompt forbids running the project's tests, build, linters or installers —
+testing is described from the commits and the CI config, because the run's budget
+is fixed while a suite's cost is the repository's. `claude.ai_pr_timeout`
+(default 600 s) bounds the run; on expiry you get a warning plus a placeholder
+description, fixable afterwards with `jailbee pr --description`.
+
 ## Submodules
 
 ### `jailbee submodule checkout [NAME] [-b BRANCH]`

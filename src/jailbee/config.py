@@ -1636,6 +1636,15 @@ class ClaudeConfig(BaseModel):
       applies. `haiku` is a valid choice but has a smaller context window than
       the alternatives, so a large cumulative diff may not fit. Has no effect
       when `enabled` or `ai_pr_description` is false.
+    - `ai_pr_timeout`: seconds `jailbee pr` gives the in-container Claude to
+      produce the PR text before giving up and falling back to a placeholder.
+      Defaults to 600. Generation is an agentic run, not one model call — it
+      reads the log, the cumulative diff, the PR template and the branch's spec
+      across a dozen-plus turns, so cost scales with the repository, not just
+      with the diff. Measured in jailbee's own repo on a 21-file diff: 129s.
+      Raise it for a large tree, or when `claude.pr_prompt` asks for work that
+      takes longer. Has no effect when `enabled` or `ai_pr_description` is
+      false.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1652,6 +1661,7 @@ class ClaudeConfig(BaseModel):
     ai_pr_branch: bool = True
     pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
     ai_pr_model: str | None = "sonnet"
+    ai_pr_timeout: int = Field(default=600, gt=0)
 
     @field_validator("ai_pr_model")
     @classmethod

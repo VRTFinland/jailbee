@@ -32,7 +32,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch, ai_pr_model, pr_prompt}` | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
+| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch, ai_pr_model, pr_prompt, ai_pr_timeout}` | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
 | `github` | `{enabled, api_tokens}` | `enabled: false` (opt-in) | global |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
@@ -535,6 +535,7 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 | `claude.ai_pr_branch` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` asks Claude to propose a convention-following PR head branch name (confirmed interactively; `--as` / `--no-ai` override). |
 | `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` for PR-text generation. An alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` inherits the container's own default model. Must be a single whitespace-free token or config load fails. |
 | `claude.pr_prompt` | string \| null | `null` | Project-specific PR-writing instructions, embedded in JailBee's prompt as a section that outranks its generic title/body guidance. A repo-level key — this is where a project's PR standard belongs. Max 20 000 characters. |
+| `claude.ai_pr_timeout` | int | `600` | Seconds `jailbee pr` gives the in-container Claude to produce the PR text before falling back to a placeholder. Generation is an agentic run over the log, the diff, the PR template, the branch's spec and the CI config — a dozen-plus turns, so cost scales with the repository, not just the diff (109 s in JailBee's own repo on a 21-file diff). Raise it for a large tree, or when `pr_prompt` asks for slower work. Must be positive; to disable generation use `ai_pr_description: false`. |
 
 Example global config:
 

@@ -114,7 +114,7 @@ def generate_pr_text(
     base: str,
     fixed_title: str | None = None,
     fixed_body: str | None = None,
-    timeout: int = 180,
+    timeout: int | None = None,
 ) -> PrText | None:
     """Ask the in-container Claude CLI for a PR title and body.
 
@@ -122,6 +122,9 @@ def generate_pr_text(
     missing/non-zero exit, timeout, or output that can't be parsed into a
     valid title+body). The caller logs a warning and falls back. Both `branch`
     and `base` are interpolated into the prompt.
+
+    ``timeout`` defaults to `claude.ai_pr_timeout`; pass it only to override
+    the configured budget.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
@@ -154,7 +157,7 @@ def generate_pr_text(
             gid=cfg.container_user.gid,
             cwd=repo_dir,
             env=env,
-            timeout=timeout,
+            timeout=cfg.claude.ai_pr_timeout if timeout is None else timeout,
         )
     except IncusError as exc:
         # The caller only learns that generation failed. Report why here: a

@@ -514,6 +514,14 @@ The generation reads the branch's commits and cumulative diff, plus
 state its own PR conventions in `claude.pr_prompt` — those instructions outrank
 JailBee's generic guidance about the title and body.
 
+It is explicitly told **not** to run the project's tests, build, linters or
+installers, and to describe how the change was tested from the commits and the
+CI config instead — the run has a fixed budget while a test suite's cost belongs
+to the repository. `claude.ai_pr_timeout` (default 600 s) bounds the whole run;
+on expiry `jailbee pr` warns and falls back to a placeholder title/body, which
+you can replace later with `jailbee pr --description`. Raise the timeout for a
+large tree, or when `claude.pr_prompt` asks for slower work.
+
 ## Using `gh` / `git push` to GitHub from inside a container
 
 `gh` is baked into every container. For it to authenticate, the `github` block

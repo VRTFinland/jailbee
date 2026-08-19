@@ -156,6 +156,24 @@
 
 ### Fixed
 
+- **`jailbee pr` no longer runs your test suite to write a PR description.** The
+  prompt asked the body to say "how it was tested", and since the generation gets
+  an unrestricted shell it answered that by running the project's tests. Measured
+  in JailBee's own repo on a 21-file diff: 59 s of a 165 s run went to
+  `uv run pytest`, against a hard-coded 180 s cap — so a repo whose suite is
+  slower than JailBee's fully-mocked one could not finish at all, and the only
+  symptom was `In-container Claude could not generate the PR text: ... timed out
+  after 180s` followed by a placeholder description. The prompt now forbids
+  running tests, builds, linters and installers, and asks it to describe testing
+  from the commits and the CI config; the same run takes 109 s. A project that
+  genuinely wants more can still ask for it in `claude.pr_prompt`, which outranks
+  the guard.
+- **The PR-text timeout is configurable** as `claude.ai_pr_timeout`, default
+  600 s (was hard-coded at 180 s, with neither `jailbee pr` call site able to
+  override it). Generation is an agentic run of a dozen-plus turns over the log,
+  the diff, the PR template, the branch's spec and the CI config, so its cost
+  scales with the repository rather than with the diff alone. Raise it for a
+  large tree; `ai_pr_description: false` is still how you switch generation off.
 - **The dashboards notice repos registered while they are open.** Both
   `jailbee dashboard` and `jailbee gui` resolved the list of registered repos
   once at launch and reused it for the whole session. A repo that registered
