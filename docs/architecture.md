@@ -19,16 +19,49 @@ golden base by what changes at runtime. Rebuilding the golden image (`jailbee
 base build`) does not touch existing containers — they keep running on
 whatever base they were cloned from until destroyed.
 
+```mermaid
+flowchart TB
+    UB["upstream Ubuntu image<br>golden.ubuntu_version"]
+    BUILD["prefix-base-build<br>temporary, on the loose bridge"]
+    IMG["prefix-base<br>golden image"]
+    C1["prefix-feat-a"]
+    C2["prefix-feat-b"]
+    C3["prefix-pr-482"]
+    OLD["prefix-base-YYYY-MM-DD<br>archived alias"]
+
+    UB -->|"jailbee base build"| BUILD
+    BUILD -->|"install.sh + enabled install.d snippets"| BUILD
+    BUILD -->|"publish, then delete the build container"| IMG
+    IMG -->|"jailbee new feat/a — copy-on-write"| C1
+    IMG -->|"jailbee new feat/b"| C2
+    IMG -->|"jailbee new --pr 482"| C3
+    IMG -.->|"the next base build renames<br>the current alias out of the way"| OLD
+```
+
+Here and below, `prefix` stands for the repo's `container_prefix`.
+
 ## Layered profiles
 
 Incus profiles are composable and independently swappable. Each container is
 built from a stack of profiles:
 
-```
-[default]                              Incus default storage/network
-[<prefix>-base]                        GPU, Wayland, security, env vars
-[<prefix>-binds]                       host + shared bind mounts
-[<prefix>-net-{strict|loose}]          network policy (exactly one)
+```mermaid
+flowchart TB
+    P0["default<br>Incus storage + network"]
+    P1["prefix-base<br>GPU, Wayland, security flags, idmap, env vars"]
+    P2["prefix-binds<br>host RO mounts + shared RW mounts"]
+    MODE{"network mode<br>exactly one"}
+    P3A["prefix-net-strict<br>incusbr0 + prefix-allowlist ACL"]
+    P3B["prefix-net-loose<br>jailbee-loose bridge, no ACL"]
+    CT["the container"]
+    DEV["per-container devices, attached outside the stack<br>host-source RO clone source, GUI sockets,<br>port-forward proxies, under-repo mounts"]
+
+    P0 --> P1 --> P2 --> MODE
+    MODE -->|"jailbee net strict"| P3A
+    MODE -->|"jailbee net loose"| P3B
+    P3A --> CT
+    P3B --> CT
+    DEV -.-> CT
 ```
 
 Splitting GUI/security config from bind mounts from network policy means a
@@ -79,6 +112,28 @@ never traverses the bridge the ACL is attached to, and neither direction is
 filtered by it. `jailbee net status` lists the active forwards next to the
 strict-mode summary for that reason; see
 [Security and limitations](security.md#port-forwards).
+
+The two paths out of a strict-mode container, and why only one of them meets
+the ACL:
+
+```mermaid
+flowchart LR
+    subgraph CT["container, strict mode"]
+        APP["build, agent, dev server"]
+        HOSTS["/etc/hosts<br>pinned to the IPs the ACL allows"]
+        APP -.->|"resolves names via"| HOSTS
+    end
+
+    NIC{"incusbr0<br>prefix-allowlist ACL<br>default-deny egress"}
+    OK(["destination listed in egress_allow<br>plus DHCP, DNS, registry mirror"])
+    NO(["everything else<br>rejected at the NIC"])
+    SVC["host service<br>e.g. adb on 5037"]
+
+    APP -->|"eth0"| NIC
+    NIC -->|"allow rule matches"| OK
+    NIC -->|"implicit default"| NO
+    APP <-->|"proxy device: forkproxy enters the<br>network namespace directly, never eth0"| SVC
+```
 
 ## Host <-> container git bridge
 

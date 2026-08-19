@@ -37,9 +37,14 @@ isolated per-branch development environments using Incus system containers. See
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
-- **`registry.py`, `gui.py`, `maintenance.py`** call `subprocess` directly
-  for non-incus operations (host Docker, `subprocess.Popen` for GUI launches,
-  `du` for disk-usage). This is intentional — they're not Incus operations.
+- **Shelling out to non-incus binaries is intentional** and stays one module
+  per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
+  `systemctl`), `init_command.py`/`migrate.py` (`systemctl`), `maintenance.py`
+  (`du`), `chrome_pool.py` (`rsync`), `macos.py` (`sh`). `gui.py` is the one
+  module that runs `incus` outside `incus.py`: a *detached*
+  `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
+  `registry.py` runs the mirror through the `Incus` wrapper and calls no
+  `subprocess` of its own.
 
 ## Essential commands
 
