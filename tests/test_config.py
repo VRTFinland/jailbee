@@ -1,6 +1,7 @@
 """Tests for config models and loader."""
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -1331,6 +1332,94 @@ def test_claude_install_jailbee_skills_override_false_via_yaml(tmp_path, mocker)
     )
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.install_jailbee_skills is False
+
+
+def test_claude_pr_prompt_defaults_to_none(tmp_path, mocker):
+    """No `claude.pr_prompt` means jailbee's own prompt is used unchanged."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt is None
+
+
+def test_claude_pr_prompt_reads_a_multiline_block_from_repo_yaml(tmp_path, mocker):
+    """A repo encodes its PR standard as a YAML block scalar."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml=(
+            "claude:\n"
+            "  enabled: true\n"
+            "  pr_prompt: |\n"
+            "    Use these headings:\n"
+            "    ## Motivation\n"
+            "    ## Risk\n"
+        ),
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt == "Use these headings:\n## Motivation\n## Risk\n"
+
+
+def test_claude_pr_prompt_rejects_an_oversized_value():
+    """A pathological value fails loudly at load instead of inside the container."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError):
+        ClaudeConfig(enabled=True, pr_prompt="x" * 20_001)
+
+
+def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
+    """PR text is a bounded summarisation job — it does not need the Opus default."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "sonnet"
+
+
+def test_claude_ai_pr_model_accepts_a_pinned_model_id(tmp_path, mocker):
+    """The value passes through to `claude --model`, so full IDs must survive."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: claude-haiku-4-5\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "claude-haiku-4-5"
+
+
+def test_claude_ai_pr_model_null_inherits_the_container_default(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: null\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model is None
+
+
+def test_claude_ai_pr_model_rejects_extra_flags():
+    """A model name never contains whitespace; smuggling flags in must not work."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeConfig(enabled=True, ai_pr_model="sonnet --dangerously-skip-permissions")
+
+
+def test_claude_ai_pr_model_rejects_an_empty_string():
+    """Empty means "inherit the container default" — spell that `null`, not ''."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeConfig(enabled=True, ai_pr_model="   ")
 
 
 def test_claude_accepts_legacy_install_gie_skills_key_with_warning(mocker):
@@ -3267,3 +3356,113 @@ def test_load_config_from_text_rejects_github_block(tmp_path, mocker):
     )
     with pytest.raises(ConfigError, match="github"):
         load_config_from_text("github:\n  enabled: true\n", tmp_path / ".jailbee" / "config.yaml")
+
+
+def test_host_ports_defaults(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n",
+    )
+    cfg = load_config(cfg_path)
+    entry = cfg.host_ports[0]
+    assert entry.name == "adb"
+    assert entry.port == 5037
+    assert entry.host_port is None
+    assert entry.effective_host_port == 5037
+    assert entry.proto == "tcp"
+    assert entry.host_address == "127.0.0.1"
+    assert entry.container_address == "127.0.0.1"
+
+
+def test_host_ports_explicit_host_port_and_udp(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n"
+        "  - name: dns\n"
+        "    port: 5353\n"
+        "    host_port: 53\n"
+        "    proto: udp\n"
+        "    host_address: 10.0.0.1\n"
+        "    container_address: 127.0.0.2\n",
+    )
+    entry = load_config(cfg_path).host_ports[0]
+    assert entry.effective_host_port == 53
+    assert entry.proto == "udp"
+    assert entry.host_address == "10.0.0.1"
+    assert entry.container_address == "127.0.0.2"
+
+
+def test_host_ports_default_is_empty(tmp_path):
+    assert load_config(_make_config(tmp_path, "{}\n")).host_ports == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Adb", "-adb", "adb_server", "adb server", "a" * 41],
+)
+def test_host_ports_rejects_bad_name(tmp_path, name):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: {name!r}\n    port: 5037\n")
+    with pytest.raises(ConfigError, match="host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("port", [0, 70000, -1])
+def test_host_ports_rejects_out_of_range_port(tmp_path, port):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: x\n    port: {port}\n")
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_out_of_range_host_port(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: x\n    port: 5037\n    host_port: 99999\n",
+    )
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("field", ["host_address", "container_address"])
+def test_host_ports_rejects_hostname_as_address(tmp_path, field):
+    cfg_path = _make_config(
+        tmp_path,
+        f"host_ports:\n  - name: x\n    port: 5037\n    {field}: localhost\n",
+    )
+    with pytest.raises(ConfigError, match="IP literal"):
+        load_config(cfg_path)
+
+
+def test_host_ports_accepts_ipv6_literal(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        'host_ports:\n  - name: x\n    port: 5037\n    host_address: "::1"\n',
+    )
+    assert load_config(cfg_path).host_ports[0].host_address == "::1"
+
+
+def test_host_ports_rejects_duplicate_names(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n  - name: adb\n    port: 5038\n",
+    )
+    with pytest.raises(ConfigError, match="duplicate host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("key", ["direction", "to_host", "bind"])
+def test_host_ports_rejects_direction_keys_with_explanation(tmp_path, key):
+    cfg_path = _make_config(
+        tmp_path,
+        f"host_ports:\n  - name: web\n    port: 8080\n    {key}: to_host\n",
+    )
+    with pytest.raises(ConfigError, match="jailbee port to-host"):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_unknown_key(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: web\n    port: 8080\n    nat: true\n",
+    )
+    with pytest.raises(ConfigError):
+        load_config(cfg_path)

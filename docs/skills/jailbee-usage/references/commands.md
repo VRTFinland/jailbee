@@ -246,20 +246,46 @@ ignores `fields` entirely.
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
-`Enter` action menu (tmux/shell/ide/chrome/restart/stop/destroy for Running;
-start/destroy for Stopped), `r` force refresh, `h`/`?` keybinding help,
+`Enter` action menu, `r` force refresh, `h`/`?` keybinding help,
 `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
 menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
 the dashboard).
 
+The menu, in order: `job clear`, `job log`, `pr --open`, `pr`, `git push`,
+`git pull`, `git diff`, then tmux/shell/ide/chrome/net/restart/stop/destroy for
+Running (start/destroy for Stopped). Each entry appears only when it would do
+something:
+
+- `job clear`/`job log` need a background-job row (`job log` follows a live
+  worker's log and prints a finished one once);
+- `pr --open` needs a known PR;
+- `pr`, `git push`, `git pull` and `git diff` need a **running clone-mode**
+  container (a stopped or `--mount` container has no clone to publish from);
+- `git pull` also needs commits ahead of the base, and `git diff` something to
+  show. A git status that is merely *unknown* — under `--no-git`, or before the
+  first git-tier refresh — hides nothing: a missing column is not evidence of a
+  clean tree.
+
 Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
-open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR. Each one
+open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR, `P`
+create/update the PR, `u` update from base, `d` show the diff. Each one
 fires only when that action is offered for that container — the gate is the
 same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need the
-repo's `jetbrains.enabled`/`chrome.enabled`, `p` needs a known PR, and orphan
+repo's `jetbrains.enabled`/`chrome.enabled`, `p` needs a known PR, `P`/`u`/`d`
+need a running clone-mode container, and orphan
 rows have none of them. A declined key prints the reason in the panel footer
-for a couple of seconds. Two-tier
+for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
+the first writes to the host's own working tree, and the second's command
+varies with `--follow`.
+
+Output is not lost when an action prints something. `git diff` opens in
+`$PAGER` (`less -R`, then `more`), with colour forced past the pipe; `pr`,
+`git push`, `git pull` and `job log` run in the foreground and then wait for
+Enter, because the dashboard repaints over the screen the moment it returns.
+Prompts those commands would normally ask (`git push`'s merge/rebase picker,
+`pr`'s branch-name confirmation) work exactly as on the command line — the TUI
+hands over the real terminal. Two-tier
 refresh: base state ~3s, git columns ~10s — tune with `-i` / `--git-interval`, or
 `--no-git` to drop git columns. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.
@@ -267,6 +293,20 @@ repo not registered) show view-only.
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`
 keeps it bound to the terminal). Same `-i` / `--git-interval` / `--no-git` knobs.
+It offers the same menu entries under the same rules, but runs them as a GUI
+rather than in a terminal: only `shell`/`tmux` open a host terminal emulator,
+while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
+into a JailBee window with Stop and Copy buttons and the exit code on its status
+line (non-modal, so the dashboard keeps refreshing behind it). Stop is what ends
+a `job log --follow`.
+
+Its child process has no stdin, so anything the CLI would prompt for is asked
+first in a dialog and passed as a flag — and only where the CLI would ask:
+`git push` asks merge/rebase/plain when the repo's `push.default_action` is
+`ask` (its default) and the source when `push.default_source` is `ask`, `pr`
+asks about draft/ready, regenerating the description and publishing to an
+existing PR's head, and `git pull` asks for confirmation because it merges into
+the host's own branch. Cancelling any of those dispatches nothing.
 
 The Qt GUI has a **View** menu to switch between a wide **Table** layout and
 a width-adaptive **Cards** layout (cards re-wrap to fill the window). Within
@@ -305,6 +345,23 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | `jailbee shell [NAME]` | Interactive shell, lands in `~/<container_prefix>` (the clone); falls back to `$HOME` if there's no clone. Waits if the container is being created in the background. |
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec NAME CMD...` | Run a command as the dev user. `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
+
+**Attaching over a failed background job.** `shell`, `tmux`, `ide` and
+`chrome` all wait on an in-flight `jailbee new --background`. When that job
+ended badly — an autostart step failed, or its worker died — but the
+container is up, the command reports the failure, points at `jailbee job
+clear NAME`, and asks `Continue anyway? [Y/n]` before going in: the failed
+container is exactly what you asked to look at. `--force` (and a
+non-interactive stdin) skips the question; both dashboards pass it, since
+they already show the job state in the JOB column. Ctrl-C out of the wait
+gets a similar offer for a container that exists but is still unfinished —
+on stricter terms, since the interrupt is an explicit cancel: `Attach
+anyway?` defaults to no, is asked even under `--force`, and is skipped
+(exit 1) without a TTY.
+
+The command still refuses, without asking, when there is nothing to attach
+to (a create that died before the container existed) or when a destroy is
+actively tearing the container down.
 
 ## Git bridge
 
@@ -388,6 +445,8 @@ branch has commits it lacks, JailBee prints the count and points at `--from-loca
 
 Default: the commits `jailbee git pull` would bring (3-dot diff vs the base branch).
 `--wt` working-tree only, `--all` both, `--stat` summary, `-b` override branch.
+Colour follows stdout; `--color`/`--no-color` forces it either way, which is how
+`jailbee dashboard` keeps the diff coloured while piping it into a pager.
 
 ### `jailbee git retarget NAME NEWBASE [--merge]`
 
@@ -447,6 +506,14 @@ proposes the head branch name (confirmed interactively). On an existing PR the
 description is left untouched unless you pass `--description`, `--title`/`--body`,
 or accept the interactive prompt — which is only offered for a PR JailBee itself
 created.
+
+Generation reads the commits and cumulative diff, `.github/pull_request_template.md`,
+the spec or issue the branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` /
+`AGENTS.md`, and links a referenced issue with `Closes #N` when it can reach
+`gh`. It runs on `claude.ai_pr_model` (default `sonnet`; `null` inherits the
+container's default). `claude.pr_prompt` adds project-specific instructions that
+outrank JailBee's generic title/body rules — see the config-schema reference in
+the `jailbee-repo-setup` skill.
 
 ## Submodules
 

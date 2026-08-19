@@ -19,7 +19,7 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
-from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, warn
+from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, success_plain, warn
 
 app = typer.Typer(
     name="jailbee",
@@ -312,6 +312,7 @@ def apply(
             result.hosts_repinned,
             result.docker_proxy_reapplied,
             result.offline_migrated,
+            result.ports_changed,
         ]
     ):
         info("Configuration already up to date.")
@@ -320,6 +321,9 @@ def apply(
 
     for name, err in result.restart_failures:
         error(f"Restart failed: {short_name(cfg, name)}: {err}")
+
+    for name, err in result.port_failures:
+        error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
 
     if not result.fully_successful:
         raise typer.Exit(1)
@@ -1273,9 +1277,8 @@ def shell(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1305,9 +1308,8 @@ def tmux(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1512,6 +1514,23 @@ def _resolve_existing_detailed(
     return incus, resolved
 
 
+def _confirm_attach(*, force: bool) -> bool:
+    """Whether to attach over a background job that failed or is unfinished.
+
+    Defaults to yes: the user typed ``jailbee shell``/``tmux`` precisely to
+    look at a container that misbehaved, and looking changes nothing. The
+    question exists only so the warning above it is read before ``tmux
+    attach`` takes over the screen.
+
+    ``force`` is an explicit "don't ask". A non-interactive stdin answers the
+    same way, because :func:`typer.confirm` would read EOF there and abort an
+    attach the caller explicitly requested.
+    """
+    if force or not sys.stdin.isatty():
+        return True
+    return typer.confirm("Continue anyway?", default=True)
+
+
 def _resolve_attachable(
     cfg: "Config",
     name: str | None,
@@ -1523,20 +1542,22 @@ def _resolve_attachable(
 
     Like :func:`_resolve_existing`, but in-flight ``jailbee new --background``
     containers resolve by name and appear in the picker; once resolved, the
-    call blocks on a spinner until the background op finishes. Fails fast
-    (Exit 1) on a failed op or a dead worker; Ctrl-C cancels the wait (not
-    the background build).
+    call blocks on a spinner until the background op finishes.
 
-    When ``force`` is set, the background job guard is bypassed entirely: the
-    call skips :func:`wait_for_background_ready` and attaches to the resolved
-    container regardless of op state, warning first if the op is ``failed``
-    or its worker died. This is the escape hatch for inspecting a container
-    whose autostart step failed (the container is created and running; only
-    the ``failed`` job row was blocking the attach).
+    A broken job never blocks the attach on its own. When the wait ends badly
+    but the container is up — the common autostart-failure case, where only
+    the ``failed`` job row stands between the user and the tmux window they
+    want to read — the failure is reported and :func:`_confirm_attach` asks
+    whether to go in anyway (default yes; ``force`` skips the question).
 
-    ``force`` bypasses the job guard, not the container's existence: a create
-    that failed before ``incus init`` leaves a job row and no container, and
-    "attaching anyway" to that can only produce an Incus error.
+    Ctrl-C out of the wait gets a similar offer, on stricter terms: an
+    unfinished container is still worth looking inside, but the interrupt is
+    an explicit cancel, so the question is asked even under ``force``,
+    defaults to no, and is not asked at all without a TTY.
+
+    Exits 1 without asking when attaching cannot help: no container exists
+    yet (a create that died before ``incus init``), or a destroy is actively
+    tearing this one down.
     """
     from jailbee import background
     from jailbee.incus import Incus
@@ -1557,28 +1578,6 @@ def _resolve_attachable(
 
     short = short_name(cfg, resolved)
 
-    if force:
-        row = lookup_background_job(cfg, resolved)
-        dead_job = row is not None and background.clearable(row.phase, row.pid)
-        if not incus.exists(resolved):
-            error(f"'{short}': no such container — there is nothing to attach to.")
-            if dead_job:
-                assert row is not None  # narrowed by dead_job
-                info(
-                    f"  Its background creation failed before the container was created: "
-                    f"{row.error_msg or 'unknown error'}"
-                )
-                info(f"  Clear the leftover job record with: jailbee job clear {short}")
-            raise typer.Exit(1)
-        if dead_job:
-            assert row is not None  # narrowed by dead_job
-            warn(
-                f"'{short}': background creation failed "
-                f"({row.error_msg or 'unknown error'}) — attaching anyway."
-            )
-            info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
-        return incus, resolved
-
     try:
         with console.status(f"⏳ waiting for '{short}' …") as status:
             wait_for_background_ready(
@@ -1587,21 +1586,33 @@ def _resolve_attachable(
                 on_phase=lambda p: status.update(f"⏳ waiting for '{short}' — {p}…"),
             )
     except KeyboardInterrupt:
-        warn(f"'{short}' is still building in the background; check `jailbee ls`.")
-        raise typer.Exit(1) from None
+        if not incus.exists(resolved):
+            warn(f"'{short}' is still building in the background; check `jailbee ls`.")
+            raise typer.Exit(1) from None
+        warn(f"'{short}' is still being created in the background — its setup is unfinished.")
+        # Ctrl-C is an explicit cancel, so neither `force` nor a missing TTY
+        # answers this one on the user's behalf: offer the unfinished
+        # container only when someone is at the keyboard to accept it, and
+        # default to no, since they just interrupted.
+        if not (sys.stdin.isatty() and typer.confirm("Attach anyway?", default=False)):
+            raise typer.Exit(1) from None
     except ValueError as e:
-        text = str(e)
-        error(text)
-        # If the op failed (or its worker died) but the container is up —
-        # the common autostart-failure case — point at --force so the user
-        # can attach and inspect it. Skip only when the error text already
-        # carries a --force hint (a freshly-rendered autostart failure);
-        # older stored error_msgs predate --force, so we still add ours.
+        # A dead job (terminal phase, or a worker that vanished) over a
+        # container that exists is recoverable by looking inside it. A live
+        # destroy job is not — nor is a create that never got as far as a
+        # container.
         row = lookup_background_job(cfg, resolved)
-        blocked = row is not None and background.clearable(row.phase, row.pid)
-        if blocked and incus.exists(resolved) and "--force" not in text:
-            info(f"  Inspect it anyway with:  jailbee {attach_cmd} {short} --force")
-        raise typer.Exit(1) from e
+        dead_job = row is not None and background.clearable(row.phase, row.pid)
+        if not (dead_job and incus.exists(resolved)):
+            error(str(e))
+            if dead_job:
+                info(f"  Nothing was created; clear the job record: jailbee job clear {short}")
+            raise typer.Exit(1) from e
+        warn(str(e))
+        info(f"  The container itself is up — 'jailbee {attach_cmd}' can still reach it.")
+        info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
+        if not _confirm_attach(force=force):
+            raise typer.Exit(1) from e
     return incus, resolved
 
 
@@ -3158,6 +3169,17 @@ def git_diff_cmd(
         bool,
         typer.Option("--stat", help="Use --stat instead of full patch."),
     ] = False,
+    color: Annotated[
+        bool | None,
+        typer.Option(
+            "--color/--no-color",
+            help=(
+                "Force ANSI colour on or off. Default: colour when stdout is a "
+                "TTY. `jailbee dashboard` passes --color because it pipes the "
+                "diff into a pager."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Show diff between container and host.
@@ -3166,6 +3188,10 @@ def git_diff_cmd(
     `jailbee git pull` (3-dot diff against the container's base branch:
     origin/<base_branch>; fallback origin/<default_branch>).
     Use --wt for working-tree-only, --all for both.
+
+    Colour follows stdout by default. `--color` forces it on for a consumer
+    that pages the output (a pipe is not a TTY, so autodetection would drop
+    exactly the colour a pager can render); `--no-color` forces it off.
     """
     import sys
 
@@ -3196,7 +3222,7 @@ def git_diff_cmd(
             branch=branch,
             mode=mode,
             stat_only=stat,
-            color=sys.stdout.isatty(),
+            color=sys.stdout.isatty() if color is None else color,
         )
     except sync.SyncError as e:
         error(str(e))
@@ -4944,6 +4970,7 @@ def net_status_cmd() -> None:
 
     # Auto-revert: list each loose-mode container, with or without TTL.
     _print_loose_status()
+    _print_port_forward_status()
 
 
 def _print_loose_status() -> None:
@@ -4987,6 +5014,55 @@ def _print_loose_status() -> None:
         typer.echo(
             f"  {short:<14}expires in {format_duration_short(delta):<10}(→ strict)",
         )
+
+
+def _print_port_forward_status() -> None:
+    """Render the port-forward section of `jailbee net status`.
+
+    Best-effort, like `_print_loose_status`: silent when no repo config is
+    reachable from cwd or Incus is unavailable. Forwards belong in this
+    command because Incus's forkproxy connects directly into (or out of)
+    the container's network namespace, so a forward's traffic never
+    traverses the bridge the ACL is attached to. The ACL is deny-by-default
+    on both egress and ingress (see `network.py`), so neither direction of
+    a forward is filtered by it — which means `net strict` alone no longer
+    describes the whole boundary.
+    """
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers
+
+    try:
+        cfg = _load_or_exit(None)
+    except typer.Exit:
+        return
+    try:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+    except Exception:
+        return
+
+    rows = [(i, by_container.get(i.name, [])) for i in infos]
+    active = [(i, fwds) for i, fwds in rows if fwds]
+    if not active:
+        return
+
+    total = sum(len(fwds) for _, fwds in active)
+    typer.echo("")
+    typer.echo(
+        f"Port forwards: {total} on {len(active)} container(s) — the network ACL does not see these"
+    )
+    for info_row, fwds in active:
+        for fwd in fwds:
+            # The direction word, not an arrow: it is the same word the
+            # commands use, and an arrow would raise the very "which way?"
+            # question the vocabulary exists to settle.
+            typer.echo(
+                f"  {info_row.display_name:<14}{fwd.direction:<14}"
+                f"{fwd.proto} container {fwd.container.display}  "
+                f"host {fwd.host.display}  ({fwd.source})"
+            )
 
 
 @net_app.command("unregister")
@@ -5729,6 +5805,366 @@ def snap_delete_cmd(
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
 
+# ---- Port forwarding commands ----
+
+port_app = typer.Typer(
+    name="port",
+    help="Forward ports between a container and the host.",
+    no_args_is_help=True,
+)
+app.add_typer(port_app)
+
+
+def _parse_port(raw: int) -> int:
+    """Validate a port before anything reaches Incus.
+
+    Incus accepts an out-of-range port at device-add time and fails only when
+    the device starts, so the check has to be here.
+    """
+    if not 1 <= raw <= 65535:
+        raise typer.BadParameter(f"port must be 1..65535, got {raw}")
+    return raw
+
+
+def _parse_proto(raw: str) -> str:
+    """Validate a forward's protocol before anything reaches Incus.
+
+    `config.HostPort.proto` restricts `host_ports` entries to tcp/udp; the
+    ad-hoc `jailbee port` commands must enforce the same restriction, or a
+    value like `sctp` reaches Incus and surfaces only as `ports._translate`'s
+    generic fallback error.
+    """
+    if raw not in ("tcp", "udp"):
+        raise typer.BadParameter(f"--proto must be 'tcp' or 'udp', got {raw!r}")
+    return raw
+
+
+def _parse_ip_literal(raw: str, *, option: str) -> str:
+    """Validate a forward endpoint address before anything reaches Incus.
+
+    Mirrors `config.HostPort`'s own `_validate_address`. Without this, a
+    hostname (or any other non-IP value) reaches `ports._probe_free_port` /
+    `ports.host_port_free`, which open a raw socket and let the resulting
+    `OSError`/`gaierror` escape uncaught for `--host-port auto`, or get
+    swallowed by `host_port_free`'s `except OSError: return False` into a
+    confidently wrong "already in use" diagnosis for an explicit
+    `--host-port N`.
+    """
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(raw)
+    except ValueError as e:
+        raise typer.BadParameter(f"{option} must be an IP literal, not a hostname: {raw!r}") from e
+    return raw
+
+
+@port_app.command("to-container")
+def port_to_container_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        int | None,
+        typer.Option("--host-port", help="Host-side port. Defaults to PORT."),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to connect to.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to listen on."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a host service reachable inside the container.
+
+    The container listens on PORT; connections land on the host. This is a
+    hole through `net strict` by construction — see docs/security.md.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-container",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
+        f"{short_name(cfg, name)}: connecting to {fwd.container.display} "
+        f"inside the container now reaches the host's {fwd.host.display} "
+        f"({fwd.device})"
+    )
+
+
+@port_app.command("to-host")
+def port_to_host_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        str | None,
+        typer.Option(
+            "--host-port",
+            help="Host-side port, or 'auto' to pick a free one. Defaults to PORT.",
+        ),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to listen on.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to connect to."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a container service reachable on the host.
+
+    The host listens; connections land inside the container. Not available in
+    repo config: a host port is machine-wide, so declaring one per repo would
+    make the repo's containers fight over it.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+
+    try:
+        if host_port == "auto":
+            taken = set(ports.declared_host_ports(incus, exclude=name))
+            resolved_host_port = ports.allocate_host_port(host_address, taken)
+        else:
+            if host_port is None:
+                resolved_host_port = container_port
+            else:
+                try:
+                    numeric_host_port = int(host_port)
+                except ValueError:
+                    raise typer.BadParameter(
+                        f"--host-port must be a port number or 'auto', got {host_port!r}"
+                    ) from None
+                # Route through `_parse_port` so a numeric-but-out-of-range value
+                # (e.g. `-1`) gets the same "port must be 1..65535" message as
+                # `to-container`, instead of the "or 'auto'" message above, which
+                # is misleading once the value has already parsed as a number.
+                resolved_host_port = _parse_port(numeric_host_port)
+            ports.check_host_port(incus, host_address, resolved_host_port, container=name)
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-host",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
+        f"{short_name(cfg, name)}: connecting to {fwd.host.display} on the "
+        f"host now reaches {fwd.container.display} inside the container "
+        f"({fwd.device})"
+    )
+
+
+@port_app.command("rm")
+def port_rm_cmd(
+    handle: Annotated[
+        str,
+        typer.Argument(
+            help="Device name, host_ports name, or container port.",
+            autocompletion=completion.complete_port_handle,
+        ),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Remove one port forward from a container."""
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.remove_forward(incus, name, handle)
+    except ports.PortError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(f"Removed {fwd.device} from {short_name(cfg, name)}")
+
+
+@port_app.command("ls")
+def port_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated fields. Allowed: container, device, "
+                "direction, proto, container_endpoint, host_endpoint, source."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List port forwards. With no container, lists every container of the repo.
+
+    Every proxy device is listed, including one added with `incus` directly —
+    it shows as source `other`. Hiding those would misreport what the
+    container can reach.
+    """
+    from rich.markup import escape
+
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+
+    rows: list[tuple[str, ports.Forward]] = []
+    if name is None:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+        for info_row in infos:
+            for fwd in by_container.get(info_row.name, []):
+                rows.append((info_row.display_name, fwd))
+        title = f"Port forwards for {cfg.container_prefix}"
+    else:
+        incus, resolved = _resolve_existing(cfg, name)
+        short = short_name(cfg, resolved)
+        rows = [(short, fwd) for fwd in ports.forwards_for(incus, resolved)]
+        title = f"Port forwards for {short}"
+
+    type Row = tuple[str, ports.Forward]
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="container",
+            header="CONTAINER",
+            cell=lambda r: r[0],
+            json=lambda r: r[0],
+            show_if=lambda rs: len({r[0] for r in rs}) > 1,
+        ),
+        table_format.FieldSpec(
+            name="device",
+            header="HANDLE",
+            cell=lambda r: r[1].device,
+            json=lambda r: r[1].device,
+        ),
+        table_format.FieldSpec(
+            name="direction",
+            header="DIRECTION",
+            cell=lambda r: r[1].direction,
+            json=lambda r: r[1].direction,
+        ),
+        table_format.FieldSpec(
+            name="proto",
+            header="PROTO",
+            cell=lambda r: r[1].proto,
+            json=lambda r: r[1].proto,
+        ),
+        table_format.FieldSpec(
+            name="container_endpoint",
+            header="IN CONTAINER",
+            # Escaped for the table cell: an IPv6 endpoint's bracketed display
+            # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and
+            # silently deleted. `json` stays unescaped — it is unstyled,
+            # pipeable output (see table_format.emit), not passed through
+            # Rich's markup parser.
+            cell=lambda r: escape(r[1].container.display),
+            json=lambda r: r[1].container.display,
+        ),
+        table_format.FieldSpec(
+            name="host_endpoint",
+            header="ON HOST",
+            cell=lambda r: escape(r[1].host.display),
+            json=lambda r: r[1].host.display,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda r: r[1].source,
+            json=lambda r: r[1].source,
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title=title if fmt == "table" else None,
+        empty_message="No port forwards.",
+    )
+
+
 # ---- GUI launcher commands ----
 
 
@@ -5750,8 +6186,8 @@ def ide_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -5782,8 +6218,8 @@ def chrome_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,

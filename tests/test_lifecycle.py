@@ -6326,3 +6326,99 @@ def test_mount_escalation_prompts_without_a_pr_too(make_cfg, tmp_path, mocker):
 
     confirm.assert_called_once()
     incus.init.assert_not_called()
+
+
+def test_new_container_attaches_config_ports(tmp_path, mocker):
+    """A `host_ports` entry becomes a proxy device on the new container."""
+    from jailbee.config import HostPort
+
+    cfg = _cfg_for_new(tmp_path)
+    cfg = cfg.model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    proxy_adds = [c for c in incus.config_device_add.call_args_list if c.args[2] == "proxy"]
+    assert len(proxy_adds) == 1
+    assert proxy_adds[0].args[0] == "repo-feat-x"
+    assert proxy_adds[0].args[1] == "port-cfg-adb"
+    assert proxy_adds[0].args[3] == {
+        "listen": "tcp:127.0.0.1:5037",
+        "connect": "tcp:127.0.0.1:5037",
+        "bind": "instance",
+    }
+
+
+def test_new_container_adds_no_proxy_device_without_host_ports(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    assert [c for c in incus.config_device_add.call_args_list if c.args[2] == "proxy"] == []
+
+
+def test_new_container_warns_and_continues_when_port_attach_fails(tmp_path, mocker):
+    """A non-"already exists" failure while attaching a config-declared
+    forward must not traceback: `new_container` has already created and
+    started the container by this point, so it warns and continues rather
+    than letting the `PortError` escape (previously uncaught here and in
+    every caller up to `entry.main`).
+    """
+    from jailbee.config import HostPort
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_new(tmp_path)
+    cfg = cfg.model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    def _add_device(_name: str, _device: str, dtype: str, _props: dict) -> None:
+        if dtype == "proxy":
+            raise IncusError("Error: the daemon is on fire")
+
+    incus.config_device_add.side_effect = _add_device
+    warn_plain = mocker.patch("jailbee.lifecycle.warn_plain")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    created = new_container(cfg, incus, opts)  # must not raise
+
+    assert created == "repo-feat-x"
+    warn_plain.assert_called_once()
+    msg = warn_plain.call_args.args[0]
+    assert "jailbee apply" in msg

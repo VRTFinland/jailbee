@@ -45,7 +45,7 @@ def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
 
 
 def test_menu_labels_match_menu_actions_for_running(qtbot):
-    from jailbee.dashboard import RepoGroup, menu_actions
+    from jailbee.dashboard import MenuContext, RepoGroup, menu_actions
 
     running = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
@@ -73,11 +73,13 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
     expected = [
         label
         for label, _ in menu_actions(
-            "Running",
-            has_config=True,
-            ide_enabled=True,
-            chrome_enabled=False,
-            current_network="strict",
+            MenuContext(
+                state="Running",
+                has_config=True,
+                ide_enabled=True,
+                chrome_enabled=False,
+                current_network="strict",
+            )
         )
     ]
     assert win.menu_labels_for("p-foo") == expected

@@ -269,8 +269,9 @@ running container once it's ready. A failed background creation shows
 <name>`, then `jailbee destroy`). The detailed worker log is written under
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/logs/`.
 
-Once you have fixed things by hand (`jailbee shell <name> --force`), clear the
-record with `jailbee job clear <name>`; the container is not touched.
+Once you have fixed things by hand (`jailbee shell <name>` warns about the
+failed job and asks before letting you in), clear the record with
+`jailbee job clear <name>`; the container is not touched.
 
 To make background the default, set it in `~/.config/jailbee/global.yaml`
 (applies to every repo) or a repo's `.jailbee/config.yaml`:

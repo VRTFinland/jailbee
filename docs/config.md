@@ -409,6 +409,73 @@ dev box where the host user already runs VMs this is the same trust boundary the
 already extend to their own account. Treat every `host_devices` entry as
 attack-surface-widening and list only what the repo's workflow needs.
 
+### `host_ports`
+
+Make a host service reachable **inside** every container of the repo — the
+classic case is an adb server: with the forward in place, plain `adb devices`
+works inside the container, and no `ADB_SERVER_SOCKET` juggling is needed,
+because the host's adb server already listens on `127.0.0.1:5037` by default.
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+Each entry becomes one Incus `proxy` device (named `port-cfg-<name>`): the
+container listens on `container_address:port`, and Incus's forkproxy connects
+to `host_address:host_port` on the host whenever something inside the
+container connects to that listener. So `port`/`container_address` name the
+container-side listener, and `host_port`/`host_address` name the host
+service it reaches.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Handle for this forward. Must match `[a-z0-9][a-z0-9-]*`, max 40 chars, unique within `host_ports`. Becomes the Incus device name `port-cfg-<name>` and the `jailbee port rm` key. |
+| `port` | int | required | Container-side port (1–65535) — what listens inside the container. |
+| `host_port` | int | `port` | Host-side port the container connects to. Set this when the container-side port and the host-side port differ. |
+| `proto` | `tcp` \| `udp` | `tcp` | Protocol. |
+| `host_address` | string | `127.0.0.1` | Host address the container connects to. Must be an IP literal — a hostname is rejected, because resolving one at device-add time would silently pin a single IP into the device. |
+| `container_address` | string | `127.0.0.1` | Container address the proxy listens on. Must also be an IP literal. |
+
+A worked example with the two ports differing — forwarding a host service on
+port 9000 to port 3000 inside the container:
+
+```yaml
+host_ports:
+  - { name: api, port: 3000, host_port: 9000 }
+```
+
+Here the container listens on `127.0.0.1:3000`; anything the container
+connects to at `3000` actually lands on the host's `127.0.0.1:9000`.
+
+**Only this direction is configurable.** A host-side listener is a
+machine-wide resource: if a repo's config declared one, every container of
+that repo would fight over the same host port, breaking the property that
+many branch containers of the same repo coexist. The reverse direction — a
+container service reachable on the host — is not something `host_ports`
+exposes at all; use `jailbee port to-host` per container instead (see
+[Commands](commands.md)). A `direction:`/`to_host:`/`bind:` key in a
+`host_ports` entry is rejected with this same explanation, not a generic
+"unknown field" error.
+
+**This is a hole through the `net strict` ACL's egress half by construction.** The
+forwarded traffic never traverses the bridge the ACL is attached to — Incus's
+forkproxy connects directly out of the container's network namespace to the
+host — so a `strict` container's default-deny ACL never sees it, on the
+egress side. (`jailbee port to-host`'s forwards are the ingress-side mirror of
+this same hole; `host_ports` only ever opens the egress one.) See
+[Security and limitations](security.md) for the full picture.
+
+Entries are attached when `jailbee new` creates a container, and reconciled
+by `jailbee apply`: an entry that's new is added, one whose properties
+changed is replaced, and one that's been deleted from the config is removed.
+There's no rebuild and no restart — proxy devices hotplug on a running
+container. Reconciliation only ever touches `port-cfg-*` devices; a forward
+you added by hand with `jailbee port` is never modified or removed by it.
+
+Layered like `host_mounts`/`host_devices`: per-repo entries append to global
+ones; `[]` resets.
+
 ### `shared_caches`
 
 The state layer every container of this repo has in common. Each entry is
@@ -745,6 +812,8 @@ Claude Code out.
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
+| `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` when generating the PR text. Writing a description is a bounded job, and pinning it means the generation does not compete for the same budget as the coding work that just happened in the container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` omits the flag so the container's own default model applies. `haiku` works but has a smaller context window, so a large cumulative diff may not fit. Rejected at load if it is not a single whitespace-free token. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
+| `claude.pr_prompt` | string \| null | `null` | Project-specific PR-writing instructions, usually a YAML block scalar in a repo's `.jailbee/config.yaml`. Embedded in JailBee's own prompt as a delimited section that **outranks** the generic title/body guidance, so a project can dictate the shape of its descriptions — but it is placed before the JSON response contract, which it cannot override. Whitespace-only is treated as unset; capped at 20 000 characters. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
 
 Example global config:
 
@@ -753,6 +822,29 @@ claude:
   enabled: true
   plugins_enabled: true
 ```
+
+### Encoding a project's PR standard
+
+`jailbee pr` already reads `.github/pull_request_template.md`, the spec or
+issue a branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`
+before writing anything. `claude.pr_prompt` is for the rules that live in
+none of those files — commit them to the repo's `.jailbee/config.yaml` so
+every container generates descriptions the same way:
+
+```yaml
+claude:
+  pr_prompt: |
+    Body sections, in this order and with these exact headings:
+      ## Why      — the user-visible problem, one paragraph, no implementation
+      ## What     — bullets, each naming the file or symbol it changed
+      ## Testing  — the commands you actually ran, verbatim
+    Never use the word "comprehensive". Link the Jira ticket from the branch
+    name as `[ABC-123](https://example.atlassian.net/browse/ABC-123)`.
+```
+
+These instructions win over JailBee's generic guidance where the two
+disagree, which is why the block cannot break generation: the response
+format Claude has to return is stated after it and stays JailBee's.
 
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when
@@ -1070,6 +1162,16 @@ CLI flags (`--merge`, `--rebase`, `--plain`, `--from`, `--current`,
 the configured defaults. With `"ask"`, the command opens a `questionary`
 prompt; in a non-TTY environment, the command errors and points at the
 relevant config key.
+
+The dashboards follow the same rule from the other side. `jailbee dashboard`
+hands over the real terminal, so the `questionary` prompt appears exactly as it
+would on the command line. The Qt dashboard cannot — its child process has no
+stdin — so it asks in a dialog instead and passes the answer as a flag, and
+**only** for a key that is `"ask"`: pin `default_action` or `default_source` and
+the GUI stops asking about it. Its source dialog offers the container's recorded
+base branch and the host's checked-out branch, the two choices it can express
+without reading the host repo; for `"default-branch"`, set `default_source` in
+the config rather than answering per push.
 
 #### Why `push_from` defaults to `origin`
 

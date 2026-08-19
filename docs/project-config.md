@@ -73,8 +73,36 @@ mount a host socket at all.
 #### Talking to Android devices over `adb`
 
 `adb` inside a container can drive a device or emulator attached to the
-**host** — no USB passthrough, no second adb server. Bind-mount the host adb
-server's socket and point the container's `adb` at it:
+**host** — no USB passthrough, no second adb server. Forward the host's adb
+server port into the container:
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+That's the whole recipe. The host's adb server already listens on
+`127.0.0.1:5037` by default, so once the forward is attached, plain
+`adb devices` inside the container lists whatever the host has plugged
+in — no `ADB_SERVER_SOCKET`, no mount. For existing containers, run
+`jailbee apply` to attach the forward (proxy devices hotplug, so no
+restart is needed). See
+[`host_ports`](config.md#host_ports) for the full field grammar.
+
+If something inside the container is already listening on 5037 — most
+likely its own adb server, started by an `adb` invocation before the
+forward was attached — the forward cannot be attached, because instance-side
+proxy listeners and pre-existing listeners on the same port can't coexist.
+Incus's own message for that case names neither the port nor the cause
+(`Failed to receive fd from listener process: Failed to receive file
+descriptor via abstract unix socket`), which is why `jailbee port
+to-container` translates it into something actionable: stop the container's
+own adb server (or forward to a different container port) and retry.
+
+**Fallback: bind-mount the socket.** `host_ports` only forwards TCP/UDP
+ports; the schema deliberately does not expose unix-socket endpoints. For a
+service that is only ever reachable over a unix socket, bind-mount it
+instead and point the client at it explicitly:
 
 ```yaml
 host_mounts:

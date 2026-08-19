@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/dashboard", "how do I use gie", "gie new/shell/git/net/dashboard" (`gie` is jailbee's deprecated pre-1.0 command alias), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` is jailbee's deprecated pre-1.0 command alias), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -266,6 +266,53 @@ allowlist to "fix" a failing push; switch to loose for the op instead. `jailbee 
 refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 `jailbee net status` shows the refresh timer + per-repo pools.
 
+## Port forwarding — `jailbee port`
+
+A forward is an Incus proxy device wired directly into (or out of) the
+container's network namespace — it bypasses the network ACL by construction,
+so it works identically in **both** `strict` and `loose`, and doesn't need
+`net loose` to set up or to use. `jailbee net status` prints an active
+forward's own section ("Port forwards: N on M container(s) — the network ACL
+does not see these"), separate from the allowlist/TTL info above.
+
+The single rule that makes every invocation unambiguous: **the positional
+argument is always the container-side port**, in both verbs, and
+`--host-port` always names the host side. There is no `HOST:CONTAINER` colon
+syntax anywhere.
+
+The verb names the side a service becomes **available** on — not which end
+opens the TCP connection. Those are opposite ends of the same forward, in
+both directions:
+
+- `jailbee port to-container PORT [NAME] [--host-port N] [--proto tcp|udp]`
+  — a **host** service becomes reachable **inside** the container. The
+  container listens on PORT; Incus's proxy connects out to
+  `--host-port`/host on the host. This is the adb case: the host runs the
+  adb server on `127.0.0.1:5037`, `jailbee port to-container 5037 <name>`
+  makes plain `adb devices` work inside the container, and the *container*
+  is the one that opens the outward connection even though the command name
+  says "to-container".
+- `jailbee port to-host PORT [NAME] [--host-port N|auto] [--proto tcp|udp]`
+  — the mirror: a **container** service becomes reachable **on the host**.
+  The host listens (on PORT, unless `--host-port` says otherwise);
+  `--host-port auto` asks Incus/the OS for a free host port and prints the
+  one it picked. The *host* opens the connection inward, even though the
+  command name says "to-host".
+- `jailbee port ls [NAME]` — list forwards; with no NAME, every container of
+  the repo. It lists **every** proxy device on the container, including one
+  added by hand with plain `incus config device add` — that one shows up
+  with source `other` rather than `config`/`ad-hoc`.
+- `jailbee port rm HANDLE [NAME]` — HANDLE is a device name, a `host_ports`
+  config entry's `name`, or a container-side port number (rejected as
+  ambiguous if more than one forward uses that port).
+
+Config-declared forwards (the `host_ports:` block in `.jailbee/config.yaml`
+— see the jailbee-repo-setup skill) are always the to-container direction
+and apply to every container of the repo. `jailbee port to-host` has no
+config equivalent by design — it's per-container and ad hoc, because a host
+listener is a machine-wide resource that containers of the same repo would
+otherwise fight over.
+
 ## Other day-to-day commands
 
 - **Shell / run:** `jailbee shell <name>` (interactive, lands in the clone),
@@ -430,6 +477,13 @@ interactively). Opt out with `--no-ai`, or override per field with
 unless you pass `--description` (regenerate with Claude), `--title`/`--body`, or
 accept the prompt — which is offered only for a PR JailBee itself created.
 `--force` force-pushes (with lease) a rebased/amended branch.
+
+The generation reads the branch's commits and cumulative diff, plus
+`.github/pull_request_template.md`, the spec or issue the branch implements, and
+`CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`. It runs on `claude.ai_pr_model`
+(default `sonnet`; `null` inherits the container's default model). A repo can
+state its own PR conventions in `claude.pr_prompt` — those instructions outrank
+JailBee's generic guidance about the title and body.
 
 ## Using `gh` / `git push` to GitHub from inside a container
 

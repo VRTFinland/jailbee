@@ -143,13 +143,16 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
   references, then tests and dependencies. Short titles, descriptive
   bodies. The user noted this explicitly after a first attempt copied
   their terse Finnish style.
-- **Planning artifacts stay out of the tree.** The planning skills write
-  design specs and implementation plans under `docs/superpowers/`; that
-  directory is gitignored on purpose, as is `.local/`, which holds
-  scratch scripts, probe output and working notes. They are working
-  notes for one change, not project documentation — never `git add -f`
-  them. Anything worth keeping goes into `docs/` proper, the CHANGELOG,
-  or a GitHub issue.
+- **Planning artifacts stay out of the tree.** Design specs go in
+  `.local/superpowers/specs/`, implementation plans in
+  `.local/superpowers/plans/`, named `YYYY-MM-DD-<topic>-design.md` /
+  `-plan.md`. `.local/` is gitignored (it also holds scratch scripts,
+  probe output and working notes), so the artifacts are kept on disk but
+  never committed — they are working notes for one change, not project
+  documentation, so never `git add -f` them. This overrides the planning
+  skills' own default of `docs/superpowers/` (that path is gitignored
+  too, but `.local/` is where this repo keeps such notes). Anything worth
+  keeping goes into `docs/` proper, the CHANGELOG, or a GitHub issue.
 - **Conversation language is Finnish; code and written artifacts are
   English.** The user prefers chatting in Finnish (explanations,
   questions, brainstorming dialogue), while all code, comments, commit

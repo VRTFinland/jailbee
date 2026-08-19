@@ -4,17 +4,130 @@
 
 ### Added
 
+- **The workflow commands are in both dashboards' action menus.** `pr` (create
+  or update the PR — not just `pr --open`, which only views one), `git push`
+  ("update from base"), `git pull` ("send commits to host"), `git diff` and
+  `job log` were reachable only from the command line, which meant leaving the
+  view that told you they were needed. Every entry is gated on whether it would
+  do something: the PR and git-bridge verbs need a running clone-mode container,
+  `git pull` needs commits ahead of the base, `git diff` needs something to
+  show, `job log` needs a job row. A git status that is merely unknown — under
+  `--no-git`, or before the first git-tier refresh — hides nothing, because a
+  missing column is not evidence of a clean tree.
+- **Output from those commands survives long enough to read.** In the TUI
+  `git diff` opens in `$PAGER` (`less -R`, then `more`) with colour forced past
+  the pipe, and `pr`/`git push`/`git pull`/`job log` wait for Enter before the
+  dashboard repaints over them. Their own prompts keep working, since the TUI
+  hands over the real terminal.
+- **`jailbee git diff --color/--no-color`** to force colour either way. The
+  default still follows stdout; the dashboard's pager path needs the override
+  because a pipe is not a TTY.
+- **The Qt dashboard runs those commands as a GUI, not in a terminal.** Only
+  `shell` and `tmux` still open a host terminal emulator, because they need a
+  real TTY. The printing verbs stream into a JailBee window with Stop and Copy
+  buttons and the exit code on its status line — non-modal, so the dashboard
+  keeps refreshing behind it and several commands can be watched at once. Stop
+  exists because `job log` on a live job follows the worker's log until it is
+  stopped. The questions those commands would ask on a TTY are asked up front in
+  Qt dialogs and passed as flags, since the GUI's child process has no stdin:
+  `git push`'s merge/rebase choice (only when the repo's `push.default_action`
+  is `ask`), `pr`'s draft/description/adoption choices, and a confirmation for
+  `git pull`, which is the one bridge command that writes to the host's own
+  working tree.
 - **Quick-action keys in `jailbee dashboard`.** `t` attaches tmux, `s` opens a
-  shell, `i` the IDE, `c` Chrome and `p` the PR, straight from the highlighted
-  row without going through the action menu. A key only fires when that action
-  is one the row's own menu would offer — a stopped container has no tmux, the
-  IDE and Chrome follow the repo's `jetbrains`/`chrome` config, and orphan rows
+  shell, `i` the IDE, `c` Chrome, `p` the PR, `P` creates or updates the PR,
+  `u` updates the container from its base and `d` shows the diff, straight from
+  the highlighted row without going through the action menu. A key only fires
+  when that action is one the row's own menu would offer — a stopped container
+  has no tmux, the IDE and Chrome follow the repo's `jetbrains`/`chrome` config,
+  `P`/`u`/`d` need a running clone-mode container, and orphan rows
   stay view-only — and when it declines, the footer says why rather than going
-  silent. `h` (or `?`) opens a keybinding help overlay.
+  silent. `git pull` and `job log` are deliberately menu-only: the first writes
+  to the host's own working tree, and the second's command varies with
+  `--follow`. `h` (or `?`) opens a keybinding help overlay.
 - **`jailbee --version`** alongside the existing `jailbee version` subcommand.
+- **`host_ports` config for forwarding a host service into every container.**
+  A `.jailbee/config.yaml` block like `host_ports: [{ name: adb, port: 5037 }]`
+  attaches an Incus proxy device to every container of the repo, so e.g. a
+  host adb server on `127.0.0.1:5037` is reachable inside the container
+  without an `ADB_SERVER_SOCKET` override. Only the host-to-container
+  direction is configurable here — a host-side listener is machine-wide, so
+  declaring the reverse per repo would make the repo's containers fight over
+  it; that direction is `jailbee port to-host`, run per container instead.
+  Entries are attached at `jailbee new` and reconciled by `jailbee apply` —
+  no image rebuild, no container restart. This supersedes the
+  adb-over-a-bind-mounted-socket recipe in
+  [`project-config.md`](docs/project-config.md#sharing-host-sockets) for the
+  common case (a TCP adb server), which remains the way to reach a host adb
+  server that only ever speaks over a unix socket — `host_ports` forwards
+  TCP/UDP only.
+- **`jailbee port` command group.** `jailbee port to-container PORT [NAME]`
+  makes a host service reachable inside the container (the adb case);
+  `jailbee port to-host PORT [NAME]` is the mirror, making a container
+  service reachable on the host (`--host-port auto` picks a free host port
+  and prints it). Both take the container-side port as the positional
+  argument and `--host-port` for the host side — there is no `HOST:CONTAINER`
+  syntax. `jailbee port ls [NAME]` lists every forward on a container (or
+  every container of the repo), including one added directly with `incus`.
+  `jailbee port rm HANDLE [NAME]` removes one by device name, config entry
+  name, or container port. A forward bypasses the network ACL by
+  construction, so it works the same in `strict` and `loose`, and shows up
+  in its own section of `jailbee net status`.
+- **`claude.pr_prompt` — a project's own PR standard.** `jailbee pr` generated
+  its title and body from a prompt hardcoded in JailBee, so a repo with its own
+  conventions had no way to reach the model. Set `claude.pr_prompt` in the
+  repo's `.jailbee/config.yaml` (a YAML block scalar) and those instructions
+  are embedded in JailBee's prompt as a delimited section that **outranks** the
+  generic title/body guidance. It is placed before the JSON response contract,
+  which it cannot override — so a project can dictate the shape of its
+  descriptions without having to restate, and risk breaking, the format
+  JailBee has to parse back.
+- **`claude.ai_pr_model`** selects the model used for PR-text generation. An
+  alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` inherits the
+  container's own default.
 
 ### Changed
 
+- **A failed background job no longer locks you out of the container.**
+  `jailbee shell`/`tmux`/`ide`/`chrome` used to refuse outright when the
+  container's `jailbee new --background` job had ended in `failed` — the
+  common case being an autostart step that errored — and demanded `--force`
+  to get in. That inverted the point: the failed container is exactly what
+  you asked to look at. The commands now report what failed, name
+  `jailbee job clear`, and ask `Continue anyway? [Y/n]` (default yes) before
+  attaching. Ctrl-C out of the wait gets a similar offer once the container
+  exists, replacing the other half of what `--force` used to do — on stricter
+  terms, since an interrupt is an explicit cancel: that one defaults to no,
+  is asked even under `--force`, and is skipped without a TTY. `--force`
+  survives as "don't ask", the same meaning it already has on
+  `jailbee destroy`; a non-interactive stdin is treated the same way. Both
+  dashboards pass it, since their JOB column already showed the failure.
+  Attaching is still refused, without a prompt, when there is no container to
+  attach to or a destroy is actively tearing it down. The autostart failure
+  message drops its `--force` hint — it rendered for foreground failures too,
+  where no background job exists and the flag never did anything.
+- **`jailbee pr` now generates its description on Sonnet**, not on whatever
+  model the container defaults to (typically Opus). Writing a PR description is
+  a bounded job — read a diff, follow a template, emit JSON — and pinning it
+  means the generation no longer competes for the same budget as the coding
+  work that just happened in that container. Set `claude.ai_pr_model: null` to
+  restore the previous inherit-the-default behaviour, or name any model you
+  prefer. `haiku` works, but its smaller context window may not hold a large
+  cumulative diff.
+- **The AI PR prompt now looks at what the project already documents.** Its
+  only nod to project context used to be a single line asking Claude to read
+  "any obviously relevant spec, plan, or README file". It now names
+  `.github/pull_request_template.md` (and `.github/PULL_REQUEST_TEMPLATE/`) as
+  the required shape when the repo ships one, searches named locations for the
+  spec or plan the branch implements — describing the change against that
+  intent and stating what it deliberately leaves out — reads `CONTRIBUTING.md`
+  / `CLAUDE.md` / `AGENTS.md` for PR-writing rules rather than only for branch
+  naming, and looks up an issue referenced by the branch name or a commit
+  message to add a `Closes #N` line.
+- **A failed PR-text generation says why.** "Claude PR-text generation failed;
+  using a placeholder" was printed whether `claude` was missing, the run timed
+  out, or the configured model does not exist. The underlying reason is now
+  reported alongside it.
 - **The dashboard's action menu opens inline, under the table.** Pressing
   `Enter` used to hand the terminal to a separate prompt, which took the whole
   dashboard off screen — you picked an action for a container you could no

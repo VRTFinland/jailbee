@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 from pathlib import Path
 
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 from jailbee.dashboard import RepoGroup
 from jailbee.git_status import GitStatus
@@ -394,7 +394,15 @@ def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
     window.card_view.set_collapsed.assert_called_once_with(set())
 
 
-def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
+def _controller_with_group(
+    mocker,
+    tmp_path,
+    *,
+    loose_ttl_default="5m",
+    push_action_default="ask",
+    push_source_default="base",
+    base_branch=None,
+):
     """An AppController holding one snapshot row, so on_action can resolve a config."""
     from jailbee.dashboard import RepoGroup
     from jailbee.lifecycle import ContainerInfo
@@ -408,6 +416,7 @@ def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
         network="strict",
         ip=None,
         memory_limit=None,
+        base_branch=base_branch,
     )
     config_path = tmp_path / ".gie" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -432,6 +441,8 @@ def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
             config_path=config_path,
             containers=[ci],
             loose_ttl_default=loose_ttl_default,
+            push_action_default=push_action_default,
+            push_source_default=push_source_default,
         )
     ]
     return controller
@@ -581,6 +592,153 @@ def test_on_action_net_strict_does_not_open_a_duration_dialog(mocker, tmp_path):
     controller.on_action("net strict", "p-foo")
 
     get_item.assert_not_called()
+
+
+def test_on_action_git_diff_opens_an_output_window_instead_of_spawning(mocker, tmp_path):
+    """`git diff` exists for the text it prints: a detached Popen would throw
+    that away, so the verb must go to the output window instead."""
+    controller = _controller_with_group(mocker, tmp_path)
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch.object(qapp.subprocess, "Popen")
+
+    controller.on_action("git diff", "p-foo")
+
+    popen.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert argv[:4] == ["jailbee", "git", "diff", "p-foo"]
+    assert open_output.call_args.args[1] == "jailbee git diff p-foo"
+
+
+def _stub_dialog(mocker, attr, answers, *, accepted=True):
+    """Patch a prompt dialog class in app's namespace; return the class mock."""
+    cls = mocker.patch(f"jailbee.qtui.app.{attr}")
+    cls.return_value.exec.return_value = (
+        QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+    )
+    cls.return_value.answers.return_value = answers
+    return cls
+
+
+def test_on_action_git_push_with_pinned_config_asks_nothing(mocker, tmp_path):
+    """A repo that pinned both `push:` defaults has already answered. Asking
+    anyway — and passing the answer as a flag — would override its policy."""
+    controller = _controller_with_group(
+        mocker, tmp_path, push_action_default="merge", push_source_default="base"
+    )
+    dialog = mocker.patch("jailbee.qtui.app.PushOptionsDialog")
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push", "p-foo")
+
+    dialog.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert not {"--merge", "--rebase", "--plain", "--from", "--current"} & set(argv)
+
+
+def test_on_action_git_push_asks_when_the_config_says_ask(mocker, tmp_path):
+    """`push.default_action` defaults to 'ask', and the detached child has no
+    stdin to answer with — so the GUI asks and passes the answer as a flag."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(
+        mocker, tmp_path, push_action_default="ask", base_branch="main"
+    )
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None))
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push", "p-foo")
+
+    assert dialog.call_args.kwargs["ask_action"] is True
+    assert dialog.call_args.kwargs["ask_source"] is False
+    assert dialog.call_args.kwargs["base_branch"] == "main"
+    assert open_output.call_args.args[0][-1] == "--rebase"
+
+
+def test_on_action_git_push_cancelled_dispatches_nothing(mocker, tmp_path):
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(mocker, tmp_path, push_action_default="ask")
+    _stub_dialog(
+        mocker, "PushOptionsDialog", PushAnswers(action="merge", source=None), accepted=False
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("git push", "p-foo")
+
+    open_output.assert_not_called()
+    popen.assert_not_called()
+
+
+def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):
+    from jailbee.qtui.prompts import PrAnswers
+
+    controller = _controller_with_group(mocker, tmp_path)
+    dialog = _stub_dialog(
+        mocker,
+        "PrOptionsDialog",
+        PrAnswers(ready=True, regenerate=False, confirm_foreign=True),
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("pr", "p-foo")
+
+    dialog.assert_called_once()
+    assert open_output.call_args.args[0][-2:] == ["--ready", "--yes"]
+
+
+def test_on_action_pr_cancelled_dispatches_nothing(mocker, tmp_path):
+    from jailbee.qtui.prompts import PrAnswers
+
+    controller = _controller_with_group(mocker, tmp_path)
+    _stub_dialog(
+        mocker,
+        "PrOptionsDialog",
+        PrAnswers(ready=None, regenerate=False, confirm_foreign=False),
+        accepted=False,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("pr", "p-foo")
+
+    open_output.assert_not_called()
+    popen.assert_not_called()
+
+
+def test_git_pull_confirmation_names_the_host_branch_and_not_destruction(mocker, tmp_path):
+    """`git pull` writes to the *host* repo, which a menu entry does not convey
+    — but it destroys nothing, so it must not inherit destroy's wording."""
+    controller = _controller_with_group(mocker, tmp_path, base_branch="main")
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git pull", "p-foo")
+
+    open_output.assert_not_called()  # declined
+    text = question.call_args.args[2]
+    assert "p-foo" in text
+    assert "main" in text
+    assert "destroy" not in text.lower()
+    assert question.call_args.args[4] == QMessageBox.StandardButton.No  # default button
+
+
+def test_git_pull_confirmation_accepted_opens_the_output_window(mocker, tmp_path):
+    controller = _controller_with_group(mocker, tmp_path, base_branch="main")
+    mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git pull", "p-foo")
+
+    argv = open_output.call_args.args[0]
+    assert argv[:4] == ["jailbee", "git", "pull", "p-foo"]
+    assert "--force" not in argv
 
 
 def test_destroy_at_risk_shows_the_summary_with_cancel_defaulted(mocker, tmp_path):

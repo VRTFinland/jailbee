@@ -23,6 +23,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `host_mounts` | list of `{host, container, readonly}` | `[]` | global for personal, repo for stack |
 | `optional_mounts` | dict of name → `{host, container, readonly, description}` | `{}` | repo |
 | `host_devices` | list of `{path, source, type, mode, gid, uid, group}` | `[]` | repo |
+| `host_ports` | list of `{name, port, host_port, proto, host_address, container_address}` | `[]` | repo |
 | `shared_caches` | list of `{name, host_subpath, container_path}` | bundled defaults (see below) | repo (rarely overridden) |
 | `share_local` | bool | `true` | repo |
 | `egress_allow` | list of strings | `[]` | global for cross-cutting, repo appends |
@@ -31,12 +32,13 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch}` | `enabled: false`, rest see below | global |
+| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch, ai_pr_model, pr_prompt}` | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
 | `github` | `{enabled, api_tokens}` | `enabled: false` (opt-in) | global |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
 | `ls` / `dashboard` | `{fields, hide}` | `fields: null`, `hide: []` (`dashboard.hide` defaults to `[repo, full_name, git_status, created, ttl]`) | global (personal display preference) |
 | `pull` | `{destroy_container, delete_branch}` | both `prompt` | mixed |
+| `confirm` | `{auto_target}` | `auto_target: true` | global (personal preference) |
 | `push` | `{default_action, default_source, push_from, autofetch}` | `ask` / `base` / `origin` / `true` | mixed |
 | `new` | `{clone_from, autofetch, background, submodules}` | `origin/true/false/true` | repo |
 | `destroy` | `{background}` | `background: false` | repo |
@@ -110,6 +112,22 @@ A device whose host `source` is absent is **skipped** (JailBee does not fail); `
 **Access is via group membership, not `mode`.** Devices with a udev `static_node` rule (`/dev/kvm`, `/dev/net/tun`, `/dev/fuse`, …) get reset to their distro default (e.g. `root:kvm 0660`) by the container's `systemd-udevd` on every boot, overriding the profile `mode`. So JailBee adds the `dev` user to the device's owning group — auto-derived from the host node (`/dev/kvm` → `kvm`), or set `group:` to override. Applied on `jailbee new` and `jailbee apply`; a new `jailbee shell`/`jailbee tmux` session picks the group up (an already-open shell must be reopened — check with `id`). `mode`/`gid`/`uid` still apply to the profile device and matter for non-`static_node` devices (e.g. render nodes keep `0666`).
 
 **Security:** opt-in, default empty. Containers are unprivileged, so `/dev/kvm` doesn't grant escape on its own, but each device widens the host-kernel attack surface (KVM ioctls run in host-kernel context). List only what the repo needs.
+
+## `host_ports`
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }                  # host adb server, reachable inside
+  # - { name: api, port: 3000, host_port: 9000 }
+```
+
+Make a host TCP/UDP service reachable **inside** every container of the repo. Each entry becomes one Incus `proxy` device named `port-cfg-<name>`: the container listens on `container_address:port` and Incus's forkproxy connects to `host_address:host_port` on the host. So `port`/`container_address` describe the container-side listener, `host_port`/`host_address` the host service it reaches. Fields: `name` (handle, `[a-z0-9][a-z0-9-]*`, max 40 chars, unique — also the `jailbee port rm` key), `port` (container-side, 1–65535, required), `host_port` (defaults to `port`), `proto` (`tcp` default, or `udp`), `host_address` (default `127.0.0.1`), `container_address` (default `127.0.0.1`). Both addresses must be IP literals — a hostname is rejected rather than resolved once and pinned into the device. Layered like `host_mounts`; `[]` resets.
+
+**Only this direction is configurable.** A host-side listener is machine-wide, so a repo declaring one would make every branch container of that repo fight over the same host port. The reverse — a container service reachable on the host — is `jailbee port to-host`, run per container. A `direction:`/`to_host:`/`bind:` key in an entry is rejected with that explanation, not a generic "unknown field".
+
+Entries are attached by `jailbee new` and reconciled by `jailbee apply` (added / replaced / removed to match the config) — proxy devices hotplug, so no image rebuild and no restart. Reconciliation only touches `port-cfg-*` devices; a forward added by hand with `jailbee port` is left alone.
+
+**Security:** a forward is a hole through the `net strict` ACL's egress half by construction — forkproxy connects straight out of the container's netns, so the bridge ACL never sees the traffic. Opt-in, default empty; list only what the repo's workflow needs.
 
 ## `shared_caches`
 
@@ -515,6 +533,8 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the **in-container Claude understands JailBee** and can help edit `.jailbee/config.yaml`. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` generates a new PR's title and body with the container's Claude CLI (opt out per-invocation with `jailbee pr --no-ai`). |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` asks Claude to propose a convention-following PR head branch name (confirmed interactively; `--as` / `--no-ai` override). |
+| `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` for PR-text generation. An alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` inherits the container's own default model. Must be a single whitespace-free token or config load fails. |
+| `claude.pr_prompt` | string \| null | `null` | Project-specific PR-writing instructions, embedded in JailBee's prompt as a section that outranks its generic title/body guidance. A repo-level key — this is where a project's PR standard belongs. Max 20 000 characters. |
 
 Example global config:
 
@@ -522,6 +542,23 @@ Example global config:
 claude:
   enabled: true
 ```
+
+Example repo-level PR standard in `.jailbee/config.yaml`:
+
+```yaml
+claude:
+  pr_prompt: |
+    Body sections, in this order and with these exact headings:
+      ## Why      — the user-visible problem, one paragraph
+      ## What     — bullets, each naming the file or symbol it changed
+      ## Testing  — the commands you actually ran, verbatim
+```
+
+`jailbee pr` already reads `.github/pull_request_template.md`, the spec or
+issue the branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` /
+`AGENTS.md` on its own. Reach for `pr_prompt` only for rules that live in
+none of those files, and never restate the JSON response format in it —
+JailBee owns that and states it after the project block.
 
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when

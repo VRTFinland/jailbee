@@ -988,6 +988,29 @@ def new_container(
 
     ensure_device_groups(cfg, incus, name)
 
+    # Attach the repo's `host_ports` forwards (Incus proxy devices) before
+    # autostart, so a step can use a forwarded host service — an adb command
+    # or a database client is exactly the case this exists for. Proxy devices
+    # hotplug, so this needs no restart.
+    if cfg.host_ports:
+        from jailbee.ports import PortError, attach_config_ports
+
+        # Warn and continue rather than let this abort `new_container`: the
+        # container is already created and started at this point, so it is
+        # usable regardless, and `jailbee apply` will attach the forward on
+        # its next run (`reconcile_config_ports` treats a missing `port-cfg-*`
+        # device the same as any other drift).
+        try:
+            attached = attach_config_ports(cfg, incus, name)
+        except PortError as e:
+            warn_plain(
+                f"Could not attach port forward(s) to {short_name(cfg, name)}: {e}\n"
+                f"  The container is usable; run `jailbee apply` to retry the forward."
+            )
+        else:
+            if attached:
+                info(f"Attached {len(attached)} port forward(s) to {short_name(cfg, name)}")
+
     # Pin /etc/hosts for strict profile so the container's resolver sees
     # the ACL'd IPs before autostart's first network use. Must run after
     # `incus.start` because `apply_hosts` uses `incus exec`.

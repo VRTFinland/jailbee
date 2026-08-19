@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.console import Console, RenderableType
 
 from jailbee import dashboard
+from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
 
@@ -63,7 +64,17 @@ def test_registered_repo_configs_skips_missing_and_keeps_present(db_session, tmp
     assert result == [present / ".jailbee" / "config.yaml"]
 
 
-def _ci(name: str, repo: str, state: str = "Running") -> ContainerInfo:
+def _ci(
+    name: str,
+    repo: str,
+    state: str = "Running",
+    *,
+    mode: str = "clone",
+    pr_number: int | None = None,
+    job_phase: str | None = None,
+    job_pid: int | None = None,
+    git_status: GitStatus | None = None,
+) -> ContainerInfo:
     return ContainerInfo(
         name=name,
         state=state,
@@ -71,7 +82,39 @@ def _ci(name: str, repo: str, state: str = "Running") -> ContainerInfo:
         ip=None,
         memory_limit=None,
         repo=repo,
+        mode=mode,
+        pr_number=pr_number,
+        job_phase=job_phase,
+        job_pid=job_pid,
+        git_status=git_status,
     )
+
+
+def _ctx(**kw: object) -> dashboard.MenuContext:
+    """A running clone container in a repo whose config loaded.
+
+    The defaults are the common case; each test overrides only the field its
+    subject is about.
+    """
+    fields: dict[str, object] = {
+        "state": "Running",
+        "has_config": True,
+        "current_network": "strict",
+    }
+    fields.update(kw)
+    return dashboard.MenuContext(**fields)
+
+
+def _dirty(**kw: str) -> GitStatus:
+    """A GitStatus with committed work and a dirty tree unless overridden."""
+    fields: dict[str, str] = {
+        "wt": "+12 -3",
+        "ahead_diff": "+245 -18",
+        "ahead_count": "3",
+        "conflict": "ok",
+    }
+    fields.update(kw)
+    return GitStatus(**fields)
 
 
 def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_cfg):
@@ -133,6 +176,44 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
     groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
 
     assert groups[0].loose_ttl_default is None
+
+
+def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg):
+    """The Qt dashboard asks the merge/rebase question itself, and only when
+    the repo left it unanswered — so the group has to carry the answer."""
+    cfg = make_cfg(
+        tmp_path / "alpha",
+        push={"default_action": "rebase", "default_source": "current"},
+    )
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].push_action_default == "rebase"
+    assert groups[0].push_source_default == "current"
+
+
+def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mocker, make_cfg):
+    """PushConfig's own defaults: 'ask' is why the GUI has a dialog at all."""
+    cfg = make_cfg(tmp_path / "alpha")
+    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+
+    assert groups[0].push_action_default == "ask"
+    assert groups[0].push_source_default == "base"
 
 
 def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg):
@@ -414,20 +495,29 @@ def test_reconcile_selection_keeps_or_clamps():
     assert dashboard.reconcile_selection(["a", "b"], None, 0) == "a"
 
 
+def _session_verbs(actions: list[tuple[str, str]]) -> list[str]:
+    """The verbs from "Attach tmux" onwards — the session/lifecycle block.
+
+    The tests below are about the IDE, Chrome and network entries, so they
+    assert on this block rather than on the whole menu: the workflow block that
+    precedes it is pinned once, by
+    `test_menu_actions_running_offers_the_workflow_verbs`.
+    """
+    verbs = [verb for _label, verb in actions]
+    return verbs[verbs.index("tmux") :]
+
+
 def test_menu_actions_running_default_hides_ide_and_chrome():
-    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    actions = dashboard.menu_actions(_ctx())
+    assert _session_verbs(actions) == ["tmux", "shell", "net loose", "restart", "stop", "destroy"]
     verbs = [a for _, a in actions]
-    assert verbs == ["tmux", "shell", "net loose", "restart", "stop", "destroy"]
     assert "ide" not in verbs
     assert "chrome" not in verbs
 
 
 def test_menu_actions_running_ide_enabled_only():
-    actions = dashboard.menu_actions(
-        "Running", has_config=True, ide_enabled=True, current_network="strict"
-    )
-    verbs = [a for _, a in actions]
-    assert verbs == [
+    actions = dashboard.menu_actions(_ctx(ide_enabled=True))
+    assert _session_verbs(actions) == [
         "tmux",
         "shell",
         "ide",
@@ -436,15 +526,12 @@ def test_menu_actions_running_ide_enabled_only():
         "stop",
         "destroy",
     ]
-    assert "chrome" not in verbs
+    assert "chrome" not in [a for _, a in actions]
 
 
 def test_menu_actions_running_chrome_enabled_only():
-    actions = dashboard.menu_actions(
-        "Running", has_config=True, chrome_enabled=True, current_network="strict"
-    )
-    verbs = [a for _, a in actions]
-    assert verbs == [
+    actions = dashboard.menu_actions(_ctx(chrome_enabled=True))
+    assert _session_verbs(actions) == [
         "tmux",
         "shell",
         "chrome",
@@ -453,19 +540,12 @@ def test_menu_actions_running_chrome_enabled_only():
         "stop",
         "destroy",
     ]
-    assert "ide" not in verbs
+    assert "ide" not in [a for _, a in actions]
 
 
 def test_menu_actions_running_both_enabled():
-    actions = dashboard.menu_actions(
-        "Running",
-        has_config=True,
-        ide_enabled=True,
-        chrome_enabled=True,
-        current_network="strict",
-    )
-    verbs = [a for _, a in actions]
-    assert verbs == [
+    actions = dashboard.menu_actions(_ctx(ide_enabled=True, chrome_enabled=True))
+    assert _session_verbs(actions) == [
         "tmux",
         "shell",
         "ide",
@@ -478,66 +558,54 @@ def test_menu_actions_running_both_enabled():
 
 
 def test_menu_actions_stopped():
-    actions = dashboard.menu_actions("Stopped", has_config=True)
+    actions = dashboard.menu_actions(_ctx(state="Stopped"))
     assert [a for _, a in actions] == ["start", "destroy"]
 
 
 def test_menu_actions_orphan_disabled():
-    assert dashboard.menu_actions("Running", has_config=False) == []
+    assert dashboard.menu_actions(_ctx(has_config=False)) == []
 
 
 def test_menu_actions_orphan_disabled_regardless_of_flags():
     assert (
-        dashboard.menu_actions("Running", has_config=False, ide_enabled=True, chrome_enabled=True)
-        == []
+        dashboard.menu_actions(_ctx(has_config=False, ide_enabled=True, chrome_enabled=True)) == []
     )
 
 
 def test_menu_actions_unknown_state_only_destroy():
-    assert [a for _, a in dashboard.menu_actions("Frozen", has_config=True)] == ["destroy"]
+    assert [a for _, a in dashboard.menu_actions(_ctx(state="Frozen"))] == ["destroy"]
 
 
 def test_menu_actions_running_network_strict_offers_loose():
-    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
-    verbs = [a for _, a in actions]
+    verbs = [a for _, a in dashboard.menu_actions(_ctx(current_network="strict"))]
     assert "net loose" in verbs
     assert "net strict" not in verbs
 
 
 def test_menu_actions_running_network_loose_offers_strict():
-    actions = dashboard.menu_actions("Running", has_config=True, current_network="loose")
-    verbs = [a for _, a in actions]
+    verbs = [a for _, a in dashboard.menu_actions(_ctx(current_network="loose"))]
     assert "net strict" in verbs
     assert "net loose" not in verbs
 
 
 def test_menu_actions_running_network_unknown_offers_both():
-    actions = dashboard.menu_actions("Running", has_config=True, current_network=None)
-    verbs = [a for _, a in actions]
+    verbs = [a for _, a in dashboard.menu_actions(_ctx(current_network=None))]
     assert "net strict" in verbs
     assert "net loose" in verbs
 
 
 def test_menu_actions_stopped_has_no_network_entries():
-    actions = dashboard.menu_actions("Stopped", has_config=True, current_network="strict")
-    verbs = [a for _, a in actions]
+    verbs = [a for _, a in dashboard.menu_actions(_ctx(state="Stopped"))]
     assert not any(v.startswith("net ") for v in verbs)
 
 
 def test_menu_actions_orphan_disabled_even_with_network():
-    assert dashboard.menu_actions("Running", has_config=False, current_network="strict") == []
+    assert dashboard.menu_actions(_ctx(has_config=False, current_network="strict")) == []
 
 
 def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
-    actions = dashboard.menu_actions(
-        "Running",
-        has_config=True,
-        ide_enabled=True,
-        chrome_enabled=True,
-        current_network="strict",
-    )
-    verbs = [a for _, a in actions]
-    assert verbs == [
+    actions = dashboard.menu_actions(_ctx(ide_enabled=True, chrome_enabled=True))
+    assert _session_verbs(actions) == [
         "tmux",
         "shell",
         "ide",
@@ -552,28 +620,114 @@ def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
 
 
 def test_menu_actions_running_includes_open_pr_when_pr_known():
-    actions = dashboard.menu_actions(
-        "Running", has_config=True, current_network="strict", pr_number=123
-    )
+    actions = dashboard.menu_actions(_ctx(pr_number=123))
     assert actions[0] == ("Open PR", "pr --open")
 
 
 def test_menu_actions_stopped_includes_open_pr_when_pr_known():
-    actions = dashboard.menu_actions("Stopped", has_config=True, pr_number=7)
+    actions = dashboard.menu_actions(_ctx(state="Stopped", pr_number=7))
     assert ("Open PR", "pr --open") in actions
     # still offers the stopped-state actions
     assert [a for _, a in actions if a != "pr --open"] == ["start", "destroy"]
 
 
 def test_menu_actions_omits_open_pr_when_no_pr():
-    running = dashboard.menu_actions("Running", has_config=True, current_network="strict")
-    stopped = dashboard.menu_actions("Stopped", has_config=True)
+    running = dashboard.menu_actions(_ctx())
+    stopped = dashboard.menu_actions(_ctx(state="Stopped"))
     assert ("Open PR", "pr --open") not in running
     assert ("Open PR", "pr --open") not in stopped
 
 
 def test_menu_actions_orphan_stays_empty_even_with_pr():
-    assert dashboard.menu_actions("Running", has_config=False, pr_number=123) == []
+    assert dashboard.menu_actions(_ctx(has_config=False, pr_number=123)) == []
+
+
+def test_menu_actions_running_offers_the_workflow_verbs():
+    """The workflow verbs come before the session verbs, and an unknown git
+    status shows both git-bridge entries (hide only a *known* no-op)."""
+    verbs = [v for _, v in dashboard.menu_actions(_ctx())]
+    assert verbs == [
+        "pr",
+        "git push",
+        "git pull",
+        "git diff",
+        "tmux",
+        "shell",
+        "net loose",
+        "restart",
+        "stop",
+        "destroy",
+    ]
+
+
+def test_menu_actions_workflow_labels_name_their_verb():
+    labels = {verb: label for label, verb in dashboard.menu_actions(_ctx())}
+    assert labels["pr"] == "Create/update PR"
+    assert labels["git push"] == "Update from base (git push)"
+    assert labels["git pull"] == "Send commits to host (git pull)"
+    assert labels["git diff"] == "Show diff (git diff)"
+
+
+def test_menu_actions_mount_mode_has_no_workflow_verbs():
+    """A mount-mode container has no clone of its own, so every one of these
+    would fail in `sync.assert_container_publishable`."""
+    verbs = [v for _, v in dashboard.menu_actions(_ctx(mode="mount"))]
+    assert verbs == ["tmux", "shell", "net loose", "restart", "stop", "destroy"]
+
+
+def test_menu_actions_stopped_has_no_workflow_verbs():
+    verbs = [v for _, v in dashboard.menu_actions(_ctx(state="Stopped"))]
+    assert verbs == ["start", "destroy"]
+
+
+def test_menu_actions_hides_git_pull_when_nothing_is_ahead():
+    verbs = [v for _, v in dashboard.menu_actions(_ctx(git_status=_dirty(ahead_count="0")))]
+    assert "git pull" not in verbs
+    assert "git diff" in verbs  # the working tree is still dirty
+    assert "git push" in verbs  # "is the host ahead?" is not knowable here
+
+
+def test_menu_actions_hides_git_diff_when_there_is_nothing_to_show():
+    clean = _dirty(wt="clean", ahead_diff="clean", ahead_count="0")
+    verbs = [v for _, v in dashboard.menu_actions(_ctx(git_status=clean))]
+    assert "git diff" not in verbs
+    assert "git pull" not in verbs
+
+
+def test_menu_actions_shows_git_verbs_when_the_status_is_unknown():
+    """`--no-git`, a base-tier refresh, or a failed probe must not silently
+    remove actions — only a known no-op hides one."""
+    unknown = _dirty(wt="?", ahead_diff="?", ahead_count="?")
+    for status in (None, unknown):
+        verbs = [v for _, v in dashboard.menu_actions(_ctx(git_status=status))]
+        assert "git pull" in verbs
+        assert "git diff" in verbs
+
+
+def test_menu_actions_job_log_only_when_there_is_a_job():
+    assert "job log" not in [v for _, v in dashboard.menu_actions(_ctx())]
+    finished = dashboard.menu_actions(_ctx(has_job=True))
+    assert ("Job log", "job log") in finished
+    live = dashboard.menu_actions(_ctx(has_job=True, job_running=True))
+    assert ("Job log", "job log --follow") in live
+
+
+def test_menu_actions_job_log_precedes_the_pr_entries():
+    """Diagnostics first: the corrective and diagnostic entries head the list,
+    far from Destroy at the bottom."""
+    verbs = [
+        v for _, v in dashboard.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))
+    ]
+    assert verbs[:4] == ["job clear", "job log", "pr --open", "pr"]
+
+
+def test_menu_actions_orphan_ignores_every_workflow_field():
+    assert (
+        dashboard.menu_actions(
+            _ctx(has_config=False, has_job=True, pr_number=7, git_status=_dirty())
+        )
+        == []
+    )
 
 
 def test_open_menu_captures_the_actions_with_the_cursor_at_the_top(tmp_path):
@@ -647,11 +801,188 @@ def test_dispatch_action_runs_jailbee_with_the_repos_config(mocker, tmp_path):
     assert rc == 0
 
 
+def test_dispatch_action_forces_the_attach_verbs(mocker, tmp_path):
+    """The JOB column already shows a failed background job, so the CLI's
+    "continue anyway?" question would only ask what the operator just read.
+
+    Covers every verb routed through the CLI's attach guard, not just the
+    interactive two: `ide`/`chrome` would otherwise block on a prompt in
+    whatever terminal the dashboard was started from.
+    """
+    config_path = tmp_path / "config.yaml"
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    for verb in ("tmux", "shell", "ide", "chrome"):
+        run.reset_mock()
+        dashboard._dispatch_action(config_path, verb, "alpha-x")
+        run.assert_called_once_with(
+            ["jailbee", verb, "alpha-x", "--config", str(config_path), "--force"],
+            check=False,
+        )
+
+
+def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
+    """`--force` means different things per command (and most don't take it
+    at all), so only the attach verbs get it appended."""
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "restart", "alpha-x")
+
+    assert "--force" not in run.call_args[0][0]
+
+
 def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 2
 
     assert dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x") == 2
+
+
+def test_dispatch_style_classifies_every_menu_verb():
+    """`git diff` is long enough to want a pager; the other printing verbs get
+    a keypress pause, because Live repaints over their output on return."""
+    assert dashboard.dispatch_style("git diff") == "paged"
+    for verb in ("pr", "git push", "git pull", "job log", "job log --follow"):
+        assert dashboard.dispatch_style(verb) == "output", verb
+    for verb in ("tmux", "shell", "ide", "chrome", "net loose", "restart", "destroy"):
+        assert dashboard.dispatch_style(verb) == "plain", verb
+
+
+def test_dispatch_style_leaves_pr_open_alone():
+    """`pr --open` only opens a browser — pausing on it would be noise, and it
+    is why the classification is exact rather than by leading token."""
+    assert dashboard.dispatch_style("pr --open") == "plain"
+
+
+def test_every_printing_verb_is_a_real_menu_verb():
+    """Guards against a typo in PRINTING_VERBS: a classified verb the menu never
+    offers would silently never take its own code path."""
+    offered = set()
+    for state in ("Running", "Stopped", "Frozen"):
+        offered |= {
+            verb
+            for _label, verb in dashboard.menu_actions(
+                _ctx(
+                    state=state,
+                    ide_enabled=True,
+                    chrome_enabled=True,
+                    pr_number=7,
+                    job_clearable=True,
+                    has_job=True,
+                )
+            )
+        }
+        offered |= {
+            verb
+            for _label, verb in dashboard.menu_actions(
+                _ctx(state=state, has_job=True, job_running=True)
+            )
+        }
+    assert dashboard.PRINTING_VERBS <= offered, (
+        f"unknown verbs: {dashboard.PRINTING_VERBS - offered}"
+    )
+    # The paged verbs are a subset, so the split cannot drop or invent one.
+    assert dashboard._PAGED_VERBS <= dashboard.PRINTING_VERBS
+    assert dashboard._OUTPUT_VERBS | dashboard._PAGED_VERBS == dashboard.PRINTING_VERBS
+
+
+def test_pager_argv_prefers_the_environment(mocker):
+    mocker.patch.dict(dashboard.os.environ, {"PAGER": "bat -p"}, clear=False)
+    assert dashboard.pager_argv() == ["bat", "-p"]
+
+
+def test_pager_argv_falls_back_to_less_then_more(mocker):
+    mocker.patch.dict(dashboard.os.environ, {}, clear=True)
+    which = mocker.patch.object(dashboard.shutil, "which", return_value=None)
+    assert dashboard.pager_argv() is None
+
+    which.side_effect = lambda n: "/usr/bin/more" if n == "more" else None
+    assert dashboard.pager_argv() == ["more"]
+
+    which.side_effect = lambda n: f"/usr/bin/{n}"
+    assert dashboard.pager_argv() == ["less", "-R"]
+
+
+def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.return_value.wait.return_value = 0
+    run = mocker.patch.object(dashboard.subprocess, "run")
+
+    rc = dashboard._dispatch_action(config_path, "git diff", "alpha-x")
+
+    assert rc == 0
+    producer_argv, viewer_argv = (c.args[0] for c in popen.call_args_list)
+    assert producer_argv == [
+        "jailbee",
+        "git",
+        "diff",
+        "alpha-x",
+        "--config",
+        str(config_path),
+        "--color",
+    ]
+    assert viewer_argv == ["less", "-R"]
+    run.assert_not_called()  # the paged path replaces the plain run entirely
+
+
+def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "git push", "alpha-x")
+
+    wait.assert_called_once_with()
+
+
+def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_path):
+    """tmux and shell end when the user leaves them; there is nothing left to
+    read, and an extra keypress would just be in the way."""
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x")
+
+    wait.assert_not_called()
+
+
+def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tmp_path):
+    mocker.patch.object(dashboard, "pager_argv", return_value=None)
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 3
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+
+    assert rc == 3
+    wait.assert_called_once_with()
+    assert "--color" not in run.call_args.args[0]  # no pager, so no forced colour
+
+
+def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp_path):
+    """`which` said yes and `exec` said no. The command still has to run, and
+    its output still has to be readable."""
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    producer = mocker.MagicMock()
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.side_effect = [producer, OSError("no less")]
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+
+    assert rc == 0
+    # Nothing will ever read the pipe, so the first process must not be left
+    # blocked on a full one.
+    producer.kill.assert_called_once_with()
+    run.assert_called_once()
+    wait.assert_called_once_with()
 
 
 def test_actions_for_container_matches_menu_actions():
@@ -682,13 +1013,7 @@ def test_actions_for_container_matches_menu_actions():
             chrome_enabled=False,
         )
     ]
-    expected = menu_actions(
-        "Running",
-        has_config=True,
-        ide_enabled=True,
-        chrome_enabled=False,
-        current_network="strict",
-    )
+    expected = menu_actions(_ctx(ide_enabled=True, chrome_enabled=False))
     assert actions_for_container(groups, "p-foo") == expected
     assert actions_for_container(groups, "nope") == []
     assert actions_for_container(groups, None) == []
@@ -1332,6 +1657,46 @@ def test_parse_key_maps_the_quick_action_keys():
     assert dashboard.parse_key(b"?") == "help"
 
 
+def test_parse_key_maps_the_workflow_action_keys():
+    assert dashboard.parse_key(b"P") == "action:pr-update"
+    assert dashboard.parse_key(b"u") == "action:push"
+    assert dashboard.parse_key(b"d") == "action:diff"
+
+
+def test_quick_verb_separates_open_pr_from_update_pr(tmp_path):
+    """`p` opens the PR in a browser, `P` pushes to it — the gate matches the
+    verb exactly, so the two never collapse into one another."""
+    with_pr = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        tmp_path / "c.yaml",
+        [_ci("alpha-x", "alpha", pr_number=7)],
+    )
+
+    assert dashboard.quick_verb([with_pr], "alpha-x", "action:pr") == "pr --open"
+    assert dashboard.quick_verb([with_pr], "alpha-x", "action:pr-update") == "pr"
+
+
+def test_quick_verb_workflow_keys_follow_the_menu_gate(tmp_path):
+    running = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
+    )
+    mounted = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-m", "alpha", mode="mount")]
+    )
+    clean = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        tmp_path / "c.yaml",
+        [_ci("alpha-c", "alpha", git_status=_dirty(wt="clean", ahead_count="0"))],
+    )
+
+    assert dashboard.quick_verb([running], "alpha-x", "action:push") == "git push"
+    assert dashboard.quick_verb([running], "alpha-x", "action:diff") == "git diff"
+    assert dashboard.quick_verb([mounted], "alpha-m", "action:push") is None
+    assert dashboard.quick_verb([clean], "alpha-c", "action:diff") is None
+
+
 def test_key_bindings_are_the_only_source_of_parse_key():
     """Every declared key sequence parses to its binding's token, and nothing
     is declared twice — the table is what `parse_key` is built from."""
@@ -1357,13 +1722,14 @@ def test_every_quick_action_verb_is_a_real_menu_verb():
         offered |= {
             verb
             for _label, verb in dashboard.menu_actions(
-                state,
-                has_config=True,
-                ide_enabled=True,
-                chrome_enabled=True,
-                current_network="strict",
-                pr_number=7,
-                job_clearable=True,
+                _ctx(
+                    state=state,
+                    ide_enabled=True,
+                    chrome_enabled=True,
+                    pr_number=7,
+                    job_clearable=True,
+                    has_job=True,
+                )
             )
         }
     quick = {b.verb for b in dashboard.KEY_BINDINGS if b.verb is not None}
@@ -1633,28 +1999,24 @@ def test_dashboard_command_delegates_to_run(mocker):
 
 
 def test_menu_actions_clear_job_entry_is_first_when_clearable():
-    actions = dashboard.menu_actions(
-        "Running", has_config=True, current_network="strict", job_clearable=True
-    )
+    actions = dashboard.menu_actions(_ctx(job_clearable=True))
     assert actions[0] == ("Clear failed job", "job clear")
 
 
 def test_menu_actions_no_clear_entry_when_not_clearable():
-    actions = dashboard.menu_actions("Running", has_config=True, current_network="strict")
+    actions = dashboard.menu_actions(_ctx())
     assert "job clear" not in [verb for _, verb in actions]
 
 
 def test_menu_actions_clear_job_precedes_open_pr():
-    actions = dashboard.menu_actions(
-        "Running", has_config=True, current_network="strict", pr_number=7, job_clearable=True
-    )
+    actions = dashboard.menu_actions(_ctx(pr_number=7, job_clearable=True))
     verbs = [verb for _, verb in actions]
     assert verbs.index("job clear") < verbs.index("pr --open")
 
 
 def test_menu_actions_clear_job_offered_for_a_container_with_no_state():
     # A job row whose container never existed is rendered with state "—".
-    actions = dashboard.menu_actions("—", has_config=True, job_clearable=True)
+    actions = dashboard.menu_actions(_ctx(state="—", job_clearable=True))
     assert actions[0] == ("Clear failed job", "job clear")
 
 

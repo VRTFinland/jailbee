@@ -359,33 +359,44 @@ jailbee new feat/waitsmoke2 --background
 jailbee shell            # no name → picker lists feat-waitsmoke2 with JOB=cloning/...
 # pick it → waits, then opens the shell.
 
-# Failure path: a backgrounded op that fails surfaces in the wait.
-jailbee new feat/waitfail nonexistent-base --background
+# Failure path: an autostart step fails, so the container is created and
+# running but the job row is `failed`. The attach reports it and offers to go
+# in anyway — no flag needed. Works on shell/tmux/ide/chrome.
+jailbee new feat/waitfail --background   # let it fail in an autostart step
 jailbee tmux feat-waitfail
-# expect: "background creation of 'feat-waitfail' failed: ..." and exit 1.
-# When the container is up (autostart failed), the error is followed by a
-# hint naming the command you ran, e.g.:
-#   "  Inspect it anyway with:  jailbee tmux feat-waitfail --force"
-
-# --force escape hatch: after an autostart step fails, the container is left
-# created and running, so --force attaches anyway to inspect it. (Only the
-# `failed` job row was blocking the plain attach.) Works on shell/tmux/ide/chrome.
-jailbee new feat/waitforce --background   # let it fail in an autostart step
-jailbee tmux feat-waitforce --force
-# expect: "⚠ 'feat-waitforce': background creation failed (...) — attaching anyway."
-#         then the tmux session with the failed window.
+# expect: "⚠ background creation of 'feat-waitfail' failed: ...",
+#         "  The container itself is up — 'jailbee tmux' can still reach it."
+#         "  Once you're done, clear the stale job record: jailbee job clear feat-waitfail"
+#         then "Continue anyway? [Y/n]" — Enter drops you into the tmux
+#         session with the failed window. Answering `n` exits 1.
 # (The job row stays `failed` until you acknowledge it:
-#    jailbee job clear feat-waitforce
+#    jailbee job clear feat-waitfail
 #  — the container is left alone. `jailbee job ls` shows the recorded error and
-#  the worker log path first; `jailbee job log feat-waitforce` prints the log.)
+#  the worker log path first; `jailbee job log feat-waitfail` prints the log.)
 
-# --force does not bypass the container's existence: when the create failed
-# before `incus init` there is nothing to attach to.
+# --force only skips the question, so scripts and the dashboards don't stall.
+# A non-interactive stdin (a script, a cron job) is treated the same way.
+jailbee tmux feat-waitfail --force        # same warning, no prompt
+
+# From the dashboard, `t`/`s`/`i`/`c` (and the Enter menu) dispatch with
+# --force: the JOB column already showed `failed`.
+jailbee dashboard                         # highlight feat-waitfail, press t
+
+# Nothing to attach to: when the create failed before `incus init` there is no
+# container, so the attach refuses without asking.
 jailbee new feat/nosuchbase nonexistent-base --background   # fails before creating
-jailbee tmux feat-nosuchbase --force
-# expect: "✗ 'feat-nosuchbase': no such container — there is nothing to attach
-#          to.", the creation error that explains it, and the
-#          `jailbee job clear feat-nosuchbase` hint. Exit 1, no traceback.
+jailbee tmux feat-nosuchbase
+# expect: "✗ background creation of 'feat-nosuchbase' failed: ...", the
+#          "Nothing was created; clear the job record: jailbee job clear
+#          feat-nosuchbase" hint, exit 1, no prompt and no traceback.
+
+# Ctrl-C out of a healthy wait, once the container exists: same offer.
+jailbee new feat/waitslow --background
+jailbee tmux feat-waitslow                # Ctrl-C while the spinner runs
+# expect: "⚠ 'feat-waitslow' is still being created in the background — its
+#          setup is unfinished." then "Attach anyway? [y/N]" — defaulting to
+#          no, and asked even under --force, because Ctrl-C means cancel.
+#          Before the container exists you get the "check `jailbee ls`" exit.
 
 jailbee destroy --all --force
 ```
@@ -1519,10 +1530,31 @@ jailbee new feat/dashsmoke --background
 #           On an orphan (view-only) row, Enter opens nothing and prints a
 #           yellow note in the panel footer for ~2.5s instead of going silent.
 #  t -> attaches tmux for the highlighted container without the menu; exit ->
-#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR.
+#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR,
+#       P = create/update the PR, u = update from base, d = show the diff.
 #       On a row that does not offer the action (Stopped container, IDE/Chrome
 #       disabled in that repo's config, no PR, orphan row) expect NO dispatch
 #       and a yellow footer note naming the key and the reason.
+
+# Workflow entries (the menu block above tmux/shell). Make a commit inside the
+# container first, so there is something for git pull and git diff to show:
+jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git commit -am wip'
+#  d (or the "Show diff (git diff)" entry) -> the diff opens in $PAGER
+#     (less -R) WITH colour, not as a plain scroll-past dump; q in less returns
+#     to the dashboard with the table intact.
+#  u ("Update from base (git push)") -> in a repo with push.default_action:
+#     ask, the CLI's own merge/rebase picker appears (the TUI hands over the
+#     real terminal); after it finishes, expect a
+#     "── press Enter to return to the dashboard ──" line and the output still
+#     readable until you press Enter.
+#  "Send commits to host (git pull)" -> same pause behaviour. On a container
+#     with nothing ahead of its base, expect the entry to be ABSENT from the
+#     menu (and `git pull` to have no quick key at all — by design).
+#  "Job log" -> present only while a job row exists; on a live background job
+#     it follows the worker log (Ctrl-C ends it), on a finished one it prints
+#     once. Not bound to a quick key.
+#  A --mount container offers none of pr/git push/git pull/git diff (no clone
+#     of its own): jailbee new feat/mnt --mount, then Enter on that row.
 #  h (or ?) -> keybinding help below the table; h again or Esc closes it.
 #              Pressing h with the action menu open swaps the menu for help.
 #  r -> forces an immediate full refresh (incl. git status)
@@ -1632,6 +1664,34 @@ Requires a real Incus daemon, at least one JailBee container, and PySide6
    (that's left to the window manager).
 9. Relaunch with `jailbee gui --interval 7`: the explicit flag should win over
    whatever cadence was persisted in step 8.
+
+### Workflow commands in the Qt dashboard
+
+The point of these checks is that nothing opens a terminal emulator and no
+output disappears. Use a container with a commit of its own (see the
+`git diff`/`git pull` recipes above).
+
+1. Right-click a running container → **Show diff (git diff)**. Expect a JailBee
+   window (not a terminal) with the diff in a monospace font, `exited 0` on its
+   status line, and a working **Copy** button. The dashboard behind it keeps
+   refreshing.
+2. Open a second output window while the first is up (e.g. **Job log** on a
+   container mid-`jailbee new`). Both should stay usable — the windows are
+   non-modal.
+3. On that live job, press **Stop**: the status line must say `stopped`, not
+   `exited 0`, and `pgrep -f "jailbee job log"` must find nothing afterwards.
+   Closing the window with the command still running must do the same.
+4. **Update from base (git push)** in a repo whose `push.default_action` is
+   `ask` → a dialog asks merge/rebase/plain first, then the output window shows
+   the push. **Cancel** in the dialog must dispatch nothing at all. In a repo
+   that pins `push.default_action`, expect no dialog.
+5. **Send commits to host (git pull)** → a confirmation naming the host branch
+   the merge lands on; declining dispatches nothing.
+6. **Create/update PR** → a dialog for draft/ready, description regeneration
+   and the existing-PR-head confirmation, then the output window (AI generation
+   takes a while — expect `running…` for a bit, not a frozen window).
+7. A `--mount` container offers none of these entries; a stopped one offers
+   only `start`/`destroy` (plus `Open PR` when it has a PR).
 
 ### Clearing a failed job from the dashboards
 
@@ -1866,4 +1926,189 @@ sha256sum ~/.local/share/jailbee/registry/ca/ca.crt
 # expect: identical hash
 jailbee registry status
 # expect: running
+```
+
+## Nested Incus probe rig (verifying device behaviour from inside a container)
+
+Every recipe above needs the host's daemon. This one does not: it brings up a
+second Incus daemon *inside* a JailBee container, so questions of the form
+"does Incus really accept these device properties, and what does it say when
+it doesn't?" can be answered without leaving the container. The unit suite is
+fully mocked by design, so this rig is the only place those answers come from.
+
+It works because JailBee's base profile already sets `security.nesting: true`
+(`profiles.base_profile_yaml`). `.jailbee/install.d/75-incus.sh` bakes the
+daemon into this repo's golden image with its units disabled, a `default` dir
+pool already created, root's subuid range capped so instances start without
+per-instance tuning, and the `dev` user in `incus-admin` so `incus` — and
+therefore `jailbee` — works without `sudo`. Two commands from a fresh
+container:
+
+```bash
+sudo systemctl start incus.service
+incus launch images:alpine/edge probe1
+incus list
+# expect: RUNNING, no IPv4/IPv6 beyond loopback (nothing here creates a NIC)
+```
+
+Starting the unit needs root; everything after it does not. If `incus` reports
+"You don't have the needed permissions to talk to the incus daemon", the shell
+predates the `incus-admin` grant — group membership is per-session, so reopen
+`jailbee shell`.
+
+A `cgroup2_devices ... Failed to load bpf program` line in the instance log is
+expected under nesting and harmless.
+
+With that up, a proxy device round-trip takes two commands. The "host" side is
+the JailBee container itself:
+
+```bash
+# host side: something to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+# instance listens, traffic lands on the host's service (the adb-style case)
+incus config device add probe1 probe-fwd proxy \
+    listen=tcp:127.0.0.1:5037 connect=tcp:127.0.0.1:5037 bind=instance
+incus exec probe1 -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response
+
+# the other direction: host listens, traffic lands on the instance's service
+incus exec probe1 -- sh -c \
+    'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
+incus config device add probe1 probe-pub proxy \
+    listen=tcp:127.0.0.1:18080 connect=tcp:127.0.0.1:8080 bind=host
+curl -s http://127.0.0.1:18080/
+# expect: OK
+```
+
+### Findings (Incus 6.0.5, 2026-08-18)
+
+Kept here because they are what the mocked tests are written against.
+
+- `bind=instance` is Incus's name; `bind=container` and `bind=guest` are both
+  accepted as LXD aliases and work — the device was accepted and the
+  instance's listener reached the host service exactly as with `instance` —
+  but the daemon stores whichever string it was given, so reads must treat
+  all three as the same thing.
+- `incus list --format json` returns each instance's `devices` and
+  `expanded_devices` maps, so reading forwards back needs no new wrapper
+  method — `Incus.list_containers()` already carries them.
+- Adding a device to a **stopped** instance succeeds and starts working on the
+  next boot; devices survive restarts.
+- `nat=true` is unusable for this purpose: instance-bound proxies are refused
+  outright (`Only host-bound proxies can use NAT`) and host-bound ones require
+  the connect address to be one of the instance's static IPs.
+- A forward whose target has nothing listening is added without complaint —
+  connections are refused at connect time, not at add time. So no pre-flight
+  check on the target service is needed, or possible.
+- Conflicts and typos, verbatim:
+  - duplicate device name → `The device already exists`
+  - host port taken → `Failed to listen on 127.0.0.1:5037: ... bind: address already in use`
+  - port already bound *inside* the instance → `Failed to receive fd from
+    listener process: Failed to receive file descriptor via abstract unix
+    socket`, which names neither the port nor the cause and needs translating
+    before a user sees it
+  - missing protocol prefix → `Unknown protocol type "127.0.0.1"`
+  - `udp:` listen with a `tcp:` connect → `Proxying from udp to non-udp
+    protocol is not supported`
+- An out-of-range port (`70000`) passes validation and fails only at device
+  start, so range checking belongs on JailBee's side.
+- IPv6 endpoints are stored byte-identically, brackets included. Adding a device
+  with `listen='tcp:[::1]:5099' connect='tcp:127.0.0.1:5037' bind=instance` and
+  reading back with `incus config device get` returned both values unchanged —
+  no normalisation of the bracket form. This matters because `ports._props_differ`
+  compares the rendered strings verbatim to detect drift; had Incus normalised,
+  every `jailbee apply` would see permanent drift and replace the device on every
+  run. The forward itself worked: `wget -qO- http://[::1]:5099/` from inside the
+  instance reached the host-side service.
+
+### What is not verified yet
+
+Running JailBee itself inside a container (`jailbee init`, `jailbee new`) is a
+separate question and remains open. What is known:
+
+- A nested bridge comes up: `incus network create incusbr0` succeeds, dnsmasq
+  serves the range, nft masquerade rules are installed, and an instance on it
+  reaches the bridge gateway.
+- A DHCP lease did **not** arrive in a hotplugged instance (`udhcpc` hung);
+  static addressing on the same bridge worked, so this is a client/hotplug
+  detail rather than a broken bridge.
+- Egress *out* of the nested bridge was never actually tested: the container
+  it was tried in was in `strict` mode with an empty allowlist at the time, so
+  it had no egress of its own to forward. Re-test from a `loose` container
+  before drawing any conclusion.
+- Untouched beyond that: whether network ACLs enforce correctly two levels
+  deep, and whether `jailbee base build` can publish an image from inside a
+  container (that needs a full apt provision at nesting depth two).
+
+Tear the rig down when done; the pool is a plain directory under
+`/var/lib/incus`:
+
+```bash
+incus delete probe1 --force
+sudo systemctl stop incus.service
+```
+
+## `jailbee port` against the nested rig (exercising the real commands)
+
+The rig above talks to the nested daemon with raw `incus config device add`.
+This recipe exercises **`jailbee port`** itself against the same daemon:
+`Incus()` shells out to the `incus` CLI, and inside this container that CLI
+resolves to the nested daemon, so `jailbee port to-container`/`ls`/`rm` are
+exactly as real here as they are on the host.
+
+Bring the nested daemon up as above (only `sudo systemctl start
+incus.service` needs root — once that grant is in place, `incus` and
+`jailbee` both reach the nested daemon as the `dev` user; if a shell
+predates the grant, reopen `jailbee shell` rather than reaching for `sudo`
+on the commands below). Launch the instance named to this repo's
+`container_prefix` convention (`<container_prefix>-<name>`) so `jailbee`
+can resolve it by its short name:
+
+```bash
+incus launch images:alpine/edge <prefix>-probe
+
+# host side (this container, from jailbee's point of view): a service to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+jailbee port to-container 5037 probe
+# expect: "... connecting to 127.0.0.1:5037 inside the container now reaches
+#          the host's 127.0.0.1:5037 (port-tc-tcp-5037)"
+jailbee port ls probe
+# expect: one row — HANDLE port-tc-tcp-5037, DIRECTION to-container, SOURCE ad-hoc
+
+incus exec <prefix>-probe -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response (the http.server's directory listing)
+
+jailbee port rm 5037 probe
+jailbee port ls probe
+# expect: No port forwards.
+```
+
+Negative case — the container-side port is already taken, which is the
+scenario JailBee's translation exists for:
+
+```bash
+# Occupy port 5037 *inside* the instance first (its own listener, adb-style).
+incus exec <prefix>-probe -- sh -c 'nc -l -p 5037 >/dev/null 2>&1 &'
+
+jailbee port to-container 5037 probe
+# expect JailBee's translated message, e.g.:
+#   "Could not open port 5037 inside <prefix>-probe — something is already
+#    listening on port 5037 inside the container. Stop it, or forward to a
+#    different container port."
+# NOT Incus's raw "Failed to receive fd from listener process: Failed to
+# receive file descriptor via abstract unix socket".
+
+incus exec <prefix>-probe -- pkill nc
+jailbee port to-container 5037 probe   # now succeeds
+jailbee port rm 5037 probe
+```
+
+Teardown:
+
+```bash
+kill %1   # stop the python http.server
+incus delete <prefix>-probe --force
+sudo systemctl stop incus.service
 ```

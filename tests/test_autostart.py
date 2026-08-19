@@ -417,9 +417,13 @@ def test_tmux_step_error_wrapped_as_autostart_step_error(mocker):
     assert "jailbee tmux gisgro-part4-fixes" in msg
 
 
-def test_autostart_error_hint_includes_force_flag():
-    """The inspection hint points at `jailbee tmux <name> --force` so it works
-    even when a background op left a `failed` row blocking a plain attach."""
+def test_autostart_error_hint_is_a_plain_attach():
+    """The inspection hint is a bare `jailbee tmux <name>`.
+
+    It renders for foreground failures too, where no background job row
+    exists and `--force` would be cargo-culted noise; the attach guard now
+    offers the failed container itself, so no flag is needed either way.
+    """
     err = AutostartStepError(
         container="gisgro-feat-x",
         step_name="backend-warmup",
@@ -427,7 +431,8 @@ def test_autostart_error_hint_includes_force_flag():
         exit_code=1,
     )
     rendered = str(err)
-    assert "jailbee tmux gisgro-feat-x --force" in rendered
+    assert "jailbee tmux gisgro-feat-x" in rendered
+    assert "--force" not in rendered
 
 
 def test_autostart_step_error_timeout_message(mocker):

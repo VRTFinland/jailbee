@@ -14,6 +14,7 @@ valid and produces a fully-defaulted Config.
 from __future__ import annotations
 
 import functools
+import ipaddress
 import os
 import re
 from collections.abc import Sequence
@@ -387,6 +388,99 @@ class HostDevice(BaseModel):
     def _validate_group(cls, v: str | None) -> str | None:
         if v is not None and not _GROUP_NAME_RE.match(v):
             raise ValueError(f"host_devices group must be a valid unix group name, got: {v!r}")
+        return v
+
+
+# Handle grammar for a `host_ports` entry. The value becomes an Incus device
+# name (`port-cfg-<name>`) and the `jailbee port rm` key, so it is kept to
+# characters that read cleanly in both.
+_PORT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_PORT_NAME_MAX_LEN = 40
+
+
+class HostPort(BaseModel):
+    """A host service made reachable inside every container of the repo.
+
+    Rendered as an Incus ``proxy`` device with ``bind=instance``: the
+    container listens on ``container_address:port`` and Incus's forkproxy
+    connects to ``host_address:host_port`` on the host. The classic case is
+    an adb server — with the forward in place, plain ``adb devices`` works
+    inside the container and no ``ADB_SERVER_SOCKET`` is needed.
+
+    Only this direction is configurable. A host-side listener is a
+    machine-wide resource, so declaring one here would make every container
+    of the repo fight over the same host port, breaking the property that
+    many branch containers coexist. See ``jailbee port to-host``.
+
+    Note this is a hole through ``net strict`` by construction: the host end
+    of the connection is opened by a host process outside the container's
+    network namespace, so the egress ACL never sees it. See docs/security.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    port: int
+    host_port: int | None = None
+    proto: Literal["tcp", "udp"] = "tcp"
+    host_address: str = "127.0.0.1"
+    container_address: str = "127.0.0.1"
+
+    @property
+    def effective_host_port(self) -> int:
+        """Host-side port; defaults to the container-side ``port``."""
+        return self.port if self.host_port is None else self.host_port
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_direction_keys(cls, data: object) -> object:
+        """Explain the to-host omission instead of saying "Unknown field".
+
+        Runs before `extra="forbid"` so the reason lands in the message.
+        """
+        if isinstance(data, dict):
+            for key in ("direction", "to_host", "bind"):
+                if key in data:
+                    raise ValueError(
+                        f"host_ports entries cannot set `{key}`: only the "
+                        "to-container direction (a host service reachable "
+                        "inside the container) is configurable. A host port "
+                        "is machine-wide, so a repo config declaring one "
+                        "would make every container of this repo fight over "
+                        "it. Use `jailbee port to-host <port>` on the one "
+                        "container that needs it."
+                    )
+        return data
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if not _PORT_NAME_RE.match(v) or len(v) > _PORT_NAME_MAX_LEN:
+            raise ValueError(
+                "host_ports name must match [a-z0-9][a-z0-9-]* and be at "
+                f"most {_PORT_NAME_MAX_LEN} chars, got: {v!r}"
+            )
+        return v
+
+    @field_validator("port", "host_port")
+    @classmethod
+    def _validate_port(cls, v: int | None) -> int | None:
+        # Ours to enforce: Incus accepts an out-of-range port at device-add
+        # time and only fails when the device starts.
+        if v is not None and not 1 <= v <= 65535:
+            raise ValueError(f"host_ports port must be 1..65535, got: {v}")
+        return v
+
+    @field_validator("host_address", "container_address")
+    @classmethod
+    def _validate_address(cls, v: str) -> str:
+        # A hostname would have to be resolved at device-add time, silently
+        # pinning one IP into the device. Incus wants an address anyway.
+        try:
+            ipaddress.ip_address(v)
+        except ValueError as e:
+            raise ValueError(
+                f"host_ports address must be an IP literal, not a hostname: {v!r}"
+            ) from e
         return v
 
 
@@ -1466,6 +1560,13 @@ def _warn_legacy_skills_key() -> None:
     )
 
 
+# `claude.pr_prompt` ships to the container as an environment variable inside
+# jailbee's own prompt. The cap is a sanity bound, not a model context limit:
+# it turns a pasted-in-by-accident file into a config error instead of a
+# `claude` invocation that fails opaquely and silently falls back.
+_MAX_PR_PROMPT_LEN = 20_000
+
+
 class ClaudeConfig(BaseModel):
     """Claude Code CLI integration inside containers.
 
@@ -1518,6 +1619,23 @@ class ClaudeConfig(BaseModel):
     - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
       the in-container Claude to propose a convention-following PR head branch
       name when opening a new PR; has no effect when `enabled` is false.
+    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
+      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
+      jailbee's own prompt as a delimited section that explicitly outranks the
+      generic guidance, so a project can dictate the title and body shape
+      without having to restate the JSON response contract `_parse_pr_text`
+      depends on. Capped at 20 000 characters so a pathological value fails at
+      config load rather than inside the container. Has no effect when
+      `enabled` or `ai_pr_description` is false.
+    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
+      generating the PR text. Defaults to `sonnet`: writing a PR description is
+      a bounded summarisation job, and pinning it means the generation does not
+      compete for the same budget as the coding work that just happened in the
+      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
+      ID; `null` omits the flag entirely so the container's own default model
+      applies. `haiku` is a valid choice but has a smaller context window than
+      the alternatives, so a large cumulative diff may not fit. Has no effect
+      when `enabled` or `ai_pr_description` is false.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1532,6 +1650,30 @@ class ClaudeConfig(BaseModel):
     )
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
+    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
+    ai_pr_model: str | None = "sonnet"
+
+    @field_validator("ai_pr_model")
+    @classmethod
+    def _reject_non_model_value(cls, v: str | None) -> str | None:
+        """A model name is a single token — reject anything that isn't one.
+
+        The value reaches `claude --model` through an environment variable, so
+        embedded flags could never be executed as such. The check exists to
+        turn a typo or a misunderstanding into a config error, rather than a
+        non-zero `claude` exit that `generate_pr_text` reports only as a failed
+        generation. Use `null`, not an empty string, to inherit the container's
+        own default model.
+        """
+        if v is None:
+            return None
+        if not v.strip() or len(v.split()) != 1:
+            raise ValueError(
+                f"must be a single model name or alias (e.g. 'sonnet', "
+                f"'claude-haiku-4-5'), or null to inherit the container "
+                f"default; got {v!r}"
+            )
+        return v.strip()
 
     @model_validator(mode="before")
     @classmethod
@@ -1580,6 +1722,7 @@ class Config(BaseModel):
     shared_dir: PathExpanded | None = None
     host_mounts: list[HostMount] = []
     host_devices: list[HostDevice] = []
+    host_ports: list[HostPort] = []
     optional_mounts: dict[str, OptionalMount] = {}
     share_local: bool = Field(
         default=True,
@@ -1667,6 +1810,16 @@ class Config(BaseModel):
 
         for raw in v:
             parse_egress_entry(raw)  # raises ValueError on bad input
+        return v
+
+    @field_validator("host_ports")
+    @classmethod
+    def _validate_host_port_names(cls, v: list[HostPort]) -> list[HostPort]:
+        seen: set[str] = set()
+        for entry in v:
+            if entry.name in seen:
+                raise ValueError(f"duplicate host_ports name: {entry.name!r}")
+            seen.add(entry.name)
         return v
 
     def effective_egress_allow(self) -> list[str]:

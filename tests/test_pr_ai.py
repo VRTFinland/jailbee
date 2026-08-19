@@ -168,6 +168,91 @@ def test_parse_bad_titlebody_still_none_even_with_branch():
 
 
 # ---------------------------------------------------------------------------
+# _build_prompt
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_points_at_the_repo_pr_template():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "pull_request_template" in prompt
+
+
+def test_prompt_asks_for_a_closes_line_when_an_issue_is_referenced():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "gh issue view" in prompt
+    assert "Closes #" in prompt
+
+
+def test_prompt_asks_what_the_change_leaves_out_relative_to_its_spec():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert "leaves out" in prompt
+
+
+def test_prompt_has_no_project_block_without_a_configured_pr_prompt():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None)
+
+    assert _PROJECT_BLOCK_HEADER not in prompt
+
+
+def test_prompt_embeds_the_project_prompt_verbatim():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt(
+        "feat/foo", "main", None, None, project_prompt="## Motivation\n## Risk\n"
+    )
+
+    assert _PROJECT_BLOCK_HEADER in prompt
+    assert "## Motivation\n## Risk\n" in prompt
+
+
+def test_project_instructions_are_declared_to_win_over_the_generic_rules():
+    from jailbee.pr_ai import _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="Use our template.")
+
+    assert "THESE WIN" in prompt
+
+
+def test_project_block_precedes_the_json_response_contract():
+    """The output contract stays last so project instructions can't displace it."""
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="Use our template.")
+
+    assert prompt.index(_PROJECT_BLOCK_HEADER) < prompt.index("ONLY a JSON object")
+
+
+def test_whitespace_only_project_prompt_is_treated_as_absent():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt("feat/foo", "main", None, None, project_prompt="  \n\t\n")
+
+    assert _PROJECT_BLOCK_HEADER not in prompt
+
+
+def test_project_prompt_and_fixed_title_clause_coexist():
+    from jailbee.pr_ai import _PROJECT_BLOCK_HEADER, _build_prompt
+
+    prompt = _build_prompt(
+        "feat/foo", "main", "feat: fixed", None, project_prompt="Use our template."
+    )
+
+    assert _PROJECT_BLOCK_HEADER in prompt
+    assert "feat: fixed" in prompt
+
+
+# ---------------------------------------------------------------------------
 # generate_pr_text
 # ---------------------------------------------------------------------------
 
@@ -192,7 +277,8 @@ def test_generate_happy_path_builds_exec_and_parses(mocker, make_cfg, tmp_path):
     assert argv[0] == "bash"
     assert argv[1] == "-lc"
     shell_cmd = argv[2]
-    assert "claude -p" in shell_cmd
+    assert shell_cmd.startswith("claude ")
+    assert '-p "$JAILBEE_PR_PROMPT"' in shell_cmd
     assert "--output-format json" in shell_cmd
     assert "--dangerously-skip-permissions" in shell_cmd
     # prompt is passed via env var, never interpolated into the shell string
@@ -219,6 +305,23 @@ def test_generate_returns_none_on_incus_error(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
 
     assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+
+def test_generate_reports_why_the_container_claude_failed(mocker, make_cfg, tmp_path):
+    """Without the reason, a bad ai_pr_model reads as an unexplained failure."""
+    from jailbee.incus import IncusError
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("exit 1: error: unknown model 'sonnnet'")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    warn = mocker.patch("jailbee.pr_ai.warn")
+
+    assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+    warn.assert_called_once()
+    assert "unknown model 'sonnnet'" in warn.call_args.args[0]
 
 
 def test_generate_returns_none_on_timeout(mocker, make_cfg, tmp_path):
@@ -274,7 +377,61 @@ def test_generate_runs_through_login_shell(mocker, make_cfg, tmp_path):
     argv = incus.exec.call_args.args[1]
     assert argv[0] == "bash"
     assert argv[1] == "-lc"
-    assert "claude -p" in argv[2]
+    assert argv[2].startswith("claude ")
     # prompt passed via env, never interpolated into the shell string
-    assert "$JAILBEE_PR_PROMPT" in argv[2]
+    assert '-p "$JAILBEE_PR_PROMPT"' in argv[2]
     assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
+
+
+def test_generate_selects_the_configured_model_via_env(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"claude": cfg.claude.model_copy(update={"ai_pr_model": "claude-haiku-4-5"})}
+    )
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    shell_cmd = incus.exec.call_args.args[1][2]
+    assert '${JAILBEE_PR_MODEL:+--model "$JAILBEE_PR_MODEL"}' in shell_cmd
+    # the model name goes through the environment, never into the shell string
+    assert "claude-haiku-4-5" not in shell_cmd
+    assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_MODEL"] == "claude-haiku-4-5"
+
+
+def test_generate_drops_the_model_flag_when_ai_pr_model_is_null(mocker, make_cfg, tmp_path):
+    """An empty env var makes the `${VAR:+...}` expansion vanish entirely."""
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"ai_pr_model": None})})
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    assert incus.exec.call_args.kwargs["env"]["JAILBEE_PR_MODEL"] == ""
+
+
+def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={
+            "claude": cfg.claude.model_copy(update={"pr_prompt": "Always mention the JIRA id."})
+        }
+    )
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main")
+
+    env_prompt = incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
+    assert "Always mention the JIRA id." in env_prompt
