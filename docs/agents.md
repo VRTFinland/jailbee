@@ -35,9 +35,13 @@ For every agent with `enabled: true`, `jailbee`:
   check.
 
 Install, update, and the autostart launch itself all run through the
-autostart step pipeline, so each gets a fresh `bash -lc` login shell — which
-is why `~/.local/bin` and `~/.npm-global/bin` are on `PATH` for them, and why
-`agents.<name>.env` reaches all three.
+autostart step pipeline, which starts each in a fresh `bash -lc` login
+shell. The autostart launch runs directly in that shell; install and update
+run in a `bash -c` child of it (`agents._ensure_one`). Either way,
+`~/.local/bin` and `~/.npm-global/bin` end up on `PATH`: the login shell
+sources `/etc/profile.d` with `export`, and the `bash -c` child inherits
+that exported PATH — which is also why `agents.<name>.env` reaches all
+three.
 
 > **Install happens only at `jailbee new`.** Enabling an agent for a
 > container that already exists and then running `jailbee apply` attaches the

@@ -217,12 +217,14 @@ def ensure_agents(
     shared install store must be present) and after the network ACL
     warm-up (installers need egress), before autostart execs the binaries.
 
-    Each command goes through `autostart._apply_step`, which gives it a fresh
-    `bash -lc` login shell. That is load-bearing rather than incidental:
+    Each command runs inside a `bash -c` (see `_ensure_one`), itself a child
+    of the fresh `bash -lc` login shell that `autostart._apply_step` starts
+    for the step. That inherited PATH is load-bearing rather than incidental:
     `~/.local/bin` and `~/.npm-global/bin` reach PATH only via
-    /etc/profile.d, so `command -v <agent>` in a non-login shell would fail
-    even with the binary installed — surfacing later as an opaque exit-127 in
-    the autostart window.
+    /etc/profile.d, which the login shell sources with `export` and the
+    `bash -c` child therefore inherits — so `command -v <agent>` without that
+    login shell in the chain would fail even with the binary installed,
+    surfacing later as an opaque exit-127 in the autostart window.
 
     Locking (see `_acquire_install_lock`) is best-effort and never gates
     whether installs run — only whether they're serialised against other
