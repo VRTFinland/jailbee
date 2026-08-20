@@ -1,10 +1,10 @@
 """Shell-completion callbacks for jailbee's CLI arguments.
 
 Typer/Click runs these inside a fresh `jailbee` process on every TAB press
-(`_JAILBEE_COMPLETE=bash_complete`; each installed console script — `jailbee`,
-`jb`, the legacy `gie` alias — gets its own variable derived from its invoked
-name, e.g. `_JB_COMPLETE` / `_GIE_COMPLETE`, per Click's convention, not
-something this code chooses), which dictates two rules:
+(`_JAILBEE_COMPLETE=bash_complete`; each installed console script — `jailbee`
+and `jb` — gets its own variable derived from its invoked name, e.g.
+`_JB_COMPLETE`, per Click's convention, not something this code chooses),
+which dictates two rules:
 
 * **Never raise.** An exception escaping a completion callback prints a
   traceback into the middle of the user's command line. An empty list is the

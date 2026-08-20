@@ -13,18 +13,16 @@ valid and produces a fully-defaulted Config.
 
 from __future__ import annotations
 
-import functools
 import ipaddress
 import os
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import yaml
 from pydantic import (
-    AliasChoices,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -200,6 +198,12 @@ _RETIRED_KEYS_AUTOSTART: dict[str, str] = {
     "chrome_dark_mode": "chrome.dark_mode",
 }
 
+# Renamed with the project itself. Accepted as a validation alias with a
+# deprecation warning through 1.0.x; retired in 1.1.0.
+_RETIRED_KEYS_CLAUDE: dict[str, str] = {
+    "install_gie_skills": "claude.install_jailbee_skills",
+}
+
 # Removed-without-replacement keys. Surface the same ConfigError as the
 # moved-key maps above, but with a human-readable reason instead of a
 # new location.
@@ -243,6 +247,12 @@ def _check_retired_keys(raw: dict[str, object]) -> None:
         for old, reason in _REMOVED_KEYS_CLAUDE.items():
             if old in claude:
                 raise ConfigError(reason)
+        for old, new in _RETIRED_KEYS_CLAUDE.items():
+            if old in claude:
+                raise ConfigError(
+                    f"Unknown field `claude.{old}` in config: renamed to "
+                    f"`{new}`. See docs/config.md for the new schema."
+                )
 
 
 def _check_pull_migration(
@@ -1549,17 +1559,6 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
         return v
 
 
-@functools.cache
-def _warn_legacy_skills_key() -> None:
-    """Warn once per process about the pre-1.0 skills key name."""
-    from jailbee.tui import warn
-
-    warn(
-        "claude.install_gie_skills is deprecated and stops working in 2.0.0 — "
-        "rename it to claude.install_jailbee_skills."
-    )
-
-
 # `claude.pr_prompt` ships to the container as an environment variable inside
 # jailbee's own prompt. The cap is a sanity bound, not a model context limit:
 # it turns a pasted-in-by-accident file into a config error instead of a
@@ -1653,10 +1652,7 @@ class ClaudeConfig(BaseModel):
     autostart: bool = False
     command: str = "claude"
     auto_update: bool = True
-    install_jailbee_skills: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("install_jailbee_skills", "install_gie_skills"),
-    )
+    install_jailbee_skills: bool = True
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
     pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
@@ -1684,15 +1680,6 @@ class ClaudeConfig(BaseModel):
                 f"default; got {v!r}"
             )
         return v.strip()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _accept_legacy_skills_key(cls, data: Any) -> Any:
-        """Warn when the pre-1.0 key name is used. Removed in 2.0.0, where it
-        becomes a `_RETIRED_KEYS_CLAUDE` entry naming the new key."""
-        if isinstance(data, dict) and "install_gie_skills" in data:
-            _warn_legacy_skills_key()
-        return data
 
 
 class GithubConfig(BaseModel):

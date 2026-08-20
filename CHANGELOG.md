@@ -252,20 +252,55 @@
   was taken from the host, so a host using another name left the container
   tracking a remote that does not exist there and `git push` inside it failed.
 
+### Removed
+
+**The `gie`-era compatibility surface is gone**, on the schedule 1.0.0
+announced. Five of the six pieces go in this release; the sixth is kept and
+described under Deprecated below. The migrator only ever shipped in 1.0.x, so
+a still-unmigrated install has to be walked forward on a 1.0.x version before
+upgrading past it — this release cannot do it. See
+[`docs/migrating-from-gie.md`](docs/migrating-from-gie.md).
+
+- **The `gie` console script.** `pip`/`uv` installed `jailbee`, `jb` and `gie`
+  as three names for the same CLI. The third is no longer declared, so an
+  upgrade leaves `gie` behind as a command not found. Anything scripted
+  against it — aliases, cron entries, editor run configs — needs the name
+  changed to `jailbee` or `jb`. One leftover to clean up by hand if you ever
+  ran `make install`: `~/.local/share/bash-completion/completions/gie` stays
+  on disk and now completes a command that does not exist. It is inert, and
+  `rm` clears it.
+- **`claude.install_gie_skills` as a config alias.** The key is
+  `claude.install_jailbee_skills`. The old name is now a retired key, so a
+  config still using it fails to load with an error naming the replacement
+  rather than being silently ignored — check `~/.config/jailbee/global.yaml`
+  if `jailbee` suddenly refuses to start.
+- **`jailbee migrate`.** The whole command and its module. `jailbee doctor`'s
+  "pre-1.0 gie state" check goes with it, replaced by a narrower "legacy repo
+  config" check for the one thing still worth reporting (below). That check no
+  longer needs the `incus` binary, so it now also runs on a host without Incus.
+- **The legacy `/etc/hosts` sentinel.** `jailbee net refresh` recognised the
+  pre-rename `# BEGIN gie-managed allowlist` markers so it would replace such
+  a block instead of appending a second one beside it. A container old enough
+  to still carry those markers must be recreated.
+- **The `<data>/gie` compatibility symlink.** `jailbee migrate` used to leave
+  `~/.local/share/gie` pointing at `~/.local/share/jailbee` so that
+  absolute disk-device sources baked into pre-rename containers kept
+  resolving. Nothing creates it any more; an existing one is inert and can be
+  deleted once no container depends on it.
+
+Two pre-1.0 cleanups that ran on every `apply` go too, having nothing left to
+clean: the container-side removal of the `gie-registry-mirror` CA certificate
+and keytool alias, and `make install-skill`'s removal of the old
+`gie-repo-setup`/`gie-usage` Claude skills.
+
 ### Deprecated
 
-- **The pre-1.0 compatibility surface is now removed in 2.0.0, not 1.1.0.**
-  1.0.0 announced that all six pieces of `gie`-era compatibility — the `gie`
-  console script, the `.gie/config.yaml` fallback, the
-  `claude.install_gie_skills` config alias, the legacy `/etc/hosts` sentinel,
-  the `<data>/gie` symlink and `jailbee migrate` itself — would go in 1.1.0.
-  Removing an installed entry point, a config key and a config-file location
-  breaks working setups, so it belongs in a major release; announcing it for a
-  minor one was the mistake, and the deadline moves rather than the promise.
-  Nothing on the list changed, nothing is removed in this release, and no
-  existing install breaks in the meantime — the deprecation warnings now name
-  2.0.0. The list and the migration path are unchanged in
-  [`docs/migrating-from-gie.md`](docs/migrating-from-gie.md).
+- **`.gie/config.yaml` is the one piece of pre-1.0 compatibility kept.** A
+  repo whose config still lives in `.gie/` is read, with a warning naming the
+  `git mv` that fixes it, because that file is committed to shared
+  application repos and every branch has to be renamed before the fallback
+  can go. It is removed in **2.0.0**. `jailbee doctor` reports whether the
+  repo you are in still relies on it.
 
 ## 1.0.0 - 2026-08-13
 

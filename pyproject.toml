@@ -49,7 +49,6 @@ gui = ["PySide6>=6.7"]
 [project.scripts]
 jailbee = "jailbee.entry:main"
 jb = "jailbee.entry:main"
-gie = "jailbee.entry:main"   # pre-1.0 alias; removed in 2.0.0
 
 [project.urls]
 Homepage = "https://jailbee.gisgro.io"

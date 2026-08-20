@@ -434,12 +434,13 @@ def test_net_loose_profile_uses_gie_loose_bridge():
 
 
 def test_loose_net_profile_yaml_matches_the_config_driven_one():
-    """`jailbee migrate` writes loose profiles through the prefix-only helper.
+    """The prefix-only helper must stay byte-identical to the config-driven one.
 
-    If `net_profile_yaml(cfg, "loose")` ever grows a Config-derived key that
-    `loose_net_profile_yaml` doesn't, the migrator would silently rewrite a
-    repo's loose profile with a *different* profile than `jailbee apply`
-    produces. Keep them byte-identical.
+    `loose_net_profile_yaml` exists so a loose profile can be written without
+    loading a repo's whole config. If `net_profile_yaml(cfg, "loose")` ever
+    grows a Config-derived key the prefix-only path cannot see, that path
+    would quietly write a *different* profile than `jailbee apply` produces —
+    a divergence nothing else in the suite would notice.
     """
     from jailbee.profiles import loose_net_profile_yaml
 

@@ -125,8 +125,8 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             CheckResult(
                 "Incus-dependent checks",
                 False,
-                "skipped — profiles, ACL, bridge, registry mirror, pre-1.0 "
-                "state and port forwards all need the `incus` binary",
+                "skipped — profiles, ACL, bridge, registry mirror and port "
+                "forwards all need the `incus` binary",
             )
         )
 
@@ -309,30 +309,23 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
 
-    # 11. Pre-1.0 leftovers. Dropped in 2.0.0 with the migrator itself.
-    # Tests the old state directly rather than asking the migrator for a plan:
-    # a plan describes what the migrator is willing to do, so anything it
-    # refuses (e.g. a directory whose target already exists) would read as
-    # clean here — precisely the state a user most needs told about.
-    if incus_available:
-        from jailbee.migrate import MIGRATION_GUIDE, leftovers
-
-        try:
-            stale = leftovers(incus)
-        except Exception as e:  # broad catch: diagnostics must never abort
-            results.append(CheckResult("pre-1.0 gie state", False, f"could not inspect: {e}"))
-        else:
-            legacy_config = (cfg.repo_root / ".gie" / "config.yaml").is_file()
-            if not stale and not legacy_config:
-                results.append(CheckResult("pre-1.0 gie state", True, "none"))
-            else:
-                hint = "run `jailbee migrate`"
-                if legacy_config:
-                    hint += " and `git mv .gie .jailbee` in this repo"
-                detail = f"found: {'; '.join(stale)} — {hint}" if stale else f"found — {hint}"
-                results.append(
-                    CheckResult("pre-1.0 gie state", False, f"{detail}; see {MIGRATION_GUIDE}")
-                )
+    # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
+    # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
+    # console script, the /etc/hosts sentinel, the data symlink — was removed
+    # in 1.1.0, so there is no host state left to inspect and no `jailbee
+    # migrate` to recommend. This is a plain file check, which is why it sits
+    # outside the `incus_available` gate the removed version needed.
+    if (cfg.repo_root / ".gie" / "config.yaml").is_file():
+        results.append(
+            CheckResult(
+                "legacy repo config",
+                False,
+                "reading .gie/config.yaml, deprecated and removed in 2.0.0 — "
+                "run `git mv .gie .jailbee` in this repo",
+            )
+        )
+    else:
+        results.append(CheckResult("legacy repo config", True, "none"))
 
     # 12. Config-declared forwards that never got attached — the container
     # predates the entry, or an `apply` was skipped. Only meaningful when the

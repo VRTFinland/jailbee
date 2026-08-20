@@ -470,10 +470,10 @@ def test_build_stages_user_install_d_from_xdg_config_home(
 ):
     """The user's install.d must be read where the rest of jailbee writes it.
 
-    `global_config.default_global_config_path()` and `jailbee migrate` both
-    honour `XDG_CONFIG_HOME`; a hardcoded `~/.config/jailbee/install.d` would
-    silently ignore every snippet of a user who sets that variable — and the
-    migrator would have moved theirs to a directory this never looks in.
+    `global_config.default_global_config_path()` honours `XDG_CONFIG_HOME`, so
+    a hardcoded `~/.config/jailbee/install.d` here would silently ignore every
+    snippet belonging to a user who sets that variable — with no error, just
+    provisioning that quietly skips their customisations.
     """
     xdg_config = tmp_path / "xdg-config"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))

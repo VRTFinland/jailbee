@@ -14,8 +14,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """Drive the real console script in a subprocess.
+
+    Spawns `jailbee`, the primary of the two entry points `pyproject.toml`
+    declares. This is the only place the suite depends on a script name being
+    installed, which is what caught the removal of the pre-1.0 `gie` alias.
+    """
     return subprocess.run(
-        ["uv", "run", "gie", *args],
+        ["uv", "run", "jailbee", *args],
         capture_output=True,
         text=True,
         check=False,
@@ -43,7 +49,7 @@ def test_version_flag() -> None:
 def test_help() -> None:
     result = run_cli("--help")
     assert result.returncode == 0
-    assert "gie" in result.stdout.lower() or "gisgro" in result.stdout.lower()
+    assert "jailbee" in result.stdout.lower()
 
 
 def test_cli_init_no_longer_has_reapply_flag() -> None:
@@ -7649,255 +7655,6 @@ def test_new_worker_injects_a_declining_confirm_fn(tmp_path, mocker):
     assert result.exit_code == 0, result.stdout
     confirm_fn = new_container.call_args.kwargs["confirm_fn"]
     assert confirm_fn("anything?") is False
-
-
-def test_migrate_dry_run_prints_the_plan_and_changes_nothing(mocker):
-    """--dry-run must short-circuit even when there IS work to do.
-
-    A plan built from `MigrationPlan(blockers=())` is also `is_empty`, so
-    the command's early `return` would fire on that branch alone — deleting
-    `or dry_run` from `if plan.is_empty or dry_run: return` would not fail
-    that version of this test. Use a non-empty, unblocked plan instead, so
-    --dry-run is the only thing keeping this test passing.
-    """
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    stop_timers = mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-    confirm = mocker.patch("typer.confirm")
-
-    result = CliRunner().invoke(app, ["migrate", "--dry-run"])
-
-    assert result.exit_code == 0
-    assert "relabel app-feat" in result.output
-    execute.assert_not_called()
-    confirm.assert_not_called()
-    # --dry-run promises to change nothing at all; a stopped timer is a change.
-    stop_timers.assert_not_called()
-
-
-def test_migrate_exits_nonzero_when_blocked(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    mocker.patch(
-        "jailbee.migrate.build_plan",
-        return_value=MigrationPlan(blockers=("containers on the loose bridge: app-feat",)),
-    )
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert "BLOCKED" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_prompts_and_aborts_when_declined(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate"], input="n\n")
-
-    assert result.exit_code == 1
-    assert "Apply this migration?" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_yes_flag_skips_prompt_and_executes(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    stop_timers = mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    # No input= provided — if the prompt were reached, CliRunner would see
-    # empty stdin and the command would abort instead of executing.
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 0, result.output
-    assert "Apply this migration?" not in result.output
-    execute.assert_called_once()
-    # Moving the data directory invalidates the absolute disk sources stored
-    # in each repo's profiles; `jailbee apply` is what rewrites them.
-    assert "jailbee apply" in result.output
-    # Stopped before the plan was built, not after: a refresh tick landing
-    # between `build_plan` and the move recreates the destination and aborts
-    # a migration that was about to succeed.
-    stop_timers.assert_called_once()
-
-
-def test_migrate_reports_an_incomplete_step_without_a_traceback(mocker):
-    """A step that can't finish must exit 1 with its own message.
-
-    Typer installs no global handler, so an exception escaping the command
-    reaches the user as a raw traceback and hides the fact that the rest of
-    the migration did complete.
-    """
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, IncompleteMigrationError, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-        migrate_bridge=True,
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    mocker.patch(
-        "jailbee.migrate.execute_plan",
-        side_effect=IncompleteMigrationError("gie-loose is still in use by: container legacy-box"),
-    )
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert "legacy-box" in result.output
-    assert "Migration complete" not in result.output
-
-
-def test_migrate_asks_before_deleting_a_populated_destination(mocker):
-    """The destination holds state, so the user gets a say — and a decline
-    leaves the machine exactly as it was."""
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate"], input="n\n")
-
-    assert result.exit_code == 1
-    assert "Delete /s/jailbee?" in result.output
-    assert "state.sqlite" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_passes_the_approved_destination_to_execute(mocker):
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    # First "y" approves the deletion, second confirms the migration itself.
-    result = CliRunner().invoke(app, ["migrate"], input="y\ny\n")
-
-    assert result.exit_code == 0, result.output
-    assert execute.call_args.kwargs["approved_removals"] == frozenset({Path("/s/jailbee")})
-
-
-def test_migrate_never_asks_about_an_empty_destination(mocker):
-    """Nothing to lose means nothing to ask about — this is the `make
-    install` case, and a prompt there would be noise on every host."""
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(src=Path("/s/gie"), dst=Path("/s/jailbee"), entries=(), is_empty=True),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 0, result.output
-    assert "Delete" not in result.output
-    assert execute.call_args.kwargs["approved_removals"] == frozenset()
-
-
-def test_migrate_yes_refuses_to_consent_to_deleting_state(mocker):
-    """`--yes` means "skip the confirmation", not "lose state unattended".
-
-    Without this, a scripted `jailbee migrate --yes` would delete a
-    populated destination with no one watching — the one outcome the
-    consent path exists to prevent.
-    """
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert "--yes cannot consent" in result.output
-    execute.assert_not_called()
 
 
 def test_registry_up_drives_a_live_status_line(mocker, tmp_path):
