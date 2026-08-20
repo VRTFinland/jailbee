@@ -28,13 +28,6 @@ _BEGIN_SENTINEL_PREFIX = "# BEGIN jailbee-managed allowlist"
 BEGIN_SENTINEL = f"{_BEGIN_SENTINEL_PREFIX} (do not edit, managed by `jailbee net refresh`)"
 END_SENTINEL = "# END jailbee-managed allowlist"
 
-# Pre-1.0 sentinels. Containers provisioned before the rename still carry a
-# `gie-managed` block; the strip program must recognise it, or `net refresh`
-# would append a second block instead of replacing the first. Removed in
-# 2.0.0 together with `jailbee migrate`.
-_LEGACY_BEGIN_SENTINEL = "# BEGIN gie-managed allowlist"
-_LEGACY_END_SENTINEL = "# END gie-managed allowlist"
-
 # The awk patterns match on the sentinel *prefix*, which is why
 # `_BEGIN_SENTINEL_PREFIX` exists as its own constant: the full
 # `BEGIN_SENTINEL` carries a parenthesised note with backticks, and
@@ -43,8 +36,6 @@ _STRIP_MANAGED_BLOCK_AWK = f"""\
 awk '
   /^{_BEGIN_SENTINEL_PREFIX}/ {{ in_block=1; next }}
   /^{END_SENTINEL}/ {{ in_block=0; next }}
-  /^{_LEGACY_BEGIN_SENTINEL}/ {{ in_block=1; next }}
-  /^{_LEGACY_END_SENTINEL}/ {{ in_block=0; next }}
   !in_block
 ' /etc/hosts"""
 
@@ -114,8 +105,8 @@ def apply_hosts(
     `jailbee-registry-mirror.incus` via `incusbr0`'s dnsmasq.
 
     Runs a single `bash -c` via `incus exec` that:
-      1. awk-strips any existing BEGIN/END jailbee-managed block (or the
-         legacy pre-1.0 gie-managed block) from /etc/hosts into a tmp file.
+      1. awk-strips any existing BEGIN/END jailbee-managed block from
+         /etc/hosts into a tmp file.
       2. Appends the freshly rendered block (if non-empty).
       3. Atomically moves the tmp file into place.
 
@@ -144,8 +135,7 @@ mv "$tmp" /etc/hosts
 
 
 def clear_hosts(cfg: Config, incus: Incus, name: str) -> None:
-    """Remove the jailbee-managed block (or the legacy pre-1.0 gie-managed
-    block) from /etc/hosts.
+    """Remove the jailbee-managed block from /etc/hosts.
 
     Strips only the BEGIN..END range; user-written entries are preserved.
     Idempotent: containers with no block produce a no-op rewrite.

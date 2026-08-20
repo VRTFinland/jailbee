@@ -258,23 +258,10 @@ def test_apply_hosts_script_strips_existing_block():
     assert "BEGIN jailbee-managed allowlist" in script
     assert "END jailbee-managed allowlist" in script
     assert "awk" in script
-
-
-def test_apply_hosts_strips_both_current_and_legacy_blocks(mocker, tmp_path):
-    """Containers provisioned before the rename still carry a `gie-managed`
-    block; the strip program must recognise it too, or `net refresh` would
-    append a second block instead of replacing the first."""
-    cfg = _make_cfg(["github.com"])
-    incus = MagicMock()
-    entries = [EgressEntry(destinations=["1.2.3.4"], port=None, description="example.com")]
-
-    apply_hosts(cfg, incus, "myrepo-feat-x", entries=entries)
-
-    script = incus.exec.call_args.args[1][2]
+    # Anchored: an unanchored pattern would also match a sentinel quoted
+    # inside a user-written comment further down /etc/hosts.
     assert "^# BEGIN jailbee-managed allowlist" in script
     assert "^# END jailbee-managed allowlist" in script
-    assert "^# BEGIN gie-managed allowlist" in script
-    assert "^# END gie-managed allowlist" in script
 
 
 # ---- apply_hosts: mirror_endpoint -------------------------------------------
@@ -351,13 +338,11 @@ def test_clear_hosts_does_not_resolve_hostnames(mocker):
     gai.assert_not_called()
 
 
-def test_clear_hosts_strips_the_legacy_block_too():
-    """`clear_hosts` must also strip a pre-rename `gie-managed` block, not
-    just the current `jailbee-managed` one."""
+def test_clear_hosts_strips_the_managed_block():
     incus = MagicMock()
 
     clear_hosts(_make_cfg(["github.com"]), incus, "myrepo-feat-x")
 
     script = incus.exec.call_args.args[1][2]
-    assert "^# BEGIN gie-managed allowlist" in script
     assert "^# BEGIN jailbee-managed allowlist" in script
+    assert "^# END jailbee-managed allowlist" in script
