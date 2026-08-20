@@ -6486,7 +6486,7 @@ def migrate(
     """Migrate pre-1.0 `gie` state to the jailbee namespace.
 
     Host-level: takes no repo config, and covers every repo whose containers
-    this host knows. Removed in 1.1.0 — see docs/migrating-from-gie.md.
+    this host knows. Removed in 2.0.0 — see docs/migrating-from-gie.md.
     """
     from jailbee.incus import Incus
     from jailbee.migrate import (

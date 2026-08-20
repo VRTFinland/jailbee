@@ -10,7 +10,7 @@ Goal: take any existing git repo and make `jailbee new <name>` work for it. The 
 This skill walks Claude through inspecting the repo, generating a tailored config, and (optionally) adding `install.d/` snippets for stack tools the bundled golden image doesn't cover.
 
 `gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 1.1.0), but don't teach it — use `jailbee`
+console-script alias (removed in 2.0.0), but don't teach it — use `jailbee`
 in every command you write or suggest.
 
 ## Workflow

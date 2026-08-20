@@ -11,7 +11,7 @@ prebuilt "golden image", carrying its own backend, frontend, Docker daemon, IDE,
 and browser — no port/name/schema collisions between branches.
 
 `gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 1.1.0), but don't teach it — use `jailbee`
+console-script alias (removed in 2.0.0), but don't teach it — use `jailbee`
 (or `jb`) in every command you write or suggest.
 
 This skill is for **using** an already-configured repo (one that has

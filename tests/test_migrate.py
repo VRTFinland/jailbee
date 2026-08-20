@@ -1,4 +1,4 @@
-"""Unit tests for the pre-1.0 state migrator. Deleted with it in 1.1.0."""
+"""Unit tests for the pre-1.0 state migrator. Deleted with it in 2.0.0."""
 
 from __future__ import annotations
 
@@ -748,7 +748,7 @@ def test_execute_plan_deletes_old_skill_paths_planned_under_the_pre_move_root(xd
     `compat_symlink=False` on purpose: with the symlink in place the old
     paths keep resolving and the deletion appears to work whether or not the
     remap exists. The remap is what must do the work, because the symlink is
-    compatibility surface that 1.1.0 removes.
+    compatibility surface that 2.0.0 removes.
     """
     from jailbee.migrate import DirMove, MigrationPlan, execute_plan
 

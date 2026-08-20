@@ -9,7 +9,7 @@ REPO_CONFIG_DIRS: tuple[str, ...] = (".jailbee", ".gie")
 
 ``.gie`` is the pre-1.0 location. It is accepted with a deprecation warning
 because the file is committed to shared application repos, so renaming it
-there cannot be synchronised with each user's tool upgrade. Removed in 1.1.0.
+there cannot be synchronised with each user's tool upgrade. Removed in 2.0.0.
 """
 
 
@@ -35,7 +35,7 @@ def _warn_legacy_config_dir(path: Path) -> None:
     from jailbee.tui import warn
 
     warn(
-        f"{path.parent.name}/config.yaml is deprecated and stops working in 1.1.0 — "
+        f"{path.parent.name}/config.yaml is deprecated and stops working in 2.0.0 — "
         f"run `git mv {path.parent.name} .jailbee` in this repo."
     )
 

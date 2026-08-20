@@ -31,7 +31,7 @@ END_SENTINEL = "# END jailbee-managed allowlist"
 # Pre-1.0 sentinels. Containers provisioned before the rename still carry a
 # `gie-managed` block; the strip program must recognise it, or `net refresh`
 # would append a second block instead of replacing the first. Removed in
-# 1.1.0 together with `jailbee migrate`.
+# 2.0.0 together with `jailbee migrate`.
 _LEGACY_BEGIN_SENTINEL = "# BEGIN gie-managed allowlist"
 _LEGACY_END_SENTINEL = "# END gie-managed allowlist"
 

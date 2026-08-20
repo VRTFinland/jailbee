@@ -1,7 +1,7 @@
 """One-shot migration of pre-1.0 `gie` state into the jailbee namespace.
 
 Deprecated on arrival: this module and the `jailbee migrate` command exist
-only for installations that predate the rename, and are removed in 1.1.0
+only for installations that predate the rename, and are removed in 2.0.0
 together with the rest of the compatibility surface. Keeping it in one file
 makes that removal a single `git rm`.
 
@@ -551,7 +551,7 @@ def leftovers(incus: Incus) -> tuple[str, ...]:
     itself.
 
     The `<data>/gie` compatibility symlink is not leftover state — it is part
-    of the 1.0 compatibility surface and is removed in 1.1.0.
+    of the 1.0 compatibility surface and is removed in 2.0.0.
     """
     found: list[str] = []
     for src in _old_dirs():
@@ -595,7 +595,7 @@ def render_plan(plan: MigrationPlan) -> str:
     for move in plan.dir_moves:
         lines.append(f"  move    {move.src} -> {move.dst}")
         if move.compat_symlink:
-            lines.append(f"  symlink {move.src} -> {move.dst} (compatibility, removed in 1.1.0)")
+            lines.append(f"  symlink {move.src} -> {move.dst} (compatibility, removed in 2.0.0)")
     for relabel in plan.relabels:
         lines.append(f"  relabel {relabel.name}: {', '.join(relabel.keys)}")
     for rename in plan.ref_renames:
