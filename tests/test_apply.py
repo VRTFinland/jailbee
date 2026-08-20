@@ -143,9 +143,10 @@ def test_run_apply_syncs_gie_skills_when_claude_enabled(
     """run_apply refreshes the bundled gie skills into the shared dir."""
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []

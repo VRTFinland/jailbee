@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
-from jailbee.config import Config
+from jailbee.config import Config, resolve_agents_raw
 from jailbee.db import _ensure_schema
 
 
@@ -35,8 +35,13 @@ def make_config(
     repo_root/default_branch/upstream_remote/container_prefix are always set.
     Extra keyword args are forwarded to ``Config.model_validate`` so callers
     can pass e.g. ``gpg={"enabled": False}`` or ``host_mounts=[...]``.
+
+    Overrides are routed through ``resolve_agents_raw`` first — the same
+    normalisation ``load_config`` applies to YAML — so a legacy
+    ``claude={...}`` override and a preset-backed ``agents={...}`` override
+    both resolve exactly as they would from a real config file.
     """
-    cfg = Config.model_validate(overrides) if overrides else Config()
+    cfg = Config.model_validate(resolve_agents_raw(overrides)) if overrides else Config()
     object.__setattr__(cfg, "repo_root", repo_root)
     object.__setattr__(cfg, "default_branch", default_branch)
     object.__setattr__(cfg, "upstream_remote", upstream_remote)
@@ -62,6 +67,27 @@ make_cfg = make_config
 def make_cfg_fixture():
     """Pytest fixture wrapper for make_config."""
     return make_config
+
+
+def with_agent(cfg: Config, name: str, **fields: Any) -> Config:
+    """Return a copy of `cfg` with `agents[name]` updated by `fields`.
+
+    Use instead of `cfg.model_copy(update={"claude": ...})`: `Config.claude` is
+    a property, so that form is silently ignored rather than failing.
+
+    Builds the model directly and does **not** run `resolve_agents_raw`, so
+    presets are not applied here — pass `command=` explicitly when the agent
+    is not already present in `cfg`. Presets resolve on the load path only.
+    """
+    from jailbee.config import AgentConfig, ClaudeAgentConfig
+
+    model = ClaudeAgentConfig if name == "claude" else AgentConfig
+    current = cfg.agents.get(name)
+    base = current.model_dump() if current is not None else {}
+    if name == "claude":
+        base.setdefault("command", "claude")
+    merged = model.model_validate({**base, **fields})
+    return cfg.model_copy(update={"agents": {**cfg.agents, name: merged}})
 
 
 def _raw_container(name: str, *profiles: str) -> dict[str, Any]:

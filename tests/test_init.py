@@ -8,6 +8,7 @@ import pytest
 from jailbee.config import load_config
 from jailbee.incus import IncusError
 from jailbee.init_command import apply_allowlist_acl, run_init
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -28,7 +29,7 @@ def test_init_creates_shared_dirs(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     # Drop the fixture's claude.enabled + jetbrains.enabled flags for this test.
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     cfg = cfg.model_copy(update={"jetbrains": cfg.jetbrains.model_copy(update={"enabled": False})})
     incus = MagicMock()
     incus.profile_exists.return_value = False
@@ -212,7 +213,7 @@ def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
     """`_ensure_claude_json_exists` is called only when claude.enabled."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     incus = MagicMock()
     incus.profile_exists.return_value = False
     incus.network_acl_exists.return_value = False

@@ -127,3 +127,26 @@ def test_bad_agent_name_is_an_error(tmp_path):
     cfg = make_cfg(tmp_path, agents={"Not_Valid": {"enabled": True, "command": "x"}})
     issues = cfg.validate_runtime()
     assert any("must match [a-z0-9-]+" in i for i in issues)
+
+
+# ---------- Task 2: Config.claude derived from agents.claude ----------
+
+
+def test_claude_property_reflects_agents_entry(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "ai_pr_timeout": 900}})
+    assert cfg.claude.enabled is True
+    assert cfg.claude.ai_pr_timeout == 900
+
+
+def test_claude_property_defaults_disabled_when_absent(tmp_path):
+    cfg = make_cfg(tmp_path)
+    assert cfg.claude.enabled is False
+    assert cfg.claude.command == "claude"
+
+
+def test_with_agent_helper_actually_changes_the_config(tmp_path):
+    """Guards the silent-failure mode: a property shadows model_copy's dict."""
+    from tests.conftest import with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    assert cfg.claude.enabled is True

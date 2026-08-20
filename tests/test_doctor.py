@@ -8,6 +8,7 @@ import pytest
 from jailbee.config import load_config
 from jailbee.doctor import run_checks
 from jailbee.registry import MirrorStatus
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -244,7 +245,7 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
     """When claude.enabled is false, doctor does not list claude as a
     missing subdir even if <shared_dir>/claude does not exist."""
     cfg = _cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     # Create only the non-claude expected subdirs.
     for sub in (
         "caches/pnpm-store",

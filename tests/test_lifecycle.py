@@ -20,6 +20,7 @@ from jailbee.lifecycle import (
     restart_container,
     switch_network,
 )
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -4434,7 +4435,7 @@ def test_new_container_runs_ensure_claude_when_enabled(make_cfg, tmp_path, mocke
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
@@ -4475,9 +4476,7 @@ def test_new_container_ensure_claude_passes_false_flag(make_cfg, tmp_path, mocke
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"enabled": True, "auto_update": False})}
-    )
+    cfg = with_agent(cfg, "claude", enabled=True, auto_update=False)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
@@ -4497,7 +4496,7 @@ def test_new_container_ensure_claude_failure_is_non_fatal(make_cfg, tmp_path, mo
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
 
@@ -4521,7 +4520,7 @@ def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)

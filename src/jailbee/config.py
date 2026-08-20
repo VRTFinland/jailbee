@@ -1554,122 +1554,6 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
 _MAX_PR_PROMPT_LEN = 20_000
 
 
-class ClaudeConfig(BaseModel):
-    """Claude Code CLI integration inside containers.
-
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When false, jailbee skips:
-        * the <shared_dir>/claude + <shared_dir>/claude.json shared
-          cache mounts (driven by `Config.effective_shared_caches`),
-        * the api.anthropic.com:443 + code.claude.com:443 +
-          downloads.claude.ai:443 strict-mode egress auto-adds,
-        * the <shared_dir>/claude subdir creation on `jailbee init`,
-        * the claude-subdir presence check in `jailbee doctor`.
-      When enabled, jailbee creates an empty <shared_dir>/claude directory
-      and an empty <shared_dir>/claude.json file as bind-mount sources
-      — Claude Code inside the first container runs its onboarding flow
-      from a clean state. No host ~/.claude / ~/.claude.json is read.
-    - `plugins_enabled`: when true (default), `effective_egress_allow`
-      also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
-      Code's plugin marketplace, skills and SessionStart hooks load in
-      strict-mode containers. Set to false to keep the API reachable
-      while blocking marketplace traffic. Has no effect when `enabled`
-      is false.
-    - `autostart`: when true (and `enabled` is true), `run_autostart`
-      appends a synthetic `claude` window to the `autostart` tmux
-      session on every container start. `jailbee tmux <c>` lands in that
-      window. Defaults to false; requires `enabled=true` —
-      `validate_runtime` rejects the misconfiguration.
-    - `command`: the command line executed in the `claude` autostart
-      window. Defaults to `claude`. Useful for passing flags
-      (e.g. `claude --dangerously-skip-permissions`) or an env-prefix
-      wrapper. Ignored when `autostart` is false.
-    - `auto_update`: when true (default), `jailbee new` runs `claude update`
-      inside the container so the shared install advances to the latest
-      release. When false, an *existing* Claude install is left untouched,
-      but a *missing* one is still installed — the shared
-      `~/.local/share/claude` version store only advances when some
-      container runs with `auto_update=true` (or a user runs `claude
-      update` by hand). Has no effect when `enabled` is false.
-    - `install_jailbee_skills`: when true (default, requires `enabled`), `jailbee new`
-      and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`,
-      `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
-      in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
-      edits. Host-side file copy only — no network. Has no effect when `enabled`
-      is false. Accepts the pre-1.0 key name as a validation alias, with a
-      one-time deprecation warning; removed in 2.0.0.
-    - `ai_pr_description`: when true (default, requires `enabled`),
-      `jailbee pr` asks the in-container Claude CLI to generate the
-      PR title and body from the branch's commits and diff, falling back to
-      a placeholder if generation fails. Has no effect when `enabled` is
-      false.
-    - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
-      the in-container Claude to propose a convention-following PR head branch
-      name when opening a new PR; has no effect when `enabled` is false.
-    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
-      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
-      jailbee's own prompt as a delimited section that explicitly outranks the
-      generic guidance, so a project can dictate the title and body shape
-      without having to restate the JSON response contract `_parse_pr_text`
-      depends on. Capped at 20 000 characters so a pathological value fails at
-      config load rather than inside the container. Has no effect when
-      `enabled` or `ai_pr_description` is false.
-    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
-      generating the PR text. Defaults to `sonnet`: writing a PR description is
-      a bounded summarisation job, and pinning it means the generation does not
-      compete for the same budget as the coding work that just happened in the
-      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
-      ID; `null` omits the flag entirely so the container's own default model
-      applies. `haiku` is a valid choice but has a smaller context window than
-      the alternatives, so a large cumulative diff may not fit. Has no effect
-      when `enabled` or `ai_pr_description` is false.
-    - `ai_pr_timeout`: seconds `jailbee pr` gives the in-container Claude to
-      produce the PR text before giving up and falling back to a placeholder.
-      Defaults to 600. Generation is an agentic run, not one model call — it
-      reads the log, the cumulative diff, the PR template and the branch's spec
-      across a dozen-plus turns, so cost scales with the repository, not just
-      with the diff. Measured in jailbee's own repo on a 21-file diff: 129s.
-      Raise it for a large tree, or when `claude.pr_prompt` asks for work that
-      takes longer. Has no effect when `enabled` or `ai_pr_description` is
-      false.
-    """
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    enabled: bool = False
-    plugins_enabled: bool = True
-    autostart: bool = False
-    command: str = "claude"
-    auto_update: bool = True
-    install_jailbee_skills: bool = True
-    ai_pr_description: bool = True
-    ai_pr_branch: bool = True
-    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
-    ai_pr_model: str | None = "sonnet"
-    ai_pr_timeout: int = Field(default=600, gt=0)
-
-    @field_validator("ai_pr_model")
-    @classmethod
-    def _reject_non_model_value(cls, v: str | None) -> str | None:
-        """A model name is a single token — reject anything that isn't one.
-
-        The value reaches `claude --model` through an environment variable, so
-        embedded flags could never be executed as such. The check exists to
-        turn a typo or a misunderstanding into a config error, rather than a
-        non-zero `claude` exit that `generate_pr_text` reports only as a failed
-        generation. Use `null`, not an empty string, to inherit the container's
-        own default model.
-        """
-        if v is None:
-            return None
-        if not v.strip() or len(v.split()) != 1:
-            raise ValueError(
-                f"must be a single model name or alias (e.g. 'sonnet', "
-                f"'claude-haiku-4-5'), or null to inherit the container "
-                f"default; got {v!r}"
-            )
-        return v.strip()
-
-
 class AgentSharedMount(BaseModel):
     """One bind-mount an agent needs to keep its auth/config across containers.
 
@@ -1732,7 +1616,63 @@ class ClaudeAgentConfig(AgentConfig):
     """`agents.claude` — the generic fields plus Claude-only integrations.
 
     `enabled`, `autostart`, `command` and `auto_update` are inherited: their
-    semantics are identical to any other agent's.
+    semantics are identical to any other agent's. `enabled` gates the shared
+    `<shared_dir>/claude` + `<shared_dir>/claude.json` cache mounts (see
+    `Config.effective_shared_caches`), the `CLAUDE_API_HOSTS` strict-mode
+    egress auto-add, the `<shared_dir>/claude` subdir creation on
+    `jailbee init`, and the claude-subdir presence check in `jailbee doctor`.
+    When enabled, jailbee creates an empty `<shared_dir>/claude` directory and
+    an empty `<shared_dir>/claude.json` file as bind-mount sources — Claude
+    Code inside the first container runs its onboarding flow from a clean
+    state. No host `~/.claude` / `~/.claude.json` is read.
+
+    - `plugins_enabled`: when true (default), `effective_egress_allow`
+      also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
+      Code's plugin marketplace, skills and SessionStart hooks load in
+      strict-mode containers. Set to false to keep the API reachable
+      while blocking marketplace traffic. Has no effect when `enabled`
+      is false.
+    - `install_jailbee_skills`: when true (default, requires `enabled`), `jailbee new`
+      and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`,
+      `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
+      in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
+      edits. Host-side file copy only — no network. Has no effect when `enabled`
+      is false. Accepts the pre-1.0 key name as a validation alias, with a
+      one-time deprecation warning; removed in 2.0.0.
+    - `ai_pr_description`: when true (default, requires `enabled`),
+      `jailbee pr` asks the in-container Claude CLI to generate the
+      PR title and body from the branch's commits and diff, falling back to
+      a placeholder if generation fails. Has no effect when `enabled` is
+      false.
+    - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
+      the in-container Claude to propose a convention-following PR head branch
+      name when opening a new PR; has no effect when `enabled` is false.
+    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
+      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
+      jailbee's own prompt as a delimited section that explicitly outranks the
+      generic guidance, so a project can dictate the title and body shape
+      without having to restate the JSON response contract `_parse_pr_text`
+      depends on. Capped at 20 000 characters so a pathological value fails at
+      config load rather than inside the container. Has no effect when
+      `enabled` or `ai_pr_description` is false.
+    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
+      generating the PR text. Defaults to `sonnet`: writing a PR description is
+      a bounded summarisation job, and pinning it means the generation does not
+      compete for the same budget as the coding work that just happened in the
+      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
+      ID; `null` omits the flag entirely so the container's own default model
+      applies. `haiku` is a valid choice but has a smaller context window than
+      the alternatives, so a large cumulative diff may not fit. Has no effect
+      when `enabled` or `ai_pr_description` is false.
+    - `ai_pr_timeout`: seconds `jailbee pr` gives the in-container Claude to
+      produce the PR text before giving up and falling back to a placeholder.
+      Defaults to 600. Generation is an agentic run, not one model call — it
+      reads the log, the cumulative diff, the PR template and the branch's spec
+      across a dozen-plus turns, so cost scales with the repository, not just
+      with the diff. Measured in jailbee's own repo on a 21-file diff: 129s.
+      Raise it for a large tree, or when `claude.pr_prompt` asks for work that
+      takes longer. Has no effect when `enabled` or `ai_pr_description` is
+      false.
     """
 
     plugins_enabled: bool = True
@@ -1743,9 +1683,6 @@ class ClaudeAgentConfig(AgentConfig):
     ai_pr_model: str | None = "sonnet"
     ai_pr_timeout: int = Field(default=600, gt=0)
 
-    # Copy of ClaudeConfig._reject_non_model_value, not a shared helper:
-    # ClaudeConfig is removed in the follow-up commit (Task 2), at which
-    # point this becomes the only copy. Keep the two in sync until then.
     @field_validator("ai_pr_model")
     @classmethod
     def _reject_non_model_value(cls, v: str | None) -> str | None:
@@ -1829,7 +1766,6 @@ class Config(BaseModel):
     ssh: SshConfig = SshConfig()
     jetbrains: JetbrainsConfig = JetbrainsConfig()
     chrome: ChromeConfig = ChromeConfig()
-    claude: ClaudeConfig = ClaudeConfig()
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     github: GithubConfig = GithubConfig()
     terminal: TerminalConfig = TerminalConfig()
@@ -1925,6 +1861,23 @@ class Config(BaseModel):
             model_cls: type[AgentConfig] = ClaudeAgentConfig if name == "claude" else AgentConfig
             result[name] = model_cls.model_validate(entry)
         return result
+
+    @property
+    def claude(self) -> ClaudeAgentConfig:
+        """The `agents.claude` entry, or a disabled default when absent.
+
+        Kept so `pr_ai`, `claude_skills`, `doctor`, `apply` and `cli` can go on
+        reading `cfg.claude.*`. Precedent: `repo_root`, `default_branch` and
+        `container_prefix` are also derived rather than YAML keys.
+
+        Read-only on purpose. `model_copy(update={"claude": ...})` cannot work
+        here — a property shadows the instance dict that update writes — so
+        tests must go through `tests.conftest.with_agent`.
+        """
+        entry = self.agents.get("claude")
+        if isinstance(entry, ClaudeAgentConfig):
+            return entry
+        return ClaudeAgentConfig(command="claude")
 
     def effective_egress_allow(self) -> list[str]:
         """User's `egress_allow` plus any feature-driven auto-additions.
@@ -2320,6 +2273,7 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
     invariants (prefix regex, reserved env keys, shared_caches uniqueness,
     autostart step-name uniqueness) are checked here as well.
     """
+    raw = resolve_agents_raw(raw)
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)

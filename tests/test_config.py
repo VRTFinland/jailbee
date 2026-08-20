@@ -18,6 +18,7 @@ from jailbee.config import (
     Stacks,
     load_config,
 )
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1225,29 +1226,29 @@ def test_jetbrains_config_enabled_can_be_enabled():
 
 
 def test_claude_config_enabled_default_false():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().enabled is False
+    assert ClaudeAgentConfig().enabled is False
 
 
 def test_claude_config_can_be_enabled():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(enabled=True)
+    cfg = ClaudeAgentConfig(enabled=True)
     assert cfg.enabled is True
 
 
 def test_claude_config_extra_keys_rejected():
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError):
-        ClaudeConfig(unknown_field=True)  # type: ignore[call-arg]
+        ClaudeAgentConfig(unknown_field=True)  # type: ignore[call-arg]
 
 
 def test_config_has_claude_block_disabled_by_default(tmp_path, mocker):
-    """Config.claude defaults to a disabled ClaudeConfig."""
+    """Config.claude defaults to a disabled ClaudeAgentConfig."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
     cfg = load_config(cfg_path)
@@ -1255,17 +1256,20 @@ def test_config_has_claude_block_disabled_by_default(tmp_path, mocker):
 
 
 def test_claude_config_autostart_defaults():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig()
+    # `command` on the bare model defaults to "" (inherited from AgentConfig) —
+    # "claude" is supplied by `Config.claude`'s fallback construction and by
+    # `claude_preset()` on the load path, not by the model itself.
+    cfg = ClaudeAgentConfig()
     assert cfg.autostart is False
-    assert cfg.command == "claude"
+    assert cfg.command == ""
 
 
 def test_claude_config_autostart_accepts_custom_command():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(
+    cfg = ClaudeAgentConfig(
         enabled=True, autostart=True, command="claude --dangerously-skip-permissions"
     )
     assert cfg.autostart is True
@@ -1276,7 +1280,7 @@ def test_validate_runtime_rejects_autostart_without_enabled(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
-    object.__setattr__(cfg, "claude", cfg.claude.model_copy(update={"autostart": True}))
+    cfg = with_agent(cfg, "claude", autostart=True)
     issues = cfg.validate_runtime()
     assert any("claude.autostart=true requires claude.enabled=true" in i for i in issues)
 
@@ -1285,11 +1289,7 @@ def test_validate_runtime_silent_when_autostart_and_enabled(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
-    object.__setattr__(
-        cfg,
-        "claude",
-        cfg.claude.model_copy(update={"enabled": True, "autostart": True}),
-    )
+    cfg = with_agent(cfg, "claude", enabled=True, autostart=True)
     issues = cfg.validate_runtime()
     assert not any("claude.autostart" in i for i in issues)
 
@@ -1365,10 +1365,10 @@ def test_claude_pr_prompt_rejects_an_oversized_value():
     """A pathological value fails loudly at load instead of inside the container."""
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError):
-        ClaudeConfig(enabled=True, pr_prompt="x" * 20_001)
+        ClaudeAgentConfig(enabled=True, pr_prompt="x" * 20_001)
 
 
 def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
@@ -1406,20 +1406,20 @@ def test_claude_ai_pr_model_rejects_extra_flags():
     """A model name never contains whitespace; smuggling flags in must not work."""
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError, match="ai_pr_model"):
-        ClaudeConfig(enabled=True, ai_pr_model="sonnet --dangerously-skip-permissions")
+        ClaudeAgentConfig(enabled=True, ai_pr_model="sonnet --dangerously-skip-permissions")
 
 
 def test_claude_ai_pr_model_rejects_an_empty_string():
     """Empty means "inherit the container default" — spell that `null`, not ''."""
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError, match="ai_pr_model"):
-        ClaudeConfig(enabled=True, ai_pr_model="   ")
+        ClaudeAgentConfig(enabled=True, ai_pr_model="   ")
 
 
 def test_claude_ai_pr_timeout_defaults_to_600(tmp_path, mocker):
@@ -1453,16 +1453,16 @@ def test_claude_ai_pr_timeout_rejects_non_positive_values(bad):
     """
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError, match="ai_pr_timeout"):
-        ClaudeConfig(enabled=True, ai_pr_timeout=bad)
+        ClaudeAgentConfig(enabled=True, ai_pr_timeout=bad)
 
 
 def test_config_rejects_the_retired_install_gie_skills_key(tmp_path, mocker):
     """End-to-end, because which error surfaces depends on ordering.
 
-    `ClaudeConfig` forbids extras, so a config carrying the pre-1.0 key name
+    `ClaudeAgentConfig` forbids extras, so a config carrying the pre-1.0 key name
     fails either way — but on pydantic's "Extra inputs are not permitted",
     which names neither the new key nor the fix. `_check_retired_keys` has to
     run first for the user to be told what to rename it to.
@@ -1507,19 +1507,19 @@ def test_config_rejects_the_retired_install_gie_skills_key_via_agents_claude(tmp
 
 
 def test_claude_install_jailbee_skills_defaults_true():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().install_jailbee_skills is True
+    assert ClaudeAgentConfig().install_jailbee_skills is True
 
 
 def test_claude_install_jailbee_skills_override_by_keyword():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig(install_jailbee_skills=False).install_jailbee_skills is False
+    assert ClaudeAgentConfig(install_jailbee_skills=False).install_jailbee_skills is False
 
 
 def test_claude_rejects_unknown_key(tmp_path, mocker):
-    """ClaudeConfig keeps extra='forbid' — unknown keys still raise."""
+    """ClaudeAgentConfig keeps extra='forbid' — unknown keys still raise."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
@@ -2594,22 +2594,22 @@ def test_destroy_background_can_be_enabled(tmp_path, mocker):
 
 
 def test_claude_ai_pr_description_defaults_true_and_round_trips():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().ai_pr_description is True
-    assert ClaudeConfig(ai_pr_description=False).ai_pr_description is False
+    assert ClaudeAgentConfig().ai_pr_description is True
+    assert ClaudeAgentConfig(ai_pr_description=False).ai_pr_description is False
 
 
 def test_claude_ai_pr_branch_defaults_true():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().ai_pr_branch is True
+    assert ClaudeAgentConfig().ai_pr_branch is True
 
 
 def test_claude_ai_pr_branch_roundtrips_false():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(ai_pr_branch=False)
+    cfg = ClaudeAgentConfig(ai_pr_branch=False)
     assert cfg.ai_pr_branch is False
     assert cfg.model_dump()["ai_pr_branch"] is False
 

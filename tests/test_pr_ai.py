@@ -466,9 +466,10 @@ def test_generate_uses_the_configured_ai_pr_timeout(mocker, make_cfg, tmp_path):
     — the only symptom was a timeout warning and a placeholder description.
     """
     from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"ai_pr_timeout": 900})})
+    cfg = with_agent(cfg, "claude", ai_pr_timeout=900)
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -503,11 +504,10 @@ def test_generate_runs_through_login_shell(mocker, make_cfg, tmp_path):
 
 def test_generate_selects_the_configured_model_via_env(mocker, make_cfg, tmp_path):
     from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"ai_pr_model": "claude-haiku-4-5"})}
-    )
+    cfg = with_agent(cfg, "claude", ai_pr_model="claude-haiku-4-5")
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -524,9 +524,10 @@ def test_generate_selects_the_configured_model_via_env(mocker, make_cfg, tmp_pat
 def test_generate_drops_the_model_flag_when_ai_pr_model_is_null(mocker, make_cfg, tmp_path):
     """An empty env var makes the `${VAR:+...}` expansion vanish entirely."""
     from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"ai_pr_model": None})})
+    cfg = with_agent(cfg, "claude", ai_pr_model=None)
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -538,13 +539,10 @@ def test_generate_drops_the_model_flag_when_ai_pr_model_is_null(mocker, make_cfg
 
 def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg, tmp_path):
     from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(
-        update={
-            "claude": cfg.claude.model_copy(update={"pr_prompt": "Always mention the JIRA id."})
-        }
-    )
+    cfg = with_agent(cfg, "claude", pr_prompt="Always mention the JIRA id.")
     incus = mocker.MagicMock()
     incus.exec.return_value = _envelope(json.dumps({"title": "t", "body": "b"}))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
