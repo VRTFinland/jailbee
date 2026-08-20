@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# An agent name becomes a tmux window name, a `jailbee doctor` label, and
+# part of an Incus device name (via `device_name`) — kept to the safest
+# common subset of what all three accept.
+_AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
+
 # Container's unix username is hardcoded — must match the user baked into the
 # golden image by provision/install.sh. It used to be configurable; made fixed
 # because nothing enforced consistency between this value and the golden-image
@@ -107,6 +112,13 @@ _DEFAULT_NODE_MAJOR = 24
 # field is added to `LooseAutoRevert`, it reintroduces the exact append bug
 # `ls`/`dashboard` were split out to avoid, and would need the same
 # treatment (its own merge method, kept out of `deep_merge`).
+#
+# `agents` deliberately stays OUT of this set. It is a mapping keyed by agent
+# name, so `deep_merge` recurses per agent instead of hitting the list rule —
+# a repo layer adjusting one field of a globally-defined agent merges cleanly.
+# Its one list-valued field, `egress_allow`, *wants* the append behaviour: a
+# repo adding a single host to a global agent is the intended use. Don't
+# "fix" the apparent asymmetry with `ls`/`dashboard` by adding it here.
 _HOST_LEVEL_KEYS: frozenset[str] = frozenset({"docker_registry_mirror", "ls", "dashboard"})
 
 
@@ -243,15 +255,24 @@ def _check_retired_keys(raw: dict[str, object]) -> None:
                     f"Unknown field `autostart.{old}` in config: moved to "
                     f"`{new}`. See docs/config.md for the new schema."
                 )
-    claude = raw.get("claude", {})
-    if isinstance(claude, dict):
+    # Checked under both spellings: the legacy top-level `claude:` block and
+    # its `agents.claude` successor. A user who has already migrated to
+    # `agents.claude` still deserves the same retired-key error, not a
+    # confusing "unknown field" from Pydantic's `extra="forbid"`.
+    claude_blocks: list[tuple[str, object]] = [("claude", raw.get("claude", {}))]
+    agents = raw.get("agents", {})
+    if isinstance(agents, dict):
+        claude_blocks.append(("agents.claude", agents.get("claude", {})))
+    for label, claude in claude_blocks:
+        if not isinstance(claude, dict):
+            continue
         for old, reason in _REMOVED_KEYS_CLAUDE.items():
             if old in claude:
                 raise ConfigError(reason)
         for old, new in _RETIRED_KEYS_CLAUDE.items():
             if old in claude:
                 raise ConfigError(
-                    f"Unknown field `claude.{old}` in config: renamed to "
+                    f"Unknown field `{label}.{old}` in config: renamed to "
                     f"`{new}`. See docs/config.md for the new schema."
                 )
 
@@ -1649,6 +1670,105 @@ class ClaudeConfig(BaseModel):
         return v.strip()
 
 
+class AgentSharedMount(BaseModel):
+    """One bind-mount an agent needs to keep its auth/config across containers.
+
+    Share the minimum surface that avoids re-authentication. Caches, chat
+    histories and logs are per-branch working state and must stay
+    per-container; a generically-named file (e.g. `~/.env`) must never be
+    shared, because the mount would collide with unrelated tools and leak
+    their secrets between containers.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    subpath: str
+    path: str
+    type: Literal["dir", "file"] = "dir"
+    seed: str | None = None
+
+    @model_validator(mode="after")
+    def _seed_is_file_only(self) -> "AgentSharedMount":
+        if self.type == "dir" and self.seed is not None:
+            raise ValueError(f"seed is only valid for type: file (subpath {self.subpath!r})")
+        return self
+
+
+class AgentConfig(BaseModel):
+    """A terminal coding agent wired into the container lifecycle.
+
+    `install`/`update` are shell command lines run inside the container as the
+    dev user through the autostart step pipeline, so each gets a fresh
+    `bash -lc` login shell — which is why `~/.local/bin` and
+    `~/.npm-global/bin` are on PATH for them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    autostart: bool = False
+    command: str = ""
+    install: str | None = None
+    install_check: str | None = None
+    update: str | None = None
+    auto_update: bool = True
+    install_network: Literal["strict", "loose"] = "strict"
+    shared: list[AgentSharedMount] = Field(default_factory=list)
+    egress_allow: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+    def effective_install_check(self) -> str:
+        """The command that decides install-vs-update.
+
+        Defaults to `command -v <first token of command>`: the binary's own
+        name, not the full command line, so flags in `command` don't leak into
+        the probe.
+        """
+        if self.install_check:
+            return self.install_check
+        binary = self.command.split()[0] if self.command.strip() else ""
+        return f"command -v {binary}"
+
+
+class ClaudeAgentConfig(AgentConfig):
+    """`agents.claude` — the generic fields plus Claude-only integrations.
+
+    `enabled`, `autostart`, `command` and `auto_update` are inherited: their
+    semantics are identical to any other agent's.
+    """
+
+    plugins_enabled: bool = True
+    install_jailbee_skills: bool = True
+    ai_pr_description: bool = True
+    ai_pr_branch: bool = True
+    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
+    ai_pr_model: str | None = "sonnet"
+    ai_pr_timeout: int = Field(default=600, gt=0)
+
+    # Copy of ClaudeConfig._reject_non_model_value, not a shared helper:
+    # ClaudeConfig is removed in the follow-up commit (Task 2), at which
+    # point this becomes the only copy. Keep the two in sync until then.
+    @field_validator("ai_pr_model")
+    @classmethod
+    def _reject_non_model_value(cls, v: str | None) -> str | None:
+        """A model name is a single token — reject anything that isn't one.
+
+        The value reaches `claude --model` through an environment variable, so
+        embedded flags could never be executed as such. The check exists to
+        turn a typo or a misunderstanding into a config error, rather than a
+        non-zero `claude` exit that `generate_pr_text` reports only as a failed
+        generation. Use `null`, not an empty string, to inherit the container's
+        own default model.
+        """
+        if v is None:
+            return None
+        if not v.strip() or len(v.split()) != 1:
+            raise ValueError(
+                f"must be a single model name or alias (e.g. 'sonnet', "
+                f"'claude-haiku-4-5'), or null to inherit the container "
+                f"default; got {v!r}"
+            )
+        return v.strip()
+
+
 class GithubConfig(BaseModel):
     """GitHub CLI (gh) integration inside containers.
 
@@ -1710,6 +1830,7 @@ class Config(BaseModel):
     jetbrains: JetbrainsConfig = JetbrainsConfig()
     chrome: ChromeConfig = ChromeConfig()
     claude: ClaudeConfig = ClaudeConfig()
+    agents: dict[str, AgentConfig] = Field(default_factory=dict)
     github: GithubConfig = GithubConfig()
     terminal: TerminalConfig = TerminalConfig()
     autostart: Autostart = Autostart()
@@ -1785,6 +1906,25 @@ class Config(BaseModel):
                 raise ValueError(f"duplicate host_ports name: {entry.name!r}")
             seen.add(entry.name)
         return v
+
+    @field_validator("agents", mode="before")
+    @classmethod
+    def _validate_agents(cls, v: object) -> dict[str, AgentConfig]:
+        """Dispatch `agents.claude` through `ClaudeAgentConfig`, the rest
+        through the generic `AgentConfig`, since a single `dict[str, Model]`
+        field can't express a per-key model choice on its own."""
+        if not isinstance(v, dict):
+            raise ValueError("agents must be a mapping of agent name to settings")
+        result: dict[str, AgentConfig] = {}
+        for name, entry in v.items():
+            if isinstance(entry, AgentConfig):
+                result[name] = entry
+                continue
+            if not isinstance(entry, dict):
+                raise ValueError(f"agents.{name} must be a mapping")
+            model_cls: type[AgentConfig] = ClaudeAgentConfig if name == "claude" else AgentConfig
+            result[name] = model_cls.model_validate(entry)
+        return result
 
     def effective_egress_allow(self) -> list[str]:
         """User's `egress_allow` plus any feature-driven auto-additions.
@@ -2045,6 +2185,44 @@ class Config(BaseModel):
                 "(shared ~/.claude mount and Anthropic egress are gated "
                 "by claude.enabled)"
             )
+
+        # Unlike the checks above, these raise rather than append to `issues`:
+        # a bad agent name or a genuinely conflicting shared-mount claim is a
+        # structural config error, not a soft warning to report and continue
+        # past — the note above `_HOST_LEVEL_KEYS` (config.py:86) explains
+        # why `agents` merges the way it does; this is the runtime half of
+        # that same design.
+        seen_subpaths: dict[str, tuple[str, str]] = {}
+        for name, agent in self.agents.items():
+            if not _AGENT_NAME_RE.fullmatch(name):
+                raise ConfigError(
+                    f"agent name {name!r} must match [a-z0-9-]+ — it becomes a "
+                    f"tmux window name, a doctor label and part of a device name"
+                )
+            if agent.autostart and not agent.enabled:
+                raise ConfigError(
+                    f"agents.{name}.autostart=true requires agents.{name}.enabled=true"
+                )
+            if agent.enabled and not agent.command.strip():
+                raise ConfigError(f"agents.{name}.enabled=true requires a non-empty `command`")
+            if not agent.enabled:
+                continue
+            for shared_mount in agent.shared:
+                if shared_mount.subpath in SHARED_SUBDIRS:
+                    raise ConfigError(
+                        f"agents.{name}.shared subpath {shared_mount.subpath!r} collides with "
+                        f"a built-in shared subdir"
+                    )
+                prior = seen_subpaths.get(shared_mount.subpath)
+                signature = (shared_mount.path, shared_mount.type)
+                if prior is not None and prior != signature:
+                    raise ConfigError(
+                        f"shared subpath {shared_mount.subpath!r} is claimed twice with "
+                        f"different targets ({prior} vs {signature}) — two agents may "
+                        f"share an identical mount, but not a conflicting one"
+                    )
+                seen_subpaths[shared_mount.subpath] = signature
+
         if self.golden.python:
             issues.append(
                 "golden.python is deprecated and ignored; the container "
@@ -2082,6 +2260,63 @@ def _derive_repo_root(config_path: Path) -> Path:
 
 def _default_shared_dir(container_prefix: str) -> Path:
     return xdg_data_home() / "jailbee" / "shared" / container_prefix
+
+
+def device_name(subpath: str) -> str:
+    """Incus disk-device name for a shared subpath.
+
+    `.` → `-` is not cosmetic: it must yield exactly `claude`, `claude-json`
+    and `claude-install` for Claude's three subpaths, because those are live
+    device names in every existing container's binds profile. A different rule
+    renames disk devices under running containers.
+    """
+    return subpath.replace(".", "-")
+
+
+def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
+    """Normalise the `agents:`/`claude:` region of a merged raw config.
+
+    Returns a new dict in which:
+      * a legacy `claude:` block has been moved to `agents.claude`,
+      * every entry has been deep-merged over its preset (preset first, so
+        user scalars win and user `egress_allow` appends).
+
+    Runs on the *merged* global+repo raw dict, before validation, so a
+    partially-specified entry (`{enabled: true}`) validates against the
+    preset's completed shape.
+    """
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    result = {k: _copy(v) for k, v in raw.items()}
+    raw_agents = result.pop("agents", {})
+    if not isinstance(raw_agents, dict):
+        raise ConfigError("`agents` must be a mapping of agent name to settings.")
+    agents: dict[str, object] = {k: _copy(v) for k, v in raw_agents.items()}
+
+    legacy = result.pop("claude", None)
+    if legacy is not None:
+        if "claude" in agents:
+            raise ConfigError(
+                "config defines both `claude:` and `agents.claude` — keep one. "
+                "`agents.claude` is the preferred spelling; the `claude:` block "
+                "is a supported legacy alias."
+            )
+        if not isinstance(legacy, dict):
+            raise ConfigError("`claude` must be a mapping.")
+        agents["claude"] = legacy
+
+    presets: dict[str, dict[str, object]] = dict(AGENT_PRESETS)
+    presets["claude"] = claude_preset()
+
+    for name, entry in agents.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"`agents.{name}` must be a mapping.")
+        base = presets.get(name)
+        agents[name] = deep_merge(base, entry) if base is not None else entry
+
+    if agents:
+        result["agents"] = agents
+    return result
 
 
 def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config:
