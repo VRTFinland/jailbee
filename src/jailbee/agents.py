@@ -10,11 +10,13 @@ import importlib.resources
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jailbee.config import ClaudeAgentConfig, SharedCache, device_name
+from jailbee.config import CONTAINER_USERNAME, ClaudeAgentConfig, SharedCache, device_name
 from jailbee.constants import CLAUDE_PLUGIN_HOSTS
-from jailbee.tui import warn
+from jailbee.tui import info, warn
 
 if TYPE_CHECKING:
+    from typing import IO
+
     from jailbee.config import AgentConfig, Config
     from jailbee.incus import Incus
 
@@ -47,8 +49,18 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
     dirs = tuple(m.subpath for m in agent.shared if m.type == "dir")
     seeds = tuple((m.subpath, m.seed or "") for m in agent.shared if m.type == "file")
     egress = tuple(agent.egress_allow)
+    env = dict(agent.env)
     if isinstance(agent, ClaudeAgentConfig) and agent.plugins_enabled:
         egress = egress + CLAUDE_PLUGIN_HOSTS
+    if name == "claude":
+        # ensure-claude.sh's own "store already populated" branch keys
+        # `claude update` off this exact env var, independent of which
+        # command line (install vs. update) invoked it — both map to the
+        # same bundled script (see `_resolve_bundled`). This is the dynamic,
+        # Claude-specific value this module's existing convention (see the
+        # `plugins_enabled` egress add above) puts here rather than in the
+        # generic dispatch in `_ensure_one`.
+        env["JAILBEE_CLAUDE_AUTO_UPDATE"] = "true" if agent.auto_update else "false"
     return AgentSpec(
         name=name,
         command=agent.command,
@@ -61,7 +73,7 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
         install_check=agent.effective_install_check(),
         update=agent.update,
         install_network=agent.install_network,
-        env=tuple(agent.env.items()),
+        env=tuple(env.items()),
     )
 
 
@@ -100,18 +112,26 @@ def _check_installed(incus: Incus, cfg: Config, container: str, spec: AgentSpec)
     """Probe whether `spec` is already installed inside `container`.
 
     Runs `spec.install_check` (e.g. `command -v codex`) as the dev user via
-    `incus.exec`. Catches bare `Exception`, not just `IncusError`: this probe
-    only decides install-vs-update, so it must never itself be fatal to
+    `incus.exec`. `--user UID` does not derive `HOME` from `/etc/passwd`
+    (see `Incus.exec`'s docstring), and the profile.d snippets that put
+    agent binaries on PATH (`~/.local/bin`, `~/.npm-global/bin`) expand
+    against `$HOME` — so this must pass `HOME`/`USER`/`LOGNAME` explicitly,
+    or every probe reports "not installed" even when the binary is present.
+
+    Catches bare `Exception`, not just `IncusError`: this probe only
+    decides install-vs-update, so it must never itself be fatal to
     `jailbee new` — a narrower catch would turn an unrelated wrapper error
     into a failed container creation instead of the safe fallback
     (treat as "not installed", attempt install).
     """
+    home = f"/home/{CONTAINER_USERNAME}"
     try:
         incus.exec(
             container,
             ["bash", "-lc", spec.install_check],
             uid=cfg.container_user.uid,
             gid=cfg.container_user.gid,
+            env={"HOME": home, "USER": CONTAINER_USERNAME, "LOGNAME": CONTAINER_USERNAME},
         )
         return True
     except Exception:
@@ -121,6 +141,50 @@ def _check_installed(incus: Incus, cfg: Config, container: str, spec: AgentSpec)
 def _auto_update(cfg: Config, name: str) -> bool:
     agent = cfg.agents.get(name)
     return agent is not None and agent.auto_update
+
+
+def _acquire_install_lock(cfg: Config) -> IO[str] | None:
+    """Best-effort host-side flock serialising parallel `jailbee new` runs
+    against the shared install prefix these commands write.
+
+    Returns the open lock file (caller `close()`s it when done), or `None`
+    when locking isn't possible — the caller still runs every install, just
+    unlocked; the lock is a nice-to-have against a rare race, not a
+    precondition for installing agents at all.
+
+    Never creates `cfg.shared_dir`: that tree belongs to `init_command`.
+    A missing/non-directory shared dir here means "install unlocked", not
+    "create the tree ourselves" or "abort `jailbee new`".
+    """
+    import fcntl
+    import os
+
+    assert cfg.shared_dir is not None  # set by load_config
+    if not cfg.shared_dir.is_dir():
+        warn(f"Shared dir {cfg.shared_dir} not found; installing agents without a lock")
+        return None
+
+    lock_path = cfg.shared_dir / ".agent-install.lock"
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        lock = os.fdopen(fd, "r+")
+    except OSError as e:
+        warn(f"Could not open the agent-install lock file (continuing without it): {e}")
+        return None
+
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # Another `jailbee new` holds it — wait, but say so first: a silent
+        # multi-minute stall here would look like a hang, not a queue.
+        info("Waiting for another jailbee new to finish installing agents...")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError as e:
+            warn(f"Could not acquire the agent-install lock (continuing without it): {e}")
+            lock.close()
+            return None
+    return lock
 
 
 def ensure_agents(
@@ -133,9 +197,9 @@ def ensure_agents(
 ) -> None:
     """Install or update every enabled agent inside `container`.
 
-    Runs in the `_ensure_claude_in_container` slot: after mounts are attached
-    (a shared install store must be present), after the network ACL warm-up
-    (installers need egress), before autostart execs the binaries.
+    Called from `lifecycle.new_container` after mounts are attached (a
+    shared install store must be present) and after the network ACL
+    warm-up (installers need egress), before autostart execs the binaries.
 
     Each command goes through `autostart._apply_step`, which gives it a fresh
     `bash -lc` login shell. That is load-bearing rather than incidental:
@@ -144,12 +208,10 @@ def ensure_agents(
     even with the binary installed — surfacing later as an opaque exit-127 in
     the autostart window.
 
-    A host-side flock serialises parallel `jailbee new` runs sharing a shared
-    dir, since a shared install prefix is written by these commands. Failures
-    are warnings: an agent is optional and the container must stay usable.
+    Locking (see `_acquire_install_lock`) is best-effort and never gates
+    whether installs run — only whether they're serialised against other
+    concurrent `jailbee new` runs sharing the same shared dir.
     """
-    import fcntl
-
     from jailbee.tmux import ensure_session
 
     specs = [s for s in enabled_agent_specs(cfg) if s.install or s.update]
@@ -168,24 +230,13 @@ def ensure_agents(
     except Exception as e:
         warn(f"Could not start the autostart tmux session for agent install (continuing): {e}")
 
-    def _install_all() -> None:
+    lock = _acquire_install_lock(cfg)
+    try:
         for spec in specs:
             _ensure_one(cfg, incus, container, repo_dir, spec, mirror_endpoint)
-
-    assert cfg.shared_dir is not None  # set by load_config
-    lock_path = cfg.shared_dir / ".agent-install.lock"
-    try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.touch(exist_ok=True)
-        with lock_path.open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            _install_all()
-    except OSError as e:
-        # The lock itself is infrastructure, not an agent: a missing/
-        # unwritable shared dir must degrade to "install without
-        # serialisation", never to a failed `jailbee new`.
-        warn(f"Could not acquire the agent-install lock (continuing without it): {e}")
-        _install_all()
+    finally:
+        if lock is not None:
+            lock.close()
 
 
 def _ensure_one(
@@ -206,24 +257,18 @@ def _ensure_one(
     from jailbee.autostart import _apply_step
     from jailbee.config import AutostartStep
 
-    env = dict(spec.env)
-    if spec.name == "claude":
-        # ensure-claude.sh (see its "store already populated" branch) keys
-        # `claude update` off this exact env var itself, independent of
-        # which command line (install vs. update) invoked it — both map to
-        # the same bundled script. The generic dispatch above only decided
-        # whether to run the script at all; this tells the script what to
-        # do once it's running.
-        env["JAILBEE_CLAUDE_AUTO_UPDATE"] = "true" if _auto_update(cfg, spec.name) else "false"
-
-    step = AutostartStep(
-        name=f"install-{spec.name}",
-        run=_resolve_bundled(command),
-        network="loose" if spec.install_network == "loose" else None,
-        env=env,
-        continue_on_error=True,
-    )
     try:
+        # Building the step (including `_resolve_bundled`, which reads the
+        # bundled script off disk) is inside this try along with running
+        # it: a missing/unreadable bundled script must degrade to the same
+        # per-agent warning as a failed install, not propagate past this
+        # function and abort `jailbee new`.
+        step = AutostartStep(
+            name=f"install-{spec.name}",
+            run=_resolve_bundled(command),
+            network="loose" if spec.install_network == "loose" else None,
+            env=dict(spec.env),
+        )
         _apply_step(cfg, incus, container, step, repo_dir, mirror_endpoint=mirror_endpoint)
     except Exception as e:  # non-fatal: never block container creation
         warn(f"{spec.name} install/update step failed (continuing): {e}")

@@ -4460,8 +4460,8 @@ def test_new_container_calls_ensure_agents(make_cfg, tmp_path, mocker):
 
 
 def test_new_container_ensure_agents_runs_before_autostart(make_cfg, tmp_path, mocker):
-    """Ordering pin: agents are installed/updated before autostart execs them
-    (must follow mounts + network warm-up, see the call site's comment)."""
+    """Ordering pin: agents are installed/updated before autostart execs
+    them (see the call site's comment for why mounts/network order it)."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
