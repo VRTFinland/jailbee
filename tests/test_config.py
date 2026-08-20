@@ -18,7 +18,7 @@ from jailbee.config import (
     Stacks,
     load_config,
 )
-from tests.conftest import with_agent
+from tests.conftest import make_cfg, with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -2538,6 +2538,14 @@ def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocke
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     names = {c.name for c in cfg.effective_shared_caches()}
     assert "claude-install" not in names
+
+
+def test_agent_mounts_and_egress_reach_effective_lists(tmp_path):
+    """Non-claude agents' mounts and egress flow through the same
+    spec-driven path as claude's, not just a claude-only code path."""
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    assert "codex" in [c.name for c in cfg.effective_shared_caches()]
+    assert "api.openai.com:443" in cfg.effective_egress_allow()
 
 
 def test_new_config_background_defaults_false() -> None:

@@ -1241,15 +1241,17 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
 
 def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
     """Attach to the autostart tmux session, creating it on demand."""
+    from jailbee.autostart import agent_autostart_steps
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
     from jailbee.tmux import SESSION_NAME, ensure_session, select_window
 
     ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
-    if cfg.claude.autostart:
-        # Best-effort: claude window may have died; fall through to the
+    steps = agent_autostart_steps(cfg)
+    if steps:
+        # Best-effort: the window may have died; fall through to the
         # default focus rather than blocking the attach.
-        select_window(incus, name, "claude")
+        select_window(incus, name, steps[-1].name)
     # See `_attach_shell` for why we route through `incus exec --user`
     # instead of `sudo -i`.
     return incus.exec_interactive(

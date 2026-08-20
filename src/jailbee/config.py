@@ -34,7 +34,7 @@ from pydantic import (
     model_validator,
 )
 
-from jailbee.constants import CLAUDE_API_HOSTS, CLAUDE_PLUGIN_HOSTS, SHARED_SUBDIRS
+from jailbee.constants import SHARED_SUBDIRS
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import expand_path, xdg_data_home
 
@@ -551,33 +551,6 @@ def _default_shared_caches() -> list[SharedCache]:
     """
     return [
         SharedCache(name="ssh", host_subpath="ssh", container_path="~/.ssh"),
-    ]
-
-
-def _claude_shared_caches() -> list[SharedCache]:
-    """Claude shared-cache mounts auto-added when `claude.enabled`.
-
-    Three entries: directory-level `<shared_dir>/claude` → `~/.claude`
-    (credentials, settings, agents, etc.); file-level
-    `<shared_dir>/claude.json` → `~/.claude.json` (identity/onboarding
-    state); and `<shared_dir>/claude-install` → `~/.local/share/claude`
-    (the shared version store so a Claude binary downloaded by one container
-    is reused by all others and survives golden rebuilds). Kept here rather
-    than in `_default_shared_caches()` so the list-level `shared_caches:`
-    YAML key isn't permanently polluted when the user isn't using Claude.
-    """
-    return [
-        SharedCache(name="claude", host_subpath="claude", container_path="~/.claude"),
-        SharedCache(
-            name="claude-json",
-            host_subpath="claude.json",
-            container_path="~/.claude.json",
-        ),
-        SharedCache(
-            name="claude-install",
-            host_subpath="claude-install",
-            container_path="~/.local/share/claude",
-        ),
     ]
 
 
@@ -1900,13 +1873,15 @@ class Config(BaseModel):
           directory lives.
         - `JETBRAINS_AI_HOSTS` when `jetbrains.enabled` and
           `jetbrains.ai_enabled` (AI Assistant backend).
-        - `CLAUDE_API_HOSTS` when `claude.enabled` (Claude Code API access).
-        - `CLAUDE_PLUGIN_HOSTS` when `claude.enabled` and
-          `claude.plugins_enabled` (marketplace/skill loading).
+        - each enabled agent's `egress` (see `agents.enabled_agent_specs`) —
+          for `claude` this is `CLAUDE_API_HOSTS` plus, when
+          `claude.plugins_enabled`, `CLAUDE_PLUGIN_HOSTS`.
         - `GITHUB_API_HOSTS` when `github.enabled` (GitHub CLI API access).
 
         Deduplicates while preserving user-entry order.
         """
+        from jailbee.agents import enabled_agent_specs
+
         result = list(self.egress_allow)
         existing = set(result)
 
@@ -1920,10 +1895,8 @@ class Config(BaseModel):
             _append(JETBRAINS_LICENSE_HOSTS)
             if self.jetbrains.ai_enabled:
                 _append(JETBRAINS_AI_HOSTS)
-        if self.claude.enabled:
-            _append(CLAUDE_API_HOSTS)
-            if self.claude.plugins_enabled:
-                _append(CLAUDE_PLUGIN_HOSTS)
+        for spec in enabled_agent_specs(self):
+            _append(spec.egress)
         if self.github.enabled:
             _append(GITHUB_API_HOSTS)
         return result
@@ -1935,10 +1908,13 @@ class Config(BaseModel):
         whose `name` matches an auto-add suppresses the auto-add. The
         `golden.stacks` caches (gradle+m2 for java, npm+pnpm-store for
         node — see `Stacks.shared_caches`) are folded in first, ahead of
-        the integration auto-adds. Then this currently auto-adds `claude`
-        + `claude-json` + `claude-install` when `claude.enabled`, and
+        the integration auto-adds. Then each enabled agent's mounts are
+        folded in (see `agents.enabled_agent_specs`) — for `claude` this is
+        `claude` + `claude-json` + `claude-install` — followed by
         `jetbrains-config` + `jetbrains-data` when `jetbrains.enabled`.
         """
+        from jailbee.agents import enabled_agent_specs
+
         result: list[SharedCache] = list(self.shared_caches)
         existing = {c.name for c in result}
 
@@ -1949,8 +1925,8 @@ class Config(BaseModel):
                     existing.add(cache.name)
 
         _extend(self.golden.stacks.shared_caches())
-        if self.claude.enabled:
-            _extend(_claude_shared_caches())
+        for spec in enabled_agent_specs(self):
+            _extend(list(spec.shared))
         if self.jetbrains.enabled:
             _extend(
                 _jetbrains_shared_caches(

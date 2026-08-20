@@ -1109,7 +1109,8 @@ def test_tmux_command_attaches_to_session(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False  # default; explicit so select_window isn't called
+    # No autostart agents, so select_window isn't called.
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1150,7 +1151,7 @@ def test_tmux_command_creates_session_if_missing(mocker):
     from jailbee.incus import IncusError
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1179,7 +1180,7 @@ def test_tmux_command_propagates_exit_code(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 1
@@ -1194,14 +1195,19 @@ def test_tmux_command_propagates_exit_code(mocker):
 
 
 def test_tmux_command_focuses_claude_window_when_autostart(mocker):
-    """When claude.autostart is on, `gie tmux` selects the claude
-    window before attaching so users land in it directly."""
+    """When an agent has autostart on, `gie tmux` selects that agent's
+    window (the last one when several autostart) before attaching so
+    users land in it directly."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
+    from jailbee.config import AutostartStep
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = True
+    mocker.patch(
+        "jailbee.autostart.agent_autostart_steps",
+        return_value=[AutostartStep(name="claude", run="exec claude", background=True)],
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0

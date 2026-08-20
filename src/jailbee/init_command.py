@@ -105,10 +105,10 @@ def _ensure_user_shared_dirs(cfg: Config) -> None:
     host_subpath isn't one of the built-in `SHARED_SUBDIRS`.
 
     Only the user's `shared_caches` list is iterated (not
-    `effective_shared_caches()`): the claude/jetbrains auto-adds are handled
+    `effective_shared_caches()`): the agent/jetbrains auto-adds are handled
     separately, and claude.json is a *file*-level disk that must not be
     created as a directory. File-type binds the user wants must be
-    pre-created by hand — see `_ensure_claude_json_exists`.
+    pre-created by hand — see `_ensure_integration_shared_dirs`.
     """
     assert cfg.shared_dir is not None  # set by load_config
     for cache in cfg.shared_caches:
@@ -116,7 +116,8 @@ def _ensure_user_shared_dirs(cfg: Config) -> None:
 
 
 def _ensure_integration_shared_dirs(cfg: Config) -> None:
-    """Create the shared subdirs/files the enabled integrations bind-mount.
+    """Create the shared subdirs/files each enabled agent bind-mounts, plus
+    JetBrains' subdirs.
 
     Single source of truth for `run_init` and `apply`: both must create the
     exact same set, or a repo initialised before a given integration's mounts
@@ -128,38 +129,31 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
     forgot `claude-install`, so `jailbee apply`/`jailbee new` failed on any repo whose
     `claude-install` dir wasn't already on disk. Keep them sharing this helper.
 
-    The set mirrors the auto-added caches in `config._claude_shared_caches()`
-    and `config._jetbrains_shared_caches()`. `claude.json` is a *file*-level
-    bind, so it is seeded via `_ensure_claude_json_exists`, not `mkdir`.
+    Directory-type mounts (`spec.dir_subpaths`) are `mkdir`'d; file-type
+    mounts (`spec.seed_files`) are seeded with their configured content only
+    if they don't already exist — required because Incus rejects the
+    container start if a file-level disk device's source is missing, and for
+    `claude.json` specifically an empty/zero-byte file fails to parse
+    (`Unexpected EOF`), which under `ensure-claude.sh`'s `pipefail` aborts the
+    binary install before the shared store is populated, hard-failing the
+    first `jailbee new` for the repo.
     """
+    from jailbee.agents import enabled_agent_specs
+
     assert cfg.shared_dir is not None  # set by load_config
-    if cfg.claude.enabled:
-        (cfg.shared_dir / "claude").mkdir(parents=True, exist_ok=True)
-        (cfg.shared_dir / "claude-install").mkdir(parents=True, exist_ok=True)
-        _ensure_claude_json_exists(cfg.shared_dir / "claude.json")
+    for spec in enabled_agent_specs(cfg):
+        for subpath in spec.dir_subpaths:
+            (cfg.shared_dir / subpath).mkdir(parents=True, exist_ok=True)
+        for subpath, seed in spec.seed_files:
+            target = cfg.shared_dir / subpath
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(seed)
     if cfg.jetbrains.enabled:
         (cfg.shared_dir / "jetbrains-config").mkdir(parents=True, exist_ok=True)
         (cfg.shared_dir / "jetbrains-data").mkdir(parents=True, exist_ok=True)
         if cfg.jetbrains.share_idea:
             (cfg.shared_dir / "jetbrains-idea").mkdir(parents=True, exist_ok=True)
-
-
-def _ensure_claude_json_exists(path: Path) -> None:
-    """Seed valid empty JSON (`{}`) at `path` if it doesn't already exist.
-
-    Required because the claude-json shared_cache is a file-level disk
-    device; Incus rejects the container start if the source file is
-    missing.
-
-    The content must be valid JSON, not a zero-byte file: this file is
-    bind-mounted as the container's `~/.claude.json`, and the Claude Code
-    installer invokes `claude` during setup. A zero-byte file fails to
-    parse (`Unexpected EOF`), which under `ensure-claude.sh`'s `pipefail`
-    aborts the binary install before the shared store is populated —
-    hard-failing the first `jailbee new` for the repo.
-    """
-    if not path.exists():
-        path.write_text("{}\n")
 
 
 def _ensure_shared_owner(shared_dir: Path, repo_root: Path) -> None:

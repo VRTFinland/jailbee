@@ -185,9 +185,10 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
         expected.append("jetbrains-config")
         if cfg.jetbrains.share_idea:
             expected.append("jetbrains-idea")
-    if cfg.claude.enabled:
-        expected.append("claude")
-        expected.append("claude-install")
+    from jailbee.agents import enabled_agent_specs
+
+    for spec in enabled_agent_specs(cfg):
+        expected.extend(spec.dir_subpaths)
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
         results.append(
