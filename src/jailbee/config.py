@@ -528,14 +528,9 @@ class SharedCache(BaseModel):
     """A bind-mount from <shared_dir>/<host_subpath> into the container.
 
     `container_path` may start with ``~``, expanded to ``/home/<user>``.
-
-    ``frozen=True``: nothing in the codebase mutates an existing instance —
-    every producer builds a fresh one — and `agents.AgentSpec` (a frozen
-    dataclass) holds a tuple of these, so `AgentSpec` can only be genuinely
-    hashable if its elements are too.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid")
     name: str
     host_subpath: str
     container_path: str

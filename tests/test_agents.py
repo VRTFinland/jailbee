@@ -67,13 +67,15 @@ def test_spec_autostart_reflects_config(tmp_path):
     assert spec_off.autostart is False
 
 
-def test_spec_is_hashable(tmp_path):
-    """`AgentSpec` advertises frozen=True; every field must actually be hashable.
+def test_env_is_an_immutable_tuple_of_pairs(tmp_path):
+    """Pins `env`'s shape against a regression back to a mutable dict.
 
-    A dict-typed `env` would type-check as hashable (dataclass(frozen=True)
-    auto-generates __hash__) but raise TypeError at runtime — this pins the
-    tuple-of-pairs representation against a regression back to dict.
+    `AgentSpec` is `frozen=True`; a dict-typed `env` would silently defeat
+    that guarantee via `spec.env["k"] = "v"`. A tuple has no `__setitem__`,
+    so that specific escape hatch is closed — assert both the exact value
+    and the absence of in-place mutation.
     """
-    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True, "env": {"FOO": "bar"}}})
     (spec,) = enabled_agent_specs(cfg)
-    assert isinstance(hash(spec), int)
+    assert spec.env == (("FOO", "bar"),)
+    assert not hasattr(spec.env, "__setitem__")
