@@ -701,10 +701,10 @@ def test_on_create_does_not_get_github_token_step(tmp_path):
     assert applied == ["user-step"]
 
 
-# ---------- claude autostart step
+# ---------- agent autostart steps (`agent_autostart_steps`)
 
 
-def test_claude_autostart_step_returns_none_when_off(tmp_path):
+def test_agent_autostart_steps_empty_when_autostart_off(tmp_path):
     from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
@@ -712,7 +712,7 @@ def test_claude_autostart_step_returns_none_when_off(tmp_path):
     assert agent_autostart_steps(cfg) == []
 
 
-def test_claude_autostart_step_shape(tmp_path):
+def test_agent_autostart_step_shape(tmp_path):
     from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
@@ -724,7 +724,7 @@ def test_claude_autostart_step_shape(tmp_path):
     assert step.run == "exec claude"
 
 
-def test_claude_autostart_step_is_continue_on_error(tmp_path):
+def test_agent_autostart_step_is_continue_on_error(tmp_path):
     """The claude step is an *optional* integration. If `claude` fails to
     launch (e.g. the binary never installed), `gie new` must degrade with a
     warning rather than hard-failing the whole provisioning — the dev
@@ -738,7 +738,7 @@ def test_claude_autostart_step_is_continue_on_error(tmp_path):
     assert step.continue_on_error is True
 
 
-def test_claude_autostart_step_uses_custom_command(tmp_path):
+def test_agent_autostart_step_uses_custom_command(tmp_path):
     from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
@@ -938,3 +938,37 @@ def test_empty_command_agent_skipped_even_when_autostart(tmp_path):
     cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": True}})
     cfg = with_agent(cfg, "codex", command="   ")
     assert agent_autostart_steps(cfg) == []
+
+
+def test_agent_env_reaches_the_autostart_step(tmp_path):
+    """`agents.<name>.env` must land on the emitted step.
+
+    `agent_autostart_steps` passes `env=dict(spec.env)`; deleting that kwarg
+    left the whole suite green, so the field the function's new signature
+    added had no coverage at all. Without it a configured `env` silently
+    never reaches the launched binary — the step's tmux window gets only
+    `autostart.env`.
+    """
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": True}})
+    cfg = with_agent(cfg, "codex", env={"CODEX_MODEL": "o4-mini"})
+
+    (step,) = agent_autostart_steps(cfg)
+
+    assert step.env == {"CODEX_MODEL": "o4-mini"}
+
+
+def test_claude_auto_update_env_reaches_the_autostart_step(tmp_path):
+    """The same wiring for the one env value `agents.py` synthesises rather
+    than reading from config, so the generic path above can't be satisfied by
+    a claude-only special case."""
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+
+    (step,) = agent_autostart_steps(cfg)
+
+    assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"

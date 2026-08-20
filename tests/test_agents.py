@@ -1,3 +1,5 @@
+import pytest
+
 from jailbee.agents import enabled_agent_specs
 from tests.conftest import make_cfg, with_agent
 
@@ -365,3 +367,34 @@ def test_missing_shared_dir_installs_unlocked_not_fatal(tmp_path, mocker):
 
     apply_step.assert_called_once()
     assert not missing.exists()
+
+
+def test_resolve_bundled_rejects_a_traversing_script_name():
+    """`__bundled__:` suffixes come from config, and the resolved text is
+    executed inside the container. A bare filename is the only legal shape."""
+    from jailbee.agents import _resolve_bundled
+
+    for bad in ("../../../../etc/passwd", "install.d/../../etc/passwd", "sub/dir.sh", ".."):
+        with pytest.raises(ValueError, match="bare filename"):
+            _resolve_bundled(f"__bundled__:{bad}")
+
+    # A plain command line is untouched, and a legitimate bundled name resolves.
+    assert _resolve_bundled("npm i -g codex") == "npm i -g codex"
+    assert "set -euo pipefail" in _resolve_bundled("__bundled__:ensure-claude.sh")
+
+
+def test_enabled_agent_specs_does_not_invent_claude_on_a_mock_config(mocker):
+    """`enabled_agent_specs` must read `cfg.agents` once, not iterate it and
+    then separately `get("claude")`.
+
+    On a `MagicMock` config the two disagree: `items()` iterates empty while
+    `get("claude").enabled` is truthy, so the two-pass form yielded a Claude
+    spec on any mocked config — a phantom agent nobody enabled, in a suite
+    where mocked configs are everywhere.
+    """
+    from jailbee.agents import enabled_agent_specs
+
+    cfg = mocker.MagicMock()
+    cfg.agents = {}
+
+    assert enabled_agent_specs(cfg) == []

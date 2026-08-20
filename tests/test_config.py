@@ -2548,6 +2548,124 @@ def test_agent_mounts_and_egress_reach_effective_lists(tmp_path):
     assert "api.openai.com:443" in cfg.effective_egress_allow()
 
 
+def test_validate_runtime_flags_agent_subpath_colliding_with_builtin(tmp_path):
+    """An agent whose `shared[].subpath` names a built-in shared subdir would
+    have `device_name()` derive the same Incus device name as the built-in
+    mount and quietly point it at the agent's container path instead — e.g.
+    `ssh`, which is where `jailbee init` seeds the user's real keys.
+
+    Only reported for an *enabled* agent: a disabled entry attaches nothing.
+    """
+    from jailbee.constants import SHARED_SUBDIRS
+
+    assert "ssh" in SHARED_SUBDIRS  # the collision this test relies on
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "codex": {
+                "enabled": True,
+                "command": "codex",
+                "shared": [{"subpath": "ssh", "path": "~/.codex"}],
+            }
+        },
+    )
+
+    issues = cfg.validate_runtime()
+
+    assert [i for i in issues if "collides with" in i and "'ssh'" in i]
+
+
+def test_validate_runtime_ignores_subpath_collision_for_disabled_agent(tmp_path):
+    """Differential partner for the test above: the check is gated on
+    `enabled`, so a disabled agent with the same colliding subpath is silent.
+    Without this, a check that reported unconditionally would still pass."""
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "codex": {
+                "enabled": False,
+                "command": "codex",
+                "shared": [{"subpath": "ssh", "path": "~/.codex"}],
+            }
+        },
+    )
+
+    assert not [i for i in cfg.validate_runtime() if "collides with" in i]
+
+
+def test_agent_shared_mount_rejects_seed_on_a_dir(tmp_path, mocker):
+    """`seed` names a file to copy in when the shared file is absent, so it is
+    meaningless on `type: dir` — and silently ignoring it would leave the user
+    believing a directory gets seeded. Rejected at model-validation time."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    with pytest.raises(ValidationError, match="seed is only valid for type: file"):
+        make_cfg(
+            tmp_path,
+            agents={
+                "codex": {
+                    "enabled": True,
+                    "command": "codex",
+                    "shared": [
+                        {
+                            "subpath": "codex",
+                            "path": "~/.codex",
+                            "type": "dir",
+                            "seed": "~/.codex.example",
+                        }
+                    ],
+                }
+            },
+        )
+
+
+def test_agent_shared_mount_allows_seed_on_a_file(tmp_path):
+    """The partner case, so the rule above can't be satisfied by rejecting
+    every `seed`. Uses a preset-free agent name so the asserted entry is the
+    only one in `shared` (a preset's own `shared` list would be merged in
+    ahead of it)."""
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "mystery": {
+                "enabled": True,
+                "command": "mystery",
+                "shared": [
+                    {
+                        "subpath": "mystery-config",
+                        "path": "~/.mystery/config.toml",
+                        "type": "file",
+                        "seed": "~/.mystery.example",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert cfg.agents["mystery"].shared[0].seed == "~/.mystery.example"
+
+
+def test_validate_runtime_flags_enabled_agent_with_empty_command(tmp_path):
+    """`enabled: true` with no `command` is a config error, not just something
+    `agent_autostart_steps` skips. An agent name outside the shipped six has
+    no preset to supply a command, so this is reachable by typo — and the only
+    coverage today is the separate autostart-step guard, which is
+    defense-in-depth rather than the primary check.
+    """
+    cfg = make_cfg(tmp_path, agents={"mystery": {"enabled": True, "command": "   "}})
+
+    issues = cfg.validate_runtime()
+
+    assert [i for i in issues if "agents.mystery.enabled=true requires a non-empty `command`" in i]
+
+
+def test_validate_runtime_silent_for_disabled_agent_with_empty_command(tmp_path):
+    """Differential partner: the check is gated on `enabled`."""
+    cfg = make_cfg(tmp_path, agents={"mystery": {"enabled": False, "command": ""}})
+
+    assert not [i for i in cfg.validate_runtime() if "non-empty `command`" in i]
+
+
 def test_new_config_background_defaults_false() -> None:
     from jailbee.config import NewConfig
 
@@ -3268,6 +3386,87 @@ def test_load_path_repo_explicit_empty_hide_beats_a_nonempty_global_dashboard(
     columns = load_config(cfg_path).effective_dashboard_columns(_load_global_yaml(global_path))
 
     assert columns.hide == []
+
+
+def test_load_path_agents_layer_merges_per_agent_instead_of_replacing(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    """The mapping-not-list decision, asserted at the layer that motivated it.
+
+    `agents:` is a mapping precisely so a repo can extend an entry the user
+    enabled globally. If it were a list, `deep_merge`'s list rule would append
+    and the codex entry would appear twice; if the mapping merge were shallow,
+    the repo's `egress_allow` would replace the whole entry and lose
+    `enabled: true`. Neither is covered anywhere else — every other
+    `agents:` test builds one dict.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, _ = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="agents:\n  codex:\n    enabled: true\n",
+        repo_yaml="agents:\n  codex:\n    egress_allow: [extra.host:443]\n",
+    )
+
+    cfg = load_config(cfg_path)
+
+    # One entry, not two, and the globally-set scalar survived the repo layer.
+    assert list(cfg.agents) == ["codex"]
+    assert cfg.agents["codex"].enabled is True
+    # The preset's own host is still there (preset merges under both layers),
+    # and the repo's addition appended rather than replacing.
+    assert cfg.agents["codex"].egress_allow == ["api.openai.com:443", "extra.host:443"]
+    # The preset's other fields survived too — the repo entry was a fragment.
+    assert cfg.agents["codex"].command == "codex"
+    assert "extra.host:443" in cfg.effective_egress_allow()
+
+
+def test_load_path_legacy_global_claude_plus_repo_agents_claude_is_an_error(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    """The exact shape an existing user hits: a `claude:` block left in
+    `global.yaml` (what the old template wrote) meeting an `agents.claude`
+    in a repo config. This is a *new hard failure* for such users, and the
+    only direct coverage today is `resolve_agents_raw` with both keys in one
+    dict — which never exercises the cross-layer path or the error text.
+
+    The message must name both files, so it points at `global.yaml` (which
+    holds the key to delete) rather than only at the repo config the
+    surrounding `Config validation failed in ...` wrapper would name.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, global_path = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="claude:\n  enabled: true\n",
+        repo_yaml="agents:\n  claude:\n    autostart: true\n",
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(cfg_path)
+
+    message = str(exc_info.value)
+    assert "claude:" in message and "agents.claude" in message
+    assert str(global_path) in message
+    assert str(cfg_path) in message
+
+
+def test_load_path_legacy_claude_alone_still_loads(tmp_path, monkeypatch, mocker) -> None:
+    """The guard above must not fire on the legacy spelling by itself —
+    a `claude:` block in `global.yaml` with no `agents.claude` anywhere is
+    still a supported config."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, _ = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="claude:\n  enabled: true\n",
+        repo_yaml="agents:\n  codex:\n    enabled: true\n",
+    )
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.claude.enabled is True
+    assert cfg.agents["codex"].enabled is True
 
 
 # A typo, an empty `fields: []`, or a duplicated name in `global.yaml`'s
