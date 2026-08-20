@@ -1,14 +1,20 @@
 """Structural guard: every container-name argument must offer completion.
 
-The wiring is 28 nearly identical edits, which is exactly the kind of list a
-later commit forgets to extend. This walks the real Click command tree instead
+The wiring is 38 nearly identical edits, which is exactly the kind of list a
+later commit forgets to extend. This walks the real Typer command tree instead
 of trusting a hand-maintained list.
+
+`typer.main.get_command()` builds the tree out of Typer's own public
+`TyperGroup`/`TyperCommand`/`TyperArgument`/`TyperOption` subclasses — verified
+by walking the whole tree and finding no other class — so the isinstance
+checks below key on those rather than on Click, which Typer vendored in 0.26
+and no longer exposes as a dependency.
 """
 
 from __future__ import annotations
 
-import click
 import typer
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from jailbee.cli import app
 
@@ -17,19 +23,19 @@ from jailbee.cli import app
 # silently loosened assertion.
 #
 # Blind spots this guard does not cover, because both checks below key on the
-# literal parameter name "name" and on `click.Argument`: a container-name
+# literal parameter name "name" and on `TyperArgument`: a container-name
 # *positional* under any other name (e.g. a future `container: ...` parameter)
 # would not be walked at all, and a container-name *Option* (e.g. `--container`)
-# would not be walked either, since `_walk` never filters on `click.Option`.
+# would not be walked either, since `_walk` never filters on `TyperOption`.
 # Neither has arisen yet; if one does, extend the walk rather than assume this
 # set already covers it.
 NON_CONTAINER_NAME_ARGS: set[tuple[str, str]] = set()
 
 
-def _walk(cmd: click.Command, path: str = ""):
+def _walk(cmd: TyperCommand | TyperGroup, path: str = ""):
     """Yield (command path, parameter) for every command in the tree."""
     here = f"{path} {cmd.name}".strip()
-    if isinstance(cmd, click.Group):
+    if isinstance(cmd, TyperGroup):
         for sub in cmd.commands.values():
             yield from _walk(sub, here)
         return
@@ -37,16 +43,17 @@ def _walk(cmd: click.Command, path: str = ""):
         yield here, param
 
 
-def _has_completion(param: click.Parameter) -> bool:
+def _has_completion(param: TyperArgument | TyperOption) -> bool:
     """True when the param was given an autocompletion callback.
 
-    Click stores it privately (`_custom_shell_complete`) and exposes no public
-    accessor, so the private name is the only way to assert on the wiring.
+    Typer's vendored Click stores it privately (`_custom_shell_complete`) and
+    exposes no public accessor, so the private name is the only way to assert
+    on the wiring.
     """
     return getattr(param, "_custom_shell_complete", None) is not None
 
 
-def _underlying_completer(param: click.Parameter) -> object | None:
+def _underlying_completer(param: TyperArgument | TyperOption) -> object | None:
     """Undo Typer's two layers of ``autocompletion=`` wrapping.
 
     A `typer.Argument(autocompletion=complete_container)` callback is never
@@ -112,7 +119,7 @@ def test_every_container_name_argument_offers_completion():
     missing = [
         f"{cmd_path}:{param.name}"
         for cmd_path, param in _walk(cli)
-        if isinstance(param, click.Argument)
+        if isinstance(param, TyperArgument)
         and param.name == "name"
         and (cmd_path, param.name) not in NON_CONTAINER_NAME_ARGS
         and not _has_completion(param)
@@ -128,7 +135,7 @@ def test_the_completion_callback_is_the_container_completer():
     wrong = [
         f"{cmd_path}:{param.name}"
         for cmd_path, param in _walk(cli)
-        if isinstance(param, click.Argument)
+        if isinstance(param, TyperArgument)
         and param.name == "name"
         and (cmd_path, param.name) not in NON_CONTAINER_NAME_ARGS
         and _underlying_completer(param) is not complete_container
@@ -136,7 +143,7 @@ def test_the_completion_callback_is_the_container_completer():
     assert not wrong, f"name arguments wired to something else: {wrong}"
 
 
-def _param(cmd_path: str, param_name: str) -> click.Parameter:
+def _param(cmd_path: str, param_name: str) -> TyperArgument | TyperOption:
     cli = typer.main.get_command(app)
     for path, param in _walk(cli):
         if path == cmd_path and param.name == param_name:
