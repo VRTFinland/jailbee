@@ -1481,6 +1481,31 @@ def test_config_rejects_the_retired_install_gie_skills_key(tmp_path, mocker):
     assert "Extra inputs" not in msg
 
 
+def test_config_rejects_the_retired_install_gie_skills_key_via_agents_claude(tmp_path, mocker):
+    """Same retired-key check, `agents.claude` spelling.
+
+    `_check_retired_keys` runs on the raw dict before `Config.model_validate`,
+    so it must catch this under `agents.claude` too — not just the legacy
+    top-level `claude:` block — or a user who has already migrated to the
+    new spelling loses the friendly rename message and falls through to
+    pydantic's "Extra inputs are not permitted" instead.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "agents:\n  claude:\n    install_gie_skills: false\n"
+    )
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+
+    msg = str(exc.value)
+    assert "claude.install_jailbee_skills" in msg
+    assert "Extra inputs" not in msg
+
+
 def test_claude_install_jailbee_skills_defaults_true():
     from jailbee.config import ClaudeConfig
 
@@ -1597,6 +1622,24 @@ def test_config_rejects_removed_claude_seed_from_host_nested(tmp_path, mocker):
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
     (repo / ".jailbee" / "config.yaml").write_text("claude:\n  seed_from_host: true\n")
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+    assert "has been removed" in str(exc.value)
+
+
+def test_config_rejects_removed_claude_seed_from_host_via_agents_claude(tmp_path, mocker):
+    """Same removal message under the `agents.claude` spelling.
+
+    `_check_retired_keys` checks both `raw["claude"]` and
+    `raw["agents"]["claude"]` for `_REMOVED_KEYS_CLAUDE` — this exercises the
+    second one specifically, so the removal message isn't silently lost for
+    users who have already migrated off the legacy `claude:` block.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text("agents:\n  claude:\n    seed_from_host: true\n")
     with pytest.raises(ConfigError) as exc:
         load_config(repo / ".jailbee" / "config.yaml")
     assert "has been removed" in str(exc.value)
