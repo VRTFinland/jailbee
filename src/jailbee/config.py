@@ -344,9 +344,7 @@ def _check_agents_spelling(
     )
 
 
-def _label_spellings(
-    legacy: list[Path], modern: list[Path]
-) -> list[tuple[Path, str]]:
+def _label_spellings(legacy: list[Path], modern: list[Path]) -> list[tuple[Path, str]]:
     """`(path, "claude:" / "agents.claude" / both)` for each file involved,
     in `legacy`-then-`modern` file order without repeating a path."""
     labels: dict[Path, list[str]] = {}

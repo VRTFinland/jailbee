@@ -119,8 +119,7 @@ def _resolve_bundled(command: str) -> str:
     script_name = command[len(_BUNDLED_PREFIX) :]
     if not script_name or "/" in script_name or ".." in script_name:
         raise ValueError(
-            f"bundled script name {script_name!r} must be a bare filename "
-            f"(no '/' or '..')"
+            f"bundled script name {script_name!r} must be a bare filename (no '/' or '..')"
         )
     return importlib.resources.files("jailbee.provision").joinpath(script_name).read_text()
 
