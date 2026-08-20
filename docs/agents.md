@@ -39,6 +39,19 @@ autostart step pipeline, so each gets a fresh `bash -lc` login shell — which
 is why `~/.local/bin` and `~/.npm-global/bin` are on `PATH` for them, and why
 `agents.<name>.env` reaches all three.
 
+> **Install happens only at `jailbee new`.** Enabling an agent for a
+> container that already exists and then running `jailbee apply` attaches the
+> mount and widens egress, but never installs the binary — so the autostart
+> window fails with exit 127 ("command not found") until the container is
+> recreated. Destroy and re-create the container after enabling an agent, or
+> install it by hand inside the container.
+
+> **`<agent>` and `install-<agent>` are effectively reserved tmux window
+> names.** Both windows are killed and re-created on each run, so an
+> `autostart.on_start` step you name `codex` or `install-codex` will have its
+> window killed out from under it when the `codex` agent runs. Nothing checks
+> for the collision — pick a different step name.
+
 ## 2. Enabling a preset
 
 Most presets need only two lines — the config below is enough to get
@@ -60,9 +73,12 @@ template; see [Claude](#9-claude) below for its own switches.
 
 A preset is a base layer, not a fixed answer. Resolution order per agent is:
 
-**preset → global.yaml entry → repo entry**
+**preset → (global + repo, already merged)**
 
-all combined through the same [deep-merge](config.md#merge-rules) rules used
+Two merges, not three: `global.yaml` and the repo config combine with each
+other first, and the preset is merged under that single combined result —
+which is what the ordering note below is about. Both steps use the same
+[deep-merge](config.md#merge-rules) rules used
 everywhere else in `jailbee`'s config: scalars from the later layer win;
 lists **append**; an explicit empty list (`egress_allow: []`) **resets** to
 empty instead of appending. Resetting is the only operation `deep_merge`
@@ -152,8 +168,10 @@ agents:
 `jailbee config validate` enforces a few cross-field rules beyond the schema
 itself:
 
-- The agent name must match `[a-z0-9-]+` — it becomes a tmux window name, a
-  doctor label, and part of an Incus device name.
+- The agent name must match `[a-z0-9-]+` — it becomes a tmux window name and
+  a doctor label. It does *not* become part of any Incus device name: those
+  are derived from each `shared[].subpath`. The two coincide for every
+  shipped preset only because each preset names its subpath after the agent.
 - `enabled: true` requires a non-empty `command`.
 - A `shared` subpath may not collide with a built-in shared subdir (the
   `caches/*`, `chrome-pool/*`, `docker-registry`, `ssh` names `jailbee`

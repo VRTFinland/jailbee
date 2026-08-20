@@ -530,8 +530,21 @@ entry. Six presets ship built in: `claude`, `codex`, `gemini`, `aider`,
 other five are untested templates, correct as needed.
 
 An agent name matching one of the six presets is deep-merged over that
-preset (preset → global.yaml → repo, same append/reset rules as every
-other list field); any other name is used as-is with no preset base.
+preset, with the same append/reset rules as every other list field; any
+other name is used as-is with no preset base. Two merges, not three:
+global.yaml and the repo config combine with each other first, and the
+preset is merged under that single combined result — so an
+`egress_allow: []` reset only sticks in whichever layer has the last word
+for that agent (usually the repo layer). `docs/agents.md` has the worked
+example.
+
+Install and update run **only at `jailbee new`** — enabling an agent for an
+existing container and running `jailbee apply` attaches the mount and
+widens egress but never installs the binary, so the autostart window fails
+with exit 127 until the container is recreated. `<agent>` and
+`install-<agent>` are also effectively reserved autostart tmux window
+names: a step of either name has its window killed when the agent runs,
+and nothing checks for the collision.
 
 ```yaml
 agents:
