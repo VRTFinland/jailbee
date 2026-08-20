@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` is jailbee's deprecated pre-1.0 command alias), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -10,9 +10,11 @@ on one Linux host. Each environment is an **Incus system container** cloned from
 prebuilt "golden image", carrying its own backend, frontend, Docker daemon, IDE,
 and browser — no port/name/schema collisions between branches.
 
-`gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 2.0.0), but don't teach it — use `jailbee`
-(or `jb`) in every command you write or suggest.
+`gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
+1.1.0** and no longer exists — always use `jailbee` (or `jb`). If a user types
+`gie`, tell them the command is now `jailbee`; if a repo still keeps its config
+in `.gie/`, that directory is still read (deprecated, removed in 2.0.0) and the
+fix is `git mv .gie .jailbee`.
 
 This skill is for **using** an already-configured repo (one that has
 `.jailbee/config.yaml` and where `jailbee init` + `jailbee base build` have already run). If

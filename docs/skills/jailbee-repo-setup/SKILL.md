@@ -1,6 +1,6 @@
 ---
 name: jailbee-repo-setup
-description: Use when configuring a new repository to work with `jailbee` — adding `.jailbee/config.yaml`, optional `install.d/` snippets, and `container_prefix`/host-mounts/egress/autostart adjustments. Trigger on phrases like "set up jailbee", "configure jailbee", "make this repo jailbee-compatible", "jailbee config", "set up gie", "configure gie", "make this repo gie-compatible", "gie config", "lisää gie-konfiguraatio" (`gie` is jailbee's deprecated pre-1.0 command alias), or whenever the user wants to run `jailbee new`/`jailbee shell` against a repo that doesn't yet have `.jailbee/config.yaml`. The skill inspects the repo's stack (package.json, pyproject.toml, pom.xml, Cargo.toml, Makefile, docker-compose, …) and generates a tailored config rather than the defaults-only template `jailbee config init` ships.
+description: Use when configuring a new repository to work with `jailbee` — adding `.jailbee/config.yaml`, optional `install.d/` snippets, and `container_prefix`/host-mounts/egress/autostart adjustments. Trigger on phrases like "set up jailbee", "configure jailbee", "make this repo jailbee-compatible", "jailbee config", "set up gie", "configure gie", "make this repo gie-compatible", "gie config", "lisää gie-konfiguraatio" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), or whenever the user wants to run `jailbee new`/`jailbee shell` against a repo that doesn't yet have `.jailbee/config.yaml`. The skill inspects the repo's stack (package.json, pyproject.toml, pom.xml, Cargo.toml, Makefile, docker-compose, …) and generates a tailored config rather than the defaults-only template `jailbee config init` ships.
 ---
 
 # JailBee repo setup
@@ -9,9 +9,11 @@ Goal: take any existing git repo and make `jailbee new <name>` work for it. The 
 
 This skill walks Claude through inspecting the repo, generating a tailored config, and (optionally) adding `install.d/` snippets for stack tools the bundled golden image doesn't cover.
 
-`gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 2.0.0), but don't teach it — use `jailbee`
-in every command you write or suggest.
+`gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
+1.1.0** and no longer exists — always use `jailbee` in every command you write
+or suggest. A repo whose config still lives in `.gie/` is still read
+(deprecated, removed in 2.0.0); when you touch such a repo, have the user run
+`git mv .gie .jailbee` first and write `.jailbee/config.yaml` from then on.
 
 ## Workflow
 
