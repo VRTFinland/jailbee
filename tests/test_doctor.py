@@ -781,72 +781,60 @@ def test_doctor_pool_check_recent_refresh_ok(tmp_path: Path, mocker) -> None:
     assert refresh_check.ok is True
 
 
-# ---- pre-1.0 gie state checks ----
+# ---- legacy repo config: the one pre-1.0 compatibility left after 1.1.0 ----
 
 
-def test_doctor_flags_leftover_pre_1_0_state(tmp_path, mocker, make_cfg):
-    from jailbee.doctor import run_checks
-
-    mocker.patch(
-        "jailbee.migrate.leftovers",
-        return_value=("old labels on container app-feat",),
-    )
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is False
-    assert "jailbee migrate" in check.detail
-    # Name what was found, not just that something was: the migrator skips
-    # some of it, so "run migrate" alone can be advice that changes nothing.
-    assert "old labels on container app-feat" in check.detail
-    # The guide is the only place the manual steps are written down.
-    assert "docs/migrating-from-gie.md" in check.detail
+def _legacy_config(results):
+    return next(r for r in results if r.name == "legacy repo config")
 
 
-def test_doctor_is_happy_when_no_pre_1_0_state_remains(tmp_path, mocker, make_cfg):
-    from jailbee.doctor import run_checks
-
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is True
-
-
-def test_doctor_reports_state_no_migration_plan_would_show(tmp_path, mocker, make_cfg):
-    """The check must not be derived from `migrate.build_plan`.
-
-    A directory whose target already exists is a blocker, not a planned
-    move, so `plan.is_empty` is True while the state is very much still
-    there — the case that silently loses a user's whole state directory.
-    """
-    from jailbee.doctor import run_checks
-
-    build_plan = mocker.patch("jailbee.migrate.build_plan")
-    mocker.patch("jailbee.migrate.leftovers", return_value=("directory /home/u/.local/state/gie",))
-
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is False
-    assert "directory /home/u/.local/state/gie" in check.detail
-    build_plan.assert_not_called()
-
-
-def test_doctor_flags_legacy_config_in_repo(tmp_path, mocker, make_cfg):
+def test_doctor_flags_a_repo_still_reading_dot_gie(tmp_path, mocker, make_cfg):
     from jailbee.doctor import run_checks
 
     repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".gie").mkdir()
+    (repo / ".gie").mkdir(parents=True)
     (repo / ".gie" / "config.yaml").write_text("# legacy config\n")
 
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
-    results = run_checks(make_cfg(repo), mocker.MagicMock())
+    check = _legacy_config(run_checks(make_cfg(repo), mocker.MagicMock()))
 
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
     assert check.ok is False
-    assert "jailbee migrate" in check.detail
+    # The fix is a `git mv` the user runs, and the deadline is the only
+    # reason to run it now rather than later — both belong in the detail.
+    assert "git mv .gie .jailbee" in check.detail
+    assert "2.0.0" in check.detail
+
+
+def test_doctor_is_happy_when_the_repo_uses_dot_jailbee(tmp_path, mocker, make_cfg):
+    from jailbee.doctor import run_checks
+
+    assert _legacy_config(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())).ok is True
+
+
+def test_doctor_checks_the_legacy_config_without_incus(tmp_path, mocker, make_cfg):
+    """The check must not sit behind the `incus` gate.
+
+    Its predecessor inspected pre-1.0 *host* state and so needed the binary.
+    What is left is a file test on the repo, and a host without Incus is
+    exactly where a stale `.gie/` is most likely to go unnoticed — doctor
+    reports plenty of red there already, and this line must still be one of
+    them rather than silently vanishing.
+    """
+    from jailbee.doctor import run_checks
+
+    repo = tmp_path / "repo"
+    (repo / ".gie").mkdir(parents=True)
+    (repo / ".gie" / "config.yaml").write_text("# legacy config\n")
+
+    # A `with` block, not `mocker.patch`: `jailbee.doctor.shutil` is the global
+    # shutil module, so this patches `shutil.which` process-wide, and mocker
+    # would undo it at fixture teardown — after the autouse `incus_on_path`
+    # context exits, i.e. in the wrong order, leaving `which` patched for the
+    # rest of the session. That broke two unrelated tests in
+    # tests/test_maintenance.py, which run later and shell out to `du`.
+    with patch("jailbee.doctor.shutil.which", return_value=None):
+        check = _legacy_config(run_checks(make_cfg(repo), mocker.MagicMock()))
+
+    assert check.ok is False
     assert "git mv .gie .jailbee" in check.detail
 
 
@@ -862,7 +850,6 @@ def test_doctor_passes_the_graphical_check_on_wayland(tmp_path, monkeypatch, mak
 
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     monkeypatch.setenv("DISPLAY", ":0")  # a Wayland session may set both
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is True
@@ -880,7 +867,6 @@ def test_doctor_fails_the_graphical_check_on_a_bare_x11_session(
 
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is False
@@ -895,7 +881,6 @@ def test_doctor_fails_the_graphical_check_with_no_session_at_all(
 
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is False
@@ -931,7 +916,6 @@ def test_doctor_flags_a_loose_bridge_that_hands_out_no_addresses(tmp_path, make_
         _running("jailbee-registry-mirror", ["default", "jailbee-registry-mirror-profile"]),
         _running("app-feat", [f"{cfg.container_prefix}-net-loose"]),
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _bridge_check(run_checks(cfg, incus))
 
@@ -949,7 +933,6 @@ def test_doctor_passes_when_the_loose_bridge_addresses_a_container(tmp_path, mak
     incus.list_containers.return_value = [
         _running("jailbee-registry-mirror", ["default"], ipv4="10.165.192.2"),
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _bridge_check(run_checks(cfg, incus))
 
@@ -972,7 +955,6 @@ def test_doctor_stays_silent_when_nothing_runs_on_the_loose_bridge(tmp_path, mak
         },
         {"name": "app-old", "status": "Stopped", "profiles": [f"{cfg.container_prefix}-net-loose"]},
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     assert _bridge_check(run_checks(cfg, incus)) is None
 
