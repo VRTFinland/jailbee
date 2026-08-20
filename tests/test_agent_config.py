@@ -1,4 +1,5 @@
 import pytest
+
 from jailbee.config import (
     AgentConfig,
     ClaudeAgentConfig,
@@ -6,7 +7,6 @@ from jailbee.config import (
     device_name,
     resolve_agents_raw,
 )
-
 from tests.conftest import make_cfg
 
 
@@ -24,9 +24,7 @@ def test_preset_supplies_command_and_install():
 
 
 def test_user_scalar_overrides_preset():
-    out = resolve_agents_raw(
-        {"agents": {"codex": {"enabled": True, "install": "my-installer"}}}
-    )
+    out = resolve_agents_raw({"agents": {"codex": {"enabled": True, "install": "my-installer"}}})
     assert out["agents"]["codex"]["install"] == "my-installer"
 
 
@@ -59,10 +57,8 @@ def test_legacy_claude_block_is_translated():
 
 
 def test_both_claude_spellings_is_an_error():
-    with pytest.raises(ConfigError, match="both `claude:` and `agents.claude`"):
-        resolve_agents_raw(
-            {"claude": {"enabled": True}, "agents": {"claude": {"enabled": True}}}
-        )
+    with pytest.raises(ConfigError, match=r"both `claude:` and `agents.claude`"):
+        resolve_agents_raw({"claude": {"enabled": True}, "agents": {"claude": {"enabled": True}}})
 
 
 def test_claude_entry_accepts_claude_only_fields():
@@ -87,10 +83,16 @@ def test_identical_shared_mount_across_agents_is_allowed(tmp_path):
     cfg = make_cfg(
         tmp_path,
         agents={
-            "a": {"enabled": True, "command": "a",
-                  "shared": [{"subpath": "npm-global", "path": "~/.npm-global"}]},
-            "b": {"enabled": True, "command": "b",
-                  "shared": [{"subpath": "npm-global", "path": "~/.npm-global"}]},
+            "a": {
+                "enabled": True,
+                "command": "a",
+                "shared": [{"subpath": "npm-global", "path": "~/.npm-global"}],
+            },
+            "b": {
+                "enabled": True,
+                "command": "b",
+                "shared": [{"subpath": "npm-global", "path": "~/.npm-global"}],
+            },
         },
     )
     cfg.validate_runtime()  # must not raise
@@ -100,10 +102,16 @@ def test_conflicting_shared_mount_across_agents_is_an_error(tmp_path):
     cfg = make_cfg(
         tmp_path,
         agents={
-            "a": {"enabled": True, "command": "a",
-                  "shared": [{"subpath": "shared", "path": "~/.a"}]},
-            "b": {"enabled": True, "command": "b",
-                  "shared": [{"subpath": "shared", "path": "~/.b"}]},
+            "a": {
+                "enabled": True,
+                "command": "a",
+                "shared": [{"subpath": "shared", "path": "~/.a"}],
+            },
+            "b": {
+                "enabled": True,
+                "command": "b",
+                "shared": [{"subpath": "shared", "path": "~/.b"}],
+            },
         },
     )
     with pytest.raises(ConfigError, match="claimed twice"):
@@ -112,7 +120,7 @@ def test_conflicting_shared_mount_across_agents_is_an_error(tmp_path):
 
 def test_autostart_requires_enabled(tmp_path):
     cfg = make_cfg(tmp_path, agents={"a": {"autostart": True, "command": "a"}})
-    with pytest.raises(ConfigError, match="requires agents.a.enabled"):
+    with pytest.raises(ConfigError, match=r"requires agents.a.enabled"):
         cfg.validate_runtime()
 
 

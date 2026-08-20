@@ -1687,7 +1687,7 @@ class AgentSharedMount(BaseModel):
     seed: str | None = None
 
     @model_validator(mode="after")
-    def _seed_is_file_only(self) -> "AgentSharedMount":
+    def _seed_is_file_only(self) -> AgentSharedMount:
         if self.type == "dir" and self.seed is not None:
             raise ValueError(f"seed is only valid for type: file (subpath {self.subpath!r})")
         return self
