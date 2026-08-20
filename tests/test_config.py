@@ -1459,19 +1459,26 @@ def test_claude_ai_pr_timeout_rejects_non_positive_values(bad):
         ClaudeConfig(enabled=True, ai_pr_timeout=bad)
 
 
-def test_claude_accepts_legacy_install_gie_skills_key_with_warning(mocker):
-    from jailbee import config as config_mod
-    from jailbee.config import ClaudeConfig
+def test_config_rejects_the_retired_install_gie_skills_key(tmp_path, mocker):
+    """End-to-end, because which error surfaces depends on ordering.
 
-    config_mod._warn_legacy_skills_key.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn")
+    `ClaudeConfig` forbids extras, so a config carrying the pre-1.0 key name
+    fails either way — but on pydantic's "Extra inputs are not permitted",
+    which names neither the new key nor the fix. `_check_retired_keys` has to
+    run first for the user to be told what to rename it to.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text("claude:\n  install_gie_skills: false\n")
 
-    cfg = ClaudeConfig.model_validate({"install_gie_skills": False})
-    ClaudeConfig.model_validate({"install_gie_skills": False})
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
 
-    assert cfg.install_jailbee_skills is False
-    warn.assert_called_once()
-    assert "install_jailbee_skills" in warn.call_args.args[0]
+    msg = str(exc.value)
+    assert "claude.install_jailbee_skills" in msg
+    assert "Extra inputs" not in msg
 
 
 def test_claude_install_jailbee_skills_defaults_true():
@@ -1511,6 +1518,7 @@ def test_claude_rejects_unknown_key(tmp_path, mocker):
         ("open_ide", "autostart", "jetbrains.ide + jetbrains.autostart"),
         ("open_chrome", "autostart", "chrome.autostart"),
         ("chrome_dark_mode", "autostart", "chrome.dark_mode"),
+        ("install_gie_skills", "claude", "claude.install_jailbee_skills"),
     ],
 )
 def test_retired_keys_raise_with_new_location(key, parent, target):
