@@ -79,3 +79,145 @@ def test_env_is_an_immutable_tuple_of_pairs(tmp_path):
     (spec,) = enabled_agent_specs(cfg)
     assert spec.env == (("FOO", "bar"),)
     assert not hasattr(spec.env, "__setitem__")
+
+
+# --- ensure_agents (Task 5): install/update dispatch -----------------------
+#
+# `shared_dir=tmp_path / "shared"` is passed explicitly on every `make_cfg`
+# call below: `ensure_agents` takes a real host-side flock on
+# `<shared_dir>/.agent-install.lock`, and the project's test-isolation rule
+# (see CLAUDE.md) requires filesystem ops to stay under `tmp_path` rather
+# than touching the real `~/.local/share/jailbee/shared/...`.
+
+
+def test_install_runs_when_check_fails(tmp_path, mocker):
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")  # install_check fails
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.run == "npm i -g @openai/codex"
+    assert step.network is None  # codex installs under strict
+
+
+def test_update_runs_when_check_succeeds_and_auto_update(tmp_path, mocker):
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()  # install_check succeeds
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.run == "npm i -g @openai/codex@latest"
+
+
+def test_no_update_when_auto_update_off(tmp_path, mocker):
+    from jailbee.agents import ensure_agents
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared"),
+        "codex",
+        auto_update=False,
+    )
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+    ensure_agents(cfg, mocker.MagicMock(), "c1", "/home/dev/repo")
+    apply_step.assert_not_called()
+
+
+def test_grok_install_step_swaps_to_loose(tmp_path, mocker):
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"grok": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.network == "loose"
+
+
+def test_install_runs_even_when_auto_update_off(tmp_path, mocker):
+    """`auto_update=False` only gates the update path — a fresh install must
+    still happen. Otherwise disabling auto-update would silently disable
+    the agent entirely on a brand-new container."""
+    from jailbee.agents import ensure_agents
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared"),
+        "codex",
+        auto_update=False,
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")  # install_check fails: not installed
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.run == "npm i -g @openai/codex"
+
+
+def test_claude_step_resolves_bundled_script_and_auto_update_flag(tmp_path, mocker):
+    """`__bundled__:ensure-claude.sh` resolves to the script's real text, and
+    `JAILBEE_CLAUDE_AUTO_UPDATE` is threaded from `cfg.claude.auto_update` —
+    the script's own "store already populated" branch keys `claude update`
+    off that exact env var, independent of the install-vs-update dispatch.
+    """
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()  # install_check succeeds -> installed=True -> "update" path
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert "ensure-claude" in step.run  # the sentinel resolved to real script text
+    assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"  # auto_update defaults to True
+
+
+def test_claude_auto_update_flag_reflects_config_off(tmp_path, mocker):
+    """Not-yet-installed-in-this-container + auto_update=False: the script
+    still runs (a fresh container always needs the symlink), but the env
+    flag it reads must say "false" so its own update branch stays off."""
+    from jailbee.agents import ensure_agents
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path, agents={"claude": {"enabled": True}}, shared_dir=tmp_path / "shared"),
+        "claude",
+        auto_update=False,
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")  # install_check fails: not installed
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "false"
+
+
+def test_step_failure_is_warned_not_raised(tmp_path, mocker):
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")
+    mocker.patch("jailbee.autostart._apply_step", side_effect=Exception("boom"))
+    warn = mocker.patch("jailbee.agents.warn")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")  # must not raise
+
+    assert warn.called
