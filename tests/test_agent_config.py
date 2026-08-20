@@ -95,10 +95,10 @@ def test_identical_shared_mount_across_agents_is_allowed(tmp_path):
             },
         },
     )
-    cfg.validate_runtime()  # must not raise
+    assert cfg.validate_runtime() == []
 
 
-def test_conflicting_shared_mount_across_agents_is_an_error(tmp_path):
+def test_conflicting_shared_mount_across_agents_is_reported(tmp_path):
     cfg = make_cfg(
         tmp_path,
         agents={
@@ -114,17 +114,16 @@ def test_conflicting_shared_mount_across_agents_is_an_error(tmp_path):
             },
         },
     )
-    with pytest.raises(ConfigError, match="claimed twice"):
-        cfg.validate_runtime()
+    assert any("claimed twice" in i for i in cfg.validate_runtime())
 
 
 def test_autostart_requires_enabled(tmp_path):
     cfg = make_cfg(tmp_path, agents={"a": {"autostart": True, "command": "a"}})
-    with pytest.raises(ConfigError, match=r"requires agents.a.enabled"):
-        cfg.validate_runtime()
+    issues = cfg.validate_runtime()
+    assert any("requires agents.a.enabled" in i for i in issues)
 
 
 def test_bad_agent_name_is_an_error(tmp_path):
     cfg = make_cfg(tmp_path, agents={"Not_Valid": {"enabled": True, "command": "x"}})
-    with pytest.raises(ConfigError, match=r"must match \[a-z0-9-\]\+"):
-        cfg.validate_runtime()
+    issues = cfg.validate_runtime()
+    assert any("must match [a-z0-9-]+" in i for i in issues)

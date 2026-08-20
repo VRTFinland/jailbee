@@ -2186,37 +2186,29 @@ class Config(BaseModel):
                 "by claude.enabled)"
             )
 
-        # Unlike the checks above, these raise rather than append to `issues`:
-        # a bad agent name or a genuinely conflicting shared-mount claim is a
-        # structural config error, not a soft warning to report and continue
-        # past — the note above `_HOST_LEVEL_KEYS` (config.py:86) explains
-        # why `agents` merges the way it does; this is the runtime half of
-        # that same design.
         seen_subpaths: dict[str, tuple[str, str]] = {}
         for name, agent in self.agents.items():
             if not _AGENT_NAME_RE.fullmatch(name):
-                raise ConfigError(
+                issues.append(
                     f"agent name {name!r} must match [a-z0-9-]+ — it becomes a "
                     f"tmux window name, a doctor label and part of a device name"
                 )
             if agent.autostart and not agent.enabled:
-                raise ConfigError(
-                    f"agents.{name}.autostart=true requires agents.{name}.enabled=true"
-                )
+                issues.append(f"agents.{name}.autostart=true requires agents.{name}.enabled=true")
             if agent.enabled and not agent.command.strip():
-                raise ConfigError(f"agents.{name}.enabled=true requires a non-empty `command`")
+                issues.append(f"agents.{name}.enabled=true requires a non-empty `command`")
             if not agent.enabled:
                 continue
             for shared_mount in agent.shared:
                 if shared_mount.subpath in SHARED_SUBDIRS:
-                    raise ConfigError(
+                    issues.append(
                         f"agents.{name}.shared subpath {shared_mount.subpath!r} collides with "
                         f"a built-in shared subdir"
                     )
                 prior = seen_subpaths.get(shared_mount.subpath)
                 signature = (shared_mount.path, shared_mount.type)
                 if prior is not None and prior != signature:
-                    raise ConfigError(
+                    issues.append(
                         f"shared subpath {shared_mount.subpath!r} is claimed twice with "
                         f"different targets ({prior} vs {signature}) — two agents may "
                         f"share an identical mount, but not a conflicting one"
