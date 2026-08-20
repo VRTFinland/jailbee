@@ -259,7 +259,7 @@ announced. Five of the six pieces go in this release; the sixth is kept and
 described under Deprecated below. The migrator only ever shipped in 1.0.x, so
 a still-unmigrated install has to be walked forward on a 1.0.x version before
 upgrading past it — this release cannot do it. See
-[`docs/migrating-from-gie.md`](docs/migrating-from-gie.md).
+[`docs/migrating-from-gie.md` as of 1.0.0](https://github.com/VRTFinland/jailbee/blob/v1.0.0/docs/migrating-from-gie.md).
 
 - **The `gie` console script.** `pip`/`uv` installed `jailbee`, `jb` and `gie`
   as three names for the same CLI. The third is no longer declared, so an
@@ -555,7 +555,7 @@ the branch.
 JailBee was called `gie` (`gisgro-incus-env`) before this release. Six
 pieces of pre-1.0 compatibility exist so that an install from before the
 rename keeps working while it migrates, and all six are removed in
-**1.1.0**. See [`docs/migrating-from-gie.md`](docs/migrating-from-gie.md)
+**1.1.0**. See [`docs/migrating-from-gie.md` as of 1.0.0](https://github.com/VRTFinland/jailbee/blob/v1.0.0/docs/migrating-from-gie.md)
 for the full migration guide (what `jailbee migrate` does, what it refuses
 to do, and how to upgrade).
 
