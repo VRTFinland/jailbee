@@ -2548,6 +2548,30 @@ def test_agent_mounts_and_egress_reach_effective_lists(tmp_path):
     assert "api.openai.com:443" in cfg.effective_egress_allow()
 
 
+def test_validate_agents_revalidates_a_plain_agentconfig_under_claude_key():
+    """A caller building `Config` in Python (not from YAML) can pass an
+    already-constructed base `AgentConfig` under the `claude` key.
+    `_validate_agents` must re-validate it through `ClaudeAgentConfig`,
+    because `Config.claude` only ever recognises that subclass and falls
+    back to a disabled default otherwise — so leaving the base class in
+    `agents["claude"]` would split the config in two views that disagree
+    on whether Claude is enabled.
+
+    Not reachable from YAML: the dict branch of `_validate_agents` already
+    dispatches on the key name, so this is a latent trap only a Python
+    caller passing pre-built model instances can hit.
+    """
+    from jailbee.config import AgentConfig, ClaudeAgentConfig
+
+    cfg = Config.model_validate({"agents": {"claude": AgentConfig(enabled=True, command="claude")}})
+
+    assert isinstance(cfg.agents["claude"], ClaudeAgentConfig)
+    # The actual bug: without re-validation, cfg.claude falls back to a
+    # disabled default while agents["claude"].enabled stays True — the two
+    # views of the same config disagree.
+    assert cfg.claude.enabled == cfg.agents["claude"].enabled
+
+
 def test_validate_runtime_flags_agent_subpath_colliding_with_builtin(tmp_path):
     """An agent whose `shared[].subpath` names a built-in shared subdir would
     have `device_name()` derive the same Incus device name as the built-in
