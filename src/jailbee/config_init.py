@@ -282,31 +282,51 @@ terminal:
     enabled: auto
     host_terminfo_path: null
 
-# Claude Code integration. When enabled, jailbee:
-#   - Mounts <shared_dir>/claude (RW shared cache) as the container's
-#     ~/.claude — credentials, settings, MCP, agents, skills, plugins
-#     are shared across every container in this repo.
-#   - Mounts <shared_dir>/claude.json (file-level shared cache) as the
-#     container's ~/.claude.json (Claude's identity/onboarding state).
-#   - Auto-extends strict-mode egress_allow with api.anthropic.com:443,
-#     code.claude.com:443, and downloads.claude.ai:443 (CLI self-update)
-#     — no need to list them by hand below.
-#   - When `plugins_enabled` is true (default), also auto-extends
-#     egress_allow with the GitHub + npm hosts Claude Code's plugin
-#     marketplace, skills and SessionStart hooks reach. Set to false
+# Coding agents. This is the personal, per-developer place to turn one on —
+# a repo's own .jailbee/config.yaml can also define `agents:` (and does, for
+# team defaults), and the two deep-merge (scalar override, list append). Each
+# entry here is itself merged over a shipped preset, so enabling one is
+# usually two lines (see `claude:` below, already flipped on as this file's
+# working example). Every preset field is overridable — see docs/agents.md.
+# Presets: claude, codex, gemini, aider, opencode, grok. Only `claude` is
+# exercised in production; the rest are untested templates — package names,
+# config paths and host lists are best-effort until someone corrects them.
+#
+# When an agent is enabled, jailbee, for that agent:
+#   - Mounts its config/auth paths from <shared_dir> as bind-mounts inside
+#     the container, so credentials and settings survive container rebuilds
+#     and are shared between branches. For `claude`: <shared_dir>/claude
+#     (RW shared cache) as ~/.claude — credentials, settings, MCP, agents,
+#     skills, plugins — and <shared_dir>/claude.json (file-level shared
+#     cache) as ~/.claude.json (Claude's identity/onboarding state).
+#   - Auto-extends strict-mode egress_allow with that agent's hosts — no
+#     need to list them by hand below. For `claude`: api.anthropic.com:443,
+#     code.claude.com:443, and downloads.claude.ai:443 (CLI self-update).
+#     Claude-only: when `plugins_enabled` is true (default), also
+#     auto-extends egress_allow with the GitHub + npm hosts Claude Code's
+#     plugin marketplace, skills and SessionStart hooks reach; set to false
 #     to keep the API reachable while blocking marketplace traffic.
-#   - Creates an empty <shared_dir>/claude on `jailbee init` and includes
-#     it in `jailbee doctor` checks. No host ~/.claude is read; Claude Code
-#     runs its onboarding flow on first launch from a clean state.
-#   autostart: launch `claude` in the autostart tmux session on every
-#   container start. `jailbee tmux <c>` lands directly in the claude window.
-#   `command` is what that window executes; override to pass flags
-#   (e.g. "claude --dangerously-skip-permissions").
-claude:
-  enabled: true
-  plugins_enabled: true
-  # autostart: false
-  # command: claude
+#   - Installs it at `jailbee new` time (and updates it when `auto_update`,
+#     the default) and creates its empty shared-dir subpaths on
+#     `jailbee init`, checked by `jailbee doctor`. No host dotfiles are
+#     read — each agent runs its own onboarding/login flow from a clean
+#     state on first launch.
+#   - `autostart: true` launches the agent's `command` in the autostart
+#     tmux session on every container start; `jailbee tmux <c>` lands
+#     directly in that window. Override `command` to pass flags (e.g.
+#     "claude --dangerously-skip-permissions").
+agents:
+  claude:
+    enabled: true
+    plugins_enabled: true
+    # autostart: false
+    # command: claude
+  # codex:
+  #   enabled: true
+  #   autostart: true
+#
+# Legacy: a top-level `claude:` block is still accepted and means the same as
+# `agents.claude`. Defining both is an error. Prefer `agents.claude`.
 
 # GitHub CLI (gh) integration. When enabled, jailbee:
 #   - Auto-extends strict-mode egress_allow with api.github.com:443.
@@ -339,10 +359,10 @@ host_mounts:
     container: /home/dev/.gitconfig
     readonly: true
 
-# Extra egress endpoints needed by every repo. Defaults to none — the
-# claude block above auto-adds api.anthropic.com:443 + code.claude.com:443
-# + downloads.claude.ai:443 when claude.enabled (plus GitHub + npm when
-# claude.plugins_enabled),
+# Extra egress endpoints needed by every repo. Defaults to none — each enabled
+# agent in the `agents:` block above appends its own hosts (e.g. `claude` adds
+# api.anthropic.com:443 + code.claude.com:443 + downloads.claude.ai:443, plus
+# GitHub + npm when plugins_enabled),
 # and the jetbrains block auto-adds the JetBrains license / plugin /
 # CDN hosts when jetbrains.enabled (plus AI Assistant hosts when
 # jetbrains.ai_enabled). Add hostnames here only for endpoints not

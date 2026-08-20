@@ -423,3 +423,54 @@ def test_repo_template_agents_comment_names_every_preset_and_docs():
     assert "docs/agents.md" in _TEMPLATE
     assert "untested templates" in _TEMPLATE
     assert "agents.claude" in _TEMPLATE
+
+
+# --- global template's agents: block (converted from the old claude: block) -
+
+
+def test_global_template_emits_agents_block():
+    """~/.config/jailbee/global.yaml is the file a developer actually edits
+    to turn an agent on — it must teach the current `agents:` spelling, not
+    just the legacy top-level `claude:` block."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    assert "agents:" in _GLOBAL_TEMPLATE
+    # The legacy spelling appears only in the trailing explanatory comment
+    # and the CLI example line further down, never as its own top-level key.
+    assert "\nclaude:" not in _GLOBAL_TEMPLATE
+
+
+def test_global_template_agents_block_enables_claude_by_default():
+    """The global template is a *working* starting point (unlike the repo
+    template, which ships every integration disabled) — claude stays
+    enabled: true by default here, now under agents.claude."""
+    out = render_global_template()
+    parsed = yaml.safe_load(out)
+
+    assert parsed["agents"]["claude"]["enabled"] is True
+    assert parsed["agents"]["claude"]["plugins_enabled"] is True
+
+
+def test_global_template_agents_comment_names_every_preset_and_docs():
+    """Same honest framing as the repo template — pin it here too so a
+    future edit to either file is a deliberate choice, not a drift."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
+        assert preset in _GLOBAL_TEMPLATE
+    assert "docs/agents.md" in _GLOBAL_TEMPLATE
+    assert "untested templates" in _GLOBAL_TEMPLATE
+    assert "agents.claude" in _GLOBAL_TEMPLATE
+
+
+def test_global_template_egress_comment_generalises_beyond_claude():
+    """The egress_allow comment used to name Claude's hosts via dotted
+    `claude.enabled`/`claude.plugins_enabled` references. Pin that those
+    stale, agent-specific attribute references are gone — the comment now
+    frames it as "each enabled agent appends its own hosts", with Claude
+    only as the concrete example."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    assert "appends its own hosts" in _GLOBAL_TEMPLATE
+    assert "claude.enabled" not in _GLOBAL_TEMPLATE
+    assert "claude.plugins_enabled" not in _GLOBAL_TEMPLATE
