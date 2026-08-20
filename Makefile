@@ -15,7 +15,7 @@ install: install-skill
 	uv tool install '.[gui]' --force --reinstall
 	jailbee net install
 	mkdir -p ~/.local/share/bash-completion/completions
-	@for name in jailbee jb gie; do \
+	@for name in jailbee jb; do \
 		$$name --show-completion > ~/.local/share/bash-completion/completions/$$name; \
 	done
 	@echo "Bash completion installed. Open a new shell to activate."

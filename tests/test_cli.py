@@ -14,8 +14,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """Drive the real console script in a subprocess.
+
+    Spawns `jailbee`, the primary of the two entry points `pyproject.toml`
+    declares. This is the only place the suite depends on a script name being
+    installed, which is what caught the removal of the pre-1.0 `gie` alias.
+    """
     return subprocess.run(
-        ["uv", "run", "gie", *args],
+        ["uv", "run", "jailbee", *args],
         capture_output=True,
         text=True,
         check=False,
@@ -43,7 +49,7 @@ def test_version_flag() -> None:
 def test_help() -> None:
     result = run_cli("--help")
     assert result.returncode == 0
-    assert "gie" in result.stdout.lower() or "gisgro" in result.stdout.lower()
+    assert "jailbee" in result.stdout.lower()
 
 
 def test_cli_init_no_longer_has_reapply_flag() -> None:
