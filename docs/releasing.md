@@ -105,7 +105,10 @@ happens. Step by step:
    tag, `twine upload` to PyPI, and `gh release create` with the sdist + wheel
    attached and the release notes taken from the CHANGELOG section.
 
-The release commit is minimal: `pyproject.toml`, `uv.lock`, and `CHANGELOG.md`.
+The release commit is minimal: `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, and
+`website/index.html` — the last because the site is served as committed, so the
+version its JSON-LD advertises is a literal that has to be rewritten with the
+rest.
 
 ### Flags
 
@@ -159,10 +162,12 @@ git tag -d v1.0.1
 git reset --hard HEAD~1
 ```
 
-## Helper script
+## Helper scripts
 
-`scripts/changelog.py` (pure stdlib) does the deterministic CHANGELOG surgery
-used by the targets above:
+Both are pure stdlib and do the deterministic file surgery the targets above
+rely on.
+
+`scripts/changelog.py`:
 
 | Command | Purpose |
 |---------|---------|
@@ -170,3 +175,16 @@ used by the targets above:
 | `extract <version>` | print a version's section body (used as GitHub Release notes) |
 | `unreleased-empty` | exit 0 if the Unreleased section is empty, 1 otherwise |
 | `draft [--from <ref>]` | draft Unreleased entries from `git log` via the `claude` CLI |
+
+`scripts/site_version.py`:
+
+| Command | Purpose |
+|---------|---------|
+| `get` | print the version `website/index.html`'s JSON-LD advertises |
+| `set <version>` | rewrite it (exits non-zero unless exactly one field matches) |
+
+`set` runs during a release, after `uv version` and before the commit, so a
+stale value aborts the release while everything is still local. Without it the
+drift only surfaced afterwards, as
+`test_the_structured_data_version_tracks_pyproject` going red on `main` — which
+is how it was found.

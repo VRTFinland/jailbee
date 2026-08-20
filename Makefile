@@ -108,6 +108,7 @@ release:
 	echo "==> Bumping version to $$v"; \
 	uv version "$$v"; \
 	python3 scripts/changelog.py finalize "$$v"; \
+	python3 scripts/site_version.py set "$$v"; \
 	echo "==> Committing and tagging"; \
 	git commit -aqm "chore: release $$v"; \
 	git tag -a "v$$v" -m "Release $$v"; \
