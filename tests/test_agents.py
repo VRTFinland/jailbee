@@ -122,7 +122,9 @@ def test_install_runs_when_check_fails(tmp_path, mocker):
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert step.run == "npm i -g @openai/codex"
+    # Wrapped in a child `bash -c` so the command gets its own shell — see
+    # `_ensure_one` and `test_install_step_is_safe_to_concatenate`.
+    assert step.run == "bash -c 'npm i -g @openai/codex'"
     assert step.network is None  # codex installs under strict
 
 
@@ -136,7 +138,7 @@ def test_update_runs_when_check_succeeds_and_auto_update(tmp_path, mocker):
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert step.run == "npm i -g @openai/codex@latest"
+    assert step.run == "bash -c 'npm i -g @openai/codex@latest'"
 
 
 def test_no_update_when_auto_update_off(tmp_path, mocker):
@@ -186,7 +188,42 @@ def test_install_runs_even_when_auto_update_off(tmp_path, mocker):
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert step.run == "npm i -g @openai/codex"
+    assert step.run == "bash -c 'npm i -g @openai/codex'"
+
+
+def test_install_step_is_safe_to_concatenate(tmp_path, mocker):
+    """A multi-line, newline-terminated `install:` must not be pasted raw into
+    the shell line `tmux.run_step` builds around it.
+
+    `run_step`'s sync path composes
+    `cd <cwd> && <command>; rc=$?; echo $rc > <sentinel>; tmux wait-for -S <sig>`.
+    A command ending in a newline puts the `;` on a fresh line — a bash syntax
+    error, so the sentinel is never written and the host blocks on
+    `tmux wait-for` for the whole `autostart.step_timeout` before reporting a
+    bogus timeout. The `bash -c` wrapper also gives `set -e` / `exit N` inside
+    the script their own shell, so a genuine install failure still writes the
+    sentinel with the real exit code.
+    """
+    from jailbee.agents import ensure_agents
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path, agents={"codex": {"enabled": True}}, shared_dir=tmp_path / "shared"),
+        "codex",
+        install="set -euo pipefail\nnpm i -g @openai/codex\n",
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")  # not installed -> install path
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert not step.run.endswith("\n")
+    assert step.run.startswith("bash -c ")
+    # The script text survives intact inside the single quoted argument, so
+    # the whole multi-line script reaches the child shell.
+    assert step.run == "bash -c 'set -euo pipefail\nnpm i -g @openai/codex\n'"
 
 
 def test_claude_step_resolves_bundled_script_and_auto_update_flag(tmp_path, mocker):
@@ -204,7 +241,13 @@ def test_claude_step_resolves_bundled_script_and_auto_update_flag(tmp_path, mock
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert "ensure-claude" in step.run  # the sentinel resolved to real script text
+    # Differential on `_resolve_bundled` actually reading the file: assert on
+    # the script's *content*, not its filename. `"ensure-claude" in step.run`
+    # is also satisfied by the unresolved `__bundled__:ensure-claude.sh`
+    # sentinel, so it would pass even if `_resolve_bundled` were a no-op —
+    # and that function is what the whole Claude install hangs off.
+    assert "set -euo pipefail" in step.run
+    assert "__bundled__" not in step.run
     assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"  # auto_update defaults to True
 
 

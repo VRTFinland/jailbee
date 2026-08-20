@@ -155,7 +155,16 @@ def run_step(
     For ``background=True``, returns immediately after creating the window.
     For ``background=False``, blocks until the step exits and raises
     ``RuntimeError`` if the exit code is non-zero or the step times out.
+
+    ``command`` is stripped before it is composed into the surrounding shell
+    line. Both paths append to it (``; rc=$?; …`` in the sync path), so a
+    trailing newline — which YAML's ``run: |`` block scalar always produces,
+    and which ``AutostartStep.run`` does not strip — would start the
+    continuation on a fresh line and make the whole line a bash syntax error.
+    The sync path would then never write its sentinel and the caller would
+    block on ``tmux wait-for`` for the full timeout.
     """
+    command = command.strip()
     window = _sanitize_window_name(name)
     kill_window(incus, container, window)
     env_flags = _env_flags(env)

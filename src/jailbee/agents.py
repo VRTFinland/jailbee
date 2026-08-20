@@ -7,6 +7,7 @@ the only impure part and goes through the `Incus` wrapper.
 from __future__ import annotations
 
 import importlib.resources
+import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -265,7 +266,24 @@ def _ensure_one(
         # function and abort `jailbee new`.
         step = AutostartStep(
             name=f"install-{spec.name}",
-            run=_resolve_bundled(command),
+            # `bash -c <script>` rather than the raw script text, for every
+            # agent command — not just the bundled ones. `tmux.run_step`'s
+            # sync path concatenates the command into a larger shell line
+            # (`cd … && <command>; rc=$?; echo $rc > sentinel; tmux wait-for`),
+            # which breaks two ways when `<command>` is a whole script:
+            #   1. a multi-line command ending in a newline puts the `;` on a
+            #      fresh line — a bash syntax error, so the sentinel is never
+            #      written and the host blocks on `tmux wait-for` for the full
+            #      `autostart.step_timeout`;
+            #   2. even without the newline, `set -e`/`exit N` inside the
+            #      script share the wrapper's shell and exit before the
+            #      sentinel is written — the same stall, misreported as a
+            #      timeout instead of the real exit code.
+            # A child `bash -c` gives the script its own shell, so its exit
+            # status flows into `rc=$?` and the sentinel is always written.
+            # This also makes a user's multi-line `install: |` block scalar
+            # behave the same way.
+            run=f"bash -c {shlex.quote(_resolve_bundled(command))}",
             network="loose" if spec.install_network == "loose" else None,
             env=dict(spec.env),
         )

@@ -28,8 +28,23 @@
   the same autostart step pipeline every other agent's install/update uses,
   bounded by `autostart.step_timeout` (default 600s) and landing in a
   persistent tmux window instead of being captured and discarded. A stuck
-  install now times out instead of hanging `jailbee new` indefinitely, and
-  its output is inspectable afterwards via `jailbee tmux`.
+  install is therefore capped at `autostart.step_timeout` instead of hanging
+  `jailbee new` indefinitely, and its output is inspectable afterwards via
+  `jailbee tmux`.
+- **Every agent install/update command runs in its own `bash -c` child
+  shell.** A command spanning multiple lines — which every bundled install
+  script and any user `install: |` block scalar is — used to be pasted
+  verbatim into the shell line that records the step's exit code, so a `set -e`
+  trip, an explicit `exit`, or just the script's trailing newline stopped that
+  bookkeeping from ever running. The step then sat until
+  `autostart.step_timeout` elapsed and reported a timeout regardless of what
+  actually happened.
+- **`ensure_agents` starts the container's autostart tmux session even under
+  `--no-autostart`.** Agent installs are infrastructure rather than user
+  autostart commands (the same reasoning `inject_github_token` already
+  follows), so they run either way and need the session to run in. Visible
+  consequence: `jailbee tmux` on a `--no-autostart` container now finds a
+  session with an `install-<agent>` window in it rather than nothing.
 
 ## 1.1.0 - 2026-08-20
 
