@@ -97,6 +97,15 @@
 
 ### Changed
 
+- **`--help` renders arguments in Typer's new style.** Typer 0.27 deliberately
+  dropped ALL-CAPS metavars, so a usage line now reads
+  `jailbee snapshot restore [OPTIONS] {name} {tag}` instead of
+  `... [OPTIONS] NAME TAG` — braces for a required positional, brackets for an
+  optional one — and the type column in the Arguments panel shows the Python
+  type (`<str>`) rather than Click's `TEXT`. Only the help output changed; the
+  arguments themselves, their order, and every command's behaviour are
+  untouched. JailBee follows Typer's house style here rather than pinning 51
+  explicit metavars against it.
 - **A failed background job no longer locks you out of the container.**
   `jailbee shell`/`tmux`/`ide`/`chrome` used to refuse outright when the
   container's `jailbee new --background` job had ended in `failed` — the

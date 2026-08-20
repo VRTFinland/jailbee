@@ -1,4 +1,4 @@
-"""End-to-end shell-completion tests, driven through real Typer/Click.
+"""End-to-end shell-completion tests, driven through the real Typer command tree.
 
 tests/test_completion.py calls the completers in `completion.py` directly —
 useful for the module's own contract (never raise, filter correctly), but it
@@ -10,8 +10,8 @@ that actually bit this branch lived: `NameError: name 'typer' is not defined`
 imported only under `TYPE_CHECKING`. Every test calling the completers
 directly passed throughout; only running the real command tree exposes it.
 
-These tests do that: they build a real `click.shell_completion.ShellComplete`
-against `jailbee.cli.app` and ask it for completions, the same way
+These tests do that: they build the real `BashComplete` driver Typer installs
+for itself against `jailbee.cli.app` and ask it for completions, the same way
 `_GIE_COMPLETE=bash_complete gie ...<TAB>` would. Incus and git are mocked
 (the `completion_repo` fixture, shared with tests/test_completion.py, lives in
 tests/conftest.py); nothing here touches a real daemon or network.
@@ -23,7 +23,15 @@ from subprocess import CompletedProcess
 from typing import Any
 
 import typer
-from click.shell_completion import ShellComplete
+
+# Typer vendored Click in 0.26 and no longer depends on it, so there is no
+# third-party `click` to import here. `_completion_classes` holds the concrete
+# drivers Typer registers for its own `--install-completion`; the base
+# `typer._click.shell_completion.ShellComplete` is abstract and cannot be
+# instantiated. Typer exposes no public API for driving a completion, so a
+# private module is the only way to run one — the alternative, shelling out
+# with `_JAILBEE_COMPLETE=bash_complete`, cannot mock Incus or git.
+from typer._completion_classes import BashComplete
 
 from jailbee.cli import app
 
@@ -31,8 +39,8 @@ _CLI = typer.main.get_command(app)
 
 
 def _complete(args: list[str], incomplete: str) -> list[str]:
-    """Completion values Click would offer, in the order it offers them."""
-    shell = ShellComplete(_CLI, {}, "gie", "_GIE_COMPLETE")
+    """Completion values the shell would be offered, in the order offered."""
+    shell = BashComplete(_CLI, {}, "gie", "_GIE_COMPLETE")
     return [item.value for item in shell.get_completions(args, incomplete)]
 
 
