@@ -243,6 +243,21 @@
   was taken from the host, so a host using another name left the container
   tracking a remote that does not exist there and `git push` inside it failed.
 
+### Deprecated
+
+- **The pre-1.0 compatibility surface is now removed in 2.0.0, not 1.1.0.**
+  1.0.0 announced that all six pieces of `gie`-era compatibility — the `gie`
+  console script, the `.gie/config.yaml` fallback, the
+  `claude.install_gie_skills` config alias, the legacy `/etc/hosts` sentinel,
+  the `<data>/gie` symlink and `jailbee migrate` itself — would go in 1.1.0.
+  Removing an installed entry point, a config key and a config-file location
+  breaks working setups, so it belongs in a major release; announcing it for a
+  minor one was the mistake, and the deadline moves rather than the promise.
+  Nothing on the list changed, nothing is removed in this release, and no
+  existing install breaks in the meantime — the deprecation warnings now name
+  2.0.0. The list and the migration path are unchanged in
+  [`docs/migrating-from-gie.md`](docs/migrating-from-gie.md).
+
 ## 1.0.0 - 2026-08-13
 
 ### Added: first public release

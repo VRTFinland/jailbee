@@ -309,7 +309,7 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
 
-    # 11. Pre-1.0 leftovers. Dropped in 1.1.0 with the migrator itself.
+    # 11. Pre-1.0 leftovers. Dropped in 2.0.0 with the migrator itself.
     # Tests the old state directly rather than asking the migrator for a plan:
     # a plan describes what the migrator is willing to do, so anything it
     # refuses (e.g. a directory whose target already exists) would read as

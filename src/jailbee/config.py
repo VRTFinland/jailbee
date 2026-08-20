@@ -1555,7 +1555,7 @@ def _warn_legacy_skills_key() -> None:
     from jailbee.tui import warn
 
     warn(
-        "claude.install_gie_skills is deprecated and stops working in 1.1.0 — "
+        "claude.install_gie_skills is deprecated and stops working in 2.0.0 — "
         "rename it to claude.install_jailbee_skills."
     )
 
@@ -1610,7 +1610,7 @@ class ClaudeConfig(BaseModel):
       in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
       edits. Host-side file copy only — no network. Has no effect when `enabled`
       is false. Accepts the pre-1.0 key name as a validation alias, with a
-      one-time deprecation warning; removed in 1.1.0.
+      one-time deprecation warning; removed in 2.0.0.
     - `ai_pr_description`: when true (default, requires `enabled`),
       `jailbee pr` asks the in-container Claude CLI to generate the
       PR title and body from the branch's commits and diff, falling back to
@@ -1688,7 +1688,7 @@ class ClaudeConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _accept_legacy_skills_key(cls, data: Any) -> Any:
-        """Warn when the pre-1.0 key name is used. Removed in 1.1.0, where it
+        """Warn when the pre-1.0 key name is used. Removed in 2.0.0, where it
         becomes a `_RETIRED_KEYS_CLAUDE` entry naming the new key."""
         if isinstance(data, dict) and "install_gie_skills" in data:
             _warn_legacy_skills_key()

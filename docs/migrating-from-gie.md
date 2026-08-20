@@ -171,7 +171,7 @@ host paths, and moving the data directory changes them. `jailbee apply`
 rewrites each repo's profile devices to the new `~/.local/share/jailbee/…`
 paths. The compatibility symlink the migrator leaves behind keeps existing
 containers — including their per-container devices, which `apply` does not
-touch — starting in the meantime, but it disappears in 1.1.0.
+touch — starting in the meantime, but it disappears in 2.0.0.
 
 **Rebuild the golden image when convenient** (`jailbee base build`). Images
 built before the rename ship a `.bashrc` that reads `$GIE_BRANCH`, while
@@ -254,24 +254,30 @@ how to unblock it.
 ## Deprecations and their removal
 
 Six pieces of pre-1.0 compatibility exist purely to make this migration
-gradual. All six are removed in **1.1.0** — don't build anything new on
-top of them:
+gradual. All six are removed in **2.0.0** — don't build anything new on
+top of them.
+
+The 1.0.0 release announced the removal for 1.1.0. It has been moved to
+2.0.0: dropping an installed entry point, a config key and a config-file
+location breaks working setups, so it belongs in a major release rather
+than a minor one. Nothing about the list below changed — only the version
+that removes it, and no existing install breaks in the meantime.
 
 - **The `gie` console script.** `pip`/`uv` installs `jailbee`, `jb`, and
   `gie` as three entry points to the same CLI today; `gie` is the pre-1.0
   name kept as an alias. Scripts, aliases, and muscle memory using `gie
-  ...` keep working until 1.1.0, when the `gie` entry point is removed
+  ...` keep working until 2.0.0, when the `gie` entry point is removed
   from `pyproject.toml` entirely.
 - **The `.gie/config.yaml` fallback.** `jailbee` prefers
   `<repo>/.jailbee/config.yaml` but still reads `<repo>/.gie/config.yaml`
   if that's all a repo has, with a one-time warning per process telling
-  you which `git mv` to run. In 1.1.0 only `.jailbee/config.yaml` is
+  you which `git mv` to run. In 2.0.0 only `.jailbee/config.yaml` is
   recognized — a repo that hasn't run the `git mv` by then stops loading.
 - **`claude.install_gie_skills` as a config alias.** The config key is now
   `claude.install_jailbee_skills`; `install_gie_skills` is accepted as an
   alias for the same field, with a deprecation warning, so an existing
   `global.yaml` or `.gie/config.yaml` written before the rename still
-  validates. In 1.1.0 the alias is dropped and only
+  validates. In 2.0.0 the alias is dropped and only
   `install_jailbee_skills` is recognized.
 - **The legacy `/etc/hosts` sentinel.** Strict-mode containers pin
   resolved egress IPs into `/etc/hosts` between a pair of sentinel
@@ -281,21 +287,21 @@ top of them:
   recognizes both forms so it replaces the old block instead of leaving it
   behind and appending a second one. Once every container has been
   through `jailbee migrate` and at least one `net refresh`, the old marker
-  never appears again; 1.1.0 stops recognizing it.
+  never appears again; 2.0.0 stops recognizing it.
 - **The `<data>/gie` compatibility symlink.** `jailbee migrate` leaves
   `~/.local/share/gie` behind as a symlink to `~/.local/share/jailbee`, so
   that the absolute disk-device sources baked into existing profiles and
   containers keep resolving after the move. `jailbee apply` rewrites the
   profile-level ones; per-container devices are attached once at creation
   and never refreshed, so a container created before the rename depends on
-  this symlink for as long as it lives. 1.1.0 removes it — recreate any
+  this symlink for as long as it lives. 2.0.0 removes it — recreate any
   surviving pre-rename container before then.
 - **`jailbee migrate` itself.** The migrator only exists to walk installs
   that predate the rename to a clean slate. Once your fleet is migrated,
   there is nothing left for it to do — `jailbee doctor` reports "pre-1.0
   gie state: none". The whole `migrate` command and its module are
-  removed in 1.1.0, together with the rest of this compatibility surface;
-  from then on a `gie`-era install must be brought current on 1.0.x first.
+  removed in 2.0.0, together with the rest of this compatibility surface;
+  from then on a `gie`-era install must be brought current on 1.x first.
 
 Run `jailbee doctor` any time to see whether any of this still applies to
 your machine — its "pre-1.0 gie state" check inspects the old directories,
