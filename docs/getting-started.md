@@ -139,8 +139,11 @@ instead of the agent's own judgement. You size the blast radius once, in
 the container's config — read-only mounts for what the build needs,
 sensitive `optional_mounts` left detached, `strict` egress — rather than
 adjudicating it one prompt at a time. JailBee has first-class support for
-[Claude Code](https://claude.com/claude-code) — turn it on in
-`~/.config/jailbee/global.yaml`:
+[Claude Code](https://claude.com/claude-code) — one of six shipped agent
+presets, and the only one exercised in production. The same `agents:`
+mechanism wires in any other terminal coding agent the same way; see
+[Generic agent support](agents.md) for the full list and how to add your
+own. Turn Claude Code on in `~/.config/jailbee/global.yaml`:
 
 ```yaml
 claude:
