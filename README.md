@@ -69,6 +69,12 @@ its origin, not its scope.
   repo's config; see
   [Running an agent without prompts](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#running-an-agent-without-prompts)
   for what it does and doesn't cover.
+- **Generic agent support** — `agents: {codex: {enabled: true}}` wires any
+  terminal coding agent into the same mount/egress/install/autostart
+  pipeline Claude Code uses, via a shipped preset or one you write yourself.
+  Five presets beyond Claude (`codex`, `gemini`, `aider`, `opencode`, `grok`)
+  ship as untested starting points — see
+  [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md).
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, the Chrome profile pool, `~/.ssh` and Claude's login live in a shared
   dir bind-mounted into every one of the repo's containers. Branches running in
@@ -162,6 +168,7 @@ directory's* containers, not the repo the flag points at.
 | Doc | What's inside |
 |---|---|
 | [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md) | Every `.jailbee/config.yaml` and `global.yaml` key |
+| [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md) | Wiring a terminal coding agent (Claude Code or otherwise) into the container lifecycle; the shipped presets and their verification status |
 | [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md) | Isolation model, git-remote handling, known limits |
 | [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md) | How the pieces fit together |
 | [Who JailBee is for](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from Dev Containers, BranchBox, nono and Docker Sandboxes |

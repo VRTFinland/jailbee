@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- **Generic agent support: `agents:` config key.** Claude Code's integration
+  — shared credentials/settings mount, strict-mode egress, install/update at
+  `jailbee new` time, autostart launch, `jailbee doctor` check — is now a
+  declarative mapping any terminal coding agent can use, not code specific to
+  Claude. Six presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`,
+  `grok`); enabling one is usually two lines
+  (`agents: {codex: {enabled: true, autostart: true}}`), and every preset
+  field is overridable. Only `claude` is exercised in production — the other
+  five are untested templates whose package names, config paths and
+  especially host lists are best-effort, corrected by whoever adopts one. An
+  agent name outside the shipped six works too, with no preset base. See
+  [docs/agents.md](docs/agents.md).
+- **`agents.claude` is the preferred spelling** of Claude's config block. The
+  existing top-level `claude:` block remains a supported legacy alias —
+  translated into `agents.claude` at load — and defining both at once is a
+  `ConfigError`.
+
+### Changed
+
+- **The Claude install/update step now runs bounded, with its output kept.**
+  It used to run through an unbounded `incus.exec` call; it now runs through
+  the same autostart step pipeline every other agent's install/update uses,
+  bounded by `autostart.step_timeout` (default 600s) and landing in a
+  persistent tmux window instead of being captured and discarded. A stuck
+  install now times out instead of hanging `jailbee new` indefinitely, and
+  its output is inspectable afterwards via `jailbee tmux`.
+
 ## 1.1.0 - 2026-08-20
 
 ### Added

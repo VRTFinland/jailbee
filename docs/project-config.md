@@ -167,6 +167,26 @@ golden:
     REGION: eu-north-1   # whatever your script reads
 ```
 
+## 4c. Optional — enable a coding agent
+
+`agents:` is valid at both `~/.config/jailbee/global.yaml` (your personal
+default across every repo) and this repo's `.jailbee/config.yaml` (a
+team default for everyone working on it) — a repo entry merges over a
+global one for the same agent, field by field, same as the rest of
+JailBee's config layering. Enabling a shipped preset is usually two lines:
+
+```yaml
+agents:
+  claude:
+    enabled: true
+    autostart: true
+```
+
+Six presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`);
+only `claude` is exercised in production, the rest are untested starting
+points. See [Generic agent support](agents.md) for the full mechanism, the
+preset table, and how to write your own agent entry.
+
 ## 5. Define autostart steps
 
 Each step is a shell command run as the dev user inside the container.

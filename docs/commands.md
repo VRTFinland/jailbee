@@ -43,7 +43,7 @@
 | `jailbee doctor` | Diagnostics |
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
-| `jailbee config show/validate/init` | Configuration |
+| `jailbee config show/validate/init` | Configuration. `show`'s effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
 
 ### `jailbee gui` / `jailbee dashboard --gui`
