@@ -1637,8 +1637,10 @@ class ClaudeAgentConfig(AgentConfig):
       `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
       in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
       edits. Host-side file copy only — no network. Has no effect when `enabled`
-      is false. Accepts the pre-1.0 key name as a validation alias, with a
-      one-time deprecation warning; removed in 2.0.0.
+      is false. The pre-1.0 key name (`install_gie_skills`) is not accepted at
+      all — `_check_retired_keys`/`_RETIRED_KEYS_CLAUDE` raises a `ConfigError`
+      naming this key as the replacement, under both the legacy `claude:` and
+      the `agents.claude` spelling.
     - `ai_pr_description`: when true (default, requires `enabled`),
       `jailbee pr` asks the in-container Claude CLI to generate the
       PR title and body from the branch's commits and diff, falling back to
@@ -1873,6 +1875,13 @@ class Config(BaseModel):
         Read-only on purpose. `model_copy(update={"claude": ...})` cannot work
         here — a property shadows the instance dict that update writes — so
         tests must go through `tests.conftest.with_agent`.
+
+        The fallback branch allocates a fresh `ClaudeAgentConfig` on every
+        call: `cfg.claude is cfg.claude` is `False` when `"claude"` is absent
+        from `agents`, and `cfg.claude.autostart = True` silently mutates a
+        throwaway instead of `cfg`. A second silent-no-op shape alongside the
+        `model_copy` one above — harmless today because nothing does this,
+        but don't rely on the returned object's identity or on mutating it.
         """
         entry = self.agents.get("claude")
         if isinstance(entry, ClaudeAgentConfig):
@@ -2132,12 +2141,6 @@ class Config(BaseModel):
             secret = self.github.api_tokens.get(self.container_prefix)
             if secret is not None and not secret.get_secret_value().strip():
                 issues.append(f"github.api_tokens['{self.container_prefix}'] is empty")
-        if self.claude.autostart and not self.claude.enabled:
-            issues.append(
-                "claude.autostart=true requires claude.enabled=true "
-                "(shared ~/.claude mount and Anthropic egress are gated "
-                "by claude.enabled)"
-            )
 
         seen_subpaths: dict[str, tuple[str, str]] = {}
         for name, agent in self.agents.items():
@@ -2147,7 +2150,22 @@ class Config(BaseModel):
                     f"tmux window name, a doctor label and part of a device name"
                 )
             if agent.autostart and not agent.enabled:
-                issues.append(f"agents.{name}.autostart=true requires agents.{name}.enabled=true")
+                # `claude` keeps the extra parenthetical explaining *why* the
+                # gate exists — the only agent with a documented shared-mount
+                # + egress side effect on `enabled`. This is the single
+                # source of this check: a legacy `claude:` block resolves to
+                # `agents["claude"]` via `resolve_agents_raw` before
+                # validation, so a second, claude-specific check here would
+                # report the same misconfiguration twice.
+                detail = (
+                    f" (shared ~/.claude mount and Anthropic egress are gated "
+                    f"by agents.{name}.enabled)"
+                    if name == "claude"
+                    else ""
+                )
+                issues.append(
+                    f"agents.{name}.autostart=true requires agents.{name}.enabled=true{detail}"
+                )
             if agent.enabled and not agent.command.strip():
                 issues.append(f"agents.{name}.enabled=true requires a non-empty `command`")
             if not agent.enabled:
@@ -2273,7 +2291,10 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
     invariants (prefix regex, reserved env keys, shared_caches uniqueness,
     autostart step-name uniqueness) are checked here as well.
     """
-    raw = resolve_agents_raw(raw)
+    try:
+        raw = resolve_agents_raw(raw)
+    except ConfigError as e:
+        raise ConfigError(f"Config validation failed in {config_path}:\n{e}") from e
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)

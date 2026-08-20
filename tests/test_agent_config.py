@@ -61,6 +61,46 @@ def test_both_claude_spellings_is_an_error():
         resolve_agents_raw({"claude": {"enabled": True}, "agents": {"claude": {"enabled": True}}})
 
 
+def test_malformed_claude_block_error_names_the_config_path(tmp_path, mocker):
+    """`resolve_agents_raw` now runs inside `_build_config_from_dict`, before
+    the `Config.model_validate` call — its `ConfigError` must keep the
+    `Config validation failed in <path>:` wrapper too, or a malformed
+    `claude:`/`agents:` block loses the file name that names the mistake."""
+    from jailbee.config import load_config
+
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    cfg_path = repo / ".jailbee" / "config.yaml"
+    cfg_path.write_text("claude: 5\n")
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_path)
+
+    msg = str(exc.value)
+    assert "must be a mapping" in msg
+    assert str(cfg_path) in msg
+
+
+def test_malformed_agents_block_error_names_the_config_path(tmp_path, mocker):
+    from jailbee.config import load_config
+
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    cfg_path = repo / ".jailbee" / "config.yaml"
+    cfg_path.write_text("agents: 5\n")
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_path)
+
+    msg = str(exc.value)
+    assert "must be a mapping" in msg
+    assert str(cfg_path) in msg
+
+
 def test_claude_entry_accepts_claude_only_fields():
     cfg = ClaudeAgentConfig.model_validate({"enabled": True, "ai_pr_timeout": 900})
     assert cfg.ai_pr_timeout == 900

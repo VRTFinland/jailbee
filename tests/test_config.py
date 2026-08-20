@@ -1277,12 +1277,24 @@ def test_claude_config_autostart_accepts_custom_command():
 
 
 def test_validate_runtime_rejects_autostart_without_enabled(tmp_path):
+    """Exactly one diagnostic for this misconfiguration.
+
+    `resolve_agents_raw` always populates `agents["claude"]`, so a legacy
+    claude-specific special case alongside the generic per-agent loop would
+    double-report the same issue. `validate_runtime`'s generic loop is the
+    single source; guard against a duplicate creeping back in with a count
+    assertion rather than `any(...)`, which can't see a duplicate.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
     cfg = with_agent(cfg, "claude", autostart=True)
     issues = cfg.validate_runtime()
-    assert any("claude.autostart=true requires claude.enabled=true" in i for i in issues)
+    matches = [
+        i for i in issues if "agents.claude.autostart=true requires agents.claude.enabled=true" in i
+    ]
+    assert len(matches) == 1
+    assert "shared ~/.claude mount and Anthropic egress are gated" in matches[0]
 
 
 def test_validate_runtime_silent_when_autostart_and_enabled(tmp_path):
@@ -1291,7 +1303,8 @@ def test_validate_runtime_silent_when_autostart_and_enabled(tmp_path):
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
     cfg = with_agent(cfg, "claude", enabled=True, autostart=True)
     issues = cfg.validate_runtime()
-    assert not any("claude.autostart" in i for i in issues)
+    matches = [i for i in issues if "claude.autostart" in i]
+    assert len(matches) == 0
 
 
 def test_claude_auto_update_defaults_true(tmp_path, mocker):
