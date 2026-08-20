@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-skill check build publish-testpypi \
-        public-push changelog release
+        changelog release
 
 # Use bash for recipe lines — Typer's --show-completion uses
 # shellingham, which inspects the parent process; under the default
@@ -53,59 +53,6 @@ build:
 # TWINE_* env vars). Use this before the first real release.
 publish-testpypi: build
 	uvx twine upload --repository testpypi dist/*
-
-# Push the public lineage to the open-source repo.
-#
-#   make public-push [TAG=v1.0.1]
-#
-# This repo is the private one and keeps everything, including the pre-1.0
-# history that was never published. The public repo's history starts at the
-# 1.0.0 root commit and carries every commit from there on, unsquashed;
-# pushes happen at release time rather than per commit, so the public repo
-# lags this one in between. That is intentional, not a bug to fix.
-#
-# The whole point of this target is the checks. `git push --all`, `--tags`
-# or `--mirror` to the public remote would republish the pre-1.0 history in
-# one keystroke, so this pushes exactly one branch, and one tag by name.
-#
-# The structural check is the root-commit one: the public lineage must have
-# exactly one root and it must be the commit tagged v1.0.0. Merging the
-# archived pre-1.0 branch into main gives main a second root, which fails
-# here rather than on the push.
-PUBLIC_REMOTE ?= public
-PUBLIC_BRANCH ?= main
-
-public-push:
-	@set -euo pipefail; \
-	git remote get-url "$(PUBLIC_REMOTE)" >/dev/null 2>&1 \
-	  || { echo "error: no '$(PUBLIC_REMOTE)' remote — see .local/RUNBOOK-export.md"; exit 1; }; \
-	[ "$$(git rev-parse --abbrev-ref HEAD)" = "$(PUBLIC_BRANCH)" ] \
-	  || { echo "error: public pushes are made from $(PUBLIC_BRANCH)"; exit 1; }; \
-	git diff --quiet && git diff --cached --quiet \
-	  || { echo "error: working tree is dirty — commit or stash first"; exit 1; }; \
-	roots="$$(git rev-list --max-parents=0 HEAD)"; \
-	if [ "$$(echo "$$roots" | wc -l)" -ne 1 ]; then \
-	  echo "error: $(PUBLIC_BRANCH) has more than one root commit — the archived"; \
-	  echo "       pre-1.0 history has been merged in and must not be published:"; \
-	  echo "$$roots" | sed 's/^/         /'; exit 1; \
-	fi; \
-	if [ "$$roots" != "$$(git rev-parse v1.0.0^{commit})" ]; then \
-	  echo "error: $(PUBLIC_BRANCH)'s root is $$roots, not the v1.0.0 root"; exit 1; \
-	fi; \
-	if [ -n "$(TAG)" ]; then \
-	  git rev-parse -q --verify "refs/tags/$(TAG)" >/dev/null \
-	    || { echo "error: no such tag: $(TAG)"; exit 1; }; \
-	  git merge-base --is-ancestor "$(TAG)^{commit}" HEAD \
-	    || { echo "error: $(TAG) is not on $(PUBLIC_BRANCH)"; exit 1; }; \
-	fi; \
-	echo "==> Pushing $(PUBLIC_BRANCH) to $(PUBLIC_REMOTE) ($$(git remote get-url $(PUBLIC_REMOTE)))"; \
-	git push "$(PUBLIC_REMOTE)" "$(PUBLIC_BRANCH):$(PUBLIC_BRANCH)"; \
-	if [ -n "$(TAG)" ]; then \
-	  echo "==> Pushing tag $(TAG)"; \
-	  git push "$(PUBLIC_REMOTE)" "refs/tags/$(TAG):refs/tags/$(TAG)"; \
-	fi; \
-	echo "==> Public refs now:"; \
-	git ls-remote --heads --tags "$(PUBLIC_REMOTE)" | sed 's/^/    /'
 
 # Draft/edit the Unreleased CHANGELOG section without cutting a release.
 # Drafts entries from git history via the `claude` CLI (best effort), then
