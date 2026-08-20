@@ -54,7 +54,7 @@ speculatively.
 | Command | What it does |
 |---|---|
 | `jailbee config init [--global]` | Write a fully-commented `.jailbee/config.yaml` (or `~/.config/jailbee/global.yaml` with `--global`). The template comments ARE the schema docs. |
-| `jailbee config show` | Print the merged effective config (global + per-repo) as YAML. Use to check active `push.default_*`, `new.background`, etc. |
+| `jailbee config show` | Print the merged effective config (global + per-repo) as YAML. Use to check active `push.default_*`, `new.background`, etc. Prints the resolved `agents:` block too — preset fields filled in whether or not the repo's own config mentions them, so it's the way to check what a `claude`/`codex`/… preset actually resolved to rather than re-deriving it by hand. |
 | `jailbee config validate` | Schema + cross-field + runtime-path checks. Fail-closed: unknown keys, bad `container_prefix`, malformed `egress_allow`, reserved `provision_env` keys, duplicate autostart step names, and unknown `optional_mounts` references are rejected. |
 
 ## Create & lifecycle

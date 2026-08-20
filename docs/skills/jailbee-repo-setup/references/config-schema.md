@@ -32,7 +32,8 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `claude` | `{enabled, plugins_enabled, autostart, command, auto_update, install_jailbee_skills, ai_pr_description, ai_pr_branch, ai_pr_model, pr_prompt, ai_pr_timeout}` | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
+| `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
+| `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `install_jailbee_skills`, `ai_pr_description`, `ai_pr_branch`, `ai_pr_model`, `pr_prompt`, `ai_pr_timeout`) | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
 | `github` | `{enabled, api_tokens}` | `enabled: false` (opt-in) | global |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
@@ -518,14 +519,85 @@ docker_registry_mirror:
 
 Bare hostnames optionally with `:port`. No scheme, no path. Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
 
+## `agents`
+
+Generic hook for terminal coding agents. A mapping keyed by agent name
+(`{codex: {...}, gemini: {...}}`), not a list — this is what lets the repo
+layer tweak one field of an agent the global layer already turned on
+without the deep-merge pipeline's list-append rule producing a duplicate
+entry. Six presets ship built in: `claude`, `codex`, `gemini`, `aider`,
+`opencode`, `grok`. **Only `claude` is exercised in production** — the
+other five are untested templates, correct as needed.
+
+An agent name matching one of the six presets is deep-merged over that
+preset (preset → global.yaml → repo, same append/reset rules as every
+other list field); any other name is used as-is with no preset base.
+
+```yaml
+agents:
+  codex:
+    enabled: true
+    autostart: true
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. Gates the shared mount, the strict-mode egress add, install/update at `jailbee new` time, and the `jailbee doctor` shared-dir check. |
+| `autostart` | bool | `false` | Launch `command` in a background autostart tmux window. Requires `enabled: true`. |
+| `command` | string | `""` | The command line the autostart window execs; also the default source for `install_check`. Required when `enabled: true`. |
+| `install` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` fails. |
+| `install_check` | string \| null | `null` | Probe deciding install-vs-update. Defaults to `command -v <first token of command>`. |
+| `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
+| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
+| `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
+| `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. |
+| `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow--strict-mode-allowlist). |
+| `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
+
+`jailbee config validate` additionally rejects: an agent name outside
+`[a-z0-9-]+`; `enabled: true` with an empty `command`; `autostart: true`
+without `enabled: true`; and a `shared` subpath colliding with a built-in
+shared subdir or with a different mount target another agent already
+claimed.
+
+A full custom (non-preset) entry:
+
+```yaml
+agents:
+  my-agent:
+    enabled: true
+    autostart: true
+    command: my-agent
+    install: "npm i -g my-agent-cli"
+    update: "npm i -g my-agent-cli@latest"
+    shared:
+      - { subpath: my-agent, path: "~/.config/my-agent" }
+    egress_allow:
+      - api.my-agent.example:443
+```
+
+Full field-by-field detail, the preset table, and the "which paths to
+share" rule live in `docs/agents.md` of the JailBee repo — read that if
+this summary doesn't cover what you need.
+
 ## `claude`
+
+**`agents.claude` is the preferred spelling of this block.** A top-level
+`claude:` block is still accepted as a **legacy alias**: it is translated
+into `agents.claude` at config-load time, before validation. Defining
+**both** `claude:` and `agents.claude` in the merged config (global + repo
+combined) is a `ConfigError` naming both spellings — pick one, and prefer
+`agents.claude`. Everything below applies identically under either
+spelling, and `claude` also carries every generic field from the `agents`
+table above (`install`, `update`, `install_check`, `install_network`,
+`shared`, `egress_allow`, `env`), not repeated here.
 
 Claude Code CLI integration. Defaults to disabled — opt-in via
 `~/.config/jailbee/global.yaml`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude.json` → `~/.claude.json` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `downloads.claude.ai:443` (the last enables the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
 | `claude.plugins_enabled` | bool | `true` | When `true`, `effective_egress_allow` also opens the Claude plugin-marketplace hosts so the in-container CLI can install plugins. |
 | `claude.autostart` | bool | `false` | When `true` (and `enabled`), `run_autostart` launches the `claude` CLI as an autostart step. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |
@@ -564,8 +636,8 @@ JailBee owns that and states it after the project block.
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when
 `claude.enabled` is `true`. Manual entries in `shared_caches:` with names
-`claude` or `claude-json` suppress the auto-add (same precedent as
-`effective_host_mounts`).
+`claude`, `claude-json`, or `claude-install` suppress the auto-add (same
+precedent as `effective_host_mounts`).
 
 ## install.d snippet resolution
 
