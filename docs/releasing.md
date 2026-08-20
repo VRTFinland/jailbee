@@ -172,7 +172,7 @@ rely on.
 | Command | Purpose |
 |---------|---------|
 | `finalize <version> [--date YYYY-MM-DD]` | stamp `## Unreleased` with a version + date and open a fresh Unreleased |
-| `extract <version>` | print a version's section body (used as GitHub Release notes) |
+| `extract <version> [--raw]` | print a version's section body (used as GitHub Release notes), with each block's hard-wrapped lines joined onto one line; `--raw` prints it verbatim |
 | `unreleased-empty` | exit 0 if the Unreleased section is empty, 1 otherwise |
 | `draft [--from <ref>]` | draft Unreleased entries from `git log` via the `claude` CLI |
 

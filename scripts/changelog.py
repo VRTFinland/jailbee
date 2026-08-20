@@ -8,9 +8,11 @@ Pure stdlib so it runs without the project virtualenv. Subcommands:
         and insert a fresh, empty ``## Unreleased`` above it. Errors if the
         Unreleased section has no content (nothing to release).
 
-    extract <version>
+    extract <version> [--raw]
         Print the body of the ``## <version> ...`` section (used as the
-        GitHub Release notes via ``gh release create --notes-file``).
+        GitHub Release notes via ``gh release create --notes-file``), with
+        each block's hard-wrapped lines joined onto one line. ``--raw``
+        prints the section verbatim instead. See ``_unwrap`` for why.
 
     unreleased-empty
         Exit 0 if the Unreleased section is empty, 1 if it has content.
@@ -74,7 +76,74 @@ def cmd_finalize(version: str, date: str | None) -> None:
     print(f"changelog: finalized {version} ({stamp})")
 
 
-def cmd_extract(version: str) -> None:
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_BLOCK_START = re.compile(
+    r"""^\s*(
+        \#{1,6}\s                   # heading
+      | [-*+]\s                     # bullet, at any nesting depth
+      | \d+\.\s                     # ordered item
+      | >                           # blockquote
+      | \|                          # table row — one per line, never joined
+      | (-{3,}|\*{3,}|_{3,})\s*$    # thematic break
+    )""",
+    re.VERBOSE,
+)
+
+
+def _unwrap(body: str) -> str:
+    """Join each block's hard-wrapped lines onto a single line.
+
+    CHANGELOG.md is wrapped at ~78 columns like the rest of the repo's prose,
+    which reads well as a file: GitHub renders `.md` files in its `markdown`
+    mode, where a lone newline is just whitespace and paragraphs reflow.
+
+    Release notes are not rendered that way. A release body goes through
+    `gfm` mode, the same as an issue or a comment, where **a lone newline
+    becomes `<br>`**. The wrapped section therefore rendered as a narrow
+    ragged column — and worse, wherever a backtick code span straddled a line
+    break, no `<br>` could be inserted inside it, so those two lines merged
+    into one conspicuously long one. Both symptoms, one cause. Verified
+    against GitHub's own `POST /markdown` endpoint in both modes.
+
+    Joining the lines back up before handing them to `--notes-file` fixes
+    both at once: nothing is left for gfm to break on, and the page wraps the
+    text to its own width.
+
+    Structure is preserved: headings, list items at any depth, blockquotes,
+    table rows and thematic breaks each start a new line, blank lines are
+    kept as paragraph separators, and fenced blocks pass through verbatim.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if buf:
+            out.append(" ".join(buf))
+            buf.clear()
+
+    in_fence = False
+    for raw in body.split("\n"):
+        if _FENCE.match(raw):
+            flush()
+            out.append(raw)
+            in_fence = not in_fence
+        elif in_fence:
+            out.append(raw)
+        elif not raw.strip():
+            flush()
+            out.append("")
+        elif _BLOCK_START.match(raw):
+            flush()
+            buf.append(raw.rstrip())
+        elif not buf:
+            buf.append(raw.rstrip())
+        else:
+            buf.append(raw.strip())
+    flush()
+    return "\n".join(out)
+
+
+def cmd_extract(version: str, raw: bool) -> None:
     def is_version_heading(ln: str) -> bool:
         if not ln.startswith("## "):
             return False
@@ -83,7 +152,7 @@ def cmd_extract(version: str) -> None:
     lines = _read()
     start, end = _section_bounds(lines, is_version_heading)
     body = "\n".join(lines[start + 1 : end]).strip()
-    print(body)
+    print(body if raw else _unwrap(body))
 
 
 def cmd_unreleased_empty() -> None:
@@ -154,6 +223,7 @@ def main() -> None:
 
     p_ext = sub.add_parser("extract", help="print a version's section body")
     p_ext.add_argument("version")
+    p_ext.add_argument("--raw", action="store_true", help="print verbatim, without unwrapping")
 
     sub.add_parser("unreleased-empty", help="exit 0 if Unreleased is empty")
 
@@ -164,7 +234,7 @@ def main() -> None:
     if args.cmd == "finalize":
         cmd_finalize(args.version, args.date)
     elif args.cmd == "extract":
-        cmd_extract(args.version)
+        cmd_extract(args.version, args.raw)
     elif args.cmd == "unreleased-empty":
         cmd_unreleased_empty()
     elif args.cmd == "draft":
