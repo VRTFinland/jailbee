@@ -61,13 +61,22 @@ changelog:
 	-python3 scripts/changelog.py draft
 	$${EDITOR:-vi} CHANGELOG.md
 
+# The repo `gh` acts on. Passed explicitly as `-R` rather than left to gh's
+# own inference: gh needs a *default repository*, which it cannot derive when
+# the checkout has several remotes or an SSH-alias URL it does not recognise
+# as GitHub. That is how the 1.1.0 release failed — "No default remote
+# repository has been set", raised by `gh release create`, which is the very
+# last step, after the push and the PyPI upload had already happened.
+REPO ?= VRTFinland/jailbee
+
 # Cut a release:  make release VERSION=x.y.z  [REGEN=1]
 #
 # Interactively finalizes the CHANGELOG (drafting from git history when the
 # Unreleased section is empty, or always when REGEN=1), then bumps the
 # version, commits, tags, builds, pushes, uploads to PyPI, and creates a
 # GitHub Release with the built artifacts attached. PyPI upload needs a
-# token (~/.pypirc or TWINE_* env vars); GitHub Release needs `gh` auth.
+# token (~/.pypirc or TWINE_* env vars); GitHub Release needs `gh` auth with
+# write access to $(REPO).
 release:
 	@set -euo pipefail; \
 	v="$(VERSION)"; \
@@ -82,6 +91,10 @@ release:
 	  echo "error: tag v$$v already exists"; exit 1; fi; \
 	command -v gh >/dev/null || { echo "error: gh CLI not found"; exit 1; }; \
 	command -v uv >/dev/null || { echo "error: uv not found"; exit 1; }; \
+	gh repo view "$(REPO)" >/dev/null 2>&1 \
+	  || { echo "error: gh cannot read $(REPO) — check \`gh auth status\`,"; \
+	       echo "       or override the target with: make release VERSION=$$v REPO=owner/name"; \
+	       exit 1; }; \
 	echo "==> Running checks"; \
 	$(MAKE) --no-print-directory check; \
 	if python3 scripts/changelog.py unreleased-empty || [ -n "$(REGEN)" ]; then \
@@ -107,6 +120,6 @@ release:
 	echo "==> Creating GitHub release"; \
 	notes="$$(mktemp)"; \
 	python3 scripts/changelog.py extract "$$v" > "$$notes"; \
-	gh release create "v$$v" dist/* --title "v$$v" --notes-file "$$notes"; \
+	gh release create "v$$v" dist/* --title "v$$v" --notes-file "$$notes" -R "$(REPO)"; \
 	rm -f "$$notes"; \
 	echo "==> Released v$$v"
