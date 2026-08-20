@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -312,6 +313,78 @@ def _container_ref_oid(
     return oid or None
 
 
+#: Retry budget for a container-side git write blocked by `.git/index.lock`,
+#: and the linear backoff between attempts (attempt * backoff seconds).
+_INDEX_LOCK_ATTEMPTS = 3
+_INDEX_LOCK_BACKOFF_S = 0.5
+
+#: Environment for container-side git commands that only *read*. `git status`
+#: and `git diff` refresh the index and write it back, which takes
+#: `.git/index.lock` — so a read both contends for the lock and fails on one
+#: held by someone else. `GIT_OPTIONAL_LOCKS=0` makes git skip it; the only
+#: cost is that the refreshed stat cache is not persisted. The same variable is
+#: set for the listing probe (`git_status._PROBE_SNIPPET`'s exec env).
+_READ_ONLY_GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0"}
+
+
+def _index_lock_held(exc: Exception) -> bool:
+    """True when a container-side git command failed on `.git/index.lock`.
+
+    The match is textual because `IncusError` carries the command's stderr in
+    its message rather than a structured attribute (incus.py is the sole
+    subprocess boundary). git's wording is stable: "Unable to create
+    '<path>/.git/index.lock': File exists".
+    """
+    text = str(exc)
+    return "index.lock" in text and "File exists" in text
+
+
+def _index_lock_message(short: str, repo_dir: str, op: str) -> str:
+    """User-facing report for a lock that outlived the retry budget."""
+    return (
+        f"git {op} could not start in container '{short}': another git process "
+        f"is holding {repo_dir}/.git/index.lock "
+        f"(retried {_INDEX_LOCK_ATTEMPTS} times).\n"
+        f"\n"
+        f"Either a git command is still running in the container, or one "
+        f"crashed and left the lock file behind:\n"
+        f"  jailbee shell {short}\n"
+        f"  cd {repo_dir}\n"
+        f"  git status              # what state the tree is in\n"
+        f"  ls -l .git/index.lock   # delete it only if no git is running\n"
+        f"\n"
+        f"Then run the push again."
+    )
+
+
+def _exec_container_git_write(
+    incus: Incus,
+    full_name: str,
+    cmd: list[str],
+    *,
+    uid: int,
+    env: dict[str, str],
+) -> str:
+    """Run a writing container-side git command, retrying a held index lock.
+
+    `git merge` / `rebase` / `reset --hard` refuse to start while another git
+    process in the same repository holds `.git/index.lock`, and they refuse
+    *before* changing anything — so re-running is safe, and in practice enough:
+    the contention seen in the wild is a concurrent short-lived git command,
+    not a deadlock. A lock still held after the whole budget is either a much
+    longer operation or a leftover from a crashed git; that needs the user, so
+    the error propagates for the caller to report.
+    """
+    for attempt in range(1, _INDEX_LOCK_ATTEMPTS + 1):
+        try:
+            return incus.exec(full_name, cmd, uid=uid, env=env)
+        except IncusError as exc:
+            if attempt == _INDEX_LOCK_ATTEMPTS or not _index_lock_held(exc):
+                raise
+            time.sleep(_INDEX_LOCK_BACKOFF_S * attempt)
+    raise AssertionError("unreachable: the loop either returns or raises")
+
+
 def _container_status_dirty(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> bool:
     """Return True if `git status --porcelain` in the container has output."""
     try:
@@ -319,6 +392,7 @@ def _container_status_dirty(incus: Incus, full_name: str, repo_dir: str, *, uid:
             full_name,
             ["git", "-C", repo_dir, "status", "--porcelain"],
             uid=uid,
+            env=_READ_ONLY_GIT_ENV,
         )
     except IncusError as exc:
         raise SyncError(f"Failed to inspect container working tree at {repo_dir}: {exc}") from exc
@@ -1939,8 +2013,14 @@ def push_and_merge(
     }
 
     try:
-        incus.exec(full_name, merge_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        # Checked before the merge-state probe: a lock failure is never a
+        # conflict, but `git merge` can have written MERGE_HEAD before it hit
+        # the lock, which would send an unfinished merge down the gitlink
+        # conflict resolver.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
         run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
@@ -2036,8 +2116,11 @@ def push_and_rebase(
         "LOGNAME": CONTAINER_USERNAME,
     }
     try:
-        incus.exec(full_name, rebase_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, rebase_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        # Before the rebase-state probe, for the reason given in push_and_merge.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "rebase")) from exc
         if _container_has_rebase_in_progress(incus, full_name, repo_dir):
             raise SyncError(
                 f"Conflict during rebase in container '{short}'.\n"
@@ -2151,8 +2234,10 @@ def push_and_reset(
     }
     reset_cmd = ["git", "-C", repo_dir, "reset", "--hard", push_result.container_ref]
     try:
-        incus.exec(full_name, reset_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, reset_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "reset --hard")) from exc
         raise SyncError(f"git reset --hard failed in container '{short}': {exc}") from exc
 
     # `reset --hard` moves the superproject gitlink but leaves submodule
