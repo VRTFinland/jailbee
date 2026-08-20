@@ -54,3 +54,26 @@ def test_grok_install_runs_loose(tmp_path):
     cfg = make_cfg(tmp_path, agents={"grok": {"enabled": True}})
     (spec,) = enabled_agent_specs(cfg)
     assert spec.install_network == "loose"
+
+
+def test_spec_autostart_reflects_config(tmp_path):
+    """Differential in both directions: catches a hardcoded True or False."""
+    autostart_on = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": True}})
+    (spec_on,) = enabled_agent_specs(autostart_on)
+    assert spec_on.autostart is True
+
+    autostart_off = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": False}})
+    (spec_off,) = enabled_agent_specs(autostart_off)
+    assert spec_off.autostart is False
+
+
+def test_spec_is_hashable(tmp_path):
+    """`AgentSpec` advertises frozen=True; every field must actually be hashable.
+
+    A dict-typed `env` would type-check as hashable (dataclass(frozen=True)
+    auto-generates __hash__) but raise TypeError at runtime — this pins the
+    tuple-of-pairs representation against a regression back to dict.
+    """
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    (spec,) = enabled_agent_specs(cfg)
+    assert isinstance(hash(spec), int)

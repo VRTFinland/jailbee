@@ -6,7 +6,7 @@ the only impure part and goes through the `Incus` wrapper.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jailbee.config import ClaudeAgentConfig, SharedCache, device_name
@@ -29,7 +29,7 @@ class AgentSpec:
     install_check: str
     update: str | None
     install_network: str
-    env: dict[str, str] = field(default_factory=dict)
+    env: tuple[tuple[str, str], ...] = ()
 
 
 def _spec(name: str, agent: AgentConfig) -> AgentSpec:
@@ -58,7 +58,7 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
         install_check=agent.effective_install_check(),
         update=agent.update,
         install_network=agent.install_network,
-        env=dict(agent.env),
+        env=tuple(agent.env.items()),
     )
 
 
