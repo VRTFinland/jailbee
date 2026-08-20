@@ -4,9 +4,15 @@
 
 In clone mode the container has its own working tree, so commits move between
 host and container over a small bridge — **the container acts as a git remote** —
-instead of round-tripping through GitHub. Each container records the **base
-branch** it was forked from (`user.jailbee.base_branch`, set at `jailbee new` time); pulls
-merge into that base and `jailbee ls` / `jailbee git diff` measure "ahead" against it.
+instead of round-tripping through GitHub. The transport is git's own `ext::`
+helper running `incus exec --user <uid> … git upload-pack` (reading) or
+`git receive-pack` (writing) inside the container, so no daemon, port or key is
+involved. Little travels either way: the container was cloned with
+`git clone --shared`, so its alternates point at the host's object store and
+only the objects the other side actually lacks are sent. Each container records
+the **base branch** it was forked from (`user.jailbee.base_branch`, set at
+`jailbee new` time); pulls merge into that base and `jailbee ls` /
+`jailbee git diff` measure "ahead" against it.
 
 **Container → host:**
 
@@ -33,22 +39,6 @@ only, `--checkout` checks the base out (staying on it) if it isn't current, and
 (otherwise driven by the `pull:` config block). With no name on a TTY it opens a
 multi-select picker and stops at the first failure.
 
-One `jailbee git fetch` / `checkout` / `pull` of the branch `feat/foo` from the
-container `feat-foo`, whose recorded base branch is `main`:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant H as Host repo
-    participant C as Container feat-foo
-    Note over C: cloned with git clone --shared, so its<br>alternates point at the host's object store
-    H->>C: git fetch over ext::incus exec --user uid ... git upload-pack
-    C-->>H: only the commits the host's object store lacks
-    Note over H: written to refs/jailbee/feat-foo/feat/foo
-    H->>H: checkout: fast-forward or create refs/heads/feat/foo
-    H->>H: pull: no-ff merge into main, the recorded base branch
-```
-
 **Host → container:**
 
 ```bash
@@ -62,21 +52,6 @@ jailbee pr feat-foo                        # create a draft PR, or push new comm
 `--merge`/`--rebase` apply the pushed ref to the container's branch (conflicts
 left for `jailbee shell`); `--plain` is transport only. With no name on a TTY it opens
 a multi-select picker (failures don't stop the batch; ✓/✗ summary at the end).
-
-The same bridge in reverse — sending `main` into the container `feat-foo` and
-applying it to `feat/foo`:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant H as Host repo
-    participant C as Container feat-foo
-    H->>H: git fetch origin main, unless --from-local
-    H->>C: git push over ext::incus exec --user uid ... git receive-pack
-    Note over C: written to refs/jailbee/host/main
-    C->>C: --merge / --rebase applies it to feat/foo
-    Note over C: --plain stops at the ref — conflicts<br>are left for jailbee shell
-```
 
 ### Confirming an auto-picked container
 
