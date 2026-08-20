@@ -176,6 +176,12 @@ def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
     a bare `exec ` that fails opaquely in the tmux window.
     `validate_runtime` already reports `enabled=true` with an empty command
     as a config issue; this is defense-in-depth, not the primary check.
+
+    The agent's `env` is copied onto the step, so `agents.<name>.env` reaches
+    the launched binary via tmux's `-e` flags. `_apply_step` layers it over
+    `autostart.env`, so a per-agent key wins over the global one. It is the
+    same mapping the install/update step gets (see `agents._ensure_one`), which
+    is why Claude's `JAILBEE_CLAUDE_AUTO_UPDATE` flag needs no separate wiring.
     """
     from jailbee.agents import enabled_agent_specs
 

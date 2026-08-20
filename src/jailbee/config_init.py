@@ -100,14 +100,21 @@ host_ports: []
 #   - installs it at `jailbee new` time (and updates it when auto_update),
 #   - launches it in the autostart tmux session when `autostart: true`,
 #   - includes its shared dirs in `jailbee doctor` checks.
-agents:
-  claude:
-    enabled: false
-    # autostart: false
-    # command: claude
-  # codex:
-  #   enabled: true
-  #   autostart: true
+#
+# Commented out on purpose, like the `jetbrains` / `chrome` blocks above:
+# repo values win over global ones, so a live `enabled: false` here would
+# silently switch off an agent the user opted into in
+# ~/.config/jailbee/global.yaml. Opt in globally; override here only when the
+# repo needs to deviate.
+#
+# agents:
+#   claude:
+#     enabled: true
+#     # autostart: false
+#     # command: claude
+#   codex:
+#     enabled: true
+#     autostart: true
 #
 # Legacy: a top-level `claude:` block is still accepted and means the same as
 # `agents.claude`. Defining both is an error. Prefer `agents.claude`.

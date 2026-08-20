@@ -83,13 +83,16 @@ def enabled_agent_specs(cfg: Config) -> list[AgentSpec]:
 
     `claude` last preserves today's tmux behaviour — its window is the
     most-recently-created one, which is what `jailbee tmux` focuses.
+
+    A single sorted pass over `cfg.agents`, keyed on `n == "claude"` to put
+    claude at the end, rather than one pass for the other agents plus a
+    `cfg.agents.get("claude")` special case. Two passes let the two disagree:
+    on a `MagicMock` config `items()` iterates empty while
+    `get("claude").enabled` is truthy, so a mocked config yielded a phantom
+    Claude spec nobody had enabled.
     """
-    names = sorted(n for n, a in cfg.agents.items() if a.enabled and n != "claude")
-    specs = [_spec(n, cfg.agents[n]) for n in names]
-    claude = cfg.agents.get("claude")
-    if claude is not None and claude.enabled:
-        specs.append(_spec("claude", claude))
-    return specs
+    names = sorted(cfg.agents, key=lambda n: (n == "claude", n))
+    return [_spec(n, cfg.agents[n]) for n in names if cfg.agents[n].enabled]
 
 
 _BUNDLED_PREFIX = "__bundled__:"
@@ -102,10 +105,23 @@ def _resolve_bundled(command: str) -> str:
     `versions/` symlink logic as a real script file rather than being
     inlined as a one-line shell command like every other agent's
     install/update. Any other command line passes through unchanged.
+
+    The suffix is config-supplied, so it is rejected unless it is a bare
+    filename: `__bundled__:../../../../etc/passwd` would otherwise build a
+    traversing path whose content is then executed in the container. Not an
+    escalation — a config that can write `install:` can equally write
+    `install: cat /etc/passwd`, and a PR branch's `agents:` block never
+    reaches here (see `branch_config`) — but the primitive exists only by
+    accident, so it goes.
     """
     if not command.startswith(_BUNDLED_PREFIX):
         return command
     script_name = command[len(_BUNDLED_PREFIX) :]
+    if not script_name or "/" in script_name or ".." in script_name:
+        raise ValueError(
+            f"bundled script name {script_name!r} must be a bare filename "
+            f"(no '/' or '..')"
+        )
     return importlib.resources.files("jailbee.provision").joinpath(script_name).read_text()
 
 

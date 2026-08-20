@@ -44,9 +44,11 @@ if TYPE_CHECKING:
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-# An agent name becomes a tmux window name, a `jailbee doctor` label, and
-# part of an Incus device name (via `device_name`) — kept to the safest
-# common subset of what all three accept.
+# An agent name becomes a tmux window name and a `jailbee doctor` label —
+# kept to the safest common subset of what both accept. It does *not* reach
+# any Incus device name: those derive from each `shared[].subpath` via
+# `device_name()`. The two only coincide because every shipped preset happens
+# to name its subpath after the agent.
 _AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
 
 # Container's unix username is hardcoded — must match the user baked into the
@@ -303,6 +305,58 @@ def _check_pull_migration(
     )
 
 
+def _check_agents_spelling(
+    global_raw: dict[str, object],
+    repo_raw: dict[str, object],
+    global_path: Path,
+    repo_path: Path,
+) -> None:
+    """Raise ConfigError if the legacy `claude:` and `agents.claude` spellings
+    are both in play across the two layers.
+
+    `resolve_agents_raw` catches the same conflict on the merged dict, but by
+    then the layers are indistinguishable and the surrounding message in
+    `_build_config_from_dict` can only name the repo config. The likely shape
+    of this conflict for an existing user is a `claude:` block left in
+    `global.yaml` (what the old template wrote) meeting an `agents.claude` in
+    a repo config — so the file the user must edit is precisely the one that
+    message would *not* name. Report every file that carries either spelling,
+    the way `_check_pull_migration` does for the renamed `merge:` key.
+    """
+
+    def _has_agents_claude(raw: dict[str, object]) -> bool:
+        agents = raw.get("agents")
+        return isinstance(agents, dict) and "claude" in agents
+
+    legacy = [p for raw, p in ((global_raw, global_path), (repo_raw, repo_path)) if "claude" in raw]
+    modern = [
+        p
+        for raw, p in ((global_raw, global_path), (repo_raw, repo_path))
+        if _has_agents_claude(raw)
+    ]
+    if not legacy or not modern:
+        return
+    listed = "\n  ".join(f"{p} ({label})" for p, label in _label_spellings(legacy, modern))
+    raise ConfigError(
+        "Config defines both the legacy `claude:` block and `agents.claude` — "
+        "keep one. `agents.claude` is the preferred spelling; the `claude:` "
+        f"block is a supported legacy alias. Files involved:\n  {listed}"
+    )
+
+
+def _label_spellings(
+    legacy: list[Path], modern: list[Path]
+) -> list[tuple[Path, str]]:
+    """`(path, "claude:" / "agents.claude" / both)` for each file involved,
+    in `legacy`-then-`modern` file order without repeating a path."""
+    labels: dict[Path, list[str]] = {}
+    for path in legacy:
+        labels.setdefault(path, []).append("claude:")
+    for path in modern:
+        labels.setdefault(path, []).append("agents.claude")
+    return [(path, " and ".join(spellings)) for path, spellings in labels.items()]
+
+
 def _expand(value: str | Path) -> Path:
     return expand_path(value)
 
@@ -544,10 +598,12 @@ def _default_shared_caches() -> list[SharedCache]:
     `golden.stacks.java` / `.node` toggle, which auto-adds gradle+m2
     (java) or npm+pnpm-store (node) via `Config.effective_shared_caches`.
     Override the whole list by setting ``shared_caches:`` to a different
-    list (or ``[]`` to disable entirely). Claude and JetBrains shared
-    caches are not included here — they are added by
-    `Config.effective_shared_caches` when `claude.enabled` /
-    `jetbrains.enabled` respectively.
+    list (or ``[]`` to disable entirely). Agent and JetBrains shared caches
+    are not included here — they are added by
+    `Config.effective_shared_caches`: one set per enabled entry in
+    `agents:` (via the generic `agents.enabled_agent_specs` loop, which is
+    where Claude's now come from), plus the JetBrains ones when
+    `jetbrains.enabled`.
     """
     return [
         SharedCache(name="ssh", host_subpath="ssh", container_path="~/.ssh"),
@@ -1823,12 +1879,26 @@ class Config(BaseModel):
     def _validate_agents(cls, v: object) -> dict[str, AgentConfig]:
         """Dispatch `agents.claude` through `ClaudeAgentConfig`, the rest
         through the generic `AgentConfig`, since a single `dict[str, Model]`
-        field can't express a per-key model choice on its own."""
+        field can't express a per-key model choice on its own.
+
+        The already-constructed-model branch re-validates a plain
+        `AgentConfig` sitting under the `claude` key rather than passing it
+        through: `Config.claude` only recognises a `ClaudeAgentConfig` and
+        falls back to a disabled default otherwise, so letting a plain
+        `AgentConfig` stand would split the config in two — `agents["claude"]`
+        enabled (mounts, egress and install all active) while `cfg.claude`
+        reports disabled (`pr_ai`, `claude_skills`, `apply` and `doctor` all
+        see Claude off). Not reachable from YAML, since the dict branch below
+        already dispatches on the key, but it is the shape a caller
+        constructing `Config` in Python will write.
+        """
         if not isinstance(v, dict):
             raise ValueError("agents must be a mapping of agent name to settings")
         result: dict[str, AgentConfig] = {}
         for name, entry in v.items():
             if isinstance(entry, AgentConfig):
+                if name == "claude" and not isinstance(entry, ClaudeAgentConfig):
+                    entry = ClaudeAgentConfig.model_validate(entry.model_dump())
                 result[name] = entry
                 continue
             if not isinstance(entry, dict):
@@ -2123,7 +2193,7 @@ class Config(BaseModel):
             if not _AGENT_NAME_RE.fullmatch(name):
                 issues.append(
                     f"agent name {name!r} must match [a-z0-9-]+ — it becomes a "
-                    f"tmux window name, a doctor label and part of a device name"
+                    f"tmux window name and a doctor label"
                 )
             if agent.autostart and not agent.enabled:
                 # `claude` keeps the extra parenthetical explaining *why* the
@@ -2235,10 +2305,19 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     legacy = result.pop("claude", None)
     if legacy is not None:
         if "claude" in agents:
+            # No file is named: this runs on the *merged* global+repo dict, so
+            # either layer (or both) may carry either spelling, and the
+            # `Config validation failed in <repo config>` wrapper in
+            # `_build_config_from_dict` would assert the wrong one. The load
+            # path checks the layers separately first
+            # (`_check_agents_spelling`) and does name every file; this is the
+            # backstop for callers that reach `resolve_agents_raw` directly.
             raise ConfigError(
-                "config defines both `claude:` and `agents.claude` — keep one. "
-                "`agents.claude` is the preferred spelling; the `claude:` block "
-                "is a supported legacy alias."
+                "config defines both `claude:` and `agents.claude` — keep one, "
+                "in whichever of ~/.config/jailbee/global.yaml and the repo's "
+                ".jailbee/config.yaml defines it. `agents.claude` is the "
+                "preferred spelling; the `claude:` block is a supported legacy "
+                "alias."
             )
         if not isinstance(legacy, dict):
             raise ConfigError("`claude` must be a mapping.")
@@ -2379,6 +2458,7 @@ def load_config_from_text(text: str, path: Path) -> Config:
     repo_raw = _parse_yaml_text(text, str(path))
     _check_retired_keys(repo_raw)
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
+    _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 
     # Placement constraint: github tokens must live in ~/.config/jailbee/global.yaml,
     # never in repo .jailbee/config.yaml — the latter is typically committed to git.

@@ -405,11 +405,39 @@ def test_template_emits_agents_block():
     assert "\nclaude:" not in _TEMPLATE
 
 
-def test_repo_template_agents_block_disables_claude_by_default(tmp_path):
+def test_repo_template_agents_block_is_commented_out(tmp_path):
+    """The repo template must not emit a *live* `agents:` key.
+
+    Repo scalars win over global ones in `deep_merge`, so a live
+    `agents: {claude: {enabled: false}}` here would silently switch Claude off
+    in any repo where the user had opted in via
+    `jailbee config init --global` — the documented first-run path. Same
+    reasoning as the commented-out `jetbrains` / `chrome` blocks.
+    """
     out = render_template(repo_root=tmp_path / "myrepo")
     parsed = yaml.safe_load(out)
 
-    assert parsed["agents"]["claude"]["enabled"] is False
+    assert "agents" not in parsed
+    assert "claude" not in parsed
+
+
+def test_repo_template_does_not_override_globally_enabled_claude(tmp_path):
+    """The two shipped templates, merged the way `load_config` merges them,
+    must leave Claude enabled.
+
+    This is the user-visible consequence of the test above and the reason it
+    exists: `jailbee config init --global` (Claude on) followed by
+    `jailbee config init` in a repo used to turn Claude off in that repo,
+    silently.
+    """
+    from jailbee.config import deep_merge
+
+    global_raw = yaml.safe_load(render_global_template())
+    repo_raw = yaml.safe_load(render_template(repo_root=tmp_path / "myrepo"))
+
+    merged = deep_merge(global_raw, repo_raw)
+
+    assert merged["agents"]["claude"]["enabled"] is True
 
 
 def test_repo_template_agents_comment_names_every_preset_and_docs():

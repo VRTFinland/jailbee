@@ -2,8 +2,12 @@
 
 A leaf module (imports nothing from `jailbee`) so that other leaf modules —
 notably `agent_presets.py` — can import from it without creating an import
-cycle back through `config.py`. `config.py` and `init_command.py` re-export
-these names so every existing import site keeps working unchanged.
+cycle back through `config.py`.
+
+`config.py` and `init_command.py` import `SHARED_SUBDIRS` from here, so that
+name stays reachable through either of them. The Claude host tuples do not:
+`CLAUDE_API_HOSTS` and `CLAUDE_PLUGIN_HOSTS` moved here outright and are no
+longer attributes of `jailbee.config` — import them from this module.
 """
 
 from __future__ import annotations
