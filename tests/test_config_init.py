@@ -394,3 +394,32 @@ def test_repo_template_omits_host_specific_defaults_block(tmp_path):
     assert "defaults" not in parsed
     for token in ("memory:", "16GiB", "storage_pool:"):
         assert token not in out, f"{token!r} still in repo template"
+
+
+def test_template_emits_agents_block():
+    from jailbee.config_init import _TEMPLATE
+
+    assert "agents:" in _TEMPLATE
+    # The legacy spelling appears only in the trailing explanatory comment,
+    # never as its own top-level key.
+    assert "\nclaude:" not in _TEMPLATE
+
+
+def test_repo_template_agents_block_disables_claude_by_default(tmp_path):
+    out = render_template(repo_root=tmp_path / "myrepo")
+    parsed = yaml.safe_load(out)
+
+    assert parsed["agents"]["claude"]["enabled"] is False
+
+
+def test_repo_template_agents_comment_names_every_preset_and_docs():
+    """The comment is the only place a user learns which presets exist and
+    that only `claude` has ever been run for real — pin the honest framing
+    so a future edit can't quietly soften or drop it."""
+    from jailbee.config_init import _TEMPLATE
+
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
+        assert preset in _TEMPLATE
+    assert "docs/agents.md" in _TEMPLATE
+    assert "untested templates" in _TEMPLATE
+    assert "agents.claude" in _TEMPLATE

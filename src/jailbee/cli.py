@@ -122,6 +122,12 @@ def config_show(
     data["egress_allow"] = cfg.effective_egress_allow()
     data["shared_caches"] = [c.model_dump(mode="json") for c in cfg.effective_shared_caches()]
     data["host_mounts"] = [m.model_dump(mode="json") for m in cfg.effective_host_mounts()]
+    # Dump each agent through its own (possibly subclassed) model rather than
+    # relying on `cfg.model_dump()`'s dict[str, AgentConfig] field type: that
+    # would serialise every entry — including `agents.claude`, which is a
+    # ClaudeAgentConfig — through the base AgentConfig shape and silently
+    # drop the Claude-only fields (plugins_enabled, install_jailbee_skills, …).
+    data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
 

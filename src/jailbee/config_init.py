@@ -87,6 +87,31 @@ host_ports: []
 #   - { name: adb, port: 5037 }               # host adb server, same port
 #   - { name: db, port: 5432, host_port: 15432 }
 
+# Coding agents. Each entry is merged over a shipped preset, so enabling one
+# is usually two lines. Every preset field is overridable here — see
+# docs/agents.md. Presets: claude, codex, gemini, aider, opencode, grok.
+# Only `claude` is exercised in production; the others are untested templates
+# — package names, config paths and host lists are best-effort.
+#
+# When enabled, jailbee for each agent:
+#   - bind-mounts its config/auth paths from <shared_dir> so credentials
+#     survive container rebuilds and are shared between branches,
+#   - adds its hosts to the strict-mode egress allowlist,
+#   - installs it at `jailbee new` time (and updates it when auto_update),
+#   - launches it in the autostart tmux session when `autostart: true`,
+#   - includes its shared dirs in `jailbee doctor` checks.
+agents:
+  claude:
+    enabled: false
+    # autostart: false
+    # command: claude
+  # codex:
+  #   enabled: true
+  #   autostart: true
+#
+# Legacy: a top-level `claude:` block is still accepted and means the same as
+# `agents.claude`. Defining both is an error. Prefer `agents.claude`.
+
 # Egress allowlist applied in strict mode. Each entry is either a literal
 # IP/CIDR (e.g. 10.0.0.0/8) or a hostname optionally followed by :PORT
 # (e.g. github.com, archive.ubuntu.com:443). Hostnames are resolved to
