@@ -67,7 +67,7 @@ its origin, not its scope.
   (`--dangerously-skip-permissions`), because the boundary is the container
   rather than the agent's own judgement. You size that boundary once in the
   repo's config; see
-  [Running an agent without prompts](docs/security.md#running-an-agent-without-prompts)
+  [Running an agent without prompts](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#running-an-agent-without-prompts)
   for what it does and doesn't cover.
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, the Chrome profile pool, `~/.ssh` and Claude's login live in a shared
@@ -100,7 +100,7 @@ uv tool install 'jailbee[gui]'      # or: pipx install 'jailbee[gui]'
 ```
 
 Host setup — Incus, firewall, UID mapping, kernel keyring limits — is a
-one-time job with a few moving parts. Follow **[Installation](docs/installation.md)**
+one-time job with a few moving parts. Follow **[Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md)**
 end-to-end first. Then, from the repo you want to manage:
 
 ```bash
@@ -111,7 +111,7 @@ jailbee base build           # build the golden image (one-time, ~10–15 min)
 jailbee new feat/my-branch   # spin up an isolated env for a branch
 ```
 
-See **[Getting started](docs/getting-started.md)** for the full first-run
+See **[Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md)** for the full first-run
 walkthrough.
 
 ## Shell completion
@@ -144,39 +144,39 @@ directory's* containers, not the repo the flag points at.
 
 | Doc | What's inside |
 |---|---|
-| [Installation](docs/installation.md) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
-| [Getting started](docs/getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
-| [Running on macOS](docs/macos.md) | Using JailBee from an Apple Silicon Mac via a Linux VM (Colima/Lima) with the repo shared from macOS (experimental) |
+| [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
+| [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
+| [Running on macOS](https://github.com/VRTFinland/jailbee/blob/main/docs/macos.md) | Using JailBee from an Apple Silicon Mac via a Linux VM (Colima/Lima) with the repo shared from macOS (experimental) |
 
 **Daily use** — working with containers:
 
 | Doc | What's inside |
 |---|---|
-| [Commands](docs/commands.md) | Full command + flag reference table |
-| [Git bridge and branch workflows](docs/git-bridge.md) | Host↔container git bridge, stacked PRs, mount vs clone, PR review, `gh` inside containers |
-| [Setting up JailBee in your own project](docs/project-config.md) | Tutorial for adapting JailBee to your own repo and stack |
-| [Troubleshooting](docs/troubleshooting.md) | Common failures by symptom, and how to remove JailBee |
+| [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md) | Full command + flag reference table |
+| [Git bridge and branch workflows](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md) | Host↔container git bridge, stacked PRs, mount vs clone, PR review, `gh` inside containers |
+| [Setting up JailBee in your own project](https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md) | Tutorial for adapting JailBee to your own repo and stack |
+| [Troubleshooting](https://github.com/VRTFinland/jailbee/blob/main/docs/troubleshooting.md) | Common failures by symptom, and how to remove JailBee |
 
 **Reference** — the details:
 
 | Doc | What's inside |
 |---|---|
-| [Configuration reference](docs/config.md) | Every `.jailbee/config.yaml` and `global.yaml` key |
-| [Security and limitations](docs/security.md) | Isolation model, git-remote handling, known limits |
-| [Architecture](docs/architecture.md) | How the pieces fit together |
-| [Who JailBee is for](docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from Dev Containers, BranchBox, nono and Docker Sandboxes |
+| [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md) | Every `.jailbee/config.yaml` and `global.yaml` key |
+| [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md) | Isolation model, git-remote handling, known limits |
+| [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md) | How the pieces fit together |
+| [Who JailBee is for](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from Dev Containers, BranchBox, nono and Docker Sandboxes |
 
 **Meta** — project internals:
 
 | Doc | What's inside |
 |---|---|
-| [Manual testing](docs/manual-testing.md) | End-to-end smoke-test recipes (require a real Incus daemon) |
-| [Releasing](docs/releasing.md) | Release process |
-| [Contributing](CONTRIBUTING.md) | Development setup and repo conventions |
+| [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md) | End-to-end smoke-test recipes (require a real Incus daemon) |
+| [Releasing](https://github.com/VRTFinland/jailbee/blob/main/docs/releasing.md) | Release process |
+| [Contributing](https://github.com/VRTFinland/jailbee/blob/main/CONTRIBUTING.md) | Development setup and repo conventions |
 
 ## License
 
 `jailbee` is free software, released under the GNU General Public License v3.0
-or later (GPL-3.0-or-later). See [`LICENSE`](LICENSE) for the full text.
+or later (GPL-3.0-or-later). See [`LICENSE`](https://github.com/VRTFinland/jailbee/blob/main/LICENSE) for the full text.
 
 Copyright © 2026 GISGRO Oy.
