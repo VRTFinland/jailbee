@@ -30,12 +30,6 @@ install-gui: install
 # this target, so the skills install and update alongside the CLI.
 install-skill:
 	mkdir -p ~/.claude/skills
-	@for skill in gie-repo-setup gie-usage; do \
-		if [ -e ~/.claude/skills/$$skill ]; then \
-			rm -rf ~/.claude/skills/$$skill; \
-			echo "Removed pre-1.0 skill: ~/.claude/skills/$$skill"; \
-		fi; \
-	done
 	@for skill in jailbee-repo-setup jailbee-usage; do \
 		rm -rf ~/.claude/skills/$$skill; \
 		cp -r docs/skills/$$skill ~/.claude/skills/; \

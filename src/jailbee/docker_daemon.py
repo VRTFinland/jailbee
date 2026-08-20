@@ -88,18 +88,12 @@ cat > "$ca_tmp" <<'JAILBEE_CA_EOF'
 {ca_cert_pem.rstrip()}
 JAILBEE_CA_EOF
 mv "$ca_tmp" /usr/local/share/ca-certificates/jailbee-registry-mirror.crt
-# Drop the pre-1.0 copy: `jailbee migrate` deletes the gie-registry-mirror
-# container, so leaving its cert in the trust bundle keeps a dangling anchor
-# for a mirror that no longer exists.
-rm -f /usr/local/share/ca-certificates/gie-registry-mirror.crt
 update-ca-certificates >/dev/null
 
 # 2. Java keystore — best effort. Container may not have a JDK installed
 # (or keytool may live elsewhere); silently skip in that case so dockerd
 # still gets its OS-level CA.
 if command -v keytool >/dev/null 2>&1; then
-  keytool -delete -noprompt -alias gie-registry-mirror \\
-    -cacerts -storepass changeit 2>/dev/null || true
   keytool -delete -noprompt -alias jailbee-registry-mirror \\
     -cacerts -storepass changeit 2>/dev/null || true
   keytool -importcert -noprompt -alias jailbee-registry-mirror \\

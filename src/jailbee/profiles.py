@@ -309,11 +309,10 @@ def loose_net_profile_yaml(prefix: str) -> str:
 
     Split out of `net_profile_yaml` because the loose profile's content is
     fully determined by the container prefix — no other Config field enters
-    it. `jailbee migrate` repoints a pre-1.0 repo's loose profile at the
-    renamed bridge and must not have to load (and risk failing to validate)
-    that repo's whole config to do so.
-
-    `net_profile_yaml(cfg, "loose")` delegates here, so the two can't drift.
+    it. The caller that needed a config-free path here was `jailbee migrate`,
+    removed in 1.1.0; the split stays because it keeps that independence
+    checkable, and `net_profile_yaml(cfg, "loose")` delegates here, so the
+    two cannot drift.
     """
     profile = {
         "name": f"{prefix}{LOOSE_PROFILE_SUFFIX}",

@@ -273,9 +273,8 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
             from jailbee.paths import repo_config_dir_name
 
             # Derived from the global config path so `XDG_CONFIG_HOME` is
-            # honoured exactly as `global_config` and `jailbee migrate` do —
-            # hardcoding ~/.config would look in a directory the migrator
-            # never writes for a user who sets that variable.
+            # honoured exactly as `global_config` does — hardcoding ~/.config
+            # would look in a directory that variable's user never writes.
             user_install_d = default_global_config_path().parent / "install.d"
             repo_install_d = cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
             bundled_install_d = importlib.resources.files("jailbee.provision").joinpath("install.d")

@@ -168,23 +168,21 @@ def test_apply_docker_proxy_script_writes_ca_cert_via_heredoc():
     assert "update-ca-certificates" in script
 
 
-def test_apply_docker_proxy_removes_the_pre_1_0_trust_anchors():
-    """`jailbee migrate` deletes the gie-registry-mirror it vouched for.
+def test_apply_docker_proxy_deletes_its_own_alias_before_reimporting():
+    """The keystore delete is what makes the re-import idempotent.
 
-    Left behind, the old CA file and keytool alias are dangling anchors for
-    a mirror that no longer exists — and this script is the only thing that
-    rewrites container-side trust after the rename.
+    `keytool -importcert` fails on an alias that already exists, so a second
+    `jailbee apply` against a container that already trusts the mirror would
+    leave the JDK on a stale certificate if the delete ran after — or not at
+    all. Ordering is the assertion; presence alone would not catch a swap.
     """
     incus = MagicMock()
     apply_docker_proxy(incus, "myrepo-feat-x", ca_cert_pem="cert", port=3128)
 
     script = incus.exec.call_args.args[1][2]
-    old_cert_rm = "rm -f /usr/local/share/ca-certificates/gie-registry-mirror.crt"
-    assert old_cert_rm in script
-    assert "-alias gie-registry-mirror" in script
-    # The removals must precede the trust-store refresh / re-import they undo.
-    assert script.index(old_cert_rm) < script.index("update-ca-certificates")
-    assert script.index("-alias gie-registry-mirror") < script.index("-importcert")
+    assert script.index("-delete -noprompt -alias jailbee-registry-mirror") < script.index(
+        "-importcert"
+    )
 
 
 def test_apply_docker_proxy_writes_systemd_dropin_atomically():
