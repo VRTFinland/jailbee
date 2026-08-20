@@ -33,7 +33,10 @@ metadata, so a release only ever bumps that one field.
    export TWINE_PASSWORD=pypi-AgEIcHl…
    ```
 3. **GitHub CLI authenticated** (`gh auth status` should be green) — used to
-   create the GitHub Release and upload the built artifacts.
+   create the GitHub Release and upload the built artifacts. The target names
+   the repo explicitly (`REPO ?= VRTFinland/jailbee`) and verifies `gh` can
+   read it during preflight, so no `gh repo set-default` is needed. Override
+   with `make release VERSION=… REPO=owner/name` if you ever release a fork.
 4. **A clean checkout of `main`.** The release target refuses to run from any
    other branch or with a dirty working tree.
 
@@ -102,7 +105,10 @@ happens. Step by step:
    tag, `twine upload` to PyPI, and `gh release create` with the sdist + wheel
    attached and the release notes taken from the CHANGELOG section.
 
-The release commit is minimal: `pyproject.toml`, `uv.lock`, and `CHANGELOG.md`.
+The release commit is minimal: `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, and
+`website/index.html` — the last because the site is served as committed, so the
+version its JSON-LD advertises is a literal that has to be rewritten with the
+rest.
 
 ### Flags
 
@@ -135,11 +141,19 @@ untouched. If a step fails **after** the push but before PyPI/GitHub finished:
   `uvx twine upload dist/*`. PyPI rejects re-uploading an existing version, so
   a partial upload of the same version cannot be clobbered; bump to a new
   version only if the artifacts themselves were wrong.
-- **`gh release create` failed** — re-run it manually:
+- **`gh release create` failed** — re-run it manually. `make release` cannot be
+  re-run at this point: the tag now exists, so its preflight refuses.
   ```bash
   python3 scripts/changelog.py extract 1.0.1 > notes.md
-  gh release create v1.0.1 dist/* --title v1.0.1 --notes-file notes.md
+  gh release create v1.0.1 dist/* --title v1.0.1 --notes-file notes.md \
+    -R VRTFinland/jailbee
   ```
+  `-R` is what makes this work regardless of how the checkout's remotes are
+  set up. This is how the 1.1.0 release failed: `gh` reported "No default
+  remote repository has been set", which it does when a checkout has several
+  remotes or an SSH-alias URL it cannot recognise as GitHub. The target now
+  passes `-R $(REPO)` itself and checks the repo is readable in preflight, so
+  the same cause fails *before* the push rather than after the PyPI upload.
 
 To undo a release that was only committed/tagged locally (nothing pushed):
 
@@ -148,10 +162,12 @@ git tag -d v1.0.1
 git reset --hard HEAD~1
 ```
 
-## Helper script
+## Helper scripts
 
-`scripts/changelog.py` (pure stdlib) does the deterministic CHANGELOG surgery
-used by the targets above:
+Both are pure stdlib and do the deterministic file surgery the targets above
+rely on.
+
+`scripts/changelog.py`:
 
 | Command | Purpose |
 |---------|---------|
@@ -159,3 +175,16 @@ used by the targets above:
 | `extract <version>` | print a version's section body (used as GitHub Release notes) |
 | `unreleased-empty` | exit 0 if the Unreleased section is empty, 1 otherwise |
 | `draft [--from <ref>]` | draft Unreleased entries from `git log` via the `claude` CLI |
+
+`scripts/site_version.py`:
+
+| Command | Purpose |
+|---------|---------|
+| `get` | print the version `website/index.html`'s JSON-LD advertises |
+| `set <version>` | rewrite it (exits non-zero unless exactly one field matches) |
+
+`set` runs during a release, after `uv version` and before the commit, so a
+stale value aborts the release while everything is still local. Without it the
+drift only surfaced afterwards, as
+`test_the_structured_data_version_tracks_pyproject` going red on `main` — which
+is how it was found.
