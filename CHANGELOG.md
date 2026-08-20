@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-20
+
 ### Added
 
 - **The workflow commands are in both dashboards' action menus.** `pr` (create
