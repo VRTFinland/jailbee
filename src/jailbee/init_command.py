@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jailbee.config import Config, ConfigError
+from jailbee.constants import SHARED_SUBDIRS
 from jailbee.egress import EgressEntry
 from jailbee.incus import Incus, IncusError
 from jailbee.network import acl_name, allowlist_acl_yaml
@@ -16,17 +17,6 @@ from jailbee.profiles import (
 )
 from jailbee.ssh_seed import seed_ssh_dir
 from jailbee.tui import info, success, warn
-
-SHARED_SUBDIRS = (
-    "caches/pnpm-store",
-    "caches/gradle",
-    "caches/npm",
-    "caches/m2",
-    "chrome-pool/slots",
-    "chrome-pool/by-container",
-    "docker-registry",
-    "ssh",
-)
 
 BRIDGE_NETWORK = "incusbr0"
 LOOSE_BRIDGE = "jailbee-loose"
