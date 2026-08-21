@@ -73,6 +73,7 @@ scope.
 
 ## Documentation
 
+- [FAQ](https://github.com/VRTFinland/jailbee/blob/main/docs/faq.md): short answers to the common questions, indexed into the rest of the documentation
 - [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md): one-time host setup — Incus, UID delegation, installing the CLI
 - [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md): concepts, configuring a repo, building the image, a typical day
 - [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md): full command and flag reference

@@ -158,6 +158,7 @@ directory's* containers, not the repo the flag points at.
 
 | Doc | What's inside |
 |---|---|
+| [FAQ](https://github.com/VRTFinland/jailbee/blob/main/docs/faq.md) | Short answers to the common questions, each linking to the page that covers it in full |
 | [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md) | Full command + flag reference table |
 | [Git bridge and branch workflows](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md) | Host↔container git bridge, stacked PRs, mount vs clone, PR review, `gh` inside containers |
 | [Setting up JailBee in your own project](https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md) | Tutorial for adapting JailBee to your own repo and stack |
