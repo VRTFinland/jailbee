@@ -16,6 +16,10 @@ PREFIX="${PREFIX:-jailbee-demo}"
 SHARED="${SHARED:-$HOME/.local/share/jailbee/shared/$PREFIX}"
 SRC_DIR="${SRC_DIR:-$HOME/.claude}"
 SRC_JSON="${SRC_JSON:-$HOME/.claude.json}"
+# The repo path *inside* the container: jailbee clones into ~/<prefix> and the
+# unix user is always `dev`. Claude Code records per-project state under this
+# key, and without it the agent opens a trust dialog instead of working.
+CONTAINER_REPO="${CONTAINER_REPO:-/home/dev/$PREFIX}"
 
 # Not as root. `install` recreates the destination with the *caller's*
 # ownership, so a sudo run leaves a root-owned 0600 .credentials.json inside a
@@ -43,12 +47,12 @@ SRC_JSON="${SRC_JSON:-$HOME/.claude.json}"
 
 install -m 0600 "$SRC_DIR/.credentials.json" "$SHARED/claude/.credentials.json"
 
-python3 - "$SRC_JSON" "$SHARED/claude.json" <<'PY'
+python3 - "$SRC_JSON" "$SHARED/claude.json" "$CONTAINER_REPO" <<'PY'
 import json
 import os
 import sys
 
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, container_repo = sys.argv[1], sys.argv[2], sys.argv[3]
 KEYS = [
     "oauthAccount",
     "userID",
@@ -62,6 +66,25 @@ out = {k: data[k] for k in KEYS if k in data}
 missing = [k for k in KEYS if k not in data]
 if "oauthAccount" in missing:
     sys.exit("error: source has no oauthAccount — is the source logged in?")
+
+# One project entry, synthesised rather than copied.
+#
+# Without it Claude Code opens its per-project trust dialog ("Is this a project
+# you created or one you trust?") the first time it runs in the container's
+# repo. On camera that dialog swallows the prompt the tape types and the tmux
+# pane dies — found six minutes into a render, and invisible until someone
+# watched the frames.
+#
+# The account keys above come from the maintainer's file; this does not. It is
+# built from the container path alone, so seeding trust for the demo repo can
+# never carry any other project's path into the container.
+out["projects"] = {
+    container_repo: {
+        "hasTrustDialogAccepted": True,
+        "hasCompletedProjectOnboarding": True,
+        "projectOnboardingSeenCount": 1,
+    }
+}
 
 # Serialise first, then write once. `open(dst, "w")` truncates before json.dump
 # writes, so a failure mid-serialisation would leave a zero-byte claude.json —

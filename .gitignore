@@ -30,3 +30,8 @@ Thumbs.db
 # Internal planning artifacts (specs/plans written by the planning skills).
 # They are working notes, not project documentation — keep them out of the tree.
 docs/superpowers/
+
+# Intermediate renders: render.sh copies the finished clips into
+# website/assets/media/, which is what the page references.
+website/demo/workflows/*.webm
+website/demo/workflows/*.mp4
