@@ -38,7 +38,9 @@ class RefreshResult:
     """Outcome of one refresh cycle for one repo."""
 
     container_prefix: str
-    status: str  # "ok" | "dns_error" | "partial" | "acl_error"
+    # "error" is `refresh_all`'s catch-all for a repo whose refresh raised;
+    # every other value comes from refresh_pool itself.
+    status: str  # "ok" | "dns_error" | "partial" | "acl_error" | "error"
     added: list[tuple[str, str]] = field(default_factory=list)
     removed: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
@@ -261,7 +263,7 @@ def refresh_pool(
             error=error_msg,
         )
 
-    mirror_endpoint = _compute_mirror_endpoint(incus, gcfg)
+    mirror_endpoint = _compute_mirror_endpoint(cfg, incus, gcfg)
 
     try:
         _write_acl(cfg, session, incus, mirror_endpoint=mirror_endpoint)
@@ -317,15 +319,27 @@ def _record_state(
 
 
 def _compute_mirror_endpoint(
+    cfg: Config,
     incus: Incus,
     gcfg: GlobalConfig,
 ) -> tuple[str, int] | None:
-    """Resolve registry-mirror endpoint, or None when disabled."""
-    if not gcfg.docker_registry_mirror.enabled:
+    """Resolve the registry-mirror endpoint, or None when unwanted/unreachable.
+
+    Best-effort by design. This runs on the 60s timer and inside `jailbee new`,
+    where a mirror that is merely stopped must not abort the cycle: the ACL
+    omits the mirror rule until a later refresh finds it running.
+    """
+    from jailbee.docker_daemon import mirror_wanted
+
+    if not mirror_wanted(cfg, gcfg):
         return None
     from jailbee.docker_daemon import compute_mirror_endpoint
 
-    return compute_mirror_endpoint(incus, gcfg)
+    try:
+        return compute_mirror_endpoint(incus, gcfg)
+    except ValueError as e:
+        log.warning("refresh_pool: mirror unavailable, ACL omits its rule: %s", e)
+        return None
 
 
 def _write_acl(
@@ -512,9 +526,28 @@ def refresh_all(
             )
             continue
 
-        result = refresh_pool(cfg, gcfg, incus, session, now=now)
-        out[repo.container_prefix] = result
-        repo.last_refresh_at = now
+        try:
+            out[repo.container_prefix] = refresh_pool(cfg, gcfg, incus, session, now=now)
+            repo.last_refresh_at = now
+        except Exception as e:
+            log.warning(
+                "refresh_all: refresh_pool failed for %s: %s",
+                repo.container_prefix,
+                e,
+            )
+            # Record it rather than dropping the key. `jailbee net refresh` —
+            # verbatim the systemd unit's ExecStart — iterates this dict and
+            # treats any status outside ("ok", "partial") as FAIL, so a dropped
+            # key would exit 0 and let the timer unit look healthy. The
+            # missing-mirror case is already handled inside
+            # `_compute_mirror_endpoint`, so anything reaching here is a bug.
+            out[repo.container_prefix] = RefreshResult(
+                container_prefix=repo.container_prefix,
+                status="error",
+                error=str(e),
+            )
+            # No `continue`: check_and_revert_loose below is independent of the
+            # pool refresh and must still run for this repo.
 
         # TTL-driven revert of `jailbee net loose` containers. One call per
         # registered repo; it acts on whatever `user.jailbee.loose_until` labels

@@ -226,7 +226,7 @@ def init(config: ConfigOption = None) -> None:
     Errors if profiles already exist — use `jailbee apply` to update from
     current config.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.incus import Incus
     from jailbee.init_command import run_init
 
@@ -236,12 +236,15 @@ def init(config: ConfigOption = None) -> None:
     gcfg = _load_global()
 
     mirror_endpoint: tuple[str, int] | None = None
-    if gcfg.docker_registry_mirror.enabled:
+    if mirror_wanted(cfg, gcfg):
+        from jailbee.docker_daemon import compute_mirror_endpoint
+
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
+            # Not fatal: `init` is documented to run before `registry up`, and
+            # the ACL's mirror rule is written by the next `apply` / refresh.
+            warn(f"{e} Continuing — run 'jailbee apply' after 'jailbee registry up'.")
 
     try:
         run_init(cfg, incus, mirror_endpoint=mirror_endpoint)
@@ -612,6 +615,7 @@ def new_cmd(
                                         # name; host repo is bind-mounted RW
     """
     from jailbee.autostart import AutostartStepError
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
     from jailbee.incus import Incus
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
@@ -853,30 +857,47 @@ def new_cmd(
 
     gcfg = _load_global()
 
+    net_mode = network or cfg.defaults.network
+
     mirror_endpoint: tuple[str, int] | None = None
-    mirror_ca_path = None
-    if gcfg.docker_registry_mirror.enabled:
+    mirror_ca_path: Path | None = None
+    if mirror_wanted(cfg, gcfg):
         from jailbee.docker_daemon import compute_mirror_endpoint
 
+        problem: str | None = None
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
-        mirror_ca_path = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
-        if not mirror_ca_path.is_file():
-            error(
-                f"Mirror CA cert not found at {mirror_ca_path}. "
-                f"Run 'jailbee registry up' and wait for the proxy to start."
+            problem = str(e)
+        else:
+            ca = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
+            if ca.is_file():
+                mirror_ca_path = ca
+            else:
+                problem = (
+                    f"Mirror CA cert not found at {ca}. "
+                    f"Run 'jailbee registry up' and wait for the proxy to start."
+                )
+        if problem is not None:
+            # Half a mirror is not a mirror: without the CA the container
+            # cannot trust the proxy, so drop the endpoint too and treat both
+            # failures identically.
+            mirror_endpoint = None
+            if net_mode == "strict":
+                error(problem)
+                raise typer.Exit(1)
+            warn(
+                f"{problem} Continuing without it — in loose mode the mirror is "
+                f"only a pull cache. Enable it later with "
+                f"'jailbee registry up && jailbee apply'."
             )
-            raise typer.Exit(1)
 
     if mount:
         full_name = name or f"{cfg.container_prefix}-{container_branch}"
         opts = NewContainerOptions(
             container_branch="",
             name=full_name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
@@ -892,7 +913,7 @@ def new_cmd(
         opts = NewContainerOptions(
             container_branch=container_branch,
             name=name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
@@ -1682,7 +1703,7 @@ def _post_start_actions(
     )
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
-    mirror_endpoint = _mirror_endpoint_or_none(incus)
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     if current_network_mode(cfg, incus, name) == "strict":
         from jailbee.hosts import apply_hosts
 
@@ -1767,10 +1788,14 @@ def stop(
 ) -> None:
     """Stop a running container."""
     from jailbee.lifecycle import short_name
+    from jailbee.stopping import stop_container
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    incus.stop(name, force=force)
+    # No force fallback here: this container holds the user's work, so a
+    # shutdown that will not finish is reported (with what is blocking it)
+    # rather than turned into a power cut behind their back.
+    stop_container(incus, name, force=force, label=short_name(cfg, name))
     success(f"Stopped: {short_name(cfg, name)}")
 
 
@@ -4606,21 +4631,43 @@ def submodule_checkout(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Branch to place submodules on (default: current)."),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Branch to put the tree on (default: current). On the host this "
+            "checks the branch out in the superproject too.",
+        ),
     ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option(
+            "--submodules-only",
+            help="Align submodules without checking -b out in the superproject "
+            "(host only: a container's branch is never switched here).",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Recursively place submodules on the superproject's branch.
+    """Put the repo tree — superproject and submodules — on one branch.
 
     Purely local — moves nothing between host and container (that is
-    `jailbee git push`/`pull`). With no NAME, aligns the host repo's submodules
-    to the host's current branch (or -b). With a container NAME, aligns that
-    container's submodules to its branch (or -b).
+    `jailbee git push`/`pull`).
+
+    With no NAME this works on the host repo: bare, it aligns the submodules
+    to the branch already checked out; with -b it checks that branch out in
+    the superproject first and then aligns the submodules to it, so one
+    command jumps the whole tree. Pass --submodules-only to leave the
+    superproject where it is (a deliberate mismatch, or a detached HEAD you
+    want to keep).
+
+    With a container NAME, aligns that container's submodules to its branch
+    (or -b). A container's branch is its identity, so -b never switches it.
 
     Examples:
 
-      jailbee submodule checkout               # host repo, current branch
-      jailbee submodule checkout -b feat/x     # host repo, explicit branch
+      jailbee submodule checkout               # host, align to current branch
+      jailbee submodule checkout -b master     # host, whole tree to master
+      jailbee submodule checkout -b master --submodules-only
       jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
     """
     from jailbee import sync
@@ -4630,7 +4677,11 @@ def submodule_checkout(
 
     try:
         if name is None:
-            resolved, report = sync.checkout_submodules_on_host(cfg, branch=branch)
+            resolved, report = sync.checkout_submodules_on_host(
+                cfg,
+                branch=branch,
+                switch_superproject=branch is not None and not submodules_only,
+            )
         else:
             incus, full = _resolve_existing(cfg, name)
             short = short_name(cfg, full)
@@ -4750,7 +4801,22 @@ def _switch(
     )
 
     incus, resolved = _resolve_existing(cfg, name)
-    mirror_endpoint = _mirror_endpoint_or_none(incus) if mode == "strict" else None
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
+    if mode == "strict" and mirror_endpoint is None:
+        # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
+        # `restart` path, where the pin is incidental. Here it is not: going
+        # strict removes the container's direct route to Docker Hub, so a repo
+        # that wants the mirror and cannot reach it ends up with a dockerd
+        # proxying to a host it can no longer resolve. `jailbee new --network
+        # loose` with the mirror down is a legitimate way to reach this state.
+        from jailbee.docker_daemon import mirror_wanted
+
+        if mirror_wanted(cfg, _load_global()):
+            warn(
+                "Registry mirror unavailable — this strict container gets no "
+                "/etc/hosts pin for it, so `docker pull` inside it will fail. "
+                "Fix with 'jailbee registry up && jailbee apply'."
+            )
 
     # Capture pre-switch mode for ``loose_revert_to``. None means no
     # recognised jailbee net profile attached — default to "strict" as the
@@ -5544,19 +5610,19 @@ def _load_global() -> GlobalConfig:
     return gcfg
 
 
-def _mirror_endpoint_or_none(incus: "IncusType") -> tuple[str, int] | None:
+def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, int] | None:
     """Resolve the registry mirror's (ip, port) best-effort.
 
-    Returns ``None`` when the mirror is disabled in global config or the
-    container isn't in a usable state (e.g. not yet started). Used by
-    operations that pin `jailbee-registry-mirror.incus` into strict containers'
-    /etc/hosts but should NOT abort the operation if the
-    mirror is unavailable — the pin is best-effort.
+    Returns ``None`` when this repo does not want the mirror or the container
+    isn't in a usable state (e.g. not yet started). Used by operations that
+    pin `jailbee-registry-mirror.incus` into strict containers' /etc/hosts but
+    should NOT abort the operation if the mirror is unavailable — the pin is
+    best-effort.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import compute_mirror_endpoint, mirror_wanted
 
     gcfg = _load_global()
-    if not gcfg.docker_registry_mirror.enabled:
+    if not mirror_wanted(cfg, gcfg):
         return None
     try:
         return compute_mirror_endpoint(incus, gcfg)
@@ -6469,7 +6535,7 @@ def doctor(config: ConfigOption = None) -> None:
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    results = run_checks(cfg, Incus())
+    results = run_checks(cfg, Incus(), gcfg=_load_global())
 
     table = Table(title="Diagnostic checks")
     table.add_column("CHECK")

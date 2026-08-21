@@ -3596,6 +3596,63 @@ def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     incus.delete.assert_called_once_with("x", force=True)
 
 
+def test_destroy_container_bounds_the_clean_shutdown(tmp_path, mocker):
+    """Without --force, the courtesy shutdown gets a budget, not incusd's 600s."""
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    cfg = _cfg_for_destroy(tmp_path)
+    mocker.patch("jailbee.chrome_pool.release")
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Running",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    destroy_container(cfg, incus, "x", force=False)
+    incus.stop.assert_called_once_with("x", timeout=CLEAN_STOP_BUDGET)
+
+
+def test_destroy_container_forces_a_container_that_will_not_shut_down(tmp_path, mocker):
+    """The user already asked for the container to go away; `delete --force`
+    would have killed it anyway, so a stuck shutdown must not block destroy.
+    """
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_destroy(tmp_path)
+    mocker.patch("jailbee.chrome_pool.release")
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Running",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    incus.stop.side_effect = lambda name, **kw: (
+        None
+        if kw.get("force")
+        else _raise(
+            IncusError(
+                "`incus stop x` failed (exit 1): Error: Failed shutting down instance, "
+                'status is "Running": context deadline exceeded'
+            )
+        )
+    )
+
+    destroy_container(cfg, incus, "x", force=False)
+
+    assert incus.stop.call_args_list[-1] == mocker.call("x", force=True)
+    incus.delete.assert_called_once_with("x", force=False)
+
+
+def _raise(exc):
+    raise exc
+
+
 def test_destroy_container_just_deletes_when_stopped(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
     mocker.patch("jailbee.chrome_pool.release")

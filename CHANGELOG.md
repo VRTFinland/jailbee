@@ -23,6 +23,18 @@
 
 ### Changed
 
+- **BREAKING: `jailbee submodule checkout -b <branch>` now switches the host
+  superproject too.** It used to align the submodules and leave the
+  superproject wherever it was, so moving the whole tree took two commands
+  (`git checkout <branch>`, then this one) and a bare `-b` quietly produced a
+  superproject/submodule mismatch instead. `-b` now means "put the tree on
+  this branch": the superproject checkout runs first — it is what rewrites the
+  gitlinks the alignment places branches at — and a refused checkout (dirty
+  tree, unknown branch) fails without touching the submodules. Pass
+  `--submodules-only` for the old behaviour; it is also the way to align
+  submodules from a detached HEAD or to keep a deliberate mismatch. A
+  container's branch is its identity, so `jailbee submodule checkout <name> -b`
+  is unchanged: pure submodule placement, no branch switch.
 - **The Claude install/update step now runs bounded, with its output kept.**
   It used to run through an unbounded `incus.exec` call; it now runs through
   the same autostart step pipeline every other agent's install/update uses,
@@ -45,6 +57,69 @@
   follows), so they run either way and need the session to run in. Visible
   consequence: `jailbee tmux` on a `--no-autostart` container now finds a
   session with an `install-<agent>` window in it rather than nothing.
+- **The Docker registry mirror is now opt-in by detection.**
+  `docker_registry_mirror.enabled` defaults to `auto`: the mirror is wired only
+  into repos that ask for it — a golden image that would contain Docker
+  (`golden.stacks.docker`, an `enable_snippets` / `install.d` `50-docker`, a
+  `golden.extra_apt_packages` entry starting with `docker`, minus
+  `disable_snippets`), a non-empty per-repo
+  `docker_registry_mirror.extra_registries`, or `golden.stacks.ecr`. Repos
+  without any of those no longer need the mirror container to exist at all. Set
+  `enabled: true` in `~/.config/jailbee/global.yaml` to force the previous
+  behaviour for every repo; `false` still disables it everywhere.
+  **Upgrade note:** if a repo's image has Docker by a route jailbee cannot
+  detect — a differently-named `install.d` snippet, a custom
+  `golden.provision_script` without `golden.stacks.docker`, or Docker installed
+  by hand inside a container — its strict containers lose the `/etc/hosts`
+  mirror pin and the ACL rule on the next refresh while their dockerd keeps
+  proxying to the now-unresolvable mirror host, so `docker pull` inside the
+  container fails. Set `docker_registry_mirror.enabled: true` (or declare the
+  stack and rebuild the golden image).
+
+### Fixed
+
+- **A stopped or missing registry mirror is no longer fatal.** `jailbee init`
+  (which the docs tell you to run *before* `jailbee registry up`) and
+  `jailbee apply` now warn and continue instead of aborting, and the background
+  egress refresh logs instead of raising. `jailbee start` / `jailbee restart`
+  never aborted on this and still don't: they skip the `/etc/hosts` mirror pin
+  silently. `jailbee doctor` no longer reports a red mirror line for repos that
+  don't use Docker, and one repo's failed refresh no longer skips every other
+  registered repo in the same cycle. `jailbee new` still refuses in strict mode,
+  where the mirror is the container's only route to Docker Hub.
+- **`jailbee net strict` warns when the mirror a repo wants is unavailable.**
+  Going strict is what removes the container's direct route to Docker Hub, so
+  the switch is the last point at which the remedy
+  (`jailbee registry up && jailbee apply`) can still be named — previously it
+  was silent, and a container created with `--network loose` while the mirror
+  was down became a strict container with a broken `docker pull` and no
+  indication why.
+- **`jailbee net refresh` exits non-zero again when a repo's refresh raises.**
+  The new per-repo error handling in the 60-second refresh loop dropped the
+  failed repo from the results, so the command (verbatim the systemd unit's
+  `ExecStart`) printed nothing and exited 0. Failures are now recorded as an
+  `error` result and reported as `FAIL`.
+- **Listing a container no longer takes git's index lock.** The git-status
+  probe behind `jailbee ls`, the `jailbee git push` picker and both dashboards'
+  periodic refresh only reads — but `git diff`, `git diff --cached` and
+  `git submodule foreach 'git diff'` refresh the index and write it back, which
+  takes `.git/index.lock`. A refresh landing on the same container as a write
+  therefore makes the write fail — the shape of a failure seen in the wild,
+  where `jailbee git push --merge` died with `error: Unable to create
+  '/home/dev/<repo>/.git/index.lock': File exists` mid-fast-forward and
+  succeeded on an immediate retry. The probe and the dirty-tree preflight now
+  run with `GIT_OPTIONAL_LOCKS=0`, so they neither take the lock nor fail on
+  one — at the cost of not persisting the refreshed stat cache, which nothing
+  here reuses.
+- **A container-side `git merge` / `rebase` / `reset --hard` blocked by
+  `.git/index.lock` is retried instead of reported.** These refuse to start
+  while another git process holds the lock, and they refuse before changing
+  anything, so `jailbee git push` now retries three times with a linear backoff
+  — enough for the short-lived git command that causes the contention in
+  practice (an editor, a coding agent, another `jailbee` invocation). A lock
+  that outlives the budget is reported as what it is, naming the lock file and
+  how to inspect it, rather than as a wall of `incus exec` command line plus
+  git's own advice.
 
 ## 1.1.0 - 2026-08-20
 
@@ -211,6 +286,30 @@
 
 ### Fixed
 
+- **The golden image no longer ships Ubuntu's automatic apt machinery.**
+  `install.sh` masks `apt-daily{,-upgrade}.timer`, their services and
+  `unattended-upgrades`. The timer fires within minutes of every boot — that
+  is, right on top of the golden build's own apt run and of yours inside a
+  branch container — and an upgrade still in flight at shutdown blocks
+  systemd, the most likely explanation for a build container that would not
+  stop. Masked rather than disabled, so reinstalling the packages cannot
+  quietly bring it back. Takes effect on the next `jailbee base build`.
+- **A container that will not shut down no longer costs ten silent minutes.**
+  Every jailbee stop passed no `--timeout`, and incusd reads that as a
+  600-second clean-shutdown budget: a container whose init hangs froze the
+  command with no output and then failed with `Failed shutting down instance,
+  status is "Running": context deadline exceeded`. In `jailbee base build`
+  that discarded a complete, successful provisioning run at the very last
+  step, and pointed at `incus info --show-log` for a container it deleted one
+  line later. Stops now use a 120-second budget with the elapsed time on
+  screen, and an expired budget first asks the still-running container what is
+  holding it up — pending systemd jobs, processes in uninterruptible sleep,
+  the tail of the console log where `A stop job is running for …` appears.
+  Disposable containers (the golden-image build container, the registry
+  mirror, anything `jailbee destroy` is about to delete anyway) are then
+  force-stopped so the work completes; `jailbee stop` on a container holding
+  your own work still reports rather than pulling the plug, and says how to
+  inspect it and how to force it.
 - **`jailbee exec` finds per-user tools again.** It ran the command under a
   non-login `bash -c`, and `incus exec` supplies only a bare default PATH, so
   anything installed per-user was invisible: `~/.local/bin` (added by

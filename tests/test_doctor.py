@@ -7,6 +7,7 @@ import pytest
 
 from jailbee.config import load_config
 from jailbee.doctor import run_checks
+from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from jailbee.registry import MirrorStatus
 from tests.conftest import with_agent
 
@@ -82,9 +83,10 @@ def test_doctor_reports_registry_running(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is True
@@ -95,9 +97,10 @@ def test_doctor_reports_registry_degraded(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.DEGRADED):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
@@ -110,9 +113,10 @@ def test_doctor_reports_registry_stopped(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.STOPPED):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
@@ -124,14 +128,79 @@ def test_doctor_reports_registry_missing(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
     assert "missing" in mirror.detail
     assert "jailbee registry up" in mirror.detail
+
+
+def test_doctor_reports_the_mirror_as_not_needed_without_docker(tmp_path):
+    """A user who does not use Docker must not see a red mirror line for a
+    container they were never supposed to create."""
+    from jailbee.config import DockerRegistryMirrorRepoConfig
+
+    # The fixture declares `extra_registries`, which is itself mirror intent —
+    # clear it so this test exercises the "no signal at all" repo.
+    cfg = _cfg(tmp_path).model_copy(
+        update={"docker_registry_mirror": DockerRegistryMirrorRepoConfig()}
+    )
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING) as status:
+        results = run_checks(cfg, incus)
+
+    mirror = next(r for r in results if r.name == "registry mirror")
+    assert mirror.ok is True
+    assert "not needed" in mirror.detail
+    assert "no docker detected" in mirror.detail
+    # The `auto` gate is overridable, so the line has to say how.
+    assert "docker_registry_mirror.enabled: true" in mirror.detail
+    status.assert_not_called()
+
+
+def test_doctor_names_the_explicit_opt_out_rather_than_blaming_the_stack(tmp_path):
+    """`enabled: false` never consults the repo at all, so telling that user
+    they have "no docker stack" reports a fact the gate never checked."""
+    cfg = _cfg(tmp_path)  # full_config declares extra_registries → mirror wanted
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=False))
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING) as status:
+        results = run_checks(cfg, incus, gcfg=gcfg)
+
+    mirror = next(r for r in results if r.name == "registry mirror")
+    assert mirror.ok is True
+    assert "docker_registry_mirror.enabled: false" in mirror.detail
+    assert "no docker" not in mirror.detail
+    status.assert_not_called()
+
+
+def test_doctor_cmd_passes_the_loaded_global_config(tmp_path, mocker):
+    """The default gcfg=None is the absent-file default; the command itself
+    must hand over the user's real global config."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    gcfg = GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(enabled=True, data_dir=tmp_path),
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=gcfg)
+    mocker.patch("jailbee.incus.Incus")
+    run = mocker.patch("jailbee.doctor.run_checks", return_value=[])
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert run.call_args.kwargs["gcfg"] is gcfg
 
 
 def test_doctor_warns_on_legacy_host_docker_mirror(tmp_path):

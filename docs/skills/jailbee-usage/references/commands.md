@@ -534,18 +534,34 @@ transcript as it works, so a run that ran out of budget is still on disk.
 
 ## Submodules
 
-### `jailbee submodule checkout [NAME] [-b BRANCH]`
+### `jailbee submodule checkout [NAME] [-b BRANCH] [--submodules-only]`
 
-Recursively place submodules on the superproject's branch (they can end up on a
-detached HEAD after clone / `jailbee git push`/`pull`). With **no NAME** it fixes the
-**host** repo's submodules; with a NAME it fixes that **container's** submodules.
-`-b` overrides the branch (default: current).
+Put the tree — superproject and submodules, recursively — on one branch.
+Submodules can end up on a detached HEAD after clone / `jailbee git
+push`/`pull`. With **no NAME** it works on the **host** repo; with a NAME on
+that **container's** submodules.
 
 ```bash
-jailbee submodule checkout                # host repo, current branch
-jailbee submodule checkout -b feat/x      # host repo, explicit branch
+jailbee submodule checkout                # host, align to current branch
+jailbee submodule checkout -b master      # host, whole tree to master
+jailbee submodule checkout -b master --submodules-only
 jailbee submodule checkout feat-foo       # container 'feat-foo', its branch
 ```
+
+On the host, `-b BRANCH` checks that branch out in the **superproject** first
+and then aligns the submodules to it — one command for jumping the whole tree
+between `master` and a container's branch (towards a container, use `jailbee
+git checkout <container>`, which already aligns submodules). `--submodules-only`
+skips the superproject checkout, which is the only way to align submodules
+from a detached HEAD or to keep a deliberate mismatch. With a container NAME,
+`-b` is pure submodule placement: a container's branch is its identity and is
+never switched here.
+
+Placement never rewinds a submodule branch. A submodule whose local branch is
+ahead of the superproject's recorded gitlink keeps that newer branch checked
+out and warns — bump the pointer with `git add <sub> && git commit` in the
+superproject. A dirty or genuinely diverged submodule is left on its detached
+HEAD, also with a warning.
 
 ## Network
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
@@ -123,3 +124,61 @@ if command -v docker >/dev/null 2>&1; then
 fi
 """
     incus.exec(name, ["bash", "-c", script], timeout=120)
+
+
+def _auto_mirror_wanted(cfg: Config) -> bool:
+    """The `auto` decision: does this repo state mirror intent in any way?
+
+    Three independent signals, because "the image has Docker" is not the only
+    way a repo says it wants the mirror:
+
+    * `repo_uses_docker` — the image would contain Docker.
+    * `docker_registry_mirror.extra_registries` — the per-repo list of upstream
+      registries to cache. Both push sites (`apply.py`, `lifecycle.py`) are
+      gated on the mirror endpoint, so treating this as no signal would make
+      the key an inert no-op.
+    * `golden.stacks.ecr` — stages `80-ecr-helper.sh`, a Docker credential
+      helper, without pulling in the `docker` snippet itself.
+    """
+    from jailbee.golden import repo_uses_docker
+
+    return bool(
+        repo_uses_docker(cfg)
+        or cfg.docker_registry_mirror.extra_registries
+        or cfg.golden.stacks.ecr
+    )
+
+
+def mirror_wanted(cfg: Config, gcfg: GlobalConfig) -> bool:
+    """Whether this repo should be wired to the registry mirror.
+
+    The single reader of `docker_registry_mirror.enabled`. An explicit `true`
+    or `false` short-circuits before any detection; `auto` defers to
+    `_auto_mirror_wanted`, so a repo that neither ships Docker nor names any
+    registry never needs the mirror container to exist.
+
+    Note that the host-level `enabled` is the blunt instrument — it applies to
+    every repo on the machine. The per-repo way to opt in without touching
+    `~/.config/jailbee/global.yaml` is `docker_registry_mirror.extra_registries`
+    in the repo's own config.
+    """
+    enabled = gcfg.docker_registry_mirror.enabled
+    if enabled != "auto":
+        return enabled
+    return _auto_mirror_wanted(cfg)
+
+
+def mirror_skip_reason(cfg: Config, gcfg: GlobalConfig) -> str | None:
+    """Why the mirror is not wired into this repo, or None when it is wanted.
+
+    The diagnostic companion to `mirror_wanted` — same decision, but it keeps
+    the two "no" cases apart so `doctor` does not tell a user who wrote
+    `enabled: false` that their repo has no Docker (a fact the gate never
+    checked). Exists so `doctor` need not read the raw flag.
+    """
+    enabled = gcfg.docker_registry_mirror.enabled
+    if enabled != "auto":
+        return None if enabled else "disabled by docker_registry_mirror.enabled: false"
+    if _auto_mirror_wanted(cfg):
+        return None
+    return "no docker detected; set docker_registry_mirror.enabled: true to force"

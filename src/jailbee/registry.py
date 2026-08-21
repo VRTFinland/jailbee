@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from jailbee.incus import Incus, IncusError
+from jailbee.stopping import stop_container
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -526,7 +527,15 @@ def registry_up(
             current_ip = eth0_global_ipv4(container_info)
             if wanted_ip is not None and current_ip is not None and current_ip != wanted_ip:
                 on_step(f"restarting {MIRROR_CONTAINER_NAME} to pick up its static address")
-                incus.stop(MIRROR_CONTAINER_NAME)
+                # show_progress=False: `on_step` callers own a Rich Live
+                # display, and Rich permits only one at a time.
+                stop_container(
+                    incus,
+                    MIRROR_CONTAINER_NAME,
+                    force_fallback=True,
+                    show_progress=False,
+                    label="the registry mirror",
+                )
                 incus.start(MIRROR_CONTAINER_NAME)
         if _provisioning_incomplete(incus):
             on_step("repairing the proxy install (apt + podman, up to 10 min)")
@@ -545,7 +554,15 @@ def registry_down(incus: Incus) -> None:
         return
     if info.get("status") != "Running":
         return
-    incus.stop(MIRROR_CONTAINER_NAME)
+    # The mirror is a caching proxy in front of a registry: its state is a
+    # rebuildable blob cache, so a shutdown that will not finish is worth
+    # ending rather than reporting.
+    stop_container(
+        incus,
+        MIRROR_CONTAINER_NAME,
+        force_fallback=True,
+        label="the registry mirror",
+    )
 
 
 def _read_registries_env_file(incus: Incus) -> set[str]:
