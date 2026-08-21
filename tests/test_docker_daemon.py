@@ -7,9 +7,11 @@ import pytest
 from jailbee.docker_daemon import (
     apply_docker_proxy,
     compute_mirror_endpoint,
+    mirror_wanted,
     render_proxy_conf,
 )
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+from tests.conftest import make_cfg
 
 
 def test_compute_mirror_endpoint_returns_mirror_container_ip(tmp_path):
@@ -267,3 +269,50 @@ def test_apply_docker_proxy_uses_dns_name_not_ip():
 
     script = incus.exec.call_args.args[1][2]
     assert "jailbee-registry-mirror.incus:3128" in script
+
+
+def _gcfg(enabled, tmp_path):
+    return GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(enabled=enabled, data_dir=tmp_path),
+    )
+
+
+def _docker_cfg(tmp_path):
+    return make_cfg(tmp_path / "repo", golden={"stacks": {"docker": True}})
+
+
+def _plain_cfg(tmp_path):
+    return make_cfg(tmp_path / "repo")
+
+
+def test_mirror_wanted_auto_follows_the_docker_stack(tmp_path):
+    assert mirror_wanted(_docker_cfg(tmp_path), _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_is_false_without_docker(tmp_path):
+    assert mirror_wanted(_plain_cfg(tmp_path), _gcfg("auto", tmp_path)) is False
+
+
+def test_mirror_wanted_true_forces_on_without_docker(tmp_path):
+    """The escape hatch for a repo whose Docker install jailbee cannot see."""
+    assert mirror_wanted(_plain_cfg(tmp_path), _gcfg(True, tmp_path)) is True
+
+
+def test_mirror_wanted_false_wins_over_the_docker_stack(tmp_path):
+    assert mirror_wanted(_docker_cfg(tmp_path), _gcfg(False, tmp_path)) is False
+
+
+@pytest.mark.xfail(reason="call sites migrate in Tasks 3-7", strict=True)
+def test_enabled_is_read_in_exactly_two_modules():
+    """`mirror_wanted` is the only reader; a call site that peeks at the raw
+    field would silently ignore `auto` and re-introduce the old behaviour."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "src" / "jailbee"
+    offenders = sorted(
+        p.name
+        for p in src.rglob("*.py")
+        if "docker_registry_mirror.enabled" in p.read_text()
+        and p.name not in {"global_config.py", "docker_daemon.py"}
+    )
+    assert offenders == []

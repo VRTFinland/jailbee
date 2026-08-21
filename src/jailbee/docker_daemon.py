@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
@@ -123,3 +124,16 @@ if command -v docker >/dev/null 2>&1; then
 fi
 """
     incus.exec(name, ["bash", "-c", script], timeout=120)
+
+
+def mirror_wanted(cfg: Config, gcfg: GlobalConfig) -> bool:
+    """Whether this repo should be wired to the registry mirror.
+
+    The single reader of `docker_registry_mirror.enabled`. `auto` defers to
+    the repo's image contents, so a repo without Docker never needs the
+    mirror container to exist.
+    """
+    from jailbee.golden import repo_uses_docker
+
+    enabled = gcfg.docker_registry_mirror.enabled
+    return repo_uses_docker(cfg) if enabled == "auto" else enabled
