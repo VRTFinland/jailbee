@@ -226,7 +226,7 @@ def init(config: ConfigOption = None) -> None:
     Errors if profiles already exist — use `jailbee apply` to update from
     current config.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.incus import Incus
     from jailbee.init_command import run_init
 
@@ -236,12 +236,15 @@ def init(config: ConfigOption = None) -> None:
     gcfg = _load_global()
 
     mirror_endpoint: tuple[str, int] | None = None
-    if gcfg.docker_registry_mirror.enabled:
+    if mirror_wanted(cfg, gcfg):
+        from jailbee.docker_daemon import compute_mirror_endpoint
+
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
+            # Not fatal: `init` is documented to run before `registry up`, and
+            # the ACL's mirror rule is written by the next `apply` / refresh.
+            warn(f"{e} Continuing — run 'jailbee apply' after 'jailbee registry up'.")
 
     try:
         run_init(cfg, incus, mirror_endpoint=mirror_endpoint)
@@ -612,6 +615,7 @@ def new_cmd(
                                         # name; host repo is bind-mounted RW
     """
     from jailbee.autostart import AutostartStepError
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
     from jailbee.incus import Incus
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
@@ -853,30 +857,47 @@ def new_cmd(
 
     gcfg = _load_global()
 
+    net_mode = network or cfg.defaults.network
+
     mirror_endpoint: tuple[str, int] | None = None
-    mirror_ca_path = None
-    if gcfg.docker_registry_mirror.enabled:
+    mirror_ca_path: Path | None = None
+    if mirror_wanted(cfg, gcfg):
         from jailbee.docker_daemon import compute_mirror_endpoint
 
+        problem: str | None = None
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
-        mirror_ca_path = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
-        if not mirror_ca_path.is_file():
-            error(
-                f"Mirror CA cert not found at {mirror_ca_path}. "
-                f"Run 'jailbee registry up' and wait for the proxy to start."
+            problem = str(e)
+        else:
+            ca = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
+            if ca.is_file():
+                mirror_ca_path = ca
+            else:
+                problem = (
+                    f"Mirror CA cert not found at {ca}. "
+                    f"Run 'jailbee registry up' and wait for the proxy to start."
+                )
+        if problem is not None:
+            # Half a mirror is not a mirror: without the CA the container
+            # cannot trust the proxy, so drop the endpoint too and treat both
+            # failures identically.
+            mirror_endpoint = None
+            if net_mode == "strict":
+                error(f"{problem} Run 'jailbee registry up' and retry.")
+                raise typer.Exit(1)
+            warn(
+                f"{problem} Continuing without it — in loose mode the mirror is "
+                f"only a pull cache. Enable it later with "
+                f"'jailbee registry up && jailbee apply'."
             )
-            raise typer.Exit(1)
 
     if mount:
         full_name = name or f"{cfg.container_prefix}-{container_branch}"
         opts = NewContainerOptions(
             container_branch="",
             name=full_name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
@@ -892,7 +913,7 @@ def new_cmd(
         opts = NewContainerOptions(
             container_branch=container_branch,
             name=name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,

@@ -1931,6 +1931,7 @@ def test_new_cmd_forwards_mirror_endpoint_to_lifecycle(tmp_path, mocker):
     from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -2469,6 +2470,7 @@ def test_init_resolves_mirror_endpoint_and_calls_run_init(tmp_path, mocker):
     from jailbee.cli import app
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -7810,3 +7812,144 @@ def test_base_build_reports_a_provisioning_failure_without_a_traceback(mocker):
     # Rich wraps at the terminal width, so match a fragment that cannot wrap.
     assert "Unable to locate" in result.output
     assert "Traceback" not in result.output
+
+
+def test_new_cmd_aborts_in_strict_when_the_mirror_is_down(tmp_path, mocker):
+    """strict + Docker: the mirror is the container's only route to Docker
+    Hub, so creating the container anyway would produce a silently broken
+    `docker pull`."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: strict\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    # `tui.error` prints to err_console (stderr) and this typer version's
+    # CliRunner keeps the streams apart — hence the repo idiom from
+    # tests/test_cli_port.py:134.
+    assert "registry up" in result.stdout + (result.stderr or "")
+    new_container.assert_not_called()
+
+
+def test_new_cmd_warns_but_continues_in_loose_when_the_mirror_is_down(tmp_path, mocker):
+    """loose pulls go direct, so the mirror is only a cache there."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: loose\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    opts = new_container.call_args.args[2]
+    assert opts.mirror_endpoint is None
+    assert opts.mirror_ca_path is None
+
+
+def test_new_cmd_skips_the_mirror_preflight_without_a_docker_stack(tmp_path, mocker):
+    """The whole point: a repo with no Docker never touches the mirror, so a
+    missing mirror container is not its problem."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("{}\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    compute = mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint")
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    compute.assert_not_called()
+    assert new_container.call_args.args[2].mirror_endpoint is None
+
+
+def test_init_cmd_warns_instead_of_aborting_when_the_mirror_is_down(tmp_path, mocker):
+    """`init` is documented to run before `registry up`, and the ACL's mirror
+    rule is added by the next `apply` / refresh anyway."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    run_init = mocker.patch("jailbee.init_command.run_init")
+    # Left unmocked, install_systemd_units writes real unit files into
+    # ~/.config/systemd/user/ and runs systemctl against the developer's
+    # session — see the comment in test_init_resolves_mirror_endpoint_and_calls_run_init.
+    mocker.patch("jailbee.init_command.install_systemd_units")
+    mocker.patch("jailbee.egress_pool.register_repo")
+
+    result = CliRunner().invoke(app, ["init"])
+
+    assert result.exit_code == 0, result.stdout
+    run_init.assert_called_once()
+    assert run_init.call_args.kwargs["mirror_endpoint"] is None
