@@ -386,6 +386,16 @@ def probe_container_git(
                 "BASE_BRANCH": base_branch or "",
                 "DEFAULT_BRANCH": default_branch,
                 "HOST_HEAD": host_head or "",
+                # The probe only reads, but `git diff`/`git diff --cached`/
+                # `git submodule foreach 'git diff'` refresh the index and
+                # write it back — which takes `.git/index.lock`. A listing
+                # (`jailbee ls`, the push picker, the dashboard's periodic
+                # refresh) would then race any write in the same container and
+                # make `git merge` die with "Unable to create
+                # '.git/index.lock': File exists". This tells git to skip the
+                # optional lock; the only cost is that the refreshed stat
+                # cache is not persisted.
+                "GIT_OPTIONAL_LOCKS": "0",
             },
             uid=uid,
             timeout=timeout_s,

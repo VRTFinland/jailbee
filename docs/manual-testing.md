@@ -1259,7 +1259,7 @@ git reset --hard HEAD~1   # drop the local "host: bump submodule" commit
 
 ## `jailbee submodule checkout` smoke test
 
-> Host-only. Aligns submodules to a branch locally (no host<->container transport).
+> Host-only. Puts the tree on a branch locally (no host<->container transport).
 
 ```bash
 # Host repo: detach a submodule, then re-align it to the current branch.
@@ -1271,9 +1271,20 @@ jailbee submodule checkout
 #         "Submodules aligned to 'feat/align-smoke'."
 git -C <submodule-path> branch --show-current   # -> feat/align-smoke
 
-# Explicit branch override.
+# -b switches the superproject too: one command for the whole tree.
+git branch feat/other
 jailbee submodule checkout -b feat/other
+git branch --show-current                       # -> feat/other  (superproject moved)
 git -C <submodule-path> branch --show-current   # -> feat/other
+
+# --submodules-only keeps the superproject put (the pre-1.2 behaviour).
+jailbee submodule checkout -b feat/align-smoke --submodules-only
+git branch --show-current                       # -> feat/other  (unchanged)
+git -C <submodule-path> branch --show-current   # -> feat/align-smoke
+
+# A refused superproject checkout aligns nothing.
+jailbee submodule checkout -b no/such/branch    # expect: exit 1, git's own error
+git -C <submodule-path> branch --show-current   # -> feat/align-smoke (untouched)
 
 # Container target (aligns the container's submodules to its branch).
 jailbee new feat/submod-align

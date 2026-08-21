@@ -217,3 +217,24 @@ def test_start_skips_apply_hosts_when_no_recognised_profile(mocker):
 
     assert result.exit_code == 0, result.output
     apply.assert_not_called()
+
+
+def test_mirror_endpoint_or_none_skips_compute_without_a_docker_stack(tmp_path, mocker):
+    """No Docker in the image → no reason to resolve the mirror, and no
+    reason for the /etc/hosts pin to name it."""
+    from jailbee import cli
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "repo")
+    mocker.patch.object(
+        cli,
+        "_load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    compute = mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint")
+
+    assert cli._mirror_endpoint_or_none(cfg, mocker.MagicMock()) is None
+    compute.assert_not_called()

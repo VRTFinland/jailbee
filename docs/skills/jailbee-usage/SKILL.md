@@ -240,9 +240,13 @@ scripting.
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). The stacked-PR tool: when a parent PR merges to `main`, retarget
   its dependent container from the parent branch onto `main`.
-- `jailbee submodule checkout [<name>] [-b <branch>]` — put submodules back on the
-  superproject's branch when they land on a detached HEAD after clone/push/pull.
-  No name → fixes the host repo; a name → fixes that container.
+- `jailbee submodule checkout [<name>] [-b <branch>] [--submodules-only]` — put the
+  tree on one branch, superproject and submodules, when they land on a detached
+  HEAD after clone/push/pull. No name → the host repo; a name → that container.
+  On the host, `-b <branch>` checks that branch out in the superproject first and
+  then aligns the submodules to it, so jumping the whole tree back to `master` is
+  one command; `--submodules-only` keeps the superproject where it is. A
+  container's branch is its identity, so `-b` never switches it.
 
 **Recipe — merging several containers through one.** Three features built in
 parallel become one branch without resolving anything on the host, which is the

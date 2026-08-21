@@ -416,7 +416,9 @@ def test_up_restarts_running_mirror_when_live_ip_differs_from_reservation(tmp_pa
 
     registry_up(incus, gcfg)
 
-    incus.stop.assert_called_once_with(MIRROR_CONTAINER_NAME)
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    incus.stop.assert_called_once_with(MIRROR_CONTAINER_NAME, timeout=CLEAN_STOP_BUDGET)
     incus.start.assert_called_once_with(MIRROR_CONTAINER_NAME)
 
 
@@ -494,7 +496,35 @@ def test_down_stops_container_when_present():
 
     registry_down(incus)
 
-    incus.stop.assert_called_once_with(MIRROR_CONTAINER_NAME)
+    # Bounded: an unqualified `incus stop` would sit on incusd's 600s
+    # clean-shutdown budget before reporting anything at all.
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    incus.stop.assert_called_once_with(MIRROR_CONTAINER_NAME, timeout=CLEAN_STOP_BUDGET)
+
+
+def test_down_forces_a_mirror_that_will_not_shut_down():
+    """The mirror is a cache in front of a registry — nothing to lose."""
+    from jailbee.incus import IncusError
+
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": MIRROR_CONTAINER_NAME, "status": "Running"},
+    ]
+
+    def stop(name, **kwargs):
+        if kwargs.get("force"):
+            return None
+        raise IncusError(
+            f"`incus stop {name}` failed (exit 1): Error: Failed shutting down "
+            'instance, status is "Running": context deadline exceeded'
+        )
+
+    incus.stop.side_effect = stop
+
+    registry_down(incus)
+
+    assert incus.stop.call_args_list[-1].kwargs == {"force": True}
 
 
 def test_down_is_noop_when_container_missing():

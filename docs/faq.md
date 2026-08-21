@@ -92,7 +92,7 @@ authorises root to delegate exactly one UID — your own.
 jailbee config init      # write .jailbee/config.yaml
 jailbee doctor           # sanity-check host + config
 jailbee init             # profiles, ACL, jailbee-loose bridge, shared dirs
-jailbee registry up      # host-level Docker registry mirror
+jailbee registry up      # Docker users only — host-level Docker registry mirror
 jailbee base build       # golden image, ~10–15 min, one time
 jailbee new feat/x       # first container
 ```
@@ -245,8 +245,9 @@ upstream. On `jailbee new` they are initialised recursively and **offline**
 from the read-only host-source mount; on push/pull/checkout their objects
 travel over the same transport, and a sub-repo the peer lacks is created there
 first. Conflicting gitlinks are merged for you where possible, with a report of
-what is left. `jailbee submodule checkout` aligns submodules with the
-superproject branch locally.
+what is left. `jailbee submodule checkout -b <branch>` puts the whole tree —
+superproject and submodules — on one branch locally, which is how you jump
+back to `master` and out again in one command.
 
 → [Submodules](git-bridge.md#submodules)
 

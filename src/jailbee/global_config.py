@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
@@ -50,7 +50,14 @@ class DockerRegistryMirror(BaseModel):
     port: int = 3128
     data_dir: PathExpanded = None  # type: ignore[assignment]
     image: str = "rpardini/docker-registry-proxy:0.6.5"
-    enabled: bool = True
+    # bool-first ordering follows the `Stacks.java: bool | str` idiom for
+    # three-valued keys in this codebase; pydantic binds YAML `true`/`false`
+    # to bool either way here, since `Literal["auto"]` cannot accept a bool.
+    # `auto` (the default) defers to the repo — see `docker_daemon.mirror_wanted`
+    # for the signals. An explicit `true` forces the mirror on for every repo
+    # on the host, which is what releases up to and including 1.1.0 did
+    # unconditionally.
+    enabled: bool | Literal["auto"] = "auto"
 
     def model_post_init(self, __context: object) -> None:
         # Default is computed (uses Path.home()), so we set it post-init.

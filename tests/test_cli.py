@@ -1653,6 +1653,65 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
     incus_mock.return_value.start.assert_called_once_with("myrepo-feat-only")
 
 
+def test_stop_bounds_the_clean_shutdown(mocker, tmp_path):
+    """`jb stop` must not sit silently on incusd's 600s shutdown budget."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code == 0, result.stdout
+    incus_mock.return_value.stop.assert_called_once_with(
+        "myrepo-feat-bar", timeout=CLEAN_STOP_BUDGET
+    )
+
+
+def test_stop_reports_a_container_that_will_not_shut_down(mocker, tmp_path):
+    """No silent force: the user's container may hold unsaved work."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.incus import IncusError
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+    incus_mock.return_value.exec.return_value = ""
+    incus_mock.return_value.console_log.return_value = ""
+    incus_mock.return_value.stop.side_effect = IncusError(
+        "`incus stop myrepo-feat-bar` failed (exit 1): Error: Failed shutting down "
+        'instance, status is "Running": context deadline exceeded'
+    )
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code != 0
+    # `entry.main` (bypassed by CliRunner) is what prints an IncusError for
+    # the user; what matters here is that the message it will print names a
+    # way forward instead of just echoing incus's deadline.
+    assert isinstance(result.exception, IncusError)
+    message = str(result.exception)
+    assert "--force" in message
+    assert "incus console --show-log myrepo-feat-bar" in message
+    assert mocker.call("myrepo-feat-bar", force=True) not in (
+        incus_mock.return_value.stop.call_args_list
+    )
+
+
 def test_shell_with_explicit_name_still_works(mocker, tmp_path):
     from typer.testing import CliRunner
 
@@ -1931,6 +1990,7 @@ def test_new_cmd_forwards_mirror_endpoint_to_lifecycle(tmp_path, mocker):
     from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -2469,6 +2529,7 @@ def test_init_resolves_mirror_endpoint_and_calls_run_init(tmp_path, mocker):
     from jailbee.cli import app
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -4780,6 +4841,35 @@ def test_net_strict_clears_loose_labels(tmp_path, mocker):
     unset_keys = [c.args[1] for c in incus.config_unset.call_args_list]
     assert "user.jailbee.loose_until" in unset_keys
     assert "user.jailbee.loose_revert_to" in unset_keys
+
+
+def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):
+    """`jailbee new --network loose` with the mirror down succeeds by design,
+    so `net strict` is where a Docker repo first meets a broken dockerd — and
+    the only place that can still name the remedy."""
+    _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"golden": {"stacks": {"docker": True}}},
+        pre_mode="loose",
+    )
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    # Rich hard-wraps the warning, so compare on collapsed whitespace.
+    flat = " ".join(result.stdout.split())
+    assert "Registry mirror unavailable" in flat
+    assert "jailbee registry up && jailbee apply" in flat
+
+
+def test_net_strict_is_silent_when_the_repo_does_not_want_the_mirror(tmp_path, mocker):
+    """The warning must be gated on `mirror_wanted`, not on the endpoint alone,
+    or every non-Docker repo gets it on every `net strict`."""
+    _setup_net_test(tmp_path, mocker, pre_mode="loose")
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "registry up" not in result.stdout
 
 
 def test_net_loose_already_loose_preserves_revert_to(tmp_path, mocker):
@@ -7810,3 +7900,155 @@ def test_base_build_reports_a_provisioning_failure_without_a_traceback(mocker):
     # Rich wraps at the terminal width, so match a fragment that cannot wrap.
     assert "Unable to locate" in result.output
     assert "Traceback" not in result.output
+
+
+def test_new_cmd_aborts_in_strict_when_the_mirror_is_down(tmp_path, mocker):
+    """strict + Docker: the mirror is the container's only route to Docker
+    Hub, so creating the container anyway would produce a silently broken
+    `docker pull`.
+
+    Note: the mocked message here is the realistic one `compute_mirror_endpoint`
+    actually raises (CA already includes its own "registry up" hint, so the
+    old, pre-gating code aborted on this exact input too). This test does not
+    distinguish old from new gating behaviour — it only guards against a
+    future regression that relaxes the strict abort. The gating behaviour
+    itself (Docker-stack detection, strict vs. loose) is proven by the loose
+    test and the no-docker-stack test below.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: strict\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError(
+            "jailbee-registry-mirror container not found. Run 'jailbee registry up' first."
+        ),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    # `tui.error` prints to err_console (stderr) and this typer version's
+    # CliRunner keeps the streams apart — hence the repo idiom from
+    # tests/test_cli_port.py:134.
+    assert "registry up" in result.stdout + (result.stderr or "")
+    new_container.assert_not_called()
+
+
+def test_new_cmd_warns_but_continues_in_loose_when_the_mirror_is_down(tmp_path, mocker):
+    """loose pulls go direct, so the mirror is only a cache there."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: loose\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    opts = new_container.call_args.args[2]
+    assert opts.mirror_endpoint is None
+    assert opts.mirror_ca_path is None
+
+
+def test_new_cmd_skips_the_mirror_preflight_without_a_docker_stack(tmp_path, mocker):
+    """The whole point: a repo with no Docker never touches the mirror, so a
+    missing mirror container is not its problem."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("{}\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    compute = mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint")
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    compute.assert_not_called()
+    assert new_container.call_args.args[2].mirror_endpoint is None
+
+
+def test_init_cmd_warns_instead_of_aborting_when_the_mirror_is_down(tmp_path, mocker):
+    """`init` is documented to run before `registry up`, and the ACL's mirror
+    rule is added by the next `apply` / refresh anyway."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    run_init = mocker.patch("jailbee.init_command.run_init")
+    # Left unmocked, install_systemd_units writes real unit files into
+    # ~/.config/systemd/user/ and runs systemctl against the developer's
+    # session — see the comment in test_init_resolves_mirror_endpoint_and_calls_run_init.
+    mocker.patch("jailbee.init_command.install_systemd_units")
+    mocker.patch("jailbee.egress_pool.register_repo")
+
+    result = CliRunner().invoke(app, ["init"])
+
+    assert result.exit_code == 0, result.stdout
+    run_init.assert_called_once()
+    assert run_init.call_args.kwargs["mirror_endpoint"] is None

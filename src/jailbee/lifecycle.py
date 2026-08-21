@@ -38,6 +38,7 @@ from jailbee.profiles import (
     profile_names,
 )
 from jailbee.retry import with_remote_retry
+from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
@@ -1489,7 +1490,20 @@ def destroy_container(
 
     if state == "Running":
         _phase("stopping")
-        incus.stop(name, force=force)
+        # The clean shutdown here is a courtesy — `incus delete --force`
+        # below would kill the container regardless — so give it a bounded
+        # budget and pull the plug if it expires rather than leaving the
+        # user's destroy wedged for incusd's ten minutes.
+        #
+        # show_progress=False: the dashboard and the Qt UI call this with an
+        # `on_phase` reporter while their own Rich Live display is up.
+        stop_container(
+            incus,
+            name,
+            force=force,
+            force_fallback=True,
+            show_progress=False,
+        )
 
     # Release Chrome pool slot before deleting
     from jailbee.chrome_pool import release as chrome_pool_release
