@@ -1703,7 +1703,7 @@ def _post_start_actions(
     )
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
-    mirror_endpoint = _mirror_endpoint_or_none(incus)
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     if current_network_mode(cfg, incus, name) == "strict":
         from jailbee.hosts import apply_hosts
 
@@ -4771,7 +4771,7 @@ def _switch(
     )
 
     incus, resolved = _resolve_existing(cfg, name)
-    mirror_endpoint = _mirror_endpoint_or_none(incus) if mode == "strict" else None
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
 
     # Capture pre-switch mode for ``loose_revert_to``. None means no
     # recognised jailbee net profile attached — default to "strict" as the
@@ -5565,19 +5565,19 @@ def _load_global() -> GlobalConfig:
     return gcfg
 
 
-def _mirror_endpoint_or_none(incus: "IncusType") -> tuple[str, int] | None:
+def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, int] | None:
     """Resolve the registry mirror's (ip, port) best-effort.
 
-    Returns ``None`` when the mirror is disabled in global config or the
-    container isn't in a usable state (e.g. not yet started). Used by
-    operations that pin `jailbee-registry-mirror.incus` into strict containers'
-    /etc/hosts but should NOT abort the operation if the
-    mirror is unavailable — the pin is best-effort.
+    Returns ``None`` when this repo does not want the mirror or the container
+    isn't in a usable state (e.g. not yet started). Used by operations that
+    pin `jailbee-registry-mirror.incus` into strict containers' /etc/hosts but
+    should NOT abort the operation if the mirror is unavailable — the pin is
+    best-effort.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import compute_mirror_endpoint, mirror_wanted
 
     gcfg = _load_global()
-    if not gcfg.docker_registry_mirror.enabled:
+    if not mirror_wanted(cfg, gcfg):
         return None
     try:
         return compute_mirror_endpoint(incus, gcfg)
