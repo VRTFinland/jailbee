@@ -38,7 +38,9 @@ class RefreshResult:
     """Outcome of one refresh cycle for one repo."""
 
     container_prefix: str
-    status: str  # "ok" | "dns_error" | "partial" | "acl_error"
+    # "error" is `refresh_all`'s catch-all for a repo whose refresh raised;
+    # every other value comes from refresh_pool itself.
+    status: str  # "ok" | "dns_error" | "partial" | "acl_error" | "error"
     added: list[tuple[str, str]] = field(default_factory=list)
     removed: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
@@ -533,6 +535,19 @@ def refresh_all(
                 repo.container_prefix,
                 e,
             )
+            # Record it rather than dropping the key. `jailbee net refresh` —
+            # verbatim the systemd unit's ExecStart — iterates this dict and
+            # treats any status outside ("ok", "partial") as FAIL, so a dropped
+            # key would exit 0 and let the timer unit look healthy. The
+            # missing-mirror case is already handled inside
+            # `_compute_mirror_endpoint`, so anything reaching here is a bug.
+            out[repo.container_prefix] = RefreshResult(
+                container_prefix=repo.container_prefix,
+                status="error",
+                error=str(e),
+            )
+            # No `continue`: check_and_revert_loose below is independent of the
+            # pool refresh and must still run for this repo.
 
         # TTL-driven revert of `jailbee net loose` containers. One call per
         # registered repo; it acts on whatever `user.jailbee.loose_until` labels

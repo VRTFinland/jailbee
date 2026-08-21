@@ -636,7 +636,9 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
     mocker: MockerFixture,
 ) -> None:
     """One repo's failure must not skip every later repo — nor the trailing
-    session.commit(). Matches how check_and_revert_loose is already wrapped."""
+    session.commit() — and must not vanish from the results either: `jailbee
+    net refresh` (the systemd unit's ExecStart) derives its exit code from
+    these keys, so a dropped one exits 0 on a broken cycle."""
     from jailbee import egress_pool
 
     for name in ("a", "b"):
@@ -668,6 +670,16 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
 
     mocker.patch.object(egress_pool, "refresh_pool", side_effect=refresh)
 
+    # Spy installed after the setup commits above so only refresh_all's own
+    # trailing commit is counted.
+    commit = mocker.spy(db_session, "commit")
+
     results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
 
-    assert set(results.keys()) == {"B"}
+    assert set(results.keys()) == {"A", "B"}
+    assert results["A"].status == "error"
+    assert results["A"].error is not None and "boom" in results["A"].error
+    assert results["B"].status == "ok"
+    # Neither repo's config is missing, so the loop body commits nothing —
+    # this call count is the trailing commit and nothing else.
+    assert commit.call_count == 1
