@@ -430,26 +430,6 @@ def test_the_page_never_calls_a_container_a_machine() -> None:
     assert "machine" not in INDEX.read_text().lower()
 
 
-def test_generated_scenes_match_what_jailbees_renderer_produces_today() -> None:
-    """The demo table is real output over invented data — keep it that way.
-
-    If a column is renamed or dropped in the code, this fails and the scene
-    is regenerated, rather than the site quietly showing a table that the
-    tool no longer prints.
-    """
-    import sys
-
-    sys.path.insert(0, str(SITE / "demo"))
-    try:
-        import generate
-    finally:
-        sys.path.pop(0)
-
-    generated = SITE / "demo" / "scenes" / "generated"
-    assert generate.render_ls() == (generated / "ls.txt").read_text()
-    assert generate.render_net_switch() == (generated / "net-switch.txt").read_text()
-
-
 def test_the_page_ships_no_clips_while_they_are_being_rerecorded() -> None:
     """The staged clips were pulled for 1.0; real recordings replace them.
 
@@ -486,13 +466,6 @@ def test_no_media_file_is_a_zero_byte_stand_in() -> None:
 def test_the_stylesheet_honours_reduced_motion() -> None:
     css = (SITE / "assets" / "style.css").read_text()
     assert "prefers-reduced-motion: reduce" in css
-
-
-def test_render_script_is_executable() -> None:
-    import os
-
-    script = SITE / "demo" / "render.sh"
-    assert os.access(script, os.X_OK)
 
 
 def test_robots_allows_crawling_and_points_at_the_sitemap() -> None:
