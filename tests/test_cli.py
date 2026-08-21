@@ -1109,7 +1109,8 @@ def test_tmux_command_attaches_to_session(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False  # default; explicit so select_window isn't called
+    # No autostart agents, so select_window isn't called.
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1150,7 +1151,7 @@ def test_tmux_command_creates_session_if_missing(mocker):
     from jailbee.incus import IncusError
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1179,7 +1180,7 @@ def test_tmux_command_propagates_exit_code(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 1
@@ -1194,14 +1195,19 @@ def test_tmux_command_propagates_exit_code(mocker):
 
 
 def test_tmux_command_focuses_claude_window_when_autostart(mocker):
-    """When claude.autostart is on, `gie tmux` selects the claude
-    window before attaching so users land in it directly."""
+    """When an agent has autostart on, `gie tmux` selects that agent's
+    window (the last one when several autostart) before attaching so
+    users land in it directly."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
+    from jailbee.config import AutostartStep
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = True
+    mocker.patch(
+        "jailbee.autostart.agent_autostart_steps",
+        return_value=[AutostartStep(name="claude", run="exec claude", background=True)],
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -2833,6 +2839,60 @@ def test_cli_config_show_repo_layer_does_not_inject_auto_entries(tmp_path, monke
     assert result.exit_code == 0
     assert "api.anthropic.com" not in result.stdout
     assert "code.claude.com" not in result.stdout
+
+
+def test_cli_config_show_includes_resolved_agents(tmp_path, monkeypatch, mocker):
+    """The override story requires seeing what a preset resolved to: a user
+    enabling `agents.codex` must be able to see the preset's install command
+    and egress host in `config show`, not just `enabled: true`."""
+    runner = CliRunner()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: myrepo\nagents:\n  codex:\n    enabled: true\n"
+    )
+    (tmp_path / ".git").mkdir()
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    result = runner.invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.stdout + (result.stderr or "")
+    assert "npm i -g @openai/codex" in result.stdout
+    assert "api.openai.com:443" in result.stdout
+
+
+def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude(
+    tmp_path, monkeypatch, mocker
+):
+    """Pins a deliberate shape, closing a regression from an earlier task:
+    `Config.claude` became a read-only property, so it no longer appears in
+    `model_dump()` — settings now live only under `agents.claude`, and that
+    entry must keep ClaudeAgentConfig's own fields (e.g. `plugins_enabled`),
+    not just the fields shared with the generic `AgentConfig` base."""
+    runner = CliRunner()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: myrepo\nagents:\n  claude:\n    enabled: true\n"
+    )
+    (tmp_path / ".git").mkdir()
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    result = runner.invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.stdout + (result.stderr or "")
+    # Line-exact checks, not a full yaml.safe_load(result.stdout): the
+    # leading "# Effective config (merged from global + <path>)" header is
+    # printed through Rich and can word-wrap onto a second, un-commented
+    # physical line for a long tmp_path, which breaks a whole-document parse
+    # (pre-existing quirk of `info()`, unrelated to this change).
+    raw_lines = result.stdout.splitlines()
+    assert "claude:" not in raw_lines  # no top-level (unindented) `claude:` key
+    stripped_lines = [line.strip() for line in raw_lines]
+    assert "plugins_enabled: true" in stripped_lines
+    assert "install_jailbee_skills: true" in stripped_lines
 
 
 def test_cli_fetch_invokes_sync(mocker, tmp_path):

@@ -34,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 
+from jailbee.constants import SHARED_SUBDIRS
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import expand_path, xdg_data_home
 
@@ -42,6 +43,13 @@ if TYPE_CHECKING:
 
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# An agent name becomes a tmux window name and a `jailbee doctor` label —
+# kept to the safest common subset of what both accept. It does *not* reach
+# any Incus device name: those derive from each `shared[].subpath` via
+# `device_name()`. The two only coincide because every shipped preset happens
+# to name its subpath after the agent.
+_AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
 
 # Container's unix username is hardcoded — must match the user baked into the
 # golden image by provision/install.sh. It used to be configurable; made fixed
@@ -106,6 +114,13 @@ _DEFAULT_NODE_MAJOR = 24
 # field is added to `LooseAutoRevert`, it reintroduces the exact append bug
 # `ls`/`dashboard` were split out to avoid, and would need the same
 # treatment (its own merge method, kept out of `deep_merge`).
+#
+# `agents` deliberately stays OUT of this set. It is a mapping keyed by agent
+# name, so `deep_merge` recurses per agent instead of hitting the list rule —
+# a repo layer adjusting one field of a globally-defined agent merges cleanly.
+# Its one list-valued field, `egress_allow`, *wants* the append behaviour: a
+# repo adding a single host to a global agent is the intended use. Don't
+# "fix" the apparent asymmetry with `ls`/`dashboard` by adding it here.
 _HOST_LEVEL_KEYS: frozenset[str] = frozenset({"docker_registry_mirror", "ls", "dashboard"})
 
 
@@ -242,15 +257,24 @@ def _check_retired_keys(raw: dict[str, object]) -> None:
                     f"Unknown field `autostart.{old}` in config: moved to "
                     f"`{new}`. See docs/config.md for the new schema."
                 )
-    claude = raw.get("claude", {})
-    if isinstance(claude, dict):
+    # Checked under both spellings: the legacy top-level `claude:` block and
+    # its `agents.claude` successor. A user who has already migrated to
+    # `agents.claude` still deserves the same retired-key error, not a
+    # confusing "unknown field" from Pydantic's `extra="forbid"`.
+    claude_blocks: list[tuple[str, object]] = [("claude", raw.get("claude", {}))]
+    agents = raw.get("agents", {})
+    if isinstance(agents, dict):
+        claude_blocks.append(("agents.claude", agents.get("claude", {})))
+    for label, claude in claude_blocks:
+        if not isinstance(claude, dict):
+            continue
         for old, reason in _REMOVED_KEYS_CLAUDE.items():
             if old in claude:
                 raise ConfigError(reason)
         for old, new in _RETIRED_KEYS_CLAUDE.items():
             if old in claude:
                 raise ConfigError(
-                    f"Unknown field `claude.{old}` in config: renamed to "
+                    f"Unknown field `{label}.{old}` in config: renamed to "
                     f"`{new}`. See docs/config.md for the new schema."
                 )
 
@@ -279,6 +303,56 @@ def _check_pull_migration(
         f"(the 'jailbee git merge' command was renamed to 'jailbee git pull'). "
         f"Update:\n  {paths_listed}"
     )
+
+
+def _check_agents_spelling(
+    global_raw: dict[str, object],
+    repo_raw: dict[str, object],
+    global_path: Path,
+    repo_path: Path,
+) -> None:
+    """Raise ConfigError if the legacy `claude:` and `agents.claude` spellings
+    are both in play across the two layers.
+
+    `resolve_agents_raw` catches the same conflict on the merged dict, but by
+    then the layers are indistinguishable and the surrounding message in
+    `_build_config_from_dict` can only name the repo config. The likely shape
+    of this conflict for an existing user is a `claude:` block left in
+    `global.yaml` (what the old template wrote) meeting an `agents.claude` in
+    a repo config — so the file the user must edit is precisely the one that
+    message would *not* name. Report every file that carries either spelling,
+    the way `_check_pull_migration` does for the renamed `merge:` key.
+    """
+
+    def _has_agents_claude(raw: dict[str, object]) -> bool:
+        agents = raw.get("agents")
+        return isinstance(agents, dict) and "claude" in agents
+
+    legacy = [p for raw, p in ((global_raw, global_path), (repo_raw, repo_path)) if "claude" in raw]
+    modern = [
+        p
+        for raw, p in ((global_raw, global_path), (repo_raw, repo_path))
+        if _has_agents_claude(raw)
+    ]
+    if not legacy or not modern:
+        return
+    listed = "\n  ".join(f"{p} ({label})" for p, label in _label_spellings(legacy, modern))
+    raise ConfigError(
+        "Config defines both the legacy `claude:` block and `agents.claude` — "
+        "keep one. `agents.claude` is the preferred spelling; the `claude:` "
+        f"block is a supported legacy alias. Files involved:\n  {listed}"
+    )
+
+
+def _label_spellings(legacy: list[Path], modern: list[Path]) -> list[tuple[Path, str]]:
+    """`(path, "claude:" / "agents.claude" / both)` for each file involved,
+    in `legacy`-then-`modern` file order without repeating a path."""
+    labels: dict[Path, list[str]] = {}
+    for path in legacy:
+        labels.setdefault(path, []).append("claude:")
+    for path in modern:
+        labels.setdefault(path, []).append("agents.claude")
+    return [(path, " and ".join(spellings)) for path, spellings in labels.items()]
 
 
 def _expand(value: str | Path) -> Path:
@@ -522,40 +596,15 @@ def _default_shared_caches() -> list[SharedCache]:
     `golden.stacks.java` / `.node` toggle, which auto-adds gradle+m2
     (java) or npm+pnpm-store (node) via `Config.effective_shared_caches`.
     Override the whole list by setting ``shared_caches:`` to a different
-    list (or ``[]`` to disable entirely). Claude and JetBrains shared
-    caches are not included here — they are added by
-    `Config.effective_shared_caches` when `claude.enabled` /
-    `jetbrains.enabled` respectively.
+    list (or ``[]`` to disable entirely). Agent and JetBrains shared caches
+    are not included here — they are added by
+    `Config.effective_shared_caches`: one set per enabled entry in
+    `agents:` (via the generic `agents.enabled_agent_specs` loop, which is
+    where Claude's now come from), plus the JetBrains ones when
+    `jetbrains.enabled`.
     """
     return [
         SharedCache(name="ssh", host_subpath="ssh", container_path="~/.ssh"),
-    ]
-
-
-def _claude_shared_caches() -> list[SharedCache]:
-    """Claude shared-cache mounts auto-added when `claude.enabled`.
-
-    Three entries: directory-level `<shared_dir>/claude` → `~/.claude`
-    (credentials, settings, agents, etc.); file-level
-    `<shared_dir>/claude.json` → `~/.claude.json` (identity/onboarding
-    state); and `<shared_dir>/claude-install` → `~/.local/share/claude`
-    (the shared version store so a Claude binary downloaded by one container
-    is reused by all others and survives golden rebuilds). Kept here rather
-    than in `_default_shared_caches()` so the list-level `shared_caches:`
-    YAML key isn't permanently polluted when the user isn't using Claude.
-    """
-    return [
-        SharedCache(name="claude", host_subpath="claude", container_path="~/.claude"),
-        SharedCache(
-            name="claude-json",
-            host_subpath="claude.json",
-            container_path="~/.claude.json",
-        ),
-        SharedCache(
-            name="claude-install",
-            host_subpath="claude-install",
-            container_path="~/.local/share/claude",
-        ),
     ]
 
 
@@ -668,40 +717,6 @@ JETBRAINS_LICENSE_HOSTS: tuple[str, ...] = (
 JETBRAINS_AI_HOSTS: tuple[str, ...] = (
     "api.app.prod.grazie.aws.intellij.net:443",
     "api.jetbrains.ai:443",
-)
-
-# Hosts Claude Code reaches: api.anthropic.com (chat/completions),
-# code.claude.com (in-CLI documentation links / /help), claude.ai (the
-# `install.sh` bootstrap entry point — it 302-redirects to
-# downloads.claude.ai, so the bare host is needed for the initial GET),
-# and downloads.claude.ai (the redirect target: `latest` version pointer,
-# `manifest.json` checksums, and the platform binary blob). Both
-# `curl https://claude.ai/install.sh | bash` (run by `ensure-claude.sh`
-# at `jailbee new` time) and `claude` self-updates use these. Added
-# automatically by `Config.effective_egress_allow()` when `claude.enabled`
-# so users don't have to know the Anthropic service topology. Note: the
-# install now runs inside the (possibly strict-mode) container rather than
-# the unrestricted golden-build container, so claude.ai must be on the ACL.
-CLAUDE_API_HOSTS: tuple[str, ...] = (
-    "api.anthropic.com:443",
-    "code.claude.com:443",
-    "claude.ai:443",
-    "downloads.claude.ai:443",
-)
-
-# Hosts Claude Code's plugin/marketplace machinery reaches at session start
-# and on `/plugin install` / `/reload-plugins`: GitHub for marketplace clones
-# and content fetches, npm for plugin-bundled tools (LSP servers, etc.).
-# Added automatically by `Config.effective_egress_allow()` when both
-# `claude.enabled` and `claude.plugins_enabled` are true so that skills,
-# SessionStart hooks and plugin updates work in strict-mode containers.
-CLAUDE_PLUGIN_HOSTS: tuple[str, ...] = (
-    "github.com:443",
-    "api.github.com:443",
-    "raw.githubusercontent.com:443",
-    "objects.githubusercontent.com:443",
-    "codeload.github.com:443",
-    "registry.npmjs.org:443",
 )
 
 # Hosts gh CLI reaches: api.github.com for REST/GraphQL. Added
@@ -1566,50 +1581,93 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
 _MAX_PR_PROMPT_LEN = 20_000
 
 
-class ClaudeConfig(BaseModel):
-    """Claude Code CLI integration inside containers.
+class AgentSharedMount(BaseModel):
+    """One bind-mount an agent needs to keep its auth/config across containers.
 
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When false, jailbee skips:
-        * the <shared_dir>/claude + <shared_dir>/claude.json shared
-          cache mounts (driven by `Config.effective_shared_caches`),
-        * the api.anthropic.com:443 + code.claude.com:443 +
-          downloads.claude.ai:443 strict-mode egress auto-adds,
-        * the <shared_dir>/claude subdir creation on `jailbee init`,
-        * the claude-subdir presence check in `jailbee doctor`.
-      When enabled, jailbee creates an empty <shared_dir>/claude directory
-      and an empty <shared_dir>/claude.json file as bind-mount sources
-      — Claude Code inside the first container runs its onboarding flow
-      from a clean state. No host ~/.claude / ~/.claude.json is read.
+    Share the minimum surface that avoids re-authentication. Caches, chat
+    histories and logs are per-branch working state and must stay
+    per-container; a generically-named file (e.g. `~/.env`) must never be
+    shared, because the mount would collide with unrelated tools and leak
+    their secrets between containers.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    subpath: str
+    path: str
+    type: Literal["dir", "file"] = "dir"
+    seed: str | None = None
+
+    @model_validator(mode="after")
+    def _seed_is_file_only(self) -> AgentSharedMount:
+        if self.type == "dir" and self.seed is not None:
+            raise ValueError(f"seed is only valid for type: file (subpath {self.subpath!r})")
+        return self
+
+
+class AgentConfig(BaseModel):
+    """A terminal coding agent wired into the container lifecycle.
+
+    `install`/`update` are shell command lines run inside the container as the
+    dev user through the autostart step pipeline, so each gets a fresh
+    `bash -lc` login shell — which is why `~/.local/bin` and
+    `~/.npm-global/bin` are on PATH for them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    autostart: bool = False
+    command: str = ""
+    install: str | None = None
+    install_check: str | None = None
+    update: str | None = None
+    auto_update: bool = True
+    install_network: Literal["strict", "loose"] = "strict"
+    shared: list[AgentSharedMount] = Field(default_factory=list)
+    egress_allow: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+    def effective_install_check(self) -> str:
+        """The command that decides install-vs-update.
+
+        Defaults to `command -v <first token of command>`: the binary's own
+        name, not the full command line, so flags in `command` don't leak into
+        the probe.
+        """
+        if self.install_check:
+            return self.install_check
+        binary = self.command.split()[0] if self.command.strip() else ""
+        return f"command -v {binary}"
+
+
+class ClaudeAgentConfig(AgentConfig):
+    """`agents.claude` — the generic fields plus Claude-only integrations.
+
+    `enabled`, `autostart`, `command` and `auto_update` are inherited: their
+    semantics are identical to any other agent's. `enabled` gates the shared
+    `<shared_dir>/claude` + `<shared_dir>/claude.json` cache mounts (see
+    `Config.effective_shared_caches`), the `CLAUDE_API_HOSTS` strict-mode
+    egress auto-add, the `<shared_dir>/claude` subdir creation on
+    `jailbee init`, and the claude-subdir presence check in `jailbee doctor`.
+    When enabled, jailbee creates an empty `<shared_dir>/claude` directory and
+    an empty `<shared_dir>/claude.json` file as bind-mount sources — Claude
+    Code inside the first container runs its onboarding flow from a clean
+    state. No host `~/.claude` / `~/.claude.json` is read.
+
     - `plugins_enabled`: when true (default), `effective_egress_allow`
       also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
       Code's plugin marketplace, skills and SessionStart hooks load in
       strict-mode containers. Set to false to keep the API reachable
       while blocking marketplace traffic. Has no effect when `enabled`
       is false.
-    - `autostart`: when true (and `enabled` is true), `run_autostart`
-      appends a synthetic `claude` window to the `autostart` tmux
-      session on every container start. `jailbee tmux <c>` lands in that
-      window. Defaults to false; requires `enabled=true` —
-      `validate_runtime` rejects the misconfiguration.
-    - `command`: the command line executed in the `claude` autostart
-      window. Defaults to `claude`. Useful for passing flags
-      (e.g. `claude --dangerously-skip-permissions`) or an env-prefix
-      wrapper. Ignored when `autostart` is false.
-    - `auto_update`: when true (default), `jailbee new` runs `claude update`
-      inside the container so the shared install advances to the latest
-      release. When false, an *existing* Claude install is left untouched,
-      but a *missing* one is still installed — the shared
-      `~/.local/share/claude` version store only advances when some
-      container runs with `auto_update=true` (or a user runs `claude
-      update` by hand). Has no effect when `enabled` is false.
     - `install_jailbee_skills`: when true (default, requires `enabled`), `jailbee new`
       and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`,
       `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
       in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
       edits. Host-side file copy only — no network. Has no effect when `enabled`
-      is false. Accepts the pre-1.0 key name as a validation alias, with a
-      one-time deprecation warning; removed in 2.0.0.
+      is false. The pre-1.0 key name (`install_gie_skills`) is not accepted at
+      all — `_check_retired_keys`/`_RETIRED_KEYS_CLAUDE` raises a `ConfigError`
+      naming this key as the replacement, under both the legacy `claude:` and
+      the `agents.claude` spelling.
     - `ai_pr_description`: when true (default, requires `enabled`),
       `jailbee pr` asks the in-container Claude CLI to generate the
       PR title and body from the branch's commits and diff, falling back to
@@ -1646,12 +1704,7 @@ class ClaudeConfig(BaseModel):
       false.
     """
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    enabled: bool = False
     plugins_enabled: bool = True
-    autostart: bool = False
-    command: str = "claude"
-    auto_update: bool = True
     install_jailbee_skills: bool = True
     ai_pr_description: bool = True
     ai_pr_branch: bool = True
@@ -1742,7 +1795,7 @@ class Config(BaseModel):
     ssh: SshConfig = SshConfig()
     jetbrains: JetbrainsConfig = JetbrainsConfig()
     chrome: ChromeConfig = ChromeConfig()
-    claude: ClaudeConfig = ClaudeConfig()
+    agents: dict[str, AgentConfig] = Field(default_factory=dict)
     github: GithubConfig = GithubConfig()
     terminal: TerminalConfig = TerminalConfig()
     autostart: Autostart = Autostart()
@@ -1819,6 +1872,63 @@ class Config(BaseModel):
             seen.add(entry.name)
         return v
 
+    @field_validator("agents", mode="before")
+    @classmethod
+    def _validate_agents(cls, v: object) -> dict[str, AgentConfig]:
+        """Dispatch `agents.claude` through `ClaudeAgentConfig`, the rest
+        through the generic `AgentConfig`, since a single `dict[str, Model]`
+        field can't express a per-key model choice on its own.
+
+        The already-constructed-model branch re-validates a plain
+        `AgentConfig` sitting under the `claude` key rather than passing it
+        through: `Config.claude` only recognises a `ClaudeAgentConfig` and
+        falls back to a disabled default otherwise, so letting a plain
+        `AgentConfig` stand would split the config in two — `agents["claude"]`
+        enabled (mounts, egress and install all active) while `cfg.claude`
+        reports disabled (`pr_ai`, `claude_skills`, `apply` and `doctor` all
+        see Claude off). Not reachable from YAML, since the dict branch below
+        already dispatches on the key, but it is the shape a caller
+        constructing `Config` in Python will write.
+        """
+        if not isinstance(v, dict):
+            raise ValueError("agents must be a mapping of agent name to settings")
+        result: dict[str, AgentConfig] = {}
+        for name, entry in v.items():
+            if isinstance(entry, AgentConfig):
+                if name == "claude" and not isinstance(entry, ClaudeAgentConfig):
+                    entry = ClaudeAgentConfig.model_validate(entry.model_dump())
+                result[name] = entry
+                continue
+            if not isinstance(entry, dict):
+                raise ValueError(f"agents.{name} must be a mapping")
+            model_cls: type[AgentConfig] = ClaudeAgentConfig if name == "claude" else AgentConfig
+            result[name] = model_cls.model_validate(entry)
+        return result
+
+    @property
+    def claude(self) -> ClaudeAgentConfig:
+        """The `agents.claude` entry, or a disabled default when absent.
+
+        Kept so `pr_ai`, `claude_skills`, `doctor`, `apply` and `cli` can go on
+        reading `cfg.claude.*`. Precedent: `repo_root`, `default_branch` and
+        `container_prefix` are also derived rather than YAML keys.
+
+        Read-only on purpose. `model_copy(update={"claude": ...})` cannot work
+        here — a property shadows the instance dict that update writes — so
+        tests must go through `tests.conftest.with_agent`.
+
+        The fallback branch allocates a fresh `ClaudeAgentConfig` on every
+        call: `cfg.claude is cfg.claude` is `False` when `"claude"` is absent
+        from `agents`, and `cfg.claude.autostart = True` silently mutates a
+        throwaway instead of `cfg`. A second silent-no-op shape alongside the
+        `model_copy` one above — harmless today because nothing does this,
+        but don't rely on the returned object's identity or on mutating it.
+        """
+        entry = self.agents.get("claude")
+        if isinstance(entry, ClaudeAgentConfig):
+            return entry
+        return ClaudeAgentConfig(command="claude")
+
     def effective_egress_allow(self) -> list[str]:
         """User's `egress_allow` plus any feature-driven auto-additions.
 
@@ -1831,13 +1941,15 @@ class Config(BaseModel):
           directory lives.
         - `JETBRAINS_AI_HOSTS` when `jetbrains.enabled` and
           `jetbrains.ai_enabled` (AI Assistant backend).
-        - `CLAUDE_API_HOSTS` when `claude.enabled` (Claude Code API access).
-        - `CLAUDE_PLUGIN_HOSTS` when `claude.enabled` and
-          `claude.plugins_enabled` (marketplace/skill loading).
+        - each enabled agent's `egress` (see `agents.enabled_agent_specs`) —
+          for `claude` this is `CLAUDE_API_HOSTS` plus, when
+          `claude.plugins_enabled`, `CLAUDE_PLUGIN_HOSTS`.
         - `GITHUB_API_HOSTS` when `github.enabled` (GitHub CLI API access).
 
         Deduplicates while preserving user-entry order.
         """
+        from jailbee.agents import enabled_agent_specs
+
         result = list(self.egress_allow)
         existing = set(result)
 
@@ -1851,10 +1963,8 @@ class Config(BaseModel):
             _append(JETBRAINS_LICENSE_HOSTS)
             if self.jetbrains.ai_enabled:
                 _append(JETBRAINS_AI_HOSTS)
-        if self.claude.enabled:
-            _append(CLAUDE_API_HOSTS)
-            if self.claude.plugins_enabled:
-                _append(CLAUDE_PLUGIN_HOSTS)
+        for spec in enabled_agent_specs(self):
+            _append(spec.egress)
         if self.github.enabled:
             _append(GITHUB_API_HOSTS)
         return result
@@ -1866,10 +1976,13 @@ class Config(BaseModel):
         whose `name` matches an auto-add suppresses the auto-add. The
         `golden.stacks` caches (gradle+m2 for java, npm+pnpm-store for
         node — see `Stacks.shared_caches`) are folded in first, ahead of
-        the integration auto-adds. Then this currently auto-adds `claude`
-        + `claude-json` + `claude-install` when `claude.enabled`, and
+        the integration auto-adds. Then each enabled agent's mounts are
+        folded in (see `agents.enabled_agent_specs`) — for `claude` this is
+        `claude` + `claude-json` + `claude-install` — followed by
         `jetbrains-config` + `jetbrains-data` when `jetbrains.enabled`.
         """
+        from jailbee.agents import enabled_agent_specs
+
         result: list[SharedCache] = list(self.shared_caches)
         existing = {c.name for c in result}
 
@@ -1880,8 +1993,8 @@ class Config(BaseModel):
                     existing.add(cache.name)
 
         _extend(self.golden.stacks.shared_caches())
-        if self.claude.enabled:
-            _extend(_claude_shared_caches())
+        for spec in enabled_agent_specs(self):
+            _extend(list(spec.shared))
         if self.jetbrains.enabled:
             _extend(
                 _jetbrains_shared_caches(
@@ -2072,12 +2185,51 @@ class Config(BaseModel):
             secret = self.github.api_tokens.get(self.container_prefix)
             if secret is not None and not secret.get_secret_value().strip():
                 issues.append(f"github.api_tokens['{self.container_prefix}'] is empty")
-        if self.claude.autostart and not self.claude.enabled:
-            issues.append(
-                "claude.autostart=true requires claude.enabled=true "
-                "(shared ~/.claude mount and Anthropic egress are gated "
-                "by claude.enabled)"
-            )
+
+        seen_subpaths: dict[str, tuple[str, str]] = {}
+        for name, agent in self.agents.items():
+            if not _AGENT_NAME_RE.fullmatch(name):
+                issues.append(
+                    f"agent name {name!r} must match [a-z0-9-]+ — it becomes a "
+                    f"tmux window name and a doctor label"
+                )
+            if agent.autostart and not agent.enabled:
+                # `claude` keeps the extra parenthetical explaining *why* the
+                # gate exists — the only agent with a documented shared-mount
+                # + egress side effect on `enabled`. This is the single
+                # source of this check: a legacy `claude:` block resolves to
+                # `agents["claude"]` via `resolve_agents_raw` before
+                # validation, so a second, claude-specific check here would
+                # report the same misconfiguration twice.
+                detail = (
+                    f" (shared ~/.claude mount and Anthropic egress are gated "
+                    f"by agents.{name}.enabled)"
+                    if name == "claude"
+                    else ""
+                )
+                issues.append(
+                    f"agents.{name}.autostart=true requires agents.{name}.enabled=true{detail}"
+                )
+            if agent.enabled and not agent.command.strip():
+                issues.append(f"agents.{name}.enabled=true requires a non-empty `command`")
+            if not agent.enabled:
+                continue
+            for shared_mount in agent.shared:
+                if shared_mount.subpath in SHARED_SUBDIRS:
+                    issues.append(
+                        f"agents.{name}.shared subpath {shared_mount.subpath!r} collides with "
+                        f"a built-in shared subdir"
+                    )
+                prior = seen_subpaths.get(shared_mount.subpath)
+                signature = (shared_mount.path, shared_mount.type)
+                if prior is not None and prior != signature:
+                    issues.append(
+                        f"shared subpath {shared_mount.subpath!r} is claimed twice with "
+                        f"different targets ({prior} vs {signature}) — two agents may "
+                        f"share an identical mount, but not a conflicting one"
+                    )
+                seen_subpaths[shared_mount.subpath] = signature
+
         if self.golden.python:
             issues.append(
                 "golden.python is deprecated and ignored; the container "
@@ -2117,6 +2269,72 @@ def _default_shared_dir(container_prefix: str) -> Path:
     return xdg_data_home() / "jailbee" / "shared" / container_prefix
 
 
+def device_name(subpath: str) -> str:
+    """Incus disk-device name for a shared subpath.
+
+    `.` → `-` is not cosmetic: it must yield exactly `claude`, `claude-json`
+    and `claude-install` for Claude's three subpaths, because those are live
+    device names in every existing container's binds profile. A different rule
+    renames disk devices under running containers.
+    """
+    return subpath.replace(".", "-")
+
+
+def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
+    """Normalise the `agents:`/`claude:` region of a merged raw config.
+
+    Returns a new dict in which:
+      * a legacy `claude:` block has been moved to `agents.claude`,
+      * every entry has been deep-merged over its preset (preset first, so
+        user scalars win and user `egress_allow` appends).
+
+    Runs on the *merged* global+repo raw dict, before validation, so a
+    partially-specified entry (`{enabled: true}`) validates against the
+    preset's completed shape.
+    """
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    result = {k: _copy(v) for k, v in raw.items()}
+    raw_agents = result.pop("agents", {})
+    if not isinstance(raw_agents, dict):
+        raise ConfigError("`agents` must be a mapping of agent name to settings.")
+    agents: dict[str, object] = {k: _copy(v) for k, v in raw_agents.items()}
+
+    legacy = result.pop("claude", None)
+    if legacy is not None:
+        if "claude" in agents:
+            # No file is named: this runs on the *merged* global+repo dict, so
+            # either layer (or both) may carry either spelling, and the
+            # `Config validation failed in <repo config>` wrapper in
+            # `_build_config_from_dict` would assert the wrong one. The load
+            # path checks the layers separately first
+            # (`_check_agents_spelling`) and does name every file; this is the
+            # backstop for callers that reach `resolve_agents_raw` directly.
+            raise ConfigError(
+                "config defines both `claude:` and `agents.claude` — keep one, "
+                "in whichever of ~/.config/jailbee/global.yaml and the repo's "
+                ".jailbee/config.yaml defines it. `agents.claude` is the "
+                "preferred spelling; the `claude:` block is a supported legacy "
+                "alias."
+            )
+        if not isinstance(legacy, dict):
+            raise ConfigError("`claude` must be a mapping.")
+        agents["claude"] = legacy
+
+    presets: dict[str, dict[str, object]] = dict(AGENT_PRESETS)
+    presets["claude"] = claude_preset()
+
+    for name, entry in agents.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"`agents.{name}` must be a mapping.")
+        base = presets.get(name)
+        agents[name] = deep_merge(base, entry) if base is not None else entry
+
+    if agents:
+        result["agents"] = agents
+    return result
+
+
 def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -2126,6 +2344,10 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
     invariants (prefix regex, reserved env keys, shared_caches uniqueness,
     autostart step-name uniqueness) are checked here as well.
     """
+    try:
+        raw = resolve_agents_raw(raw)
+    except ConfigError as e:
+        raise ConfigError(f"Config validation failed in {config_path}:\n{e}") from e
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)
@@ -2234,6 +2456,7 @@ def load_config_from_text(text: str, path: Path) -> Config:
     repo_raw = _parse_yaml_text(text, str(path))
     _check_retired_keys(repo_raw)
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
+    _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 
     # Placement constraint: github tokens must live in ~/.config/jailbee/global.yaml,
     # never in repo .jailbee/config.yaml — the latter is typically committed to git.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.resources
 import os
 import re
 import sys
@@ -1075,12 +1074,13 @@ def new_container(
     if not opts.mount:
         _attach_under_repo_shared_caches(cfg, incus, name)
 
-    # Ensure the latest Claude is in place before autostart execs it.
-    # Runs whenever claude.enabled (manual launches benefit too); no-op
-    # otherwise. Must come after mounts are attached (the claude-install
-    # shared cache provides ~/.local/share/claude) and after the network
-    # ACL warm-up, so the installer/update can reach downloads.claude.ai.
-    _ensure_claude_in_container(cfg, incus, name)
+    # Install/update every enabled agent before autostart execs them. Must
+    # come after mounts are attached (each agent's shared cache, e.g.
+    # claude-install, provides its persistent store) and after the network
+    # ACL warm-up, so installers/updaters can reach their egress hosts.
+    from jailbee.agents import ensure_agents
+
+    ensure_agents(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
     # Sync jailbee's own skills into the shared ~/.claude/skills so the
     # in-container Claude understands jailbee and can help with .jailbee/config.yaml
@@ -1095,7 +1095,7 @@ def new_container(
 
     # GH_TOKEN injection is auto-enabled infrastructure, not a user autostart
     # command — write it regardless of --no-autostart so `gh` works in every
-    # container (mirrors _ensure_claude_in_container above). No-op when the
+    # container (mirrors the agent install/update above). No-op when the
     # github integration is off or no token applies.
     #
     # Deliberately `cfg`, not `effective_cfg`: this is jailbee's own step, and
@@ -1250,39 +1250,6 @@ def _attach_under_repo_shared_caches(cfg: Config, incus: Incus, name: str) -> No
                 "path": path,
             },
         )
-
-
-def _ensure_claude_in_container(cfg: Config, incus: Incus, name: str) -> None:
-    """Install/relink/update Claude Code inside `name` before autostart.
-
-    No-op unless `claude.enabled`. The shared `claude-install` mount
-    (`~/.local/share/claude`) holds the version store; this runs the
-    bundled `ensure-claude.sh`, which full-installs when the store is
-    empty, repoints this container's `~/.local/bin/claude` symlink, and
-    runs `claude update` when `claude.auto_update` is true.
-
-    Non-fatal: a failure (offline, network ACL miss, installer error) is
-    logged and swallowed so `jailbee new` still completes — the container
-    just keeps whatever Claude (if any) the shared store currently has.
-    """
-    if not cfg.claude.enabled:
-        return
-
-    script = importlib.resources.files("jailbee.provision").joinpath("ensure-claude.sh").read_text()
-    home = f"/home/{CONTAINER_USERNAME}"
-    try:
-        incus.exec(
-            name,
-            ["bash", "-c", script],
-            uid=cfg.container_user.uid,
-            gid=cfg.container_user.gid,
-            env={
-                "HOME": home,
-                "JAILBEE_CLAUDE_AUTO_UPDATE": "true" if cfg.claude.auto_update else "false",
-            },
-        )
-    except Exception as e:  # non-fatal: never block container creation
-        warn(f"Claude install/update step failed (continuing): {e}")
 
 
 def _clone_repo_in_container(

@@ -793,14 +793,67 @@ IDE restart.
 | `autostart` | bool | `false` | Launch Chrome after autostart steps. No-op if no graphical session, or when `enabled: false`. |
 | `host_path` | path \| null | `/opt/google/chrome` | Host path RO-mounted to `/opt/google/chrome`. The container-side path is hardcoded because `gui.open_chrome` invokes `/opt/google/chrome/google-chrome` directly. Override for non-standard installs (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with `container: /opt/google/chrome` wins. |
 
+### `agents`
+
+Generic hook for terminal coding agents — Claude Code plus five untested
+templates (`codex`, `gemini`, `aider`, `opencode`, `grok`), or one you define
+yourself. A mapping keyed by agent name, valid at both this file and
+`~/.config/jailbee/global.yaml`, and it merges over a shipped preset
+(deep-merge — see [Merge rules](#merge-rules) above) rather than needing
+every field spelled out. Full mechanism, the preset table, the "which paths
+to share" rule, and a worked example live in
+[Generic agent support](agents.md) — this entry is the schema reference.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch: gates the shared mount, the strict-mode egress add, install/update at `jailbee new` time, and the `jailbee doctor` shared-dir check. |
+| `autostart` | bool | `false` | Launch `command` in a background autostart tmux window. Requires `enabled: true`. |
+| `command` | string | `""` | The command line the autostart window execs; also the default source for `install_check`. Required when `enabled: true`. |
+| `install` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` fails. |
+| `install_check` | string \| null | `null` | Probe deciding install-vs-update. Defaults to `command -v <first token of command>`. |
+| `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
+| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
+| `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
+| `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. |
+| `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
+| `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
+
+An agent name that matches one of the six shipped presets is deep-merged
+over that preset (preset → global.yaml → repo, same append/reset rules as
+every other list field); any other name is used as-is with no preset base.
+`jailbee config validate` additionally rejects a name outside
+`[a-z0-9-]+`, `enabled: true` with an empty `command`, `autostart: true`
+without `enabled: true`, and a `shared` subpath that collides with a
+built-in shared subdir or with a different mount target another agent
+already claimed.
+
+```yaml
+agents:
+  codex:
+    enabled: true
+    autostart: true
+```
+
 ### `claude`
 
+**`agents.claude` is the preferred spelling of this block.** The top-level
+`claude:` key documented below is a supported **legacy alias** — moved to
+`agents.claude` at config-load time, before validation. Defining both
+`claude:` and `agents.claude` in the merged config is a `ConfigError`.
+Everything below applies identically under either spelling, and `claude`
+also carries the generic `agents` fields from the table above
+(`install`, `update`, `install_check`, `install_network`, `shared`,
+`egress_allow`, `env`) — not repeated here since they mean the same thing
+for every agent. See [Generic agent support](agents.md#9-claude) for the
+short version of this same note.
+
 Claude Code CLI integration. The schema default is disabled, so a repo
-with no `claude:` block anywhere gets no Claude Code. Opt-in belongs in
-`~/.config/jailbee/global.yaml` — and the template written by `jailbee
-config init --global` already carries `claude.enabled: true`, so the
-usual first-run path turns it on. Delete or flip that block to keep
-Claude Code out.
+with no `claude:`/`agents.claude` block anywhere gets no Claude Code.
+Opt-in belongs in `~/.config/jailbee/global.yaml` — and the template
+written by `jailbee config init --global` already carries
+`claude.enabled: true` (or `agents.claude.enabled: true`), so the usual
+first-run path turns it on. Delete or flip that block to keep Claude Code
+out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -1412,7 +1465,10 @@ use gh" state.
 
 Optional. Host-global settings shared across all repos. It is the required
 home for the [`github`](#github) block (above) and the usual home for the
-opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `claude`).
+opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `agents`).
+`agents:` is valid at both layers, though — see [`agents`](#agents) above —
+and a repo entry merges over a global one, so a team default set globally
+can still be adjusted per repo.
 The keys unique to this file are the Docker registry mirror overrides:
 
 ```yaml

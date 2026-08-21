@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Added
+
+- **Generic agent support: `agents:` config key.** Claude Code's integration
+  — shared credentials/settings mount, strict-mode egress, install/update at
+  `jailbee new` time, autostart launch, `jailbee doctor` check — is now a
+  declarative mapping any terminal coding agent can use, not code specific to
+  Claude. Six presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`,
+  `grok`); enabling one is usually two lines
+  (`agents: {codex: {enabled: true, autostart: true}}`), and every preset
+  field is overridable. Only `claude` is exercised in production — the other
+  five are untested templates whose package names, config paths and
+  especially host lists are best-effort, corrected by whoever adopts one. An
+  agent name outside the shipped six works too, with no preset base. See
+  [docs/agents.md](docs/agents.md).
+- **`agents.claude` is the preferred spelling** of Claude's config block. The
+  existing top-level `claude:` block remains a supported legacy alias —
+  translated into `agents.claude` at load — and defining both at once is a
+  `ConfigError`.
+
+### Changed
+
+- **The Claude install/update step now runs bounded, with its output kept.**
+  It used to run through an unbounded `incus.exec` call; it now runs through
+  the same autostart step pipeline every other agent's install/update uses,
+  bounded by `autostart.step_timeout` (default 600s) and landing in a
+  persistent tmux window instead of being captured and discarded. A stuck
+  install is therefore capped at `autostart.step_timeout` instead of hanging
+  `jailbee new` indefinitely, and its output is inspectable afterwards via
+  `jailbee tmux`.
+- **Every agent install/update command runs in its own `bash -c` child
+  shell.** A command spanning multiple lines — which every bundled install
+  script and any user `install: |` block scalar is — used to be pasted
+  verbatim into the shell line that records the step's exit code, so a `set -e`
+  trip, an explicit `exit`, or just the script's trailing newline stopped that
+  bookkeeping from ever running. The step then sat until
+  `autostart.step_timeout` elapsed and reported a timeout regardless of what
+  actually happened.
+- **`ensure_agents` starts the container's autostart tmux session even under
+  `--no-autostart`.** Agent installs are infrastructure rather than user
+  autostart commands (the same reasoning `inject_github_token` already
+  follows), so they run either way and need the session to run in. Visible
+  consequence: `jailbee tmux` on a `--no-autostart` container now finds a
+  session with an `install-<agent>` window in it rather than nothing.
+
 ## 1.1.0 - 2026-08-20
 
 ### Added

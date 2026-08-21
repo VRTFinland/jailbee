@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jailbee.config import NewConfig, load_config
+from jailbee.config import CONTAINER_USERNAME, NewConfig, load_config
 from jailbee.lifecycle import (
     NewContainerOptions,
     ResolvedContainer,
@@ -20,6 +20,7 @@ from jailbee.lifecycle import (
     restart_container,
     switch_network,
 )
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -4405,7 +4406,7 @@ def test_short_name_only_strips_leading_match(make_cfg, tmp_path):
     assert short_name(cfg, embedded) == embedded
 
 
-# ---- ensure-claude integration in new_container ----
+# ---- agent install/update integration in new_container ----
 
 
 def _new_opts(**overrides):
@@ -4429,91 +4430,57 @@ def _patch_new_container_deps(mocker):
     mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
 
-def test_new_container_runs_ensure_claude_when_enabled(make_cfg, tmp_path, mocker):
-    """claude.enabled → the ensure-claude script is exec'd in the container."""
+def test_new_container_calls_ensure_agents(make_cfg, tmp_path, mocker):
+    """`new_container` delegates agent install/update to `agents.ensure_agents`,
+    passing the in-container repo dir and the run's mirror endpoint.
+
+    The install-vs-update dispatch itself (per-agent enable/auto_update/
+    network logic) is unit-tested in tests/test_agents.py; this only pins
+    the integration boundary — that `new_container` calls `ensure_agents`
+    with the right container/repo_dir/mirror_endpoint, at all.
+    """
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
+    ensure_agents = mocker.patch("jailbee.agents.ensure_agents")
 
-    new_container(cfg, incus, _new_opts())
+    opts = _new_opts(mirror_endpoint=("10.0.0.1", 5000))
+    new_container(cfg, incus, opts)
 
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert len(ensure_calls) == 1
-    # auto_update defaults to True → env flag is "true"
-    assert ensure_calls[0].kwargs["env"]["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"
-
-
-def test_new_container_skips_ensure_claude_when_disabled(make_cfg, tmp_path, mocker):
-    """claude.enabled=false (default) → no ensure-claude exec."""
-    repo = tmp_path / "myrepo"
-    repo.mkdir()
-    cfg = make_cfg(repo, default_branch="main")  # claude disabled by default
-    incus = MagicMock()
-    incus.exists.return_value = False
-    _patch_new_container_deps(mocker)
-
-    new_container(cfg, incus, _new_opts())
-
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert ensure_calls == []
+    ensure_agents.assert_called_once()
+    call = ensure_agents.call_args
+    assert call.args[0] is cfg
+    assert call.args[1] is incus
+    assert call.args[3] == f"/home/{CONTAINER_USERNAME}/{cfg.container_prefix}"
+    assert call.kwargs["mirror_endpoint"] == ("10.0.0.1", 5000)
 
 
-def test_new_container_ensure_claude_passes_false_flag(make_cfg, tmp_path, mocker):
-    """claude.auto_update=false → env flag is "false"."""
+def test_new_container_ensure_agents_runs_before_autostart(make_cfg, tmp_path, mocker):
+    """Ordering pin: agents are installed/updated before autostart execs
+    them (see the call site's comment for why mounts/network order it)."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"enabled": True, "auto_update": False})}
+    incus = MagicMock()
+    incus.exists.return_value = False
+    _patch_new_container_deps(mocker)
+    calls: list[str] = []
+    mocker.patch(
+        "jailbee.agents.ensure_agents", side_effect=lambda *a, **kw: calls.append("agents")
     )
-    incus = MagicMock()
-    incus.exists.return_value = False
-    _patch_new_container_deps(mocker)
+    mocker.patch(
+        "jailbee.autostart.run_autostart",
+        side_effect=lambda *a, **kw: calls.append("autostart"),
+    )
 
-    new_container(cfg, incus, _new_opts())
+    new_container(cfg, incus, _new_opts(autostart=True))
 
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert ensure_calls[0].kwargs["env"]["JAILBEE_CLAUDE_AUTO_UPDATE"] == "false"
-
-
-def test_new_container_ensure_claude_failure_is_non_fatal(make_cfg, tmp_path, mocker):
-    """A failing ensure-claude exec must not abort container creation."""
-    repo = tmp_path / "myrepo"
-    repo.mkdir()
-    cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
-    incus = MagicMock()
-    incus.exists.return_value = False
-
-    def _exec_side_effect(name, cmd, **kwargs):
-        if len(cmd) > 1 and "ensure-claude" in " ".join(cmd):
-            raise RuntimeError("network down")
-        return ""
-
-    incus.exec.side_effect = _exec_side_effect
-    _patch_new_container_deps(mocker)
-    warn_mock = mocker.patch("jailbee.lifecycle.warn")
-
-    # Must not raise.
-    new_container(cfg, incus, _new_opts())
-
-    assert warn_mock.called
+    assert calls[0] == "agents"
+    assert "autostart" in calls[1:]
 
 
 def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
@@ -4521,7 +4488,7 @@ def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)

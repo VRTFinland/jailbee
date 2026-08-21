@@ -122,6 +122,12 @@ def config_show(
     data["egress_allow"] = cfg.effective_egress_allow()
     data["shared_caches"] = [c.model_dump(mode="json") for c in cfg.effective_shared_caches()]
     data["host_mounts"] = [m.model_dump(mode="json") for m in cfg.effective_host_mounts()]
+    # Dump each agent through its own (possibly subclassed) model rather than
+    # relying on `cfg.model_dump()`'s dict[str, AgentConfig] field type: that
+    # would serialise every entry — including `agents.claude`, which is a
+    # ClaudeAgentConfig — through the base AgentConfig shape and silently
+    # drop the Claude-only fields (plugins_enabled, install_jailbee_skills, …).
+    data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
 
@@ -1241,15 +1247,17 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
 
 def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
     """Attach to the autostart tmux session, creating it on demand."""
+    from jailbee.autostart import agent_autostart_steps
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
     from jailbee.tmux import SESSION_NAME, ensure_session, select_window
 
     ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
-    if cfg.claude.autostart:
-        # Best-effort: claude window may have died; fall through to the
+    steps = agent_autostart_steps(cfg)
+    if steps:
+        # Best-effort: the window may have died; fall through to the
         # default focus rather than blocking the attach.
-        select_window(incus, name, "claude")
+        select_window(incus, name, steps[-1].name)
     # See `_attach_shell` for why we route through `incus exec --user`
     # instead of `sudo -i`.
     return incus.exec_interactive(

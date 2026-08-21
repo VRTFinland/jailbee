@@ -547,6 +547,21 @@ What you can still do from inside:
 - For host-side bridge actions (`jailbee git pull`, `jailbee destroy`, `jailbee net loose`, …),
   describe what you need and let the host operator run it — you can't from here.
 
+## Checking what an agent preset resolved to
+
+`jailbee config show` prints the merged effective config, including the
+resolved `agents:` block — preset fields filled in whether or not the
+repo's own config mentions them:
+
+```bash
+jailbee config show | less   # look for the `agents:` block
+```
+
+That's the way to answer "what did enabling `codex`/`claude`/… actually
+turn on" instead of re-deriving it from the preset source by hand.
+Configuring a new agent, not just inspecting one already on, is the
+**jailbee-repo-setup** skill's job.
+
 ## When to point elsewhere
 
 - Changing what a container installs, its autostart steps, egress allowlist,

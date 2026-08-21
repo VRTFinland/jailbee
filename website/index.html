@@ -6,12 +6,12 @@
     <title>JailBee — one container per branch</title>
     <meta
       name="description"
-      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for Claude Code behind a strict network allowlist."
+      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for coding agents, Claude Code first among them, behind a strict network allowlist."
     />
     <meta property="og:title" content="JailBee — one container per branch" />
     <meta
       property="og:description"
-      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for Claude Code behind a strict network allowlist."
+      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for coding agents, Claude Code first among them, behind a strict network allowlist."
     />
     <meta property="og:url" content="https://jailbee.gisgro.io/" />
     <meta property="og:type" content="website" />
@@ -375,8 +375,13 @@
             <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
             once and every container comes with it installed, sharing one login across the whole
             project, allowed through its own network rules, and taught to drive
-            <code>jailbee</code> itself. Have it start on its own and a container is working the
-            moment it boots.
+            <code>jailbee</code> itself. The same mechanism reaches other terminal coding agents
+            too — see
+            <a href="https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md"
+              >supported agents</a
+            >
+            for the list and how to add your own. Have it start on its own and a container is
+            working the moment it boots.
           </p>
           <p>
             The reason to run an agent here is that you stop having to be the safety mechanism.

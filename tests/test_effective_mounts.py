@@ -148,9 +148,10 @@ def test_manual_entries_listed_before_auto_adds(tmp_path):
 
 
 def test_effective_shared_caches_includes_claude_when_enabled(tmp_path):
-    # `shared_caches=[]` keeps this test focused on `_claude_shared_caches()`
-    # — the defaults don't contain claude entries any more, but stripping
-    # them removes a noise source from the assertions.
+    # `shared_caches=[]` keeps this test focused on the claude agent's
+    # spec-driven mounts (see `agents.enabled_agent_specs`) — the defaults
+    # don't contain claude entries any more, but stripping them removes a
+    # noise source from the assertions.
     cfg = make_cfg(tmp_path, claude={"enabled": True}, shared_caches=[])
     caches = cfg.effective_shared_caches()
     by_name = {c.name: c for c in caches}
@@ -187,7 +188,7 @@ def test_effective_shared_caches_manual_entry_suppresses_auto_add(tmp_path):
 
 
 def test_effective_egress_allow_includes_claude_hosts_when_enabled(tmp_path):
-    from jailbee.config import CLAUDE_API_HOSTS
+    from jailbee.constants import CLAUDE_API_HOSTS
 
     cfg = make_cfg(tmp_path, claude={"enabled": True}, egress_allow=["github.com:22"])
     allow = cfg.effective_egress_allow()
@@ -235,7 +236,7 @@ def test_effective_egress_allow_dedupes_claude_hosts(tmp_path):
 
 
 def test_effective_egress_allow_includes_claude_plugin_hosts_by_default(tmp_path):
-    from jailbee.config import CLAUDE_PLUGIN_HOSTS
+    from jailbee.constants import CLAUDE_PLUGIN_HOSTS
 
     cfg = make_cfg(tmp_path, claude={"enabled": True})
     allow = cfg.effective_egress_allow()
@@ -244,7 +245,7 @@ def test_effective_egress_allow_includes_claude_plugin_hosts_by_default(tmp_path
 
 
 def test_effective_egress_allow_omits_claude_plugin_hosts_when_disabled(tmp_path):
-    from jailbee.config import CLAUDE_PLUGIN_HOSTS
+    from jailbee.constants import CLAUDE_PLUGIN_HOSTS
 
     cfg = make_cfg(tmp_path, claude={"enabled": True, "plugins_enabled": False})
     allow = cfg.effective_egress_allow()
@@ -256,7 +257,7 @@ def test_effective_egress_allow_omits_claude_plugin_hosts_when_disabled(tmp_path
 
 def test_effective_egress_allow_omits_plugin_hosts_when_claude_disabled(tmp_path):
     """`plugins_enabled` has no effect when the master claude switch is off."""
-    from jailbee.config import CLAUDE_PLUGIN_HOSTS
+    from jailbee.constants import CLAUDE_PLUGIN_HOSTS
 
     cfg = make_cfg(tmp_path, claude={"enabled": False, "plugins_enabled": True})
     allow = cfg.effective_egress_allow()

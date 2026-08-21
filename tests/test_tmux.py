@@ -279,6 +279,55 @@ def test_run_step_sync_success_reads_exit_code():
     assert "rm -f" in rm_args
 
 
+def test_run_step_strips_trailing_newline_from_command():
+    """A `run: |` block scalar always ends in a newline, and
+    `AutostartStep.run` never strips it. The sync path appends
+    `; rc=$?; …` to the command, so an unstripped newline would put that
+    continuation on a fresh line — a bash syntax error, which means no
+    sentinel is written and the caller blocks on `tmux wait-for` for the
+    whole timeout before reporting a bogus failure.
+    """
+    from jailbee.tmux import run_step
+
+    incus = MagicMock()
+    incus.exec.side_effect = ["", "", "", "0\n", ""]
+    run_step(
+        incus,
+        "c1",
+        name="multi",
+        command="echo one\necho two\n",
+        env={},
+        cwd="/r",
+        background=False,
+        timeout=60,
+    )
+    new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
+    assert "echo two\n;" not in new_window_args
+    assert "echo two; rc=$?" in new_window_args
+
+
+def test_run_step_background_strips_trailing_newline_from_command():
+    """Same for the background path, which appends nothing today but
+    composes the command into a larger `bash -lc` line all the same."""
+    from jailbee.tmux import run_step
+
+    incus = MagicMock()
+    incus.exec.side_effect = ["", "", IncusError("still alive")]
+    run_step(
+        incus,
+        "c1",
+        name="bg",
+        command="sleep 1\n",
+        env={},
+        cwd="/r",
+        background=True,
+        timeout=60,
+    )
+    new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
+    assert not new_window_args.rstrip("'").endswith("\n")
+    assert "&& sleep 1" in new_window_args
+
+
 def test_run_step_sync_nonzero_exit_raises():
     from jailbee.tmux import TmuxStepError, run_step
 

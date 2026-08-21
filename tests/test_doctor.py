@@ -8,6 +8,7 @@ import pytest
 from jailbee.config import load_config
 from jailbee.doctor import run_checks
 from jailbee.registry import MirrorStatus
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -244,7 +245,7 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
     """When claude.enabled is false, doctor does not list claude as a
     missing subdir even if <shared_dir>/claude does not exist."""
     cfg = _cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     # Create only the non-claude expected subdirs.
     for sub in (
         "caches/pnpm-store",
@@ -316,6 +317,41 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
     tree = next(r for r in results if r.name == "shared_dir tree")
     assert tree.ok is False
     assert "claude-install" in tree.detail
+
+
+def test_doctor_flags_missing_agent_dir(tmp_path):
+    """An enabled agent's missing shared dir is reported by the tree check.
+
+    `with_agent` does not apply presets (see its docstring), so `command`
+    and `shared` must be supplied explicitly here rather than relying on
+    the `codex` preset's mounts.
+    """
+    cfg = with_agent(
+        _cfg(tmp_path),
+        "codex",
+        enabled=True,
+        command="codex",
+        shared=[{"subpath": "codex", "path": "~/.codex"}],
+    )
+    for sub in (
+        "caches/pnpm-store",
+        "caches/gradle",
+        "chrome-pool/slots",
+        "jetbrains-config",
+        "jetbrains-idea",
+        "claude",
+        "claude-install",
+    ):
+        (tmp_path / "shared" / sub).mkdir(parents=True, exist_ok=True)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    tree = next(r for r in results if r.name == "shared_dir tree")
+    assert tree.ok is False
+    assert "codex" in tree.detail
 
 
 def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):

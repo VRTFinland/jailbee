@@ -78,6 +78,7 @@ scope.
 - [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md): full command and flag reference
 - [Git bridge](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md): host↔container git bridge, stacked PRs, PR review
 - [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md): every `.jailbee/config.yaml` and `global.yaml` key
+- [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md): the `agents:` config key, the six shipped presets (Claude Code plus five untested templates), and how to add one of your own
 - [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md): isolation model and known limits, including what running an agent without prompts does and does not cover
 - [Who JailBee is for](https://jailbee.gisgro.io/comparison.html): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs
 - [Full technical comparison](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): the same comparison at length, with every caveat and the sources each claim was checked against

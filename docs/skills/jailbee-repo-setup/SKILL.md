@@ -200,6 +200,50 @@ Don't pin a version the repo doesn't actually require — bumping the golden ima
 
 `golden.enable_snippets` + a bare `golden.java`/`golden.node` version pin remain available directly as the low-level path when `stacks` doesn't cover what you need — see [Stacks](references/config-schema.md#stacks-goldenstacks) in the config schema reference.
 
+### `agents` — turning on a coding agent in every container
+
+If the user wants a terminal coding agent installed and (optionally)
+auto-started in every container of this repo, add an `agents:` block.
+Six presets ship built in — `claude`, `codex`, `gemini`, `aider`,
+`opencode`, `grok` — each a starting point covering the install command,
+the shared auth/settings mount, and the egress hosts it needs. Turning one
+on is usually two lines:
+
+```yaml
+agents:
+  codex:
+    enabled: true
+    autostart: true
+```
+
+`claude` (Claude Code) is the only preset exercised in production; the
+other five are untested templates the user should verify and correct
+against the vendor's own docs before relying on them (package name,
+config paths, host list). Enabling one they don't already use, without
+double-checking those details, is worse than not enabling it.
+
+The **master switch and egress hosts usually belong in
+`~/.config/jailbee/global.yaml`**, not the per-repo file — an agent's
+login state is personal, same reasoning as the `gpg`/`ssh`/`jetbrains`
+master switches. A per-repo `agents:` block is for something the repo
+itself needs for everyone (e.g. pinning `install_network: loose` because
+this repo's package mirror isn't in strict-mode `egress_allow` yet), not
+for turning the agent on in the first place.
+
+Writing a custom (non-preset) agent follows the same shape — `enabled`,
+`command`, `install`/`update`, `shared`, `egress_allow`; see
+[`agents`](references/config-schema.md#agents) in the config schema
+reference for the full field table, and `docs/agents.md` in the JailBee
+repo for the worked examples and the "which paths to share" rule (auth
+and settings only — never a cache, history, log, or a generically-named
+file like `~/.env`).
+
+`claude` predates the generic mechanism and still accepts a legacy
+top-level `claude:` block as an alias for `agents.claude` — prefer
+`agents.claude` in anything you generate. Never write both `claude:` and
+`agents.claude` into the same layer stack; `jailbee config validate`
+rejects that combination with a `ConfigError`.
+
 ### `autostart.on_create` / `on_start` — what runs when a container appears
 
 `on_create` runs once when `jailbee new <name>` provisions the container. `on_start` runs every time the container goes stopped→running (including on the *initial* `jailbee new`, after `on_create`).
@@ -357,7 +401,7 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - **Don't invent autostart commands.** Read the repo's README / Makefile / package.json scripts and use exactly what's documented.
 - **Don't add `github.com` to `egress_allow`.** That's a security boundary by design.
 - **Don't put personal credentials in the per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The per-repo file is committed to git and shared with the team.
-- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config.
+- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config. The same goes for `agents.<name>.enabled`/`claude.enabled` — an agent's login state is personal, so turn it on in global config unless the repo needs everyone to have that agent.
 
 ## Inside a JailBee container
 

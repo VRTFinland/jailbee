@@ -8,6 +8,7 @@ import pytest
 from jailbee.config import load_config
 from jailbee.incus import IncusError
 from jailbee.init_command import apply_allowlist_acl, run_init
+from tests.conftest import make_cfg, with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -28,7 +29,7 @@ def test_init_creates_shared_dirs(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     # Drop the fixture's claude.enabled + jetbrains.enabled flags for this test.
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     cfg = cfg.model_copy(update={"jetbrains": cfg.jetbrains.model_copy(update={"enabled": False})})
     incus = MagicMock()
     incus.profile_exists.return_value = False
@@ -209,10 +210,10 @@ def test_run_init_creates_user_shared_cache_dirs(tmp_path):
 
 
 def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
-    """`_ensure_claude_json_exists` is called only when claude.enabled."""
+    """The claude.json seed file is only written when claude.enabled."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     incus = MagicMock()
     incus.profile_exists.return_value = False
     incus.network_acl_exists.return_value = False
@@ -666,6 +667,32 @@ def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
     run_init(cfg, incus)
 
     assert (shared / "claude.json").read_text() == '{"existing": true}'
+
+
+def test_agent_dir_and_file_mounts_are_created(tmp_path):
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        agents={"aider": {"enabled": True}, "codex": {"enabled": True}},
+    )
+    _ensure_integration_shared_dirs(cfg)
+    assert (shared / "codex").is_dir()
+    assert (shared / "aider.conf.yml").is_file()
+    assert (shared / "aider.conf.yml").read_text() == ""
+
+
+def test_claude_json_still_seeded_with_empty_object(tmp_path):
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+    _ensure_integration_shared_dirs(cfg)
+    assert (shared / "claude.json").read_text() == "{}\n"
 
 
 def test_run_init_chmods_ssh_to_0700_when_ssh_enabled(make_cfg, tmp_path, mocker):

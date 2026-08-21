@@ -155,37 +155,47 @@ def inject_github_token(
     _apply_step(cfg, incus, container, step, repo_dir, mirror_endpoint=mirror_endpoint)
 
 
-def _claude_autostart_step(cfg: Config) -> AutostartStep | None:
-    """Return an AutostartStep that runs `cfg.claude.command` in a
-    backgrounded tmux window, or None when `claude.autostart` is off.
+def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
+    """One backgrounded tmux window per agent with `autostart`.
 
-    Appended (not prepended) to on_start, so user-defined steps finish
-    first and `claude` is the last window — most tmux layouts surface
-    it as the focused window when `jailbee tmux` attaches. `jailbee tmux`
-    additionally calls `select-window` for it.
+    Appended (not prepended) to on_start so user steps finish first, and
+    ordered with `claude` last so it stays the most-recently-created window —
+    `jailbee tmux` focuses the last one.
 
-    The step has no network override: claude.enabled already extends
-    strict-mode egress with api.anthropic.com:443 + code.claude.com:443
-    + claude.ai:443 + downloads.claude.ai:443 (plus the plugin marketplace
-    hosts when claude.plugins_enabled), so the container's current network
-    mode is the right one.
+    Each step's network is left unset (`None`): the agent's egress hosts
+    are already folded into `effective_egress_allow()` when the agent is
+    enabled (see `agents.enabled_agent_specs`), so the container's current
+    network mode is already the right one.
 
-    validate_runtime enforces that `claude.autostart` requires
-    `claude.enabled`, so we don't re-check here.
+    `continue_on_error` is True: an agent is an optional integration, so a
+    launch failure (binary never installed) degrades to a warning instead of
+    failing the whole `jailbee new`.
 
-    `continue_on_error` is True: claude is an optional integration, so a
-    launch failure (e.g. the binary never installed) degrades to a warning
-    instead of hard-failing the whole `jailbee new`. The dev container is still
-    usable without the claude window.
+    An agent whose `command` is empty after stripping is skipped rather than
+    emitted as a step: `run=f"exec {spec.command}"` would otherwise produce
+    a bare `exec ` that fails opaquely in the tmux window.
+    `validate_runtime` already reports `enabled=true` with an empty command
+    as a config issue; this is defense-in-depth, not the primary check.
+
+    The agent's `env` is copied onto the step, so `agents.<name>.env` reaches
+    the launched binary via tmux's `-e` flags. `_apply_step` layers it over
+    `autostart.env`, so a per-agent key wins over the global one. It is the
+    same mapping the install/update step gets (see `agents._ensure_one`), which
+    is why Claude's `JAILBEE_CLAUDE_AUTO_UPDATE` flag needs no separate wiring.
     """
-    if not cfg.claude.autostart:
-        return None
-    return AutostartStep(
-        name="claude",
-        run=f"exec {cfg.claude.command}",
-        background=True,
-        continue_on_error=True,
-    )
+    from jailbee.agents import enabled_agent_specs
+
+    return [
+        AutostartStep(
+            name=spec.name,
+            run=f"exec {spec.command}",
+            background=True,
+            continue_on_error=True,
+            env=dict(spec.env),
+        )
+        for spec in enabled_agent_specs(cfg)
+        if spec.autostart and spec.command.strip()
+    ]
 
 
 def run_autostart(
@@ -207,15 +217,14 @@ def run_autostart(
     if trigger == AutostartTrigger.ON_CREATE:
         steps: list[AutostartStep] = list(cfg.autostart.on_create)
     else:
-        # Append the synthetic claude step (no-op when claude.autostart
-        # is off) — runs last so its window is the most-recently-created
-        # and `jailbee tmux` lands in it. The github-token step is NOT injected
-        # here: it's infrastructure, not a user autostart command, so it's
-        # written by ``inject_github_token`` independently of --no-autostart.
+        # Append the synthetic per-agent steps (empty when no agent has
+        # autostart on) — claude sorts last so its window is the
+        # most-recently-created and `jailbee tmux` lands in it. The
+        # github-token step is NOT injected here: it's infrastructure, not a
+        # user autostart command, so it's written by ``inject_github_token``
+        # independently of --no-autostart.
         steps = list(cfg.autostart.on_start)
-        claude_step = _claude_autostart_step(cfg)
-        if claude_step is not None:
-            steps.append(claude_step)
+        steps.extend(agent_autostart_steps(cfg))
     if not steps:
         return
 

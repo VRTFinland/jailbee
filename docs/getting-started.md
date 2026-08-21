@@ -139,20 +139,29 @@ instead of the agent's own judgement. You size the blast radius once, in
 the container's config — read-only mounts for what the build needs,
 sensitive `optional_mounts` left detached, `strict` egress — rather than
 adjudicating it one prompt at a time. JailBee has first-class support for
-[Claude Code](https://claude.com/claude-code) — turn it on in
-`~/.config/jailbee/global.yaml`:
+[Claude Code](https://claude.com/claude-code) — one of six shipped agent
+presets, and the only one exercised in production. The same `agents:`
+mechanism wires in any other terminal coding agent the same way; see
+[Generic agent support](agents.md) for the full list and how to add your
+own. Turn Claude Code on in `~/.config/jailbee/global.yaml`:
 
 ```yaml
-claude:
-  enabled: true
-  plugins_enabled: true
-  # autostart: true                                # launch claude on every container start
-  # command: claude --dangerously-skip-permissions # what the autostart window runs
+agents:
+  claude:
+    enabled: true
+    plugins_enabled: true
+    # autostart: true                                # launch claude on every container start
+    # command: claude --dangerously-skip-permissions # what the autostart window runs
 ```
 
 The template written by `jailbee config init --global` already contains
-this block with `enabled: true`, so if you took that path you have it
-already. Run `jailbee apply` after editing, then `jailbee new` a container.
+this `agents.claude` block with `enabled: true`, so if you took that path
+you have it already. Run `jailbee apply` after editing, then `jailbee new`
+a container.
+
+A top-level `claude:` block is still accepted and means the same thing, but
+defining both spellings at once is a `ConfigError` — so if you have an older
+`claude:` block, rename it rather than adding `agents.claude` alongside it.
 
 What turning it on gets you:
 

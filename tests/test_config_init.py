@@ -394,3 +394,111 @@ def test_repo_template_omits_host_specific_defaults_block(tmp_path):
     assert "defaults" not in parsed
     for token in ("memory:", "16GiB", "storage_pool:"):
         assert token not in out, f"{token!r} still in repo template"
+
+
+def test_template_emits_agents_block():
+    from jailbee.config_init import _TEMPLATE
+
+    assert "agents:" in _TEMPLATE
+    # The legacy spelling appears only in the trailing explanatory comment,
+    # never as its own top-level key.
+    assert "\nclaude:" not in _TEMPLATE
+
+
+def test_repo_template_agents_block_is_commented_out(tmp_path):
+    """The repo template must not emit a *live* `agents:` key.
+
+    Repo scalars win over global ones in `deep_merge`, so a live
+    `agents: {claude: {enabled: false}}` here would silently switch Claude off
+    in any repo where the user had opted in via
+    `jailbee config init --global` — the documented first-run path. Same
+    reasoning as the commented-out `jetbrains` / `chrome` blocks.
+    """
+    out = render_template(repo_root=tmp_path / "myrepo")
+    parsed = yaml.safe_load(out)
+
+    assert "agents" not in parsed
+    assert "claude" not in parsed
+
+
+def test_repo_template_does_not_override_globally_enabled_claude(tmp_path):
+    """The two shipped templates, merged the way `load_config` merges them,
+    must leave Claude enabled.
+
+    This is the user-visible consequence of the test above and the reason it
+    exists: `jailbee config init --global` (Claude on) followed by
+    `jailbee config init` in a repo used to turn Claude off in that repo,
+    silently.
+    """
+    from jailbee.config import deep_merge
+
+    global_raw = yaml.safe_load(render_global_template())
+    repo_raw = yaml.safe_load(render_template(repo_root=tmp_path / "myrepo"))
+
+    merged = deep_merge(global_raw, repo_raw)
+
+    assert merged["agents"]["claude"]["enabled"] is True
+
+
+def test_repo_template_agents_comment_names_every_preset_and_docs():
+    """The comment is the only place a user learns which presets exist and
+    that only `claude` has ever been run for real — pin the honest framing
+    so a future edit can't quietly soften or drop it."""
+    from jailbee.config_init import _TEMPLATE
+
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
+        assert preset in _TEMPLATE
+    assert "docs/agents.md" in _TEMPLATE
+    assert "untested templates" in _TEMPLATE
+    assert "agents.claude" in _TEMPLATE
+
+
+# --- global template's agents: block (converted from the old claude: block) -
+
+
+def test_global_template_emits_agents_block():
+    """~/.config/jailbee/global.yaml is the file a developer actually edits
+    to turn an agent on — it must teach the current `agents:` spelling, not
+    just the legacy top-level `claude:` block."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    assert "agents:" in _GLOBAL_TEMPLATE
+    # The legacy spelling appears only in the trailing explanatory comment
+    # and the CLI example line further down, never as its own top-level key.
+    assert "\nclaude:" not in _GLOBAL_TEMPLATE
+
+
+def test_global_template_agents_block_enables_claude_by_default():
+    """The global template is a *working* starting point (unlike the repo
+    template, which ships every integration disabled) — claude stays
+    enabled: true by default here, now under agents.claude."""
+    out = render_global_template()
+    parsed = yaml.safe_load(out)
+
+    assert parsed["agents"]["claude"]["enabled"] is True
+    assert parsed["agents"]["claude"]["plugins_enabled"] is True
+
+
+def test_global_template_agents_comment_names_every_preset_and_docs():
+    """Same honest framing as the repo template — pin it here too so a
+    future edit to either file is a deliberate choice, not a drift."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
+        assert preset in _GLOBAL_TEMPLATE
+    assert "docs/agents.md" in _GLOBAL_TEMPLATE
+    assert "untested templates" in _GLOBAL_TEMPLATE
+    assert "agents.claude" in _GLOBAL_TEMPLATE
+
+
+def test_global_template_egress_comment_generalises_beyond_claude():
+    """The egress_allow comment used to name Claude's hosts via dotted
+    `claude.enabled`/`claude.plugins_enabled` references. Pin that those
+    stale, agent-specific attribute references are gone — the comment now
+    frames it as "each enabled agent appends its own hosts", with Claude
+    only as the concrete example."""
+    from jailbee.config_init import _GLOBAL_TEMPLATE
+
+    assert "appends its own hosts" in _GLOBAL_TEMPLATE
+    assert "claude.enabled" not in _GLOBAL_TEMPLATE
+    assert "claude.plugins_enabled" not in _GLOBAL_TEMPLATE
