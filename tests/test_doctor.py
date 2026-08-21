@@ -158,6 +158,27 @@ def test_doctor_reports_the_mirror_as_not_needed_without_docker(tmp_path):
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is True
     assert "not needed" in mirror.detail
+    assert "no docker detected" in mirror.detail
+    # The `auto` gate is overridable, so the line has to say how.
+    assert "docker_registry_mirror.enabled: true" in mirror.detail
+    status.assert_not_called()
+
+
+def test_doctor_names_the_explicit_opt_out_rather_than_blaming_the_stack(tmp_path):
+    """`enabled: false` never consults the repo at all, so telling that user
+    they have "no docker stack" reports a fact the gate never checked."""
+    cfg = _cfg(tmp_path)  # full_config declares extra_registries → mirror wanted
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=False))
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING) as status:
+        results = run_checks(cfg, incus, gcfg=gcfg)
+
+    mirror = next(r for r in results if r.name == "registry mirror")
+    assert mirror.ok is True
+    assert "docker_registry_mirror.enabled: false" in mirror.detail
+    assert "no docker" not in mirror.detail
     status.assert_not_called()
 
 

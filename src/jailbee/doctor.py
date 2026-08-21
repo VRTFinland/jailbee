@@ -227,19 +227,18 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
             )
 
     # 7. Docker registry mirror status (Incus-hosted)
-    from jailbee.docker_daemon import mirror_wanted
+    from jailbee.docker_daemon import mirror_skip_reason
 
-    if not mirror_wanted(cfg, gcfg):
-        # Reported rather than omitted: a check that silently disappears makes
-        # two machines' doctor output incomparable, and the user should see
-        # that the gate decided something.
-        results.append(
-            CheckResult(
-                "registry mirror",
-                True,
-                "not needed — no docker stack in this repo",
-            )
-        )
+    skip_reason = mirror_skip_reason(cfg, gcfg)
+    if skip_reason is not None:
+        # Reported rather than omitted: the user should see that the gate
+        # decided something, and which of the two reasons it was — "no docker"
+        # would be a lie to someone who wrote `enabled: false`, a case the gate
+        # never checks the repo for. (When the mirror *is* wanted but Incus is
+        # missing, the line does drop out below; the "Incus-dependent checks"
+        # result above names the mirror explicitly, so the reason is still on
+        # screen exactly once.)
+        results.append(CheckResult("registry mirror", True, f"not needed — {skip_reason}"))
     elif incus_available:
         try:
             rstatus = registry_status(incus)

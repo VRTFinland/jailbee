@@ -164,3 +164,19 @@ def mirror_wanted(cfg: Config, gcfg: GlobalConfig) -> bool:
     if enabled != "auto":
         return enabled
     return _auto_mirror_wanted(cfg)
+
+
+def mirror_skip_reason(cfg: Config, gcfg: GlobalConfig) -> str | None:
+    """Why the mirror is not wired into this repo, or None when it is wanted.
+
+    The diagnostic companion to `mirror_wanted` — same decision, but it keeps
+    the two "no" cases apart so `doctor` does not tell a user who wrote
+    `enabled: false` that their repo has no Docker (a fact the gate never
+    checked). Exists so `doctor` need not read the raw flag.
+    """
+    enabled = gcfg.docker_registry_mirror.enabled
+    if enabled != "auto":
+        return None if enabled else "disabled by docker_registry_mirror.enabled: false"
+    if _auto_mirror_wanted(cfg):
+        return None
+    return "no docker detected; set docker_registry_mirror.enabled: true to force"

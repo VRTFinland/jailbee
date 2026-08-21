@@ -7,6 +7,7 @@ import pytest
 from jailbee.docker_daemon import (
     apply_docker_proxy,
     compute_mirror_endpoint,
+    mirror_skip_reason,
     mirror_wanted,
     render_proxy_conf,
 )
@@ -335,6 +336,24 @@ def test_mirror_wanted_true_forces_on_without_docker(tmp_path):
 
 def test_mirror_wanted_false_wins_over_the_docker_stack(tmp_path):
     assert mirror_wanted(_docker_cfg(tmp_path), _gcfg(False, tmp_path)) is False
+
+
+def test_mirror_skip_reason_is_none_when_the_mirror_is_wanted(tmp_path):
+    """A reason exists only for the two "no" cases; None is the caller's cue
+    that the mirror really is expected to be there."""
+    assert mirror_skip_reason(_docker_cfg(tmp_path), _gcfg("auto", tmp_path)) is None
+    assert mirror_skip_reason(_plain_cfg(tmp_path), _gcfg(True, tmp_path)) is None
+
+
+def test_mirror_skip_reason_distinguishes_the_two_no_cases(tmp_path):
+    """`enabled: false` never looks at the repo, so it must not be reported as
+    "no docker detected" — that is a fact about a check that never ran."""
+    disabled = mirror_skip_reason(_docker_cfg(tmp_path), _gcfg(False, tmp_path))
+    undetected = mirror_skip_reason(_plain_cfg(tmp_path), _gcfg("auto", tmp_path))
+
+    assert disabled is not None and "enabled: false" in disabled
+    assert undetected is not None and "no docker detected" in undetected
+    assert disabled != undetected
 
 
 def test_enabled_is_read_in_exactly_two_modules():
