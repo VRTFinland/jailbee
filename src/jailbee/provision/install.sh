@@ -27,6 +27,27 @@ export CONTAINER_USER=dev
 : "${JAILBEE_USER_HOME:=/home/dev}"
 : "${JAILBEE_PROVISION_DIR:=/provision}"
 
+# Ubuntu's unattended-upgrade machinery is a liability in a dev container.
+# apt-daily.timer fires within minutes of every boot, so it takes the dpkg
+# lock out from under whoever is installing something — including this
+# script, moments from now — and an apt run still in flight at shutdown
+# blocks systemd, which can burn the whole clean-shutdown budget `jailbee`
+# gives a stop and leave the container Running. Nothing in a branch
+# container wants surprise background upgrades: the image is rebuilt by
+# `jailbee base build` instead.
+#
+# Masked rather than disabled: `apt-get install` of anything that ships
+# these units re-enables a merely-disabled timer, and masking survives that.
+# The timers are stopped here; the services deliberately are not, since
+# SIGTERM to an apt run mid-dpkg is how an image gets a broken package
+# database. If one is running, the apt-get below fails loudly on the lock.
+echo "==> Masking Ubuntu's automatic apt machinery"
+systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask \
+    apt-daily.timer apt-daily-upgrade.timer \
+    apt-daily.service apt-daily-upgrade.service \
+    unattended-upgrades.service 2>/dev/null || true
+
 echo "==> Updating apt cache"
 apt-get update -y
 

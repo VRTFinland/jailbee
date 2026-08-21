@@ -61,6 +61,25 @@ def _make_agent_socket(runtime_dir: Path) -> Path:
     return path
 
 
+def test_install_sh_masks_ubuntus_automatic_apt_machinery():
+    """apt-daily fires minutes after every boot: it takes the dpkg lock out
+    from under whoever is installing something, and a run still in flight at
+    shutdown blocks systemd — which is how a stop can burn incusd's whole
+    600s budget and fail. Masked, not disabled, so an apt upgrade inside the
+    container cannot quietly re-enable it.
+    """
+    script = _install_sh()
+    assert "systemctl mask" in script
+    for unit in (
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer",
+        "unattended-upgrades.service",
+    ):
+        assert unit in script, f"{unit} is not masked by install.sh"
+    # Before our own apt run, or the lock race it prevents is already lost.
+    assert script.index("systemctl mask") < script.index("apt-get update")
+
+
 def test_install_sh_writes_the_profile_d_snippet():
     assert SNIPPET_HEREDOC_START in _install_sh()
     assert "SSH_AUTH_SOCK" in _jailbee_env_snippet()

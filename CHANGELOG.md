@@ -211,6 +211,14 @@
 
 ### Fixed
 
+- **The golden image no longer ships Ubuntu's automatic apt machinery.**
+  `install.sh` masks `apt-daily{,-upgrade}.timer`, their services and
+  `unattended-upgrades`. The timer fires within minutes of every boot — that
+  is, right on top of the golden build's own apt run and of yours inside a
+  branch container — and an upgrade still in flight at shutdown blocks
+  systemd, the most likely explanation for a build container that would not
+  stop. Masked rather than disabled, so reinstalling the packages cannot
+  quietly bring it back. Takes effect on the next `jailbee base build`.
 - **A container that will not shut down no longer costs ten silent minutes.**
   Every jailbee stop passed no `--timeout`, and incusd reads that as a
   600-second clean-shutdown budget: a container whose init hangs froze the
