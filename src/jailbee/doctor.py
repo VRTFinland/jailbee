@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from jailbee.config import Config
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
+from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
 from jailbee.network import acl_name
@@ -68,8 +69,18 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
-def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
-    """Run all diagnostic checks. Returns list of results."""
+def run_checks(
+    cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None
+) -> list[CheckResult]:
+    """Run all diagnostic checks. Returns list of results.
+
+    `gcfg=None` means the same defaults `load_global_config` returns for an
+    absent `global.yaml`, so tests that do not care about host config need not
+    build one.
+    """
+    if gcfg is None:
+        gcfg = GlobalConfig()
+
     results: list[CheckResult] = []
 
     # 1. incus binary. Every check below that talks to Incus hangs off this:
@@ -218,7 +229,20 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             )
 
     # 7. Docker registry mirror status (Incus-hosted)
-    if incus_available:
+    from jailbee.docker_daemon import mirror_wanted
+
+    if not mirror_wanted(cfg, gcfg):
+        # Reported rather than omitted: a check that silently disappears makes
+        # two machines' doctor output incomparable, and the user should see
+        # that the gate decided something.
+        results.append(
+            CheckResult(
+                "registry mirror",
+                True,
+                "not needed — no docker stack in this repo",
+            )
+        )
+    elif incus_available:
         try:
             rstatus = registry_status(incus)
         except IncusError as e:

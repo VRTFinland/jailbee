@@ -6490,7 +6490,7 @@ def doctor(config: ConfigOption = None) -> None:
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    results = run_checks(cfg, Incus())
+    results = run_checks(cfg, Incus(), gcfg=_load_global())
 
     table = Table(title="Diagnostic checks")
     table.add_column("CHECK")
