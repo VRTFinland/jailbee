@@ -379,8 +379,10 @@ egress_allow: []
 # Host-level docker registry mirror (host:port). See `jailbee registry up`.
 # This block is interpreted with the GlobalConfig schema (host-level),
 # NOT the per-repo DockerRegistryMirrorRepoConfig.
-# `enabled: auto` (the default) wires the mirror only into repos whose image
-# contains Docker. Use `true` to force it on everywhere, `false` to disable.
+# `enabled: auto` (the default) wires the mirror only into repos that ask for
+# it: an image that would contain Docker, a repo-level `extra_registries`, or
+# `golden.stacks.ecr`. Use `true` to force it on everywhere (it is host-global,
+# so that applies to every repo on this machine), `false` to disable.
 # docker_registry_mirror:
 #   enabled: auto
 

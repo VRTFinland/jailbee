@@ -91,9 +91,11 @@ jailbee base build              # builds the golden image (~10-15 min, one time)
 `jailbee registry up` is only for repos whose image contains Docker
 (`golden.stacks.docker`). Run it before your first strict-mode `jailbee new`:
 the strict egress allowlist has no registry hosts, so the mirror is the
-container's only route to Docker Hub. Repos without Docker skip this step —
-`docker_registry_mirror.enabled` defaults to `auto` and never asks for the
-mirror container to exist.
+container's only route to Docker Hub — and a strict-mode `jailbee new` refuses
+to create the container until the mirror is up (in loose mode it warns and
+proceeds, since there the mirror is only a pull cache). Repos without Docker
+skip this step — `docker_registry_mirror.enabled` defaults to `auto` and never
+asks for the mirror container to exist.
 
 ## A typical day
 
