@@ -4784,6 +4784,35 @@ def test_net_strict_clears_loose_labels(tmp_path, mocker):
     assert "user.jailbee.loose_revert_to" in unset_keys
 
 
+def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):
+    """`jailbee new --network loose` with the mirror down succeeds by design,
+    so `net strict` is where a Docker repo first meets a broken dockerd — and
+    the only place that can still name the remedy."""
+    _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"golden": {"stacks": {"docker": True}}},
+        pre_mode="loose",
+    )
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    # Rich hard-wraps the warning, so compare on collapsed whitespace.
+    flat = " ".join(result.stdout.split())
+    assert "Registry mirror unavailable" in flat
+    assert "jailbee registry up && jailbee apply" in flat
+
+
+def test_net_strict_is_silent_when_the_repo_does_not_want_the_mirror(tmp_path, mocker):
+    """The warning must be gated on `mirror_wanted`, not on the endpoint alone,
+    or every non-Docker repo gets it on every `net strict`."""
+    _setup_net_test(tmp_path, mocker, pre_mode="loose")
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "registry up" not in result.stdout
+
+
 def test_net_loose_already_loose_preserves_revert_to(tmp_path, mocker):
     """If container is already loose, keep the existing revert_to value."""
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="loose")

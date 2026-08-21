@@ -4772,6 +4772,21 @@ def _switch(
 
     incus, resolved = _resolve_existing(cfg, name)
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
+    if mode == "strict" and mirror_endpoint is None:
+        # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
+        # `restart` path, where the pin is incidental. Here it is not: going
+        # strict removes the container's direct route to Docker Hub, so a repo
+        # that wants the mirror and cannot reach it ends up with a dockerd
+        # proxying to a host it can no longer resolve. `jailbee new --network
+        # loose` with the mirror down is a legitimate way to reach this state.
+        from jailbee.docker_daemon import mirror_wanted
+
+        if mirror_wanted(cfg, _load_global()):
+            warn(
+                "Registry mirror unavailable — this strict container gets no "
+                "/etc/hosts pin for it, so `docker pull` inside it will fail. "
+                "Fix with 'jailbee registry up && jailbee apply'."
+            )
 
     # Capture pre-switch mode for ``loose_revert_to``. None means no
     # recognised jailbee net profile attached — default to "strict" as the
