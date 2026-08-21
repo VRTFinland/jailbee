@@ -293,6 +293,41 @@ def test_mirror_wanted_auto_is_false_without_docker(tmp_path):
     assert mirror_wanted(_plain_cfg(tmp_path), _gcfg("auto", tmp_path)) is False
 
 
+def test_mirror_wanted_auto_sees_docker_in_extra_apt_packages(tmp_path):
+    """`golden.extra_apt_packages` is staged by 05-extra-apt.sh, so Docker can
+    reach the image without the `docker` snippet ever resolving."""
+    cfg = make_cfg(tmp_path / "repo", golden={"extra_apt_packages": ["docker.io"]})
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_sees_extra_registries_as_intent(tmp_path):
+    """Naming upstream registries to cache is the clearest statement of intent
+    there is; without this the key would be an inert no-op (both push sites
+    are gated on the endpoint)."""
+    cfg = make_cfg(
+        tmp_path / "repo",
+        docker_registry_mirror={"extra_registries": ["x.dkr.ecr.eu-north-1.amazonaws.com"]},
+    )
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_sees_the_ecr_stack(tmp_path):
+    """`stacks.ecr` stages a Docker credential helper without the `docker`
+    snippet, so image content alone would miss it."""
+    cfg = make_cfg(tmp_path / "repo", golden={"stacks": {"ecr": True}})
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_false_wins_over_every_auto_signal(tmp_path):
+    """`false` must short-circuit before detection, not merely outvote it."""
+    cfg = make_cfg(
+        tmp_path / "repo",
+        golden={"extra_apt_packages": ["docker.io"], "stacks": {"docker": True, "ecr": True}},
+        docker_registry_mirror={"extra_registries": ["x.dkr.ecr.eu-north-1.amazonaws.com"]},
+    )
+    assert mirror_wanted(cfg, _gcfg(False, tmp_path)) is False
+
+
 def test_mirror_wanted_true_forces_on_without_docker(tmp_path):
     """The escape hatch for a repo whose Docker install jailbee cannot see."""
     assert mirror_wanted(_plain_cfg(tmp_path), _gcfg(True, tmp_path)) is True

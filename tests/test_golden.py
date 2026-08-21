@@ -794,3 +794,30 @@ def test_repo_uses_docker_falls_back_to_the_stack_bool_with_provision_script(tmp
 
 def test_repo_uses_docker_false_for_a_plain_repo(tmp_path, make_cfg):
     assert repo_uses_docker(_repo_cfg(tmp_path, make_cfg)) is False
+
+
+def test_repo_uses_docker_sees_extra_apt_packages(tmp_path, make_cfg):
+    """`docker.io` from the archive lands in the image via 05-extra-apt.sh
+    without the `docker` snippet ever resolving."""
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["curl", "docker.io"]})
+    assert repo_uses_docker(cfg) is True
+
+
+def test_repo_uses_docker_sees_extra_apt_packages_with_a_provision_script(tmp_path, make_cfg):
+    """extra_apt_packages is independent of install.d, so the signal survives
+    the branch where a custom provision script replaces install.sh."""
+    script = tmp_path / "custom-install.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    cfg = _repo_cfg(
+        tmp_path,
+        make_cfg,
+        golden={"provision_script": str(script), "extra_apt_packages": ["docker-ce"]},
+    )
+    assert repo_uses_docker(cfg) is True
+
+
+def test_repo_uses_docker_ignores_unrelated_extra_apt_packages(tmp_path, make_cfg):
+    """The prefix test must not fire on packages that merely mention docker
+    late in the name."""
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["golang-docker-dev"]})
+    assert repo_uses_docker(cfg) is False

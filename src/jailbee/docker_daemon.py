@@ -126,14 +126,41 @@ fi
     incus.exec(name, ["bash", "-c", script], timeout=120)
 
 
-def mirror_wanted(cfg: Config, gcfg: GlobalConfig) -> bool:
-    """Whether this repo should be wired to the registry mirror.
+def _auto_mirror_wanted(cfg: Config) -> bool:
+    """The `auto` decision: does this repo state mirror intent in any way?
 
-    The single reader of `docker_registry_mirror.enabled`. `auto` defers to
-    the repo's image contents, so a repo without Docker never needs the
-    mirror container to exist.
+    Three independent signals, because "the image has Docker" is not the only
+    way a repo says it wants the mirror:
+
+    * `repo_uses_docker` — the image would contain Docker.
+    * `docker_registry_mirror.extra_registries` — the per-repo list of upstream
+      registries to cache. Both push sites (`apply.py`, `lifecycle.py`) are
+      gated on the mirror endpoint, so treating this as no signal would make
+      the key an inert no-op.
+    * `golden.stacks.ecr` — stages `80-ecr-helper.sh`, a Docker credential
+      helper, without pulling in the `docker` snippet itself.
     """
     from jailbee.golden import repo_uses_docker
 
+    return bool(
+        repo_uses_docker(cfg) or cfg.docker_registry_mirror.extra_registries or cfg.golden.stacks.ecr
+    )
+
+
+def mirror_wanted(cfg: Config, gcfg: GlobalConfig) -> bool:
+    """Whether this repo should be wired to the registry mirror.
+
+    The single reader of `docker_registry_mirror.enabled`. An explicit `true`
+    or `false` short-circuits before any detection; `auto` defers to
+    `_auto_mirror_wanted`, so a repo that neither ships Docker nor names any
+    registry never needs the mirror container to exist.
+
+    Note that the host-level `enabled` is the blunt instrument — it applies to
+    every repo on the machine. The per-repo way to opt in without touching
+    `~/.config/jailbee/global.yaml` is `docker_registry_mirror.extra_registries`
+    in the repo's own config.
+    """
     enabled = gcfg.docker_registry_mirror.enabled
-    return repo_uses_docker(cfg) if enabled == "auto" else enabled
+    if enabled != "auto":
+        return enabled
+    return _auto_mirror_wanted(cfg)

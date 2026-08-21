@@ -254,12 +254,23 @@ def resolved_snippet_names(cfg: Config) -> set[str]:
 def repo_uses_docker(cfg: Config) -> bool:
     """Whether a golden image built for `cfg` would contain Docker.
 
-    Covers `golden.stacks.docker`, the `golden.enable_snippets` escape hatch,
-    a user's or repo's own `install.d/50-docker.sh`, and `disable_snippets`
-    cancelling any of them. A custom snippet under a different name
+    Answers a question about *image content* only — whether the repo wants the
+    registry mirror is `docker_daemon.mirror_wanted`, which adds signals that
+    say nothing about what is installed.
+
+    Covers `golden.extra_apt_packages: [docker...]` (staged by the bundled
+    `05-extra-apt.sh`, so it is independent of install.d resolution and applies
+    with a `provision_script` too), `golden.stacks.docker`, the
+    `golden.enable_snippets` escape hatch, a user's or repo's own
+    `install.d/50-docker.sh`, and `disable_snippets` cancelling any of the
+    snippet-borne ones. A custom snippet under a different name
     (`55-docker-ce.sh`) is invisible here — that is what
     `docker_registry_mirror.enabled: true` is for.
     """
+    # apt package names are validated lowercase (config.py `_APT_PACKAGE_NAME_RE`),
+    # so a plain prefix test covers docker.io / docker-ce / docker-compose-plugin.
+    if any(pkg.startswith("docker") for pkg in cfg.golden.extra_apt_packages):
+        return True
     if cfg.golden.provision_script is not None:
         return cfg.golden.stacks.docker
     return "docker" in resolved_snippet_names(cfg)

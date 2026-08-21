@@ -142,7 +142,13 @@ def test_doctor_reports_registry_missing(tmp_path):
 def test_doctor_reports_the_mirror_as_not_needed_without_docker(tmp_path):
     """A user who does not use Docker must not see a red mirror line for a
     container they were never supposed to create."""
-    cfg = _cfg(tmp_path)
+    from jailbee.config import DockerRegistryMirrorRepoConfig
+
+    # The fixture declares `extra_registries`, which is itself mirror intent —
+    # clear it so this test exercises the "no signal at all" repo.
+    cfg = _cfg(tmp_path).model_copy(
+        update={"docker_registry_mirror": DockerRegistryMirrorRepoConfig()}
+    )
     incus = _baseline_incus()
     incus.network_exists.return_value = True
 
