@@ -54,9 +54,7 @@ def test_submodule_checkout_submodules_only_leaves_superproject(mocker, tmp_path
         return_value=("feat/x", []),
     )
 
-    result = CliRunner().invoke(
-        app, ["submodule", "checkout", "-b", "feat/x", "--submodules-only"]
-    )
+    result = CliRunner().invoke(app, ["submodule", "checkout", "-b", "feat/x", "--submodules-only"])
 
     assert result.exit_code == 0, result.output
     host.assert_called_once_with(cfg_mock, branch="feat/x", switch_superproject=False)
