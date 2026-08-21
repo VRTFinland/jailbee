@@ -69,9 +69,7 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
-def run_checks(
-    cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None
-) -> list[CheckResult]:
+def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
     `gcfg=None` means the same defaults `load_global_config` returns for an

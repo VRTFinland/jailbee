@@ -235,9 +235,7 @@ def resolved_snippet_paths(cfg: Config) -> list[Path]:
     # directory that variable's user never writes.
     user_install_d = default_global_config_path().parent / "install.d"
     repo_install_d = cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
-    enabled = list(
-        dict.fromkeys([*cfg.golden.enable_snippets, *cfg.golden.stacks.snippet_names()])
-    )
+    enabled = list(dict.fromkeys([*cfg.golden.enable_snippets, *cfg.golden.stacks.snippet_names()]))
     return resolve_snippets(
         bundled_dir=_resource_dir("install.d"),
         user_dir=user_install_d,
