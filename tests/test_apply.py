@@ -16,7 +16,7 @@ from jailbee.incus import Incus
 def _no_mirror_lookup(mocker: MockerFixture) -> None:
     """Default: mirror disabled. Override per-test by re-patching."""
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=None,
     )
     mocker.patch(
@@ -344,7 +344,7 @@ def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -426,7 +426,7 @@ def test_run_apply_reapplies_docker_proxy_when_mirror_enabled(
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     # Override the autouse `_no_mirror_lookup` fixture: mirror IS enabled.
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -851,7 +851,7 @@ def test_run_apply_mirror_endpoint_failure_aborts_before_incus_calls(
 
     # Override the autouse fixture's "mirror returns None" with a hard fail.
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         side_effect=ValueError("mirror down"),
     )
 
@@ -886,7 +886,7 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -1498,3 +1498,35 @@ def test_run_apply_reconciles_ports_from_one_prefetched_call(
     # `reconcile_config_ports` never fell back to its own per-container query.
     forwards_for.assert_not_called()
     assert result.ports_changed == []
+
+
+def test_apply_warns_and_continues_when_the_mirror_is_down(tmp_path, mocker):
+    """`apply` is the repair command; it must not die on the one thing the
+    user might be running it to fix. The CA half already warns
+    (`_read_mirror_ca_or_warn`) — the endpoint half must match."""
+    from jailbee import apply as apply_mod
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+    from tests.conftest import make_cfg
+
+    # The autouse `_no_mirror_lookup` fixture above blanket-mocks this exact
+    # function to return_value=None so every other test in this module gets
+    # "mirror disabled" for free. This test is testing that function's own
+    # body, so it must undo that mock before patching the two things the
+    # real implementation actually calls.
+    mocker.stopall()
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    # Patch the source module, not captured output: `warn` prints through a
+    # Rich console that hard-wraps at 80 columns, so a substring assertion
+    # would depend on terminal width. The helper imports `warn` lazily, so
+    # this patch is what it resolves.
+    warn = mocker.patch("jailbee.tui.warn")
+    cfg = make_cfg(tmp_path / "repo", golden={"stacks": {"docker": True}})
+    gcfg = GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+    )
+
+    assert apply_mod._mirror_endpoint_or_warn(cfg, mocker.MagicMock(), gcfg) is None
+    warn.assert_called_once()

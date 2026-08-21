@@ -152,7 +152,7 @@ def run_apply(
     # anything. Either of these raises and apply aborts cleanly with no
     # partial profile / ACL update.
     info("Refreshing egress pool + ACL + /etc/hosts...")
-    mirror_endpoint = _compute_mirror_endpoint_or_abort(incus, gcfg)
+    mirror_endpoint = _mirror_endpoint_or_warn(cfg, incus, gcfg)
     mirror_ca_pem = _read_mirror_ca_or_warn(gcfg) if mirror_endpoint else None
 
     with Session(get_engine()) as session:
@@ -379,13 +379,28 @@ def _ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
     ensure_acl_attached_to_bridge(cfg, incus)
 
 
-def _compute_mirror_endpoint_or_abort(incus: Incus, gcfg: GlobalConfig) -> tuple[str, int] | None:
-    """Resolve mirror endpoint, return None if disabled. Aborts on ValueError."""
-    if not gcfg.docker_registry_mirror.enabled:
+def _mirror_endpoint_or_warn(
+    cfg: Config, incus: Incus, gcfg: GlobalConfig
+) -> tuple[str, int] | None:
+    """Resolve the mirror endpoint, or None when unwanted / unavailable.
+
+    Warns rather than aborting: `apply` re-applies profiles, ACL, ports and
+    container state, none of which depend on the mirror, and a user whose
+    mirror is down may well be running `apply` to repair something else.
+    Symmetric with `_read_mirror_ca_or_warn` below.
+    """
+    from jailbee.docker_daemon import mirror_wanted
+    from jailbee.tui import warn
+
+    if not mirror_wanted(cfg, gcfg):
         return None
     from jailbee.docker_daemon import compute_mirror_endpoint
 
-    return compute_mirror_endpoint(incus, gcfg)
+    try:
+        return compute_mirror_endpoint(incus, gcfg)
+    except ValueError as e:
+        warn(f"{e} Skipping mirror wiring this run.")
+        return None
 
 
 def _read_mirror_ca_or_warn(gcfg: GlobalConfig) -> str | None:
