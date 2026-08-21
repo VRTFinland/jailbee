@@ -1,0 +1,16 @@
+# Video A, timed against the 143.16s take recorded 2026-08-22.
+# Re-time after any change to a.tape — see render.sh's header, and check the
+# frames it drops in workflows/a.boundaries/.
+
+# `jb new` provisions in silence: measured with
+#   ffmpeg -i a.webm -vf freezedetect=n=-60dB:d=2.5 -map 0:v -f null -
+# the screen does not change at all between 6.6s and 24.36s. It is the only
+# span in the video where nothing whatsoever happens, so it is the only one
+# sped up. The span starts 0.6s late so the command and its first three lines
+# read at normal speed, and ends 0.36s early so the output resuming does too.
+# 16.8s becomes 2.8s, and the ×6 badge is on screen for exactly those 2.8s.
+speed 7.2 24.0 6
+
+# Act 2's `jb ls`, with the new container in the table under the output that
+# created it — the frame that says what the tool is without needing play.
+poster 32.0

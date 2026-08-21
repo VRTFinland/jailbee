@@ -99,6 +99,24 @@ for name in "${names[@]}"; do
         fi
         echo "==> Recording $name"
         (cd "$WORKFLOWS" && VHS_NO_SANDBOX=1 vhs "$name.tape")
+
+        # A render that exits 0 is not a valid take. A tape that ends by
+        # pulling the container's work into the host asserts, by doing so, that
+        # there was work to pull — so if the substrate did not move, the agent
+        # produced nothing and the take is a failure that looks like a success.
+        # This is not hypothetical: it happened the moment the seeded Claude
+        # credential went stale (the agent's window said "Login expired"), and
+        # the tape's own `Wait` on `passed` did not catch it, because `passed`
+        # is a substring of `2 failed, 3 passed in 0.21s`.
+        if [[ -d ${substrate:-}/.git ]] && grep -q "git pull" "$tape"; then
+            if [[ $(git -C "$substrate" rev-parse HEAD) == "$origin" ]]; then
+                die "the take is invalid: $substrate is still at origin/main, so
+    the pull merged nothing and the agent produced nothing. Check the agent's
+    window in the frames. If it says 'Login expired', re-run rig/seed-claude.sh
+    and verify inside a container before recording again:
+    jailbee exec <container> -- bash -lc 'claude -p \"reply with exactly: ok\"'"
+            fi
+        fi
     fi
 
     raw_webm="$WORKFLOWS/$name.webm"
@@ -188,7 +206,9 @@ for name in "${names[@]}"; do
         echo "    cut: $(duration_of "$raw_webm")s -> $(duration_of "$CLIPS/$name.webm")s"
     fi
 
-    ffmpeg -v error -y -ss "$poster_at" -i "$CLIPS/$name.webm" -frames:v 1 "$CLIPS/$name.poster.png"
+    # From the RAW render, not the cut clip: every time in a cut list is a raw
+    # timestamp, and a poster must not carry a ×N badge.
+    ffmpeg -v error -y -ss "$poster_at" -i "$raw_webm" -frames:v 1 "$CLIPS/$name.poster.png"
     echo "    poster from ${poster_at}s"
 done
 
