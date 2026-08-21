@@ -4606,21 +4606,43 @@ def submodule_checkout(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Branch to place submodules on (default: current)."),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Branch to put the tree on (default: current). On the host this "
+            "checks the branch out in the superproject too.",
+        ),
     ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option(
+            "--submodules-only",
+            help="Align submodules without checking -b out in the superproject "
+            "(host only: a container's branch is never switched here).",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Recursively place submodules on the superproject's branch.
+    """Put the repo tree — superproject and submodules — on one branch.
 
     Purely local — moves nothing between host and container (that is
-    `jailbee git push`/`pull`). With no NAME, aligns the host repo's submodules
-    to the host's current branch (or -b). With a container NAME, aligns that
-    container's submodules to its branch (or -b).
+    `jailbee git push`/`pull`).
+
+    With no NAME this works on the host repo: bare, it aligns the submodules
+    to the branch already checked out; with -b it checks that branch out in
+    the superproject first and then aligns the submodules to it, so one
+    command jumps the whole tree. Pass --submodules-only to leave the
+    superproject where it is (a deliberate mismatch, or a detached HEAD you
+    want to keep).
+
+    With a container NAME, aligns that container's submodules to its branch
+    (or -b). A container's branch is its identity, so -b never switches it.
 
     Examples:
 
-      jailbee submodule checkout               # host repo, current branch
-      jailbee submodule checkout -b feat/x     # host repo, explicit branch
+      jailbee submodule checkout               # host, align to current branch
+      jailbee submodule checkout -b master     # host, whole tree to master
+      jailbee submodule checkout -b master --submodules-only
       jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
     """
     from jailbee import sync
@@ -4630,7 +4652,11 @@ def submodule_checkout(
 
     try:
         if name is None:
-            resolved, report = sync.checkout_submodules_on_host(cfg, branch=branch)
+            resolved, report = sync.checkout_submodules_on_host(
+                cfg,
+                branch=branch,
+                switch_superproject=branch is not None and not submodules_only,
+            )
         else:
             incus, full = _resolve_existing(cfg, name)
             short = short_name(cfg, full)

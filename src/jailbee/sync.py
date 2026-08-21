@@ -1218,10 +1218,18 @@ def checkout_from_container(
 
 
 def checkout_submodules_on_host(
-    cfg: Config, *, branch: str | None = None
+    cfg: Config, *, branch: str | None = None, switch_superproject: bool = False
 ) -> tuple[str, list[tuple[str, str | None]]]:
     """Place the host repo's submodules on ``branch`` (or the host's current
     branch), recursively, then return ``(resolved branch, per-submodule report)``.
+
+    With ``switch_superproject``, check the resolved branch out in the
+    superproject first, so one call moves the whole tree. That order is
+    required, not cosmetic: the superproject checkout is what rewrites the
+    gitlinks the submodule alignment then places branches at. A refused
+    checkout (dirty tree, unknown branch) raises ``SyncError`` and the
+    submodules are left alone — never aligned to a branch the superproject
+    is not on.
 
     Purely local — moves no objects between host and container. Raises
     ``SyncError`` when the host is in detached HEAD and no ``branch`` override
@@ -1232,6 +1240,11 @@ def checkout_submodules_on_host(
         raise SyncError(
             "Host is in detached HEAD; pass -b <branch> to name the branch to place submodules on."
         )
+    if switch_superproject:
+        try:
+            git.checkout_branch(cfg.repo_root, resolved)
+        except git.GitError as exc:
+            raise SyncError(f"could not check out '{resolved}' in the superproject: {exc}") from exc
     submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
     report = submodules.report_submodule_branches(git.run_capture, str(cfg.repo_root))
     return resolved, report

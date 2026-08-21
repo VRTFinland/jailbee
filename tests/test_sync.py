@@ -5191,6 +5191,84 @@ def test_checkout_submodules_on_host_branch_override_wins(mocker, make_cfg, tmp_
     upd.assert_called_once_with(cfg.repo_root, branch="feat/x")
 
 
+def test_checkout_submodules_on_host_does_not_switch_by_default(mocker, make_cfg, tmp_path):
+    """The superproject stays where it is unless the caller asks for the switch."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    co = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.submodules.report_submodule_branches", return_value=[])
+
+    sync.checkout_submodules_on_host(cfg, branch="feat/x")
+
+    co.assert_not_called()
+
+
+def test_checkout_submodules_on_host_switches_superproject_before_aligning(
+    mocker, make_cfg, tmp_path
+):
+    """The superproject checkout must land first: it is what rewrites the
+    gitlinks that the submodule alignment then checks out."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    order: list[str] = []
+    co = mocker.patch(
+        "jailbee.sync.git.checkout_branch", side_effect=lambda *a, **k: order.append("checkout")
+    )
+    upd = mocker.patch(
+        "jailbee.sync.submodules.update_submodules_on_host",
+        side_effect=lambda *a, **k: order.append("align"),
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.report_submodule_branches", return_value=[("lib", "feat/x")]
+    )
+
+    resolved, report = sync.checkout_submodules_on_host(
+        cfg, branch="feat/x", switch_superproject=True
+    )
+
+    assert order == ["checkout", "align"]
+    co.assert_called_once_with(cfg.repo_root, "feat/x")
+    upd.assert_called_once_with(cfg.repo_root, branch="feat/x")
+    assert (resolved, report) == ("feat/x", [("lib", "feat/x")])
+
+
+def test_checkout_submodules_on_host_switch_resolves_current_branch(mocker, make_cfg, tmp_path):
+    """With no override the switch targets the branch already checked out —
+    a no-op checkout, but it must not target something else."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
+    co = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.submodules.report_submodule_branches", return_value=[])
+
+    sync.checkout_submodules_on_host(cfg, switch_superproject=True)
+
+    co.assert_called_once_with(cfg.repo_root, "feat/foo")
+
+
+def test_checkout_submodules_on_host_switch_failure_skips_alignment(mocker, make_cfg, tmp_path):
+    """A refused checkout (dirty tree, unknown branch) must not leave the
+    submodules aligned to a branch the superproject is not on."""
+    from jailbee import git, sync
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch(
+        "jailbee.sync.git.checkout_branch",
+        side_effect=git.GitError("git checkout failed (exit 1)"),
+    )
+    upd = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    with pytest.raises(sync.SyncError, match="feat/x"):
+        sync.checkout_submodules_on_host(cfg, branch="feat/x", switch_superproject=True)
+
+    upd.assert_not_called()
+
+
 def test_checkout_submodules_in_container_places_and_reports(mocker, make_cfg, tmp_path):
     from jailbee import sync
 
