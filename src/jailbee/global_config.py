@@ -50,11 +50,13 @@ class DockerRegistryMirror(BaseModel):
     port: int = 3128
     data_dir: PathExpanded = None  # type: ignore[assignment]
     image: str = "rpardini/docker-registry-proxy:0.6.5"
-    # bool comes first in the union so YAML `true`/`false` binds to bool
-    # instead of being coerced to the string "True" — same reason as
-    # `Stacks.java: bool | str`. `auto` (the default) means "mirror the repos
-    # whose image contains Docker"; an explicit `true` forces it on for every
-    # repo, which is what pre-1.x jailbee did unconditionally.
+    # bool-first ordering follows the `Stacks.java: bool | str` idiom for
+    # three-valued keys in this codebase; pydantic binds YAML `true`/`false`
+    # to bool either way here, since `Literal["auto"]` cannot accept a bool.
+    # `auto` (the default) defers to the repo — see `docker_daemon.mirror_wanted`
+    # for the signals. An explicit `true` forces the mirror on for every repo
+    # on the host, which is what releases up to and including 1.1.0 did
+    # unconditionally.
     enabled: bool | Literal["auto"] = "auto"
 
     def model_post_init(self, __context: object) -> None:

@@ -148,9 +148,11 @@ def run_apply(
 
     info("Applying configuration...")
 
-    # Resolve everything that could fail outside Incus before we mutate
-    # anything. Either of these raises and apply aborts cleanly with no
-    # partial profile / ACL update.
+    # Resolve the mirror's endpoint + CA before we mutate anything. Both are
+    # best-effort: each warns and yields None rather than raising, so `apply`
+    # proceeds without mirror wiring (nothing else it does depends on the
+    # mirror, and a user whose mirror is down may be running `apply` to repair
+    # something unrelated).
     info("Refreshing egress pool + ACL + /etc/hosts...")
     mirror_endpoint = _mirror_endpoint_or_warn(cfg, incus, gcfg)
     mirror_ca_pem = _read_mirror_ca_or_warn(gcfg) if mirror_endpoint else None
