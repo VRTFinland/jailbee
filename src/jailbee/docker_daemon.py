@@ -143,7 +143,9 @@ def _auto_mirror_wanted(cfg: Config) -> bool:
     from jailbee.golden import repo_uses_docker
 
     return bool(
-        repo_uses_docker(cfg) or cfg.docker_registry_mirror.extra_registries or cfg.golden.stacks.ecr
+        repo_uses_docker(cfg)
+        or cfg.docker_registry_mirror.extra_registries
+        or cfg.golden.stacks.ecr
     )
 
 
