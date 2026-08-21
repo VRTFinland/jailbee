@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from jailbee.config import Config
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
+from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
 from jailbee.network import acl_name
@@ -68,8 +69,16 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
-def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
-    """Run all diagnostic checks. Returns list of results."""
+def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
+    """Run all diagnostic checks. Returns list of results.
+
+    `gcfg=None` means the same defaults `load_global_config` returns for an
+    absent `global.yaml`, so tests that do not care about host config need not
+    build one.
+    """
+    if gcfg is None:
+        gcfg = GlobalConfig()
+
     results: list[CheckResult] = []
 
     # 1. incus binary. Every check below that talks to Incus hangs off this:
@@ -218,7 +227,19 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             )
 
     # 7. Docker registry mirror status (Incus-hosted)
-    if incus_available:
+    from jailbee.docker_daemon import mirror_skip_reason
+
+    skip_reason = mirror_skip_reason(cfg, gcfg)
+    if skip_reason is not None:
+        # Reported rather than omitted: the user should see that the gate
+        # decided something, and which of the two reasons it was — "no docker"
+        # would be a lie to someone who wrote `enabled: false`, a case the gate
+        # never checks the repo for. (When the mirror *is* wanted but Incus is
+        # missing, the line does drop out below; the "Incus-dependent checks"
+        # result above names the mirror explicitly, so the reason is still on
+        # screen exactly once.)
+        results.append(CheckResult("registry mirror", True, f"not needed — {skip_reason}"))
+    elif incus_available:
         try:
             rstatus = registry_status(incus)
         except IncusError as e:

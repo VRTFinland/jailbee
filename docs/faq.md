@@ -92,7 +92,7 @@ authorises root to delegate exactly one UID — your own.
 jailbee config init      # write .jailbee/config.yaml
 jailbee doctor           # sanity-check host + config
 jailbee init             # profiles, ACL, jailbee-loose bridge, shared dirs
-jailbee registry up      # host-level Docker registry mirror
+jailbee registry up      # Docker users only — host-level Docker registry mirror
 jailbee base build       # golden image, ~10–15 min, one time
 jailbee new feat/x       # first container
 ```

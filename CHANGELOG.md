@@ -57,6 +57,48 @@
   follows), so they run either way and need the session to run in. Visible
   consequence: `jailbee tmux` on a `--no-autostart` container now finds a
   session with an `install-<agent>` window in it rather than nothing.
+- **The Docker registry mirror is now opt-in by detection.**
+  `docker_registry_mirror.enabled` defaults to `auto`: the mirror is wired only
+  into repos that ask for it — a golden image that would contain Docker
+  (`golden.stacks.docker`, an `enable_snippets` / `install.d` `50-docker`, a
+  `golden.extra_apt_packages` entry starting with `docker`, minus
+  `disable_snippets`), a non-empty per-repo
+  `docker_registry_mirror.extra_registries`, or `golden.stacks.ecr`. Repos
+  without any of those no longer need the mirror container to exist at all. Set
+  `enabled: true` in `~/.config/jailbee/global.yaml` to force the previous
+  behaviour for every repo; `false` still disables it everywhere.
+  **Upgrade note:** if a repo's image has Docker by a route jailbee cannot
+  detect — a differently-named `install.d` snippet, a custom
+  `golden.provision_script` without `golden.stacks.docker`, or Docker installed
+  by hand inside a container — its strict containers lose the `/etc/hosts`
+  mirror pin and the ACL rule on the next refresh while their dockerd keeps
+  proxying to the now-unresolvable mirror host, so `docker pull` inside the
+  container fails. Set `docker_registry_mirror.enabled: true` (or declare the
+  stack and rebuild the golden image).
+
+### Fixed
+
+- **A stopped or missing registry mirror is no longer fatal.** `jailbee init`
+  (which the docs tell you to run *before* `jailbee registry up`) and
+  `jailbee apply` now warn and continue instead of aborting, and the background
+  egress refresh logs instead of raising. `jailbee start` / `jailbee restart`
+  never aborted on this and still don't: they skip the `/etc/hosts` mirror pin
+  silently. `jailbee doctor` no longer reports a red mirror line for repos that
+  don't use Docker, and one repo's failed refresh no longer skips every other
+  registered repo in the same cycle. `jailbee new` still refuses in strict mode,
+  where the mirror is the container's only route to Docker Hub.
+- **`jailbee net strict` warns when the mirror a repo wants is unavailable.**
+  Going strict is what removes the container's direct route to Docker Hub, so
+  the switch is the last point at which the remedy
+  (`jailbee registry up && jailbee apply`) can still be named — previously it
+  was silent, and a container created with `--network loose` while the mirror
+  was down became a strict container with a broken `docker pull` and no
+  indication why.
+- **`jailbee net refresh` exits non-zero again when a repo's refresh raises.**
+  The new per-repo error handling in the 60-second refresh loop dropped the
+  failed repo from the results, so the command (verbatim the systemd unit's
+  `ExecStart`) printed nothing and exited 0. Failures are now recorded as an
+  `error` result and reported as `FAIL`.
 
 ## 1.1.0 - 2026-08-20
 

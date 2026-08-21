@@ -1473,7 +1473,7 @@ The keys unique to this file are the Docker registry mirror overrides:
 
 ```yaml
 docker_registry_mirror:
-  enabled: true                                  # host-global kill switch
+  enabled: auto                                  # auto | true | false
   port: 3128                                     # rpardini default
   image: rpardini/docker-registry-proxy:0.6.5    # OCI image pin
   data_dir: ~/.local/share/jailbee/registry          # cache + CA storage
@@ -1481,10 +1481,33 @@ docker_registry_mirror:
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | Set `false` to skip all mirror-related work in `jailbee new` / `jailbee apply`. Mirror container lifecycle is unaffected (use `jailbee registry up/down`). |
+| `enabled` | `auto` | `auto` wires the mirror only into repos that ask for it: a golden image that would contain Docker (`golden.stacks.docker`, an `enable_snippets`/`install.d` `50-docker`, a `golden.extra_apt_packages` entry starting with `docker`, minus `disable_snippets`), a non-empty per-repo [`docker_registry_mirror.extra_registries`](#docker_registry_mirrorextra_registries), or `golden.stacks.ecr` (which stages a Docker credential helper). `true` forces it on, `false` skips all mirror-related work. **Both are host-global** — this file is host-level, so `true` set for one undetectable repo also re-imposes the strict-mode `jailbee new` abort on every other repo on the machine; `extra_registries` is the per-repo way to opt in. Mirror container lifecycle is unaffected either way (use `jailbee registry up/down`). |
 | `port` | `3128` | Port the rpardini proxy listens on inside the mirror container. |
 | `image` | `rpardini/docker-registry-proxy:0.6.5` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
 | `data_dir` | `~/.local/share/jailbee/registry` | Host directory bind-mounted into the mirror for cache + CA storage. |
+
+`auto` cannot see every route to Docker. A differently-named `install.d`
+snippet (`55-docker-ce.sh` resolves to the logical name `docker-ce`, not
+`docker`), a custom `golden.provision_script` that installs Docker without
+`golden.stacks.docker` being set, and Docker installed by hand inside a running
+container are all invisible to it. Those repos need `enabled: true` — or, for
+the first two, a declared stack and a golden-image rebuild.
+
+When a repo wants the mirror but the mirror container is stopped or missing,
+`jailbee init`, `jailbee apply` and the background egress refresh warn and
+continue — the ACL simply omits the mirror rule until a later run finds it
+running. `jailbee start` / `jailbee restart` never aborted on this and stay
+silent: they skip the `/etc/hosts` mirror pin without comment. `jailbee net
+strict` warns, since switching to strict is what removes the container's direct
+route to Docker Hub. Only `jailbee new` refuses, and only in strict mode: the
+default egress allowlist contains no registry hosts, so there the mirror is the
+container's only route to Docker Hub. In loose mode it is a pull cache, so
+`jailbee new` warns and proceeds.
+
+The remedy in every case is `jailbee registry up && jailbee apply`. Note that
+`apply` only re-pins `/etc/hosts` and re-installs the dockerd proxy on
+*running* containers, so a container that was stopped at the time is not fixed
+by it — start it and run `jailbee apply` again.
 
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).
