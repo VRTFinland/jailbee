@@ -726,6 +726,13 @@ The key is ambiguous between the two layers:
 
 There is no global default for `extra_registries`; set it per-repo.
 
+`enabled` in the global file is three-valued: `auto` (default) wires the mirror
+only into repos whose golden image contains Docker — `golden.stacks.docker`, an
+`enable_snippets` / `install.d` `50-docker`, minus `disable_snippets`. `true`
+forces it on for every repo (use it when a repo installs Docker under a name
+jailbee cannot detect), `false` disables it everywhere. So adding
+`golden.stacks.docker: true` to a repo is also what turns the mirror on for it.
+
 ## Computed (non-YAML) Config attributes
 
 Set at load time by `_build_config_from_dict`:

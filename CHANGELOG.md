@@ -45,6 +45,24 @@
   follows), so they run either way and need the session to run in. Visible
   consequence: `jailbee tmux` on a `--no-autostart` container now finds a
   session with an `install-<agent>` window in it rather than nothing.
+- **The Docker registry mirror is now opt-in by detection.**
+  `docker_registry_mirror.enabled` defaults to `auto`: the mirror is wired only
+  into repos whose golden image contains Docker (`golden.stacks.docker`, an
+  `enable_snippets` / `install.d` `50-docker`, minus `disable_snippets`). Repos
+  without Docker no longer need the mirror container to exist at all. Set
+  `enabled: true` in `~/.config/jailbee/global.yaml` to force the previous
+  behaviour for every repo; `false` still disables it everywhere.
+
+### Fixed
+
+- **A stopped or missing registry mirror is no longer fatal.** `jailbee init`
+  (which the docs tell you to run *before* `jailbee registry up`),
+  `jailbee apply`, `jailbee start` and the background egress refresh now warn
+  and continue instead of aborting, `jailbee doctor` no longer reports a red
+  mirror line for repos that don't use Docker, and one repo's failed refresh no
+  longer skips every other registered repo in the same cycle. `jailbee new`
+  still refuses in strict mode, where the mirror is the container's only route
+  to Docker Hub.
 
 ## 1.1.0 - 2026-08-20
 

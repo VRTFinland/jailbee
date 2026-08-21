@@ -1473,7 +1473,7 @@ The keys unique to this file are the Docker registry mirror overrides:
 
 ```yaml
 docker_registry_mirror:
-  enabled: true                                  # host-global kill switch
+  enabled: auto                                  # auto | true | false
   port: 3128                                     # rpardini default
   image: rpardini/docker-registry-proxy:0.6.5    # OCI image pin
   data_dir: ~/.local/share/jailbee/registry          # cache + CA storage
@@ -1481,10 +1481,18 @@ docker_registry_mirror:
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | Set `false` to skip all mirror-related work in `jailbee new` / `jailbee apply`. Mirror container lifecycle is unaffected (use `jailbee registry up/down`). |
+| `enabled` | `auto` | `auto` wires the mirror only into repos whose golden image contains Docker (`golden.stacks.docker`, an `enable_snippets`/`install.d` `50-docker`, minus `disable_snippets`). `true` forces it on for every repo — use it when a repo installs Docker under a name jailbee cannot see. `false` skips all mirror-related work. Mirror container lifecycle is unaffected either way (use `jailbee registry up/down`). |
 | `port` | `3128` | Port the rpardini proxy listens on inside the mirror container. |
 | `image` | `rpardini/docker-registry-proxy:0.6.5` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
 | `data_dir` | `~/.local/share/jailbee/registry` | Host directory bind-mounted into the mirror for cache + CA storage. |
+
+When a repo wants the mirror but the mirror container is stopped or missing,
+`jailbee init`, `jailbee apply`, `jailbee start` and the background egress
+refresh warn and continue — the ACL simply omits the mirror rule until a later
+run finds it running. Only `jailbee new` refuses, and only in strict mode: the
+default egress allowlist contains no registry hosts, so there the mirror is the
+container's only route to Docker Hub. In loose mode it is a pull cache, so
+`jailbee new` warns and proceeds.
 
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).

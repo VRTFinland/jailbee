@@ -38,7 +38,7 @@ Walk the repo root and look at top-level manifest files. Don't recurse — sub-p
 | `Cargo.toml` | Rust | No first-class support — add `cargo` via `golden.extra_apt_packages: [cargo]` or write an `install.d/` snippet that installs rustup. |
 | `go.mod` | Go | No first-class support — `golden.extra_apt_packages: [golang-go]` or an `install.d/` snippet for a specific Go version. |
 | `Gemfile` | Ruby | `golden.extra_apt_packages: [ruby-full]` |
-| `docker-compose*.yml` | Containerized services | Don't add to JailBee config — the dev user runs compose inside the JailBee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true`. |
+| `docker-compose*.yml` | Containerized services | Don't add to JailBee config — the dev user runs compose inside the JailBee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true` — this is also what turns the registry mirror on for the repo. |
 | `Makefile` | Conventional build entrypoints | Useful for autostart: targets like `make dev-env`, `make run` are good `autostart.on_create`/`on_start` candidates. |
 | `.nvmrc`, `.node-version`, `.tool-versions` | Version pins | Set `golden.stacks.node` to the pinned major. |
 
