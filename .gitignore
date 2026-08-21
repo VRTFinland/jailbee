@@ -35,3 +35,5 @@ docs/superpowers/
 # website/assets/media/, which is what the page references.
 website/demo/workflows/*.webm
 website/demo/workflows/*.mp4
+# Boundary frames render.sh dumps for eyeballing a cut list's timing.
+website/demo/workflows/*.boundaries/

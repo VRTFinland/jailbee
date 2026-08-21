@@ -5,47 +5,62 @@
 # the container's name, detaching while the agent works, coming back to it. Do
 # not "optimise" them out -- see the design spec's section 2.
 #
-# TWO RULES ABOUT Wait, both learned by watching renders fail:
+# THREE RULES THIS TAPE FOLLOWS DELIBERATELY:
 #
-# 1. Wait only on a line jailbee always prints verbatim ("created and started",
-#    "passed"). This image's shell prompt is `>` (15-prompt.sh), so a
-#    `$`-shaped prompt pattern never matches and fails the render at
-#    WaitTimeout instead of asserting anything.
+# 1. NO FLAGS THE COMMAND DOES NOT NEED. `jb ls` runs bare: nobody types
+#    `--fields name,base,state,network,mem` at a terminal, and a video that
+#    shows them teaches a habit no user has. The default column set is what a
+#    real user sees, it happens to carry WT / AHEAD ± / MERGE, and it is 100
+#    characters wide -- inside the 105 this geometry gives. If a future take
+#    needs fewer columns, that belongs in the substrate's `.jailbee/config.yaml`
+#    (`ls.hide`), which is where a real user would put it, not on the command
+#    line.
 #
-# 2. `Wait+Screen` matches the VISIBLE screen, so a Wait only works while its
-#    target still fits on it. Measured: this tape's `jb new` Wait timed out at
-#    300s with `Set Height 700` when a `jb ls` table had scrolled it out of
-#    view, and the identical tape passed at `Height 1100`. The fix here is the
-#    `clear` before each act that contains a Wait -- which is what a person
-#    does anyway, and it keeps every frame legible. Do not remove them to save
-#    a beat.
+# 2. NO `clear`. Each act stays visible under the next one, so the viewer can
+#    still see what produced the state being acted on. This is why `Set Height`
+#    is 900 rather than 700: with nothing wiping the screen, the extra rows are
+#    real content instead of the empty bottom third the 700px take had.
+#
+# 3. INTERACTIVE PROMPTS ARE CONTENT. `jb git pull` ends by asking whether to
+#    destroy the container; the tape lets it ask and answers on camera. That
+#    is a feature of the tool, and hiding it behind `--no-cleanup` made the
+#    video quieter and less true at the same time.
+#
+# THE ONE RULE ABOUT Wait, learned by watching renders fail: wait only on a
+# line jailbee always prints verbatim ("created and started", "passed",
+# "Destroy container"). This image's shell prompt is `>` (15-prompt.sh), so a
+# `$`-shaped prompt pattern never matches and fails the render at WaitTimeout
+# instead of asserting anything. Every Wait below also targets the LAST thing
+# its command puts on screen, which is what makes rule 2 safe: `Wait+Screen`
+# only matches while its target is on the visible screen, so a target that is
+# still scrolling upward is a 300-second timeout waiting to happen.
 Source common.tape
 
 Output a.webm
 Output a.mp4
 
-# Fits the tallest single act: the agent's full-screen TUI.
-Set Height 700
+# Tall enough that three acts of history stay on screen at once, now that
+# nothing clears it. Also the frame the agent's full-screen TUI gets.
+Set Height 900
 
 Hide
 Type "cd ~/gisgro-incus-env/.local/video-rig/jailbee-demo && clear" Enter
 Show
 
 # --- act 1: what is already running here -----------------------------------
-Type "jb ls --fields name,base,state,network,mem" Enter
+Type "jb ls" Enter
 Wait+Screen /jailbee containers/
 Sleep 4s
 
 # --- act 2: a container for the new branch ---------------------------------
-Type "clear" Enter
-Sleep 1s
-
 Type "jb new feat/health-endpoint" Enter
 Wait+Screen@300s /created and started/
 Sleep 3s
 
 # "What was that container called again" -- the beat this video exists for.
-Type "jb ls --fields name,base,state,network,mem" Enter
+# The same bare `jb ls` as act 1, one row longer: the table changing under the
+# same command is the point, which is also why no column list is pinned.
+Type "jb ls" Enter
 Sleep 5s
 
 # --- act 3: hand the work to the agent -------------------------------------
@@ -78,7 +93,9 @@ Sleep 2s
 Type "jb exec feat-health-endpoint -- curl -s localhost:8080/items" Enter
 Sleep 6s
 
-Type "jb ls --fields name,state,network,mem,wt,ahead_count" Enter
+# Third bare `jb ls`, and the reason the default columns are worth keeping:
+# WT and ↑ have moved since act 2 because the agent has been committing.
+Type "jb ls" Enter
 Sleep 5s
 
 # --- act 4: come back to it ------------------------------------------------
@@ -93,32 +110,29 @@ Type "d"
 Sleep 2s
 
 # --- act 5: check it, then take it home ------------------------------------
-Type "clear" Enter
-Sleep 1s
-
 Type "jb exec feat-health-endpoint -- uv run pytest -q" Enter
 Wait+Screen@240s /passed/
 Sleep 4s
 
-# A clear before this act's Wait, per rule 2 in the header: `jb git pull`
-# prints roughly 25 lines and `✓ Merged` is the last of them, so on top of the
-# pytest output above it lands right at the edge of a 700px screen -- the exact
-# condition that made an earlier Wait time out for 300 seconds.
-Type "clear" Enter
-Sleep 1s
+# No --ff and no --no-cleanup. Without --ff this is jailbee's default: an
+# explicit merge commit, made with `git merge --no-ff -m …`, so nothing opens
+# an editor on camera. Without --no-cleanup the `pull:` policy stays at its
+# default `prompt`, which is the beat below.
+Type "jb git pull feat-health-endpoint" Enter
+# The Wait targets the prompt, not `✓ Merged`, because the prompt is what ends
+# up at the bottom of the screen: the command prints the bridge direction, the
+# fetch summary, `✓ Merged '<branch>' … into 'main'` and `HEAD now at <sha>`,
+# and only then asks. Waiting on `Merged` would be waiting on a line that four
+# more lines have already pushed upward.
+Wait+Screen@180s /Destroy container/
+Sleep 4s
 
-# --no-cleanup is not optional. Without it the command ends by asking
-# "Destroy container 'feat-health-endpoint'? [y/N]", and the next beat's
-# keystrokes are typed into that prompt instead of the shell -- found by
-# watching the final frame of a render. It also keeps the container alive for
-# video C, which reads the branch this one produced.
-Type "jb git pull feat-health-endpoint --ff --no-cleanup" Enter
-# Now a Wait, not a Sleep: the earlier note here said nobody had verified what
-# this prints. A render showed it -- `✓ Merged '<branch>' from container
-# '<name>' into 'main' (fast-forward).` -- so the fixed line exists and Wait is
-# the honest choice.
-Wait+Screen@180s /Merged/
-Sleep 5s
+# Answered on camera, and answered "no": the container is still what video C
+# reads the produced branch out of, and declining is the honest half of the
+# question to show -- jailbee asks before it destroys. `[y/N]` would also
+# accept a bare Enter; typing the `n` makes the choice legible in the frame.
+Type "n" Enter
+Sleep 3s
 
 Type "git log --oneline -3" Enter
 Sleep 6s
