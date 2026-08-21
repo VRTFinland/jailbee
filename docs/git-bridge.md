@@ -187,16 +187,32 @@ over is grouped by what it needs:
 Ordinary file conflicts are never auto-resolved; they are listed alongside so
 you see the whole picture before starting.
 
-**Branch placement.** `jailbee submodule checkout` recursively puts submodules
-on the superproject's branch. It is purely local — it moves nothing between
-host and container — and works on either side: with no argument it aligns
-the host repo, with a container name it aligns that container.
+**Branch placement.** `jailbee submodule checkout` puts the tree —
+superproject and submodules, recursively — on one branch. It is purely local
+— it moves nothing between host and container — and works on either side:
+with no argument it works on the host repo, with a container name on that
+container.
 
 ```bash
-jailbee submodule checkout               # host repo, current branch
-jailbee submodule checkout -b feat/x     # host repo, explicit branch
+jailbee submodule checkout               # host, align to current branch
+jailbee submodule checkout -b master     # host, whole tree to master
+jailbee submodule checkout -b master --submodules-only
 jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
 ```
+
+On the host, `-b` checks that branch out in the superproject first and then
+aligns the submodules to it — one command to jump the whole tree back to
+`master` and out again, the counterpart of `jailbee git checkout <container>`
+(which does the same thing towards a container's branch). `--submodules-only`
+leaves the superproject where it is: a deliberate mismatch, or a detached
+HEAD you want to keep. A container's branch is its identity, so `-b` with a
+container name never switches it — there it is pure submodule placement.
+
+Placement never rewinds a submodule branch. When a submodule's local branch
+is ahead of the gitlink recorded in the superproject — a submodule commit
+published without bumping the pointer — the newer branch stays checked out
+and the run warns instead: bump the gitlink with `git add <sub> && git
+commit` in the superproject.
 
 **Before you destroy.** `jailbee destroy`'s pre-flight check counts a changed
 submodule as work at risk — added, removed, committed ahead, or merely dirty

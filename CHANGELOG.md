@@ -23,6 +23,18 @@
 
 ### Changed
 
+- **BREAKING: `jailbee submodule checkout -b <branch>` now switches the host
+  superproject too.** It used to align the submodules and leave the
+  superproject wherever it was, so moving the whole tree took two commands
+  (`git checkout <branch>`, then this one) and a bare `-b` quietly produced a
+  superproject/submodule mismatch instead. `-b` now means "put the tree on
+  this branch": the superproject checkout runs first — it is what rewrites the
+  gitlinks the alignment places branches at — and a refused checkout (dirty
+  tree, unknown branch) fails without touching the submodules. Pass
+  `--submodules-only` for the old behaviour; it is also the way to align
+  submodules from a detached HEAD or to keep a deliberate mismatch. A
+  container's branch is its identity, so `jailbee submodule checkout <name> -b`
+  is unchanged: pure submodule placement, no branch switch.
 - **The Claude install/update step now runs bounded, with its output kept.**
   It used to run through an unbounded `incus.exec` call; it now runs through
   the same autostart step pipeline every other agent's install/update uses,

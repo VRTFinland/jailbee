@@ -245,8 +245,9 @@ upstream. On `jailbee new` they are initialised recursively and **offline**
 from the read-only host-source mount; on push/pull/checkout their objects
 travel over the same transport, and a sub-repo the peer lacks is created there
 first. Conflicting gitlinks are merged for you where possible, with a report of
-what is left. `jailbee submodule checkout` aligns submodules with the
-superproject branch locally.
+what is left. `jailbee submodule checkout -b <branch>` puts the whole tree —
+superproject and submodules — on one branch locally, which is how you jump
+back to `master` and out again in one command.
 
 → [Submodules](git-bridge.md#submodules)
 
