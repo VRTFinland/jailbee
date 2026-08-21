@@ -609,3 +609,65 @@ def test_refresh_all_continues_when_loose_revert_raises(
     # Should not raise — the loop swallows the error and logs it.
     results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
     assert "A" in results
+
+
+def test_compute_mirror_endpoint_returns_none_when_the_mirror_is_down(
+    cfg: Any, gcfg: Any, incus: Any, mocker: MockerFixture
+) -> None:
+    """`jailbee new` calls refresh_pool (cli.py:923), so a ValueError here
+    surfaces as a traceback from a command that only wanted a container."""
+    from jailbee import egress_pool
+
+    mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+
+    assert egress_pool._compute_mirror_endpoint(cfg, incus, gcfg) is None
+
+
+def test_refresh_all_continues_when_one_repo_refresh_raises(
+    db_session: Session,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """One repo's failure must not skip every later repo — nor the trailing
+    session.commit(). Matches how check_and_revert_loose is already wrapped."""
+    from jailbee import egress_pool
+
+    for name in ("a", "b"):
+        repo = tmp_path / name
+        (repo / ".jailbee").mkdir(parents=True)
+        (repo / ".jailbee" / "config.yaml").write_text("# placeholder")
+        db_session.add(
+            RegisteredRepo(
+                container_prefix=name.upper(),
+                repo_root=str(repo),
+                registered_at=frozen_now,
+            )
+        )
+    db_session.commit()
+
+    def fake_load(path: Path) -> Any:
+        m = mocker.Mock()
+        m.container_prefix = path.parent.parent.name.upper()
+        m.repo_root = path.parent.parent
+        m.effective_egress_allow.return_value = []
+        return m
+
+    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+
+    def refresh(cfg_arg: Any, *a: Any, **kw: Any) -> Any:
+        if cfg_arg.container_prefix == "A":
+            raise ValueError("boom")
+        return egress_pool.RefreshResult(container_prefix="B", status="ok")
+
+    mocker.patch.object(egress_pool, "refresh_pool", side_effect=refresh)
+
+    results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
+
+    assert set(results.keys()) == {"B"}
