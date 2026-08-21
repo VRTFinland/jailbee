@@ -13,9 +13,16 @@ from jailbee.incus import Incus
 
 
 @pytest.fixture(autouse=True)
-def _no_mirror_lookup(mocker: MockerFixture) -> None:
-    """Default: mirror disabled. Override per-test by re-patching."""
-    mocker.patch(
+def _no_mirror_lookup(mocker: MockerFixture) -> Any:
+    """Default: mirror disabled. Override per-test by re-patching.
+
+    Returns the `_mirror_endpoint_or_warn` patch object so a test that needs
+    the real implementation to run can undo just this one patch via
+    ``mocker.stop(...)`` — not ``mocker.stopall()``, which would also tear
+    down every other autouse patch made through this test's `mocker`
+    instance (e.g. conftest's runtime-mounts and kitty-autodetect fixtures).
+    """
+    endpoint_patch = mocker.patch(
         "jailbee.apply._mirror_endpoint_or_warn",
         return_value=None,
     )
@@ -23,6 +30,7 @@ def _no_mirror_lookup(mocker: MockerFixture) -> None:
         "jailbee.apply._read_mirror_ca_or_warn",
         return_value=None,
     )
+    return endpoint_patch
 
 
 @pytest.fixture(autouse=True)
@@ -839,27 +847,53 @@ def test_run_apply_dns_failure_aborts_before_incus_calls(
     assert incus.network_acl_set_yaml.call_count == 0
 
 
-def test_run_apply_mirror_endpoint_failure_aborts_before_incus_calls(
-    make_cfg, tmp_path: Path, mocker: MockerFixture
+def test_run_apply_continues_when_the_mirror_endpoint_cannot_be_resolved(
+    make_cfg,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    _no_mirror_lookup: Any,
+    _no_egress_refresh: Any,
 ) -> None:
+    """Replaces the old abort test: Task 5 deliberately removed the abort
+    on a mirror-endpoint failure, so `apply` must now degrade to a warning
+    (via `_mirror_endpoint_or_warn`) and continue to its normal work rather
+    than raise. This exercises the real `_mirror_endpoint_or_warn`, not a
+    mock standing in for it, so it fails if that catch is ever removed."""
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.network_get.return_value = ""
 
-    # Override the autouse fixture's "mirror returns None" with a hard fail.
+    # Let the real `_mirror_endpoint_or_warn` run instead of the autouse
+    # fixture's blanket mock of it (targeted `.stop()`, not
+    # `mocker.stopall()` — see `_no_mirror_lookup`'s docstring).
+    mocker.stop(_no_mirror_lookup)
+    mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
     mocker.patch(
-        "jailbee.apply._mirror_endpoint_or_warn",
-        side_effect=ValueError("mirror down"),
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError(
+            "jailbee-registry-mirror container not found. Run 'jailbee registry up' first."
+        ),
     )
+    # Unrelated to the mirror: unlike the old abort test, this one now
+    # reaches the profile/ACL diff step. `incus.profile_show` on a bare
+    # `MagicMock(spec=Incus)` returns a MagicMock, and feeding that into
+    # `_profile_differs`'s `yaml.safe_load` sends PyYAML's reader into an
+    # unbounded loop reading "chunks" off a mock. Short-circuit the diff
+    # itself, same as most other `run_apply` tests in this file that don't
+    # care about profile/ACL content.
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.apply._list_containers", return_value=[])
 
-    with pytest.raises(ValueError, match="mirror down"):
-        run_apply(cfg, incus, gcfg)
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    assert incus.profile_set_yaml.call_count == 0
-    assert incus.network_acl_set_yaml.call_count == 0
+    # No exception escaped `run_apply` above; confirm it actually reached
+    # its normal work past the mirror lookup rather than short-circuiting.
+    _no_egress_refresh.assert_called_once()
 
 
 def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
@@ -1500,7 +1534,9 @@ def test_run_apply_reconciles_ports_from_one_prefetched_call(
     assert result.ports_changed == []
 
 
-def test_apply_warns_and_continues_when_the_mirror_is_down(tmp_path, mocker):
+def test_apply_warns_and_continues_when_the_mirror_is_down(
+    tmp_path, mocker, _no_mirror_lookup: Any
+):
     """`apply` is the repair command; it must not die on the one thing the
     user might be running it to fix. The CA half already warns
     (`_read_mirror_ca_or_warn`) — the endpoint half must match."""
@@ -1511,9 +1547,11 @@ def test_apply_warns_and_continues_when_the_mirror_is_down(tmp_path, mocker):
     # The autouse `_no_mirror_lookup` fixture above blanket-mocks this exact
     # function to return_value=None so every other test in this module gets
     # "mirror disabled" for free. This test is testing that function's own
-    # body, so it must undo that mock before patching the two things the
-    # real implementation actually calls.
-    mocker.stopall()
+    # body, so it must undo just that one patch (not `mocker.stopall()`,
+    # which would also tear down conftest's other autouse patches, e.g.
+    # runtime-mounts and kitty-autodetect) before patching the two things
+    # the real implementation actually calls.
+    mocker.stop(_no_mirror_lookup)
     mocker.patch(
         "jailbee.docker_daemon.compute_mirror_endpoint",
         side_effect=ValueError("jailbee-registry-mirror container not found."),
