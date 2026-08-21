@@ -99,6 +99,27 @@
   failed repo from the results, so the command (verbatim the systemd unit's
   `ExecStart`) printed nothing and exited 0. Failures are now recorded as an
   `error` result and reported as `FAIL`.
+- **Listing a container no longer takes git's index lock.** The git-status
+  probe behind `jailbee ls`, the `jailbee git push` picker and both dashboards'
+  periodic refresh only reads — but `git diff`, `git diff --cached` and
+  `git submodule foreach 'git diff'` refresh the index and write it back, which
+  takes `.git/index.lock`. A refresh landing on the same container as a write
+  therefore makes the write fail — the shape of a failure seen in the wild,
+  where `jailbee git push --merge` died with `error: Unable to create
+  '/home/dev/<repo>/.git/index.lock': File exists` mid-fast-forward and
+  succeeded on an immediate retry. The probe and the dirty-tree preflight now
+  run with `GIT_OPTIONAL_LOCKS=0`, so they neither take the lock nor fail on
+  one — at the cost of not persisting the refreshed stat cache, which nothing
+  here reuses.
+- **A container-side `git merge` / `rebase` / `reset --hard` blocked by
+  `.git/index.lock` is retried instead of reported.** These refuse to start
+  while another git process holds the lock, and they refuse before changing
+  anything, so `jailbee git push` now retries three times with a linear backoff
+  — enough for the short-lived git command that causes the contention in
+  practice (an editor, a coding agent, another `jailbee` invocation). A lock
+  that outlives the budget is reported as what it is, naming the lock file and
+  how to inspect it, rather than as a wall of `incus exec` command line plus
+  git's own advice.
 
 ## 1.1.0 - 2026-08-20
 

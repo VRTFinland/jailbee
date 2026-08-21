@@ -6018,3 +6018,212 @@ def test_plan_push_fetch_failure_note_suppressed_when_source_is_local_only(
 
     assert not any("could not read from remote" in n for n in plan.notes)
     assert not any("fetch" in n for n in plan.notes)
+
+
+# --- .git/index.lock contention ------------------------------------------
+#
+# A container-side `git merge` / `rebase` / `reset --hard` fails outright when
+# another git process in the container holds `.git/index.lock`. Observed in the
+# wild: `jailbee git push --merge` died with "Unable to create
+# '/home/dev/<repo>/.git/index.lock': File exists" and succeeded on an
+# immediate retry — the lock was transient, held by a concurrent git.
+
+_LOCK_STDERR = (
+    "`incus exec c --user 53023 -- git -C /home/dev/repo merge` failed (exit 1): "
+    "error: Unable to create '/home/dev/repo/.git/index.lock': File exists.\n"
+    "\n"
+    "Another git process seems to be running in this repository"
+)
+
+
+def _lock_error():
+    from jailbee.incus import IncusError
+
+    return IncusError(_LOCK_STDERR)
+
+
+def test_index_lock_held_recognises_gits_lock_message():
+    assert sync._index_lock_held(_lock_error()) is True
+
+
+def test_index_lock_held_ignores_unrelated_failures():
+    from jailbee.incus import IncusError
+
+    assert sync._index_lock_held(IncusError("CONFLICT (content): Merge conflict in a.txt")) is False
+
+
+def _failing_then_ok(exc_factory, attempts):
+    """Dispatcher value: raise `exc_factory()` until `attempts` is long enough."""
+
+    def value():
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise exc_factory()
+        return ""
+
+    return value
+
+
+def test_push_and_merge_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": _failing_then_ok(_lock_error, attempts),
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    sleep = mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_merge(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "container-head-oid"
+    assert len(attempts) == 2, "the locked merge must be retried, not reported as a failure"
+    assert sleep.call_count == 1, "a retry must back off, not spin"
+
+
+def test_push_and_merge_reports_a_stuck_index_lock_without_the_raw_exec_dump(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.incus import IncusError
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    def always_locked():
+        attempts.append(1)
+        raise _lock_error()
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": always_locked,
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    with pytest.raises(SyncError) as excinfo:
+        push_and_merge(cfg, incus, "feat-foo")
+
+    assert len(attempts) == sync._INDEX_LOCK_ATTEMPTS
+    message = str(excinfo.value)
+    assert "another git process" in message
+    assert "/home/dev/repo/.git/index.lock" in message
+    assert "jailbee shell feat-foo" in message
+    assert "incus exec" not in message, "the raw exec command line is noise, not a diagnosis"
+
+
+def test_push_and_rebase_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_rebase
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "rebase": _failing_then_ok(_lock_error, attempts),
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_rebase(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "container-head-oid"
+    assert len(attempts) == 2
+
+
+def test_push_and_reset_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_reset
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "main\n",
+            "rev_parse_gie": "",
+            "rev_parse_head": "old-branch-oid\n",
+            "rev_list_count": "0\n",
+            "reset": _failing_then_ok(_lock_error, attempts),
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_reset(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "old-branch-oid"
+    assert len(attempts) == 2
+
+
+def test_container_status_preflight_does_not_take_the_index_lock(mocker):
+    """`git status --porcelain` refreshes and rewrites the index, so the
+    read-only dirty-tree preflight both takes the lock and fails on one held
+    by someone else. GIT_OPTIONAL_LOCKS=0 removes both halves.
+    """
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+    env = incus.exec.call_args.kwargs.get("env") or {}
+    assert env.get("GIT_OPTIONAL_LOCKS") == "0"
