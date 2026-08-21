@@ -7817,7 +7817,16 @@ def test_base_build_reports_a_provisioning_failure_without_a_traceback(mocker):
 def test_new_cmd_aborts_in_strict_when_the_mirror_is_down(tmp_path, mocker):
     """strict + Docker: the mirror is the container's only route to Docker
     Hub, so creating the container anyway would produce a silently broken
-    `docker pull`."""
+    `docker pull`.
+
+    Note: the mocked message here is the realistic one `compute_mirror_endpoint`
+    actually raises (CA already includes its own "registry up" hint, so the
+    old, pre-gating code aborted on this exact input too). This test does not
+    distinguish old from new gating behaviour — it only guards against a
+    future regression that relaxes the strict abort. The gating behaviour
+    itself (Docker-stack detection, strict vs. loose) is proven by the loose
+    test and the no-docker-stack test below.
+    """
     from typer.testing import CliRunner
 
     from jailbee.cli import app
@@ -7840,7 +7849,9 @@ def test_new_cmd_aborts_in_strict_when_the_mirror_is_down(tmp_path, mocker):
     )
     mocker.patch(
         "jailbee.docker_daemon.compute_mirror_endpoint",
-        side_effect=ValueError("jailbee-registry-mirror container not found."),
+        side_effect=ValueError(
+            "jailbee-registry-mirror container not found. Run 'jailbee registry up' first."
+        ),
     )
     new_container = mocker.patch("jailbee.lifecycle.new_container")
 

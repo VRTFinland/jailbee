@@ -884,7 +884,7 @@ def new_cmd(
             # failures identically.
             mirror_endpoint = None
             if net_mode == "strict":
-                error(f"{problem} Run 'jailbee registry up' and retry.")
+                error(problem)
                 raise typer.Exit(1)
             warn(
                 f"{problem} Continuing without it — in loose mode the mirror is "
