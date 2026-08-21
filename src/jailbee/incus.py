@@ -234,6 +234,16 @@ class Incus:
         """Return True if a container with this name exists."""
         return any(c["name"] == name for c in self.list_containers())
 
+    def console_log(self, name: str, *, timeout: int | None = None) -> str:
+        """The container's console ring buffer (`incus console --show-log`).
+
+        This is where systemd's own shutdown narration lands — ``A stop job
+        is running for …`` — which is the one place that names the unit
+        blocking a shutdown. Distinct from ``incus info --show-log``, which
+        shows the LXC log rather than the guest's console.
+        """
+        return self._run(["console", name, "--show-log"], timeout=timeout).stdout
+
     # ---- Container lifecycle ------------------------------------------------
 
     def init(self, image: str, name: str) -> None:
@@ -246,10 +256,25 @@ class Incus:
     def start(self, name: str) -> None:
         self._run(["start", name])
 
-    def stop(self, name: str, force: bool = False) -> None:
+    def stop(self, name: str, force: bool = False, timeout: int | None = None) -> None:
+        """Stop a container; ``timeout`` bounds the clean shutdown, in seconds.
+
+        Omitting ``timeout`` is not the neutral default it looks like: incusd
+        turns the CLI's ``--timeout -1`` into **600 seconds**
+        (``cmd/incusd/instance_state.go``, ``doInstanceStatePut``), so a
+        container whose init never finishes shutting down blocks for ten
+        minutes and then fails with ``Failed shutting down instance, status
+        is "Running": context deadline exceeded``. Callers that a user is
+        watching should pass a budget — see `jailbee.stopping`.
+
+        ``force`` is a power cut and maps to a zero timeout server-side, so
+        the two flags are mutually exclusive; ``force`` wins.
+        """
         args = ["stop", name]
         if force:
             args.append("--force")
+        elif timeout is not None:
+            args += ["--timeout", str(timeout)]
         self._run(args)
 
     def restart(self, name: str) -> None:
