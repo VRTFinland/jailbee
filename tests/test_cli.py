@@ -1653,6 +1653,65 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
     incus_mock.return_value.start.assert_called_once_with("myrepo-feat-only")
 
 
+def test_stop_bounds_the_clean_shutdown(mocker, tmp_path):
+    """`jb stop` must not sit silently on incusd's 600s shutdown budget."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code == 0, result.stdout
+    incus_mock.return_value.stop.assert_called_once_with(
+        "myrepo-feat-bar", timeout=CLEAN_STOP_BUDGET
+    )
+
+
+def test_stop_reports_a_container_that_will_not_shut_down(mocker, tmp_path):
+    """No silent force: the user's container may hold unsaved work."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.incus import IncusError
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+    incus_mock.return_value.exec.return_value = ""
+    incus_mock.return_value.console_log.return_value = ""
+    incus_mock.return_value.stop.side_effect = IncusError(
+        "`incus stop myrepo-feat-bar` failed (exit 1): Error: Failed shutting down "
+        'instance, status is "Running": context deadline exceeded'
+    )
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code != 0
+    # `entry.main` (bypassed by CliRunner) is what prints an IncusError for
+    # the user; what matters here is that the message it will print names a
+    # way forward instead of just echoing incus's deadline.
+    assert isinstance(result.exception, IncusError)
+    message = str(result.exception)
+    assert "--force" in message
+    assert "incus console --show-log myrepo-feat-bar" in message
+    assert mocker.call("myrepo-feat-bar", force=True) not in (
+        incus_mock.return_value.stop.call_args_list
+    )
+
+
 def test_shell_with_explicit_name_still_works(mocker, tmp_path):
     from typer.testing import CliRunner
 

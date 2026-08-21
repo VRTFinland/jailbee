@@ -4,7 +4,7 @@ import base64
 import re
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -21,6 +21,7 @@ from jailbee.golden import (
     resolved_snippet_paths,
 )
 from jailbee.incus import IncusError
+from jailbee.stopping import CLEAN_STOP_BUDGET
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -358,6 +359,52 @@ def test_build_deletes_container_when_provisioning_fails():
 
     expected = f"{cfg.container_prefix}-base-build"
     incus.delete.assert_called_once_with(expected, force=True)
+
+
+def test_build_survives_a_build_container_that_will_not_shut_down():
+    """A stuck shutdown must not discard a finished provisioning run.
+
+    incusd gives an unqualified `incus stop` 600s and then fails with
+    `Failed shutting down instance … context deadline exceeded`. The build
+    container is about to be published and deleted, so its rootfs is all
+    that matters: pull the plug and carry on rather than throw the build
+    away at the last step.
+    """
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    expected = f"{cfg.container_prefix}-base-build"
+
+    def stop(name, **kwargs):
+        if kwargs.get("force"):
+            return None
+        raise IncusError(
+            f"`incus stop {name}` failed (exit 1): Error: Failed shutting down "
+            'instance, status is "Running": context deadline exceeded'
+        )
+
+    incus.stop.side_effect = stop
+
+    build_golden_image(cfg, incus)
+
+    incus.publish.assert_called_once()
+    assert incus.stop.call_args_list[-1] == call(expected, force=True)
+    # The clean attempt must be time-bounded, not left on incusd's 600s.
+    assert incus.stop.call_args_list[0].kwargs.get("timeout")
+
+
+def test_build_stop_asks_for_a_clean_shutdown_first():
+    """A healthy container is shut down properly — no gratuitous power cut."""
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+
+    build_golden_image(cfg, incus)
+
+    expected = f"{cfg.container_prefix}-base-build"
+    incus.stop.assert_called_once_with(expected, timeout=CLEAN_STOP_BUDGET)
 
 
 def test_build_removes_orphan_container_before_launch():

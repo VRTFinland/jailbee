@@ -102,6 +102,15 @@ show --layer global` to see what the global file contributes.
 
 The golden image is provisioned by `src/jailbee/provision/install.sh`, which performs LXC/Incus plumbing (user creation, sudoers, SSH_AUTH_SOCK passthrough, bind-mount parents, linger) and then runs every executable in `/provision/install.d/*.sh` in lexical order.
 
+It also **masks Ubuntu's automatic apt machinery** in the image —
+`apt-daily{,-upgrade}.timer`, their services, and `unattended-upgrades`.
+A background upgrade in a branch container takes the dpkg lock out from
+under your own `apt-get`, and one still running at shutdown can block
+systemd long enough for a stop to time out. Containers get their updates
+from a rebuilt golden image (`jailbee base build`) instead; if you need the
+timers back in a particular repo, `systemctl unmask` them from an
+`install.d/` snippet.
+
 ### Resolution order
 
 The bundled snippet set is split into two libraries, both shipped in the

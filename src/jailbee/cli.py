@@ -1788,10 +1788,14 @@ def stop(
 ) -> None:
     """Stop a running container."""
     from jailbee.lifecycle import short_name
+    from jailbee.stopping import stop_container
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    incus.stop(name, force=force)
+    # No force fallback here: this container holds the user's work, so a
+    # shutdown that will not finish is reported (with what is blocking it)
+    # rather than turned into a power cut behind their back.
+    stop_container(incus, name, force=force, label=short_name(cfg, name))
     success(f"Stopped: {short_name(cfg, name)}")
 
 

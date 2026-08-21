@@ -265,6 +265,30 @@
 
 ### Fixed
 
+- **The golden image no longer ships Ubuntu's automatic apt machinery.**
+  `install.sh` masks `apt-daily{,-upgrade}.timer`, their services and
+  `unattended-upgrades`. The timer fires within minutes of every boot — that
+  is, right on top of the golden build's own apt run and of yours inside a
+  branch container — and an upgrade still in flight at shutdown blocks
+  systemd, the most likely explanation for a build container that would not
+  stop. Masked rather than disabled, so reinstalling the packages cannot
+  quietly bring it back. Takes effect on the next `jailbee base build`.
+- **A container that will not shut down no longer costs ten silent minutes.**
+  Every jailbee stop passed no `--timeout`, and incusd reads that as a
+  600-second clean-shutdown budget: a container whose init hangs froze the
+  command with no output and then failed with `Failed shutting down instance,
+  status is "Running": context deadline exceeded`. In `jailbee base build`
+  that discarded a complete, successful provisioning run at the very last
+  step, and pointed at `incus info --show-log` for a container it deleted one
+  line later. Stops now use a 120-second budget with the elapsed time on
+  screen, and an expired budget first asks the still-running container what is
+  holding it up — pending systemd jobs, processes in uninterruptible sleep,
+  the tail of the console log where `A stop job is running for …` appears.
+  Disposable containers (the golden-image build container, the registry
+  mirror, anything `jailbee destroy` is about to delete anyway) are then
+  force-stopped so the work completes; `jailbee stop` on a container holding
+  your own work still reports rather than pulling the plug, and says how to
+  inspect it and how to force it.
 - **`jailbee exec` finds per-user tools again.** It ran the command under a
   non-login `bash -c`, and `incus exec` supplies only a bare default PATH, so
   anything installed per-user was invisible: `~/.local/bin` (added by

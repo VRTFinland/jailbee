@@ -88,6 +88,30 @@ def test_stop_calls_incus_stop_with_force(incus, mocker):
     assert "--force" in args
 
 
+def test_stop_passes_an_explicit_clean_shutdown_timeout(incus, mocker):
+    """Without `--timeout`, incusd waits 600s before failing the stop."""
+    run = _mock_run(mocker)
+    incus.stop("feat-foo", timeout=120)
+    args = run.call_args[0][0]
+    assert args == ["incus", "stop", "feat-foo", "--timeout", "120"]
+
+
+def test_stop_force_never_sends_a_timeout(incus, mocker):
+    """A forced stop is a zero-timeout stop server-side; both is contradictory."""
+    run = _mock_run(mocker)
+    incus.stop("feat-foo", force=True, timeout=120)
+    args = run.call_args[0][0]
+    assert "--timeout" not in args
+    assert "--force" in args
+
+
+def test_console_log_returns_the_console_ring_buffer(incus, mocker):
+    run = _mock_run(mocker, stdout="A stop job is running for Daily apt upgrade\n")
+    out = incus.console_log("feat-foo")
+    assert run.call_args[0][0] == ["incus", "console", "feat-foo", "--show-log"]
+    assert "stop job" in out
+
+
 def test_delete_calls_incus_delete(incus, mocker):
     run = _mock_run(mocker)
     incus.delete("feat-foo", force=True)
