@@ -627,6 +627,27 @@ def test_compute_mirror_endpoint_returns_none_when_the_mirror_is_down(
     assert egress_pool._compute_mirror_endpoint(cfg, incus, gcfg) is None
 
 
+def test_compute_mirror_endpoint_skips_a_repo_that_does_not_want_the_mirror(
+    tmp_path: Path, incus: Any, mocker: MockerFixture
+) -> None:
+    """The spec's headline benefit for non-Docker repos, in the module that
+    writes the ACL. Uses real Config/GlobalConfig objects — the module-level
+    `cfg`/`gcfg` fixtures are Mocks, so the gate cannot be exercised through
+    them."""
+    from jailbee import egress_pool
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "repo")  # no docker, no extra_registries, no ecr
+    gcfg = GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+    )
+    compute = mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint")
+
+    assert egress_pool._compute_mirror_endpoint(cfg, incus, gcfg) is None
+    compute.assert_not_called()
+
+
 def test_refresh_all_continues_when_one_repo_refresh_raises(
     db_session: Session,
     gcfg: Any,
