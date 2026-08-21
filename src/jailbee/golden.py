@@ -12,6 +12,7 @@ from pathlib import Path
 from jailbee.config import Config
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
+from jailbee.stopping import stop_container
 from jailbee.tui import info, status_with_elapsed, success, warn
 
 
@@ -355,8 +356,18 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
                 env=exec_env,
             )
 
-        info("Stopping build container")
-        incus.stop(build_container)
+        # A clean shutdown is a nicety here, not a requirement: what gets
+        # published is the filesystem, and the container is deleted moments
+        # later either way. So when the build container's init will not go
+        # down — a stuck apt-daily job, a process in D state — pull the plug
+        # and publish anyway. Failing here instead used to throw away a
+        # complete, successful provisioning run at the last step.
+        stop_container(
+            incus,
+            build_container,
+            force_fallback=True,
+            label="the build container",
+        )
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
 
