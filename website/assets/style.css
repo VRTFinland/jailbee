@@ -680,6 +680,57 @@ footer p {
   overflow: hidden;
 }
 
+/* The positioning context for the play affordance. */
+.demo__frame {
+  position: relative;
+  display: block;
+}
+
+/* Centred, and deliberately large: this is the only thing telling a reader
+   the terminal screenshot is a video. Sized in rem so it scales with the
+   reader's own text size rather than being pinned to the poster's pixels.
+   It sits well above the native control bar at the bottom edge. */
+.demo__play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 5.5rem;
+  height: 5.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* No transition: the reduced-motion rule below would have to exempt it,
+     and an instant state change is the honest behaviour for a button. */
+}
+
+.demo__play svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.demo__play circle {
+  fill: rgb(11 12 14 / 62%);
+  stroke: var(--amber);
+  stroke-width: 3;
+}
+
+.demo__play path {
+  fill: var(--amber);
+}
+
+.demo__play:hover circle,
+.demo__play:focus-visible circle {
+  fill: rgb(11 12 14 / 82%);
+}
+
+.demo__play:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 4px;
+  border-radius: 50%;
+}
+
 .demo__media {
   /* The tape's own frame: Width 1200 (demo/workflows/common.tape) by
      Height 900 (demo/workflows/a.tape). The poster is cut from the same
