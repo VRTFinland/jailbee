@@ -19,7 +19,8 @@ HOST_UID="$(id -u)"
 say() { printf '\n==> %s\n' "$1"; }
 
 [[ -f "$SUBSTRATE/.jailbee/config.yaml" ]] || {
-  echo "error: no substrate at $SUBSTRATE (see the plan's Tasks 2-3)" >&2
+  echo "error: no substrate at $SUBSTRATE. Create it first:" >&2
+  echo "  $(dirname "${BASH_SOURCE[0]}")/substrate.sh" >&2
   exit 1
 }
 
