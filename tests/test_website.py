@@ -516,6 +516,36 @@ def test_every_clip_the_page_references_is_actually_committed() -> None:
         assert (SITE / src).is_file(), f"referenced clip is not committed: {src}"
 
 
+def test_the_clip_has_a_play_affordance_that_javascript_can_reveal() -> None:
+    """A terminal screenshot does not look playable, so the button matters.
+
+    Three halves, and any one of them alone is an invisible failure: a button
+    with no script stays `hidden` forever, a script with no button does
+    nothing, and a button that ships *without* `hidden` is dead markup for a
+    reader with JavaScript off. Assert all three together.
+    """
+    html = INDEX.read_text()
+    buttons = [
+        attrs
+        for tag, attrs in collect_elements(html)
+        if tag == "button" and "demo__play" in (attrs.get("class") or "")
+    ]
+    videos = sum(1 for tag, _ in collect_elements(html) if tag == "video")
+    assert len(buttons) == videos, (
+        f"{videos} clips but {len(buttons)} play buttons — the poster is a screenshot "
+        f"and the native controls are a thin bar at the bottom edge"
+    )
+    for attrs in buttons:
+        assert "hidden" in attrs, (
+            "the play button must ship hidden and be revealed by script, or a reader "
+            "with JavaScript off gets a button that does nothing"
+        )
+        assert attrs.get("aria-label"), "the play button has no accessible name"
+    assert "demo__play" in html.split("<script>")[-1], (
+        "no script reveals the play button — it would stay hidden forever"
+    )
+
+
 def test_a_second_clip_brings_the_demo_tabs_back() -> None:
     """One clip needs no tabs; two do, and the wiring is silent when wrong.
 

@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=bb301473" />
+    <link rel="stylesheet" href="assets/style.css?v=64a7c149" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -173,28 +173,39 @@
                nothing in its first five seconds. `muted` and `playsinline`
                stay so a reader who taps play on iOS gets it inline rather
                than as a fullscreen takeover. -->
-          <video
-            class="demo__media"
-            muted
-            playsinline
-            controls
-            preload="none"
-            poster="assets/media/a.poster.png"
-          >
-            <source src="assets/media/a.webm" type="video/webm" />
-            <source src="assets/media/a.mp4" type="video/mp4" />
-          </video>
+          <div class="demo__frame">
+            <video
+              class="demo__media"
+              muted
+              playsinline
+              controls
+              preload="none"
+              poster="assets/media/a.poster.png"
+            >
+              <source src="assets/media/a.webm" type="video/webm" />
+              <source src="assets/media/a.mp4" type="video/mp4" />
+            </video>
+            <!-- The poster is a terminal screenshot, and a screenshot does not
+                 look playable: the native controls are a thin bar at the
+                 bottom edge that a reader has to notice first. This is the
+                 affordance. It ships `hidden` and the script at the end of the
+                 body reveals it, so with JavaScript off the interface is the
+                 native controls — exactly what it was before. -->
+            <button class="demo__play" type="button" hidden aria-label="Play the demo">
+              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                <circle cx="50" cy="50" r="47" />
+                <path d="M40 30 L74 50 L40 70 Z" />
+              </svg>
+            </button>
+          </div>
           <figcaption>
             <code>jb new &rarr; jb tmux &rarr; jb git pull &rarr; jb destroy</code>
             <p>
-              <strong>One feature, start to finish.</strong> A branch gets a container of
-              its own, cloned from the golden image with the app's dependencies synced, its
-              database seeded and its dev server already listening on port 8080. A coding
-              agent gets a window inside it and is asked for a <code>/health</code> endpoint
-              with a test; the human detaches, checks the running service from outside, and
-              comes back to find the work committed. <code>jb git pull</code> brings that
-              commit onto the host as a merge — asking before it destroys anything — and
-              <code>jb destroy</code> throws the container away as its own deliberate step.
+              <strong>One feature, start to finish.</strong> A branch gets a container of its
+              own — dependencies synced, database seeded, dev server already listening. An
+              agent works in it while the human checks the service from outside, and comes
+              back to find the commit made. Then the commit moves to the host and the
+              container goes away, each asking first.
             </p>
             <p class="demo__note">
               Every command and every line of output is real. The two stretches marked
@@ -744,6 +755,34 @@
                 button.textContent = original;
                 button.removeAttribute("data-state");
               }, 1500);
+            });
+          });
+        });
+      })();
+
+      // Play affordance for the demo clip. The button is `hidden` in the
+      // markup and revealed here, so a reader without JavaScript gets the
+      // native controls and nothing broken — which is what the page shipped
+      // before this existed. Hidden again while playing so it never covers
+      // the picture, and back on pause so a second click is as easy as the
+      // first.
+      (function () {
+        document.querySelectorAll(".demo__frame").forEach(function (frame) {
+          var video = frame.querySelector("video");
+          var button = frame.querySelector(".demo__play");
+          if (!video || !button) {
+            return;
+          }
+          button.hidden = false;
+          button.addEventListener("click", function () {
+            video.play();
+          });
+          video.addEventListener("play", function () {
+            button.hidden = true;
+          });
+          ["pause", "ended"].forEach(function (event) {
+            video.addEventListener(event, function () {
+              button.hidden = false;
             });
           });
         });
