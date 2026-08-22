@@ -1,0 +1,24 @@
+# Video A, timed against the 154.84s take recorded 2026-08-22.
+# Re-time after ANY change to a.tape. Find the spans with
+#   ffmpeg -i a.webm -vf freezedetect=n=-60dB:d=3 -map 0:v -f null -
+# and check the frames render.sh drops in workflows/a.boundaries/ — and use
+# accurate seeking (`-i file -ss t`, in that order) when sampling frames by
+# hand: this webm's keyframes are sparse across the static stretches, so
+# `-ss` before `-i` silently returns a frame from many seconds earlier.
+
+# `jb new` provisions in silence: freezedetect finds no change at all between
+# 6.36s and 21.28s. Starts 0.6s late so the command and its first lines read at
+# normal speed, ends 0.28s early so the output resuming does too.
+speed 7.0 21.0 6
+
+# The agent working. Verified by accurate frame sampling: its TUI is on screen
+# from before 80s until the detach just after 126.2s, it finishes at ~117.8s
+# ("Cogitated for 1m 16s") and the last 8.4s are a completely static frame.
+# Speeding the whole visit rather than only that idle tail is deliberate — the
+# agent's output is a wall of streaming text that no viewer reads at 1× either,
+# and 44s of it is the single slowest thing in the video.
+speed 81.0 125.0 6
+
+# Act 2's `jb ls`, with the new container in the table under the output that
+# created it — the frame that says what the tool is without needing play.
+poster 36.0

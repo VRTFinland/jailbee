@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=a69e50c2" />
+    <link rel="stylesheet" href="assets/style.css?v=f2a8aaf2" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -318,6 +318,46 @@
             <use class="comb__bee comb__bee--3" href="#combBee" x="460" y="340" />
           </g>
         </svg>
+      </div>
+    </section>
+
+    <!-- The payoff for #problem and #parallel: the same argument, running.
+         Placed here rather than in the hero because it is 106 seconds of real
+         work and nothing about it reads at a glance — a reader needs to know
+         what they are looking at first.
+
+         ONE clip, and no tabs. The four-clip tab wiring is in git history
+         (a68553e) and comes back with the second recording, not before:
+         tests/test_website.py asserts exactly that, so a second <video> fails
+         the suite until its tabs are restored. -->
+    <section id="demos">
+      <div class="wrap">
+        <h2>See it work.</h2>
+        <figure class="demo" id="demo-feature-flow">
+          <!-- Click-to-play, not a hero loop: `controls` and `preload="none"`,
+               no `loop` and no `autoplay`. `muted` and `playsinline` stay so a
+               reader who taps play on iOS gets the clip inline rather than a
+               fullscreen takeover. -->
+          <video
+            class="demo__media"
+            muted
+            playsinline
+            controls
+            preload="none"
+            poster="assets/media/a.poster.png"
+          >
+            <source src="assets/media/a.webm" type="video/webm" />
+            <source src="assets/media/a.mp4" type="video/mp4" />
+          </video>
+          <figcaption>
+            <code>jb new feat/health-endpoint</code>
+            <p>
+              A container for a new branch, an agent working inside it, its commit merged back
+              to the host, the container thrown away. Every command and every line of output
+              is real; the two stretches marked ×6 in the corner are sped up.
+            </p>
+          </figcaption>
+        </figure>
       </div>
     </section>
 

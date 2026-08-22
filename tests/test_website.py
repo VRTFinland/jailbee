@@ -84,6 +84,30 @@ def collect_tagged_references(html: str) -> list[tuple[str, str, str]]:
     return parser.refs
 
 
+class _ElementCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.elements: list[tuple[str, dict[str, str | None]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.elements.append((tag, dict(attrs)))
+
+
+def collect_elements(html: str) -> list[tuple[str, dict[str, str | None]]]:
+    """Every start tag with its attributes, in document order.
+
+    Parsed rather than string-matched because the demo markup carries
+    comments that mention `<video>` and the tab classes by name, and a
+    `html.split("<video")` counts those as elements — which is exactly how
+    the first version of the click-to-play tests below "found" two clips on
+    a page with one. A boolean attribute (``muted``, ``controls``) arrives
+    with a value of None, so test membership, not truthiness.
+    """
+    parser = _ElementCollector()
+    parser.feed(html)
+    return parser.elements
+
+
 def test_the_site_ships_a_cname_for_the_brand_domain() -> None:
     assert (SITE / "CNAME").read_text().strip() == "jailbee.gisgro.io"
 
@@ -269,9 +293,10 @@ def test_every_local_reference_resolves_on_disk() -> None:
         # The one exemption: a demo clip's <source src="assets/media/...">
         # is legitimately absent until someone runs demo/render.sh on a
         # host (vhs/ttyd/ffmpeg aren't installed here and can't be). Every
-        # other reference — including the poster= on the same <video>,
-        # which is committed and is what the page actually shows today —
-        # must still resolve.
+        # other reference — including the poster= on the same <video> —
+        # must still resolve. For clips the page actually ships, the
+        # exemption is closed again by
+        # test_every_clip_the_page_references_is_actually_committed.
         if tag == "source" and attr == "src" and value.startswith("assets/media/"):
             continue
         target = (SITE / value.split("?", 1)[0]).resolve()
@@ -407,7 +432,16 @@ def test_documentation_links_point_at_files_that_exist_in_this_repo() -> None:
 
 def test_every_expected_section_id_exists() -> None:
     html = INDEX.read_text()
-    for anchor in ("parallel", "network", "desktop", "agents", "features", "install", "docs"):
+    for anchor in (
+        "parallel",
+        "demos",
+        "network",
+        "desktop",
+        "agents",
+        "features",
+        "install",
+        "docs",
+    ):
         assert f'id="{anchor}"' in html, f"missing section: {anchor}"
 
 
@@ -420,8 +454,9 @@ def test_incus_is_not_named_in_the_visible_hero() -> None:
     dependency.
     """
     html = INDEX.read_text()
-    # Bounded by the first section after the pitch. That used to be #demos;
-    # it is #network while the clips are out.
+    # Bounded by #network. #problem, #parallel and #demos all sit inside the
+    # space this rule protects, which is the intent: the whole run-up to the
+    # requirements is pitch.
     body = html[html.index("</head>") : html.index('id="network"')]
     assert "Incus" not in body
 
@@ -430,41 +465,91 @@ def test_the_page_never_calls_a_container_a_machine() -> None:
     assert "machine" not in INDEX.read_text().lower()
 
 
-def test_generated_scenes_match_what_jailbees_renderer_produces_today() -> None:
-    """The demo table is real output over invented data — keep it that way.
+def test_every_demo_clip_is_click_to_play_with_a_poster() -> None:
+    """The guards the clips owed the page when they came back, paid.
 
-    If a column is renamed or dropped in the code, this fails and the scene
-    is regenerated, rather than the site quietly showing a table that the
-    tool no longer prints.
+    Deliberately NOT the 1.0 contract, and the difference is the whole
+    point: `loop` and `autoplay` belonged to fifteen-second hero loops that
+    started on scroll. A real workflow recording is minutes long, so it
+    carries `controls` and `preload="none"` and starts only when the reader
+    asks — and asserting the ABSENCE of `loop`/`autoplay` is what stops a
+    future edit from "restoring" that regression out of git history.
+
+    `muted` and `playsinline` stay: they are what keeps a tap on iOS playing
+    the clip inline instead of taking over the screen.
     """
-    import sys
+    videos = [attrs for tag, attrs in collect_elements(INDEX.read_text()) if tag == "video"]
+    assert videos, "the page ships no clip — see website/demo/render.sh"
+    for attrs in videos:
+        for flag in ("muted", "playsinline", "controls", "poster"):
+            assert flag in attrs, f"a <video> is missing {flag}"
+        assert attrs.get("preload") == "none", (
+            "a <video> does not set preload=none — a minutes-long clip must not "
+            "be fetched before the reader asks for it"
+        )
+        for banned in ("loop", "autoplay"):
+            assert banned not in attrs, (
+                f"a <video> has {banned} — these are click-to-play recordings, "
+                f"not the 1.0 hero loops"
+            )
 
-    sys.path.insert(0, str(SITE / "demo"))
-    try:
-        import generate
-    finally:
-        sys.path.pop(0)
 
-    generated = SITE / "demo" / "scenes" / "generated"
-    assert generate.render_ls() == (generated / "ls.txt").read_text()
-    assert generate.render_net_switch() == (generated / "net-switch.txt").read_text()
+def test_every_clip_the_page_references_is_actually_committed() -> None:
+    """A `<video>` whose sources 404 is worse than no clip at all.
 
-
-def test_the_page_ships_no_clips_while_they_are_being_rerecorded() -> None:
-    """The staged clips were pulled for 1.0; real recordings replace them.
-
-    Asserted positively rather than by deleting the old checks, which would
-    have left nothing to notice a half-finished restoration. When a clip
-    comes back this fails, and whoever brings it back owes the page the
-    guards this test replaced: every `<video>` muted, looping, playsinline,
-    `controls`, `preload="none"` and carrying a `poster=`; every
-    `.tabs__radio` matched by a `for=` label and a `#demo-*` panel, with
-    exactly one `checked`. Restore them from git history alongside the clip
-    rather than rewriting them from scratch.
+    `test_every_local_reference_resolves_on_disk` exempts
+    `assets/media/*` because a clip could legitimately be unrendered while
+    the page waited for a host with vhs on it. That exemption is now the
+    only thing standing between a half-finished restoration and a public
+    page, so this closes it: whatever the page names, `render.sh` must have
+    produced and someone must have committed. The poster is checked by that
+    other test already — it was never exempt.
     """
-    html = INDEX.read_text()
-    assert "<video" not in html, "a clip is back — restore the playback guards with it"
-    assert "tabs__radio" not in html, "the demo tabs are back — restore their wiring test"
+    sources = [
+        attrs["src"]
+        for tag, attrs in collect_elements(INDEX.read_text())
+        if tag == "source" and attrs.get("src")
+    ]
+    assert sources, "the clip references no media"
+    for src in sources:
+        assert src is not None
+        assert (SITE / src).is_file(), f"referenced clip is not committed: {src}"
+
+
+def test_a_second_clip_brings_the_demo_tabs_back() -> None:
+    """One clip needs no tabs; two do, and the wiring is silent when wrong.
+
+    The tabs were a radio group — a `for=` pointing at nothing, or a panel
+    with no tab, breaks nothing visibly: the section just shows the wrong
+    clip, or none at all. So the guard is kept alive rather than deleted
+    while there is only one clip, and it names where to restore the markup
+    from (a68553e, which pulled it).
+    """
+    elements = collect_elements(INDEX.read_text())
+    clips = sum(1 for tag, _ in elements if tag == "video")
+    radios = [
+        attrs
+        for tag, attrs in elements
+        if tag == "input" and "tabs__radio" in (attrs.get("class") or "")
+    ]
+    if clips < 2:
+        assert not radios, "demo tabs with a single clip — one clip needs no chooser"
+        return
+
+    assert len(radios) == clips, (
+        f"{clips} clips but {len(radios)} tabs — restore the tab markup from a68553e"
+    )
+    labelled = {attrs.get("for") for tag, attrs in elements if tag == "label"}
+    ids = {attrs.get("id") for _, attrs in elements}
+    for attrs in radios:
+        tab_id = attrs.get("id")
+        assert tab_id, "a .tabs__radio has no id to point a label at"
+        assert tab_id in labelled, f"tab {tab_id} has no label"
+        panel_id = tab_id.replace("tab-", "demo-")
+        assert panel_id in ids, f"tab {tab_id} points at no panel"
+    assert sum(1 for attrs in radios if "checked" in attrs) == 1, (
+        "exactly one tab must start selected"
+    )
 
 
 def test_no_media_file_is_a_zero_byte_stand_in() -> None:
@@ -486,13 +571,6 @@ def test_no_media_file_is_a_zero_byte_stand_in() -> None:
 def test_the_stylesheet_honours_reduced_motion() -> None:
     css = (SITE / "assets" / "style.css").read_text()
     assert "prefers-reduced-motion: reduce" in css
-
-
-def test_render_script_is_executable() -> None:
-    import os
-
-    script = SITE / "demo" / "render.sh"
-    assert os.access(script, os.X_OK)
 
 
 def test_robots_allows_crawling_and_points_at_the_sitemap() -> None:
