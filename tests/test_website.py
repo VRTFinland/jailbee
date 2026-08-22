@@ -541,8 +541,19 @@ def test_the_clip_has_a_play_affordance_that_javascript_can_reveal() -> None:
             "with JavaScript off gets a button that does nothing"
         )
         assert attrs.get("aria-label"), "the play button has no accessible name"
-    assert "demo__play" in html.split("<script>")[-1], (
+    script = html.split("<script>")[-1]
+    assert "demo__play" in script, (
         "no script reveals the play button — it would stay hidden forever"
+    )
+    # Mobile Chrome and iOS Safari draw their own centred play button over an
+    # unplayed video, so revealing this one there stacks two on top of each
+    # other — reported from a real phone. The gate must stay, and it must stay
+    # phrased as "hide on coarse" rather than "show on fine": a device that
+    # reports no pointer at all (headless Chrome, which renders this page's
+    # screenshots) should keep the button.
+    assert "pointer: coarse" in script, (
+        "the play button is no longer gated on pointer type — on a touch device "
+        "it lands on top of the browser's own play button"
     )
 
 

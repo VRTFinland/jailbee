@@ -766,7 +766,25 @@
       // before this existed. Hidden again while playing so it never covers
       // the picture, and back on pause so a second click is as easy as the
       // first.
+      //
+      // NOT revealed on touch devices. Mobile Chrome (and iOS Safari) already
+      // draw their own large centred play button over an unplayed video, so
+      // this one lands on top of theirs — two stacked buttons, reported from a
+      // real phone. Desktop Chrome and Firefox draw only the thin control bar
+      // at the bottom edge, which is the whole reason this exists.
+      //
+      // The test is `(pointer: coarse)` rather than `(pointer: fine)` on
+      // purpose: it must hide only where a native overlay is known to appear.
+      // A device that reports no pointer at all — headless Chrome does, which
+      // is what renders the screenshots this page is checked with — should get
+      // the button, not lose it to a query it never answers.
       (function () {
+        var touch =
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(pointer: coarse)").matches;
+        if (touch) {
+          return;
+        }
         document.querySelectorAll(".demo__frame").forEach(function (frame) {
           var video = frame.querySelector("video");
           var button = frame.querySelector(".demo__play");
