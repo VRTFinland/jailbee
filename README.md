@@ -24,6 +24,22 @@ Python venv/pip, Docker) are bundled but opt-in, enabled per repo via
 `golden.stacks` / `golden.enable_snippets`. It was built at GISGRO, which is
 its origin, not its scope.
 
+## See it work
+
+<p align="center">
+  <a href="https://jailbee.gisgro.io/#demos"><img
+    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/media/a.poster.png"
+    width="760"
+    alt="A terminal recording: jb new builds a container for a new branch, an agent works inside it, jb git pull merges its commit onto the host, and jb destroy throws the container away."></a>
+</p>
+
+<p align="center">
+  <a href="https://jailbee.gisgro.io/#demos"><strong>▶ Watch it run</strong></a><br>
+  <em>One branch, start to finish: <code>jb new</code>, an agent working inside the
+  container, <code>jb git pull</code> to bring its commit home, <code>jb destroy</code>.
+  Every command and every line of output is real.</em>
+</p>
+
 ## Key features
 
 - **Per-branch isolation** — one full-stack container per git branch, running
