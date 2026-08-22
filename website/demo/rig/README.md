@@ -1,15 +1,20 @@
 # The workflow-video recording rig
 
-Two scripts that turn this dev container into a machine that can record the
+Three scripts that turn this dev container into a machine that can record the
 website's workflow videos. They drive jailbee against the **nested** Incus
 daemon `.jailbee/install.d/75-incus.sh` bakes into the golden image, so
 recording needs no host session and a retake costs seconds.
 
 ```bash
+./substrate.sh       # the repo the videos are recorded against (run this first)
 ./up.sh              # environment: daemon, bridge, profiles, golden image
 ./seed-claude.sh     # an authenticated agent inside the containers
-cd ../ && ./render.sh   # record the tapes
+cd .. && ./render.sh --record a   # record video A
 ```
+
+**[`../README.md`](../README.md) is the runbook** — the per-take checklist, the
+cut lists, the rules that cost failed renders, and the honesty rules. This file
+covers only what `up.sh` does to the container and why.
 
 ## What `up.sh` does, and why each step is there
 
@@ -67,3 +72,7 @@ sudo umount /dev/dri                 # restores GPU passthrough for new containe
 
 The profiles and the ACL can stay: they are inert without containers, and
 `up.sh` reuses them.
+
+The substrate itself (`.local/video-rig/jailbee-demo` and its bare origin) is
+gitignored scratch: delete both and `./substrate.sh` rebuilds them from
+`../substrate/`, which is committed.

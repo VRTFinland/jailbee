@@ -83,6 +83,17 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "RUF"]
 strict = true
 python_version = "3.12"
 
+[tool.pytest.ini_options]
+# Pinned rather than left to discovery. `website/demo/substrate/` is a
+# committed miniature application — the repo the workflow videos are recorded
+# against — and it has a `tests/` directory of its own that needs FastAPI and
+# its own package layout. Bare `pytest` from the repo root would collect it and
+# fail on the import. Discovery previously skipped it only because that tree
+# lived under a dot-directory; naming the path makes it deliberate. Passing an
+# explicit path still overrides this, so `pytest website/demo/substrate` inside
+# a container works as expected.
+testpaths = ["tests"]
+
 [tool.hatch.build.targets.sdist]
 # The sdist is a build input, not a mirror of the repo. It carries the package
 # source plus whatever the wheel force-includes; prose docs, the website and

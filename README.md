@@ -28,17 +28,26 @@ its origin, not its scope.
 
 <p align="center">
   <a href="https://jailbee.gisgro.io/#demos"><img
-    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/media/a.poster.png"
+    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/media/a-teaser.gif"
     width="760"
-    alt="A terminal recording: jb new builds a container for a new branch, an agent works inside it, jb git pull merges its commit onto the host, and jb destroy throws the container away."></a>
+    alt="A terminal recording: jb ls shows one container, jb new feat/health-endpoint clones a second from the golden image and provisions it — dependencies, database, dev server, agent — and jb ls shows it running."></a>
 </p>
 
 <p align="center">
-  <a href="https://jailbee.gisgro.io/#demos"><strong>▶ Watch it run</strong></a><br>
-  <em>One branch, start to finish: <code>jb new</code>, an agent working inside the
-  container, <code>jb git pull</code> to bring its commit home, <code>jb destroy</code>.
-  Every command and every line of output is real.</em>
+  <a href="https://jailbee.gisgro.io/#demos"><strong>▶ Watch the whole flow</strong></a>
 </p>
+
+**What the full clip shows, end to end.** A branch gets a container of its own,
+cloned from the golden image with the app's dependencies synced, its database
+seeded and its dev server already listening on port 8080. A coding agent gets a
+window inside it and is asked for a `/health` endpoint with a test; the human
+detaches, checks the running service from outside, and comes back to find the
+work committed. `jb git pull` brings that commit onto the host as a merge —
+asking before it destroys anything — and `jb destroy` throws the container away
+as its own deliberate step.
+
+Every command and every line of output is real. Two stretches of the clip are
+sped up and say so on screen; nothing else is edited.
 
 ## Key features
 
