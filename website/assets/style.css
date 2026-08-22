@@ -661,10 +661,66 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
+   Demo — #demos, one click-to-play clip.
+
+   The 1.0 page had four fifteen-second reconstructions behind tabs, all
+   autoplaying on scroll, and the note that survived that round still
+   applies: a 1200px terminal is unreadable at 512px if you put two beside
+   each other, and several moving at once tells the eye nothing. What
+   replaced them is one real recording, minutes long, that starts when the
+   reader asks — so no autoplay rule, no IntersectionObserver, no script at
+   all. The tab CSS is in git history (a68553e) and comes back with the
+   second clip.
+   ----------------------------------------------------------------------- */
+.demo {
+  margin: 2rem 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.demo__media {
+  /* The tape's own frame: Width 1200 (demo/workflows/common.tape) by
+     Height 900 (demo/workflows/a.tape). The poster is cut from the same
+     render, so this must keep matching the tape — any other ratio
+     letterboxes or crops a clip that was already the right shape. */
+  aspect-ratio: 1200 / 900;
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Direct child only: the caption's prose mentions `×6`, and a descendant
+   selector would turn that into its own block. */
+.demo figcaption > code {
+  display: block;
+  color: var(--amber);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  overflow-wrap: break-word;
+}
+
+.demo figcaption {
+  padding: 1rem 1.25rem;
+}
+
+.demo figcaption p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: none;
+}
+
+/* -----------------------------------------------------------------------
    Reduced motion — covers every transition/animation on the page. There
    happen to be none declared elsewhere yet, but a future hover/focus
-   transition must not have to remember this rule exists. (It also covered
-   the demo clips' playback before that section was pulled.)
+   transition must not have to remember this rule exists. It does not
+   need to cover #demos: that clip is click-to-play, so nothing moves
+   until the reader asks it to.
    ----------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   * {
