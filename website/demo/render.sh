@@ -126,6 +126,7 @@ for name in "${names[@]}"; do
 
     poster_at=1.0
     spans=()
+    boundaries_cleaned=""
     cutlist="$CUTS/$name.cuts"
     if [[ -f $cutlist ]]; then
         while read -r kind a b c; do
@@ -185,9 +186,21 @@ for name in "${names[@]}"; do
 
             # The frames that decide whether the span is still timed right: the
             # one the speed-up starts on, and the one it hands back on.
+            # Fresh each run: a stale frame from a previous cut list, sitting
+            # in the same directory under a different timestamp, is exactly the
+            # kind of thing that gets trusted by mistake.
+            [[ -n ${boundaries_cleaned:-} ]] || rm -rf "$WORKFLOWS/$name.boundaries"
+            boundaries_cleaned=1
             mkdir -p "$WORKFLOWS/$name.boundaries"
+            # `-ss` AFTER `-i`: output seeking, which decodes from the start
+            # and lands on the exact frame. The fast form (`-ss` before `-i`)
+            # seeks to the nearest keyframe, and this webm's keyframes are
+            # sparse across exactly the static stretches a cut list targets —
+            # it silently returns a frame from many seconds earlier, which in a
+            # tool whose whole job is verifying a boundary is worse than
+            # useless.
             for edge in "$start" "$end"; do
-                ffmpeg -v error -y -ss "$edge" -i "$raw_webm" -frames:v 1 \
+                ffmpeg -v error -y -i "$raw_webm" -ss "$edge" -frames:v 1 \
                     "$WORKFLOWS/$name.boundaries/at-${edge}s.png"
             done
         done
@@ -208,7 +221,7 @@ for name in "${names[@]}"; do
 
     # From the RAW render, not the cut clip: every time in a cut list is a raw
     # timestamp, and a poster must not carry a ×N badge.
-    ffmpeg -v error -y -ss "$poster_at" -i "$raw_webm" -frames:v 1 "$CLIPS/$name.poster.png"
+    ffmpeg -v error -y -i "$raw_webm" -ss "$poster_at" -frames:v 1 "$CLIPS/$name.poster.png"
     echo "    poster from ${poster_at}s"
 done
 
