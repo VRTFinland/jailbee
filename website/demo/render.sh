@@ -11,6 +11,7 @@
 #          cuts/<name>.cuts               optional speed-up list (see below)
 # Outputs  ../assets/media/<name>.{webm,mp4}   the shippable clip
 #          ../assets/media/<name>.poster.png   its poster frame
+#          ../assets/media/<name>-teaser.gif   a looping excerpt, if asked for
 #
 # The output directory is the one the root .gitignore already names as the
 # contract: the raw renders under workflows/ are ignored, and what the page
@@ -21,6 +22,16 @@
 #
 #   speed  <start> <end> <factor>   speed that span up by <factor>
 #   poster <t>                      pull the poster frame from <t> (default 1.0)
+#   teaser <start> <seconds>        a looping GIF cut from the FINISHED clip
+#
+# `speed` and `poster` take raw-render times. `teaser` is the exception and
+# takes times in the CUT clip's timeline, because that is the thing it is cut
+# from — a teaser of the raw render would show dead time the clip removed. The
+# script prints both timelines so the two cannot be confused silently.
+#
+# The teaser exists for README.md and the PyPI page, which have no video
+# player: an animated GIF is the only form that renders in both. Terminal video
+# has almost no colours, so 20 seconds at 720px costs about 600 KB.
 #
 # Spans must be ordered and must not overlap. Every sped-up span is stamped
 # with a visible `×<factor>` badge in the top-right corner for exactly as long
@@ -125,6 +136,8 @@ for name in "${names[@]}"; do
     echo "==> $name: raw render is ${duration}s"
 
     poster_at=1.0
+    teaser_at=""
+    teaser_len=""
     spans=()
     boundaries_cleaned=""
     cutlist="$CUTS/$name.cuts"
@@ -133,6 +146,11 @@ for name in "${names[@]}"; do
             [[ -z ${kind:-} || $kind == \#* ]] && continue
             case $kind in
             poster) poster_at=$a ;;
+            teaser)
+                [[ -n ${b:-} ]] || die "$cutlist: 'teaser' needs <start> <seconds>"
+                teaser_at=$a
+                teaser_len=$b
+                ;;
             speed)
                 [[ -n ${c:-} ]] || die "$cutlist: 'speed' needs <start> <end> <factor>"
                 lte "$b" "$duration" ||
@@ -222,7 +240,18 @@ for name in "${names[@]}"; do
     # From the RAW render, not the cut clip: every time in a cut list is a raw
     # timestamp, and a poster must not carry a ×N badge.
     ffmpeg -v error -y -i "$raw_webm" -ss "$poster_at" -frames:v 1 "$CLIPS/$name.poster.png"
-    echo "    poster from ${poster_at}s"
+    echo "    poster from ${poster_at}s (raw)"
+
+    if [[ -n $teaser_at ]]; then
+        # Cut from the finished clip, hence $CLIPS and not $raw_webm. 10fps and
+        # a 64-colour palette: this is a terminal, and paying for 25fps or 256
+        # colours would triple the size for nothing a reader would notice.
+        ffmpeg -v error -y -i "$CLIPS/$name.webm" -ss "$teaser_at" -t "$teaser_len" \
+            -vf "fps=10,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=bayer:bayer_scale=3" \
+            "$CLIPS/$name-teaser.gif"
+        echo "    teaser ${teaser_len}s from ${teaser_at}s (cut timeline), \
+$(du -h "$CLIPS/$name-teaser.gif" | cut -f1)"
+    fi
 done
 
 echo "==> Clips in website/assets/media/"

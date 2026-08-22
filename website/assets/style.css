@@ -715,6 +715,24 @@ footer p {
   max-width: none;
 }
 
+.demo figcaption p + p {
+  margin-top: 0.75rem;
+}
+
+/* The provenance line, not the story: same size, dimmer, so it reads as a
+   footnote to the clip rather than as part of the description. */
+.demo__note {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* Inline code inside the caption's prose, as opposed to the command line
+   above it, which the `> code` rule turns into its own block. */
+.demo figcaption p code {
+  color: var(--text);
+  font-size: 0.85em;
+}
+
 /* -----------------------------------------------------------------------
    Reduced motion — covers every transition/animation on the page. There
    happen to be none declared elsewhere yet, but a future hover/focus

@@ -22,3 +22,11 @@ speed 81.0 125.0 6
 # Act 2's `jb ls`, with the new container in the table under the output that
 # created it — the frame that says what the tool is without needing play.
 poster 36.0
+
+# A looping excerpt for README.md and the PyPI page, which have no video
+# player. Times are in the CUT clip's timeline, not the raw render's: 5.5s is
+# where `jb new` is typed and 26s is just after the second `jb ls` shows the
+# new container in the table. That window is the whole pitch on its own — one
+# container before, one command, one container after — and it carries the ×6
+# badge through the provisioning it speeds up.
+teaser 5.5 20.5
