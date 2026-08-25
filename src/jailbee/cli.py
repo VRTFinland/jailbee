@@ -6639,6 +6639,7 @@ def exec_cmd(
 @app.command()
 def doctor(config: ConfigOption = None) -> None:
     """Run diagnostic checks."""
+    from rich.markup import escape
     from rich.table import Table
 
     from jailbee.doctor import run_checks
@@ -6653,8 +6654,14 @@ def doctor(config: ConfigOption = None) -> None:
     table.add_column("STATUS")
     table.add_column("DETAIL")
     for r in results:
+        # The STATUS cell is markup, so the whole row is rendered with markup
+        # enabled — and details are arbitrary text: exception strings
+        # (SQLAlchemy appends `[SQL: ...] [parameters: (...)]`), absolute
+        # paths in brackets, the upgrade block's own wording. Unescaped, a
+        # bracketed run is silently swallowed as a style tag, or raises
+        # MarkupError and takes `doctor` down with it. Escape every detail.
         status = "[green]✓ OK[/green]" if r.ok else "[red]✗ FAIL[/red]"
-        table.add_row(r.name, status, r.detail)
+        table.add_row(escape(r.name), status, escape(r.detail))
     console.print(table)
 
     if any(not r.ok for r in results):

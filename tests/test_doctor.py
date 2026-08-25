@@ -203,6 +203,32 @@ def test_doctor_cmd_passes_the_loaded_global_config(tmp_path, mocker):
     assert run.call_args.kwargs["gcfg"] is gcfg
 
 
+def test_doctor_renders_a_bracketed_detail_verbatim(tmp_path, mocker):
+    """The STATUS cell is markup, so the whole row renders with markup on.
+
+    Details are arbitrary text — SQLAlchemy appends `[SQL: ...] [parameters:
+    (...)]` to any DBAPI error, and paths get bracketed by hand. Unescaped,
+    the first shape is silently swallowed as a style tag and the second
+    raises MarkupError, which would take `doctor` itself down.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.doctor import CheckResult
+
+    detail = "boom [parameters: ('x',)] [/tmp/p]"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.doctor.run_checks", return_value=[CheckResult("db", True, detail)])
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert detail in result.stdout
+
+
 def test_doctor_warns_on_legacy_host_docker_mirror(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
