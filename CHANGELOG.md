@@ -100,6 +100,16 @@
 
 ### Fixed
 
+- **`jailbee pr` no longer looks like it hangs on the container fetch.** The
+  fetch summary and the dirty-tree warning are now printed *before* the push
+  to the upstream remote, followed by an explicit
+  `Pushing '<branch>' to origin…` line. `git push` inherits its output and
+  prints nothing until the remote answers, so a push blocked on remote
+  authentication left git's own fetch output as the last thing on screen and
+  read as a stalled fetch — several steps earlier than where the command
+  actually was. The container-side `git status --porcelain` probe that runs
+  between the two is also bounded by a 60-second timeout now, so a stalled
+  `incus exec` reports instead of waiting forever.
 - **`claude` no longer breaks in one container when another container
   updates it.** The Claude version store (`~/.local/share/claude/versions`)
   is a bind mount shared by every container of a repo, but

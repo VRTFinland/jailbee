@@ -20,6 +20,8 @@ from jailbee.incus import IncusError
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -326,6 +328,14 @@ _INDEX_LOCK_BACKOFF_S = 0.5
 #: set for the listing probe (`git_status._PROBE_SNIPPET`'s exec env).
 _READ_ONLY_GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0"}
 
+#: Wall-clock bound for the container-side `git status --porcelain` probe.
+#: Generous on purpose: it is not there to police a slow repository (a cold
+#: stat cache in a large tree takes seconds), but to keep a stalled
+#: `incus exec` from hanging the caller forever with nothing on the terminal —
+#: `jailbee pr` runs this probe between the fetch and the push, where an
+#: unbounded wait looks exactly like a hung fetch.
+_STATUS_PROBE_TIMEOUT_S = 60
+
 
 def _index_lock_held(exc: Exception) -> bool:
     """True when a container-side git command failed on `.git/index.lock`.
@@ -386,13 +396,18 @@ def _exec_container_git_write(
 
 
 def _container_status_dirty(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> bool:
-    """Return True if `git status --porcelain` in the container has output."""
+    """Return True if `git status --porcelain` in the container has output.
+
+    Bounded by `_STATUS_PROBE_TIMEOUT_S`; a timeout surfaces as `SyncError`
+    like any other exec failure, carrying incus's "timed out after Ns" text.
+    """
     try:
         out = incus.exec(
             full_name,
             ["git", "-C", repo_dir, "status", "--porcelain"],
             uid=uid,
             env=_READ_ONLY_GIT_ENV,
+            timeout=_STATUS_PROBE_TIMEOUT_S,
         )
     except IncusError as exc:
         raise SyncError(f"Failed to inspect container working tree at {repo_dir}: {exc}") from exc
@@ -1159,6 +1174,7 @@ def publish_branch_from_container(
     branch: str | None = None,
     publish_name: str | None = None,
     force: bool = False,
+    on_before_push: Callable[[PublishResult], None] | None = None,
 ) -> PublishResult:
     """Fetch container `short`'s branch and push it to the GitHub origin.
 
@@ -1169,6 +1185,13 @@ def publish_branch_from_container(
 
     A failed push is offered as a retry on a TTY (see `retry.with_remote_retry`);
     only the push is re-run, never the container fetch or the lease anchor.
+
+    `on_before_push` is called with the fully-resolved `PublishResult` once
+    everything before the push is done, and is the caller's chance to flush its
+    own report of that work. This matters for the terminal: `git push` inherits
+    its output and prints nothing until the remote answers, so a push waiting on
+    authentication is indistinguishable from a hung fetch unless the fetch's
+    result is already on screen. The same object is returned on success.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -1183,6 +1206,10 @@ def publish_branch_from_container(
     lease = git.remote_branch_sha(cfg.repo_root, remote, dest) if force else None
 
     src_ref = f"refs/jailbee/{short}/{fetch.branch}"
+    result = PublishResult(fetch=fetch, dirty=dirty, publish_name=dest, forced=bool(lease))
+    if on_before_push is not None:
+        on_before_push(result)
+
     try:
         # Retry only the push. Re-fetching from the container or recomputing the
         # --force-with-lease anchor would be wrong: the lease must stay pinned to
@@ -1211,7 +1238,7 @@ def publish_branch_from_container(
         )
         raise SyncError(f"Pushing '{dest}' to {remote} failed: {exc}\n{hint}") from exc
 
-    return PublishResult(fetch=fetch, dirty=dirty, publish_name=dest, forced=bool(lease))
+    return result
 
 
 def checkout_from_container(
