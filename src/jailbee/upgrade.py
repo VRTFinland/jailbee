@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
+    from jailbee.db.models import RepoUpgradeState
+
 Action = Literal["base_build", "apply"]
 
 ACTIONS: tuple[Action, ...] = ("base_build", "apply")
@@ -195,11 +197,10 @@ def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]
 
 def _bootstrap_row(
     prefix: str, version: str, now: datetime
-) -> RepoUpgradeState:  # type: ignore[name-defined]  # noqa: F821
+) -> RepoUpgradeState:
     """Construct the assumed-bootstrap row: both watermarks at `version`,
     neither observed. This is the single place the bootstrap shape is defined,
     so all callers that need to create a fresh row share the same structure.
-    Local import of RepoUpgradeState keeps the module dependency deferred.
     """
     from jailbee.db.models import RepoUpgradeState
 
