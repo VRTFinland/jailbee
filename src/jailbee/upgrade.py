@@ -149,3 +149,40 @@ def pending(
         if reasons:
             owed.append(PendingAction(action=action, watermark=mark, reasons=reasons))
     return Pending(tuple(owed))
+
+
+MAX_REASONS = 3
+"""Reasons shown per action before collapsing into "... and N more".
+
+A user who skipped several releases should get a readable hint, not a wall.
+"""
+
+
+def _dotted(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]:
+    """Render `owed` as plain lines for `tui.hint`.
+
+    Returns lines rather than printing, so the wording is testable without
+    capturing output and the caller owns the output stream.
+    """
+    lines: list[str] = []
+    for item in owed.actions:
+        command = ACTION_COMMANDS[item.action]
+        version = _dotted(item.watermark.version)
+        if item.watermark.observed:
+            lines.append(f"Since this repo last ran `{command}` (jailbee {version}):")
+        else:
+            # No run was ever observed, so claiming "since this repo last ran"
+            # would be a fabrication. Name the release instead.
+            verb = "produces" if item.action == "base_build" else "writes"
+            lines.append(f"jailbee {version} changed what `{command}` {verb}:")
+        shown = item.reasons[:max_reasons]
+        lines.extend(f"    - {reason}" for reason in shown)
+        hidden = len(item.reasons) - len(shown)
+        if hidden:
+            lines.append(f"    - ... and {hidden} more (see the CHANGELOG)")
+        lines.append(f"    Run `{command}` in this repo to pick these up.")
+    return lines

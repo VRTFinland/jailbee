@@ -233,3 +233,83 @@ def test_missing_watermark_for_an_action_is_skipped() -> None:
     notes = (_note(1, 0, 0, "base_build", "apply", reason="both"),)
     got = pending("1.0.0", {"apply": Watermark((1, 0, 0), observed=False)}, notes=notes)
     assert [a.action for a in got.actions] == ["apply"]
+
+
+def test_format_advice_is_empty_for_nothing_owed() -> None:
+    from jailbee.upgrade import Pending, format_advice
+
+    assert format_advice(Pending()) == []
+
+
+def test_format_advice_names_the_observed_watermark() -> None:
+    """With a real run on record the message can say so honestly."""
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                action="base_build",
+                watermark=Watermark((1, 0, 3), observed=True),
+                reasons=("install.sh installs fd",),
+            ),
+        )
+    )
+    lines = format_advice(owed)
+    assert lines[0] == "Since this repo last ran `jb base build` (jailbee 1.0.3):"
+    assert lines[1] == "    - install.sh installs fd"
+    assert lines[2] == "    Run `jb base build` in this repo to pick these up."
+
+
+def test_format_advice_does_not_claim_a_run_it_never_saw() -> None:
+    """An assumed watermark means jailbee never observed a run — the message
+    must not say "since this repo last ran"."""
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                action="apply",
+                watermark=Watermark((1, 1, 0), observed=False),
+                reasons=("the ACL gained a rule",),
+            ),
+        )
+    )
+    lines = format_advice(owed)
+    assert lines[0] == "jailbee 1.1.0 changed what `jb apply` writes:"
+    assert "last ran" not in lines[0]
+
+
+def test_format_advice_truncates_a_long_reason_list() -> None:
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                action="base_build",
+                watermark=Watermark((1, 0, 0), observed=True),
+                reasons=("a", "b", "c", "d", "e"),
+            ),
+        )
+    )
+    lines = format_advice(owed, max_reasons=3)
+    assert lines[1:5] == [
+        "    - a",
+        "    - b",
+        "    - c",
+        "    - ... and 2 more (see the CHANGELOG)",
+    ]
+
+
+def test_format_advice_renders_both_actions() -> None:
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction("base_build", Watermark((1, 0, 0), observed=True), ("x",)),
+            PendingAction("apply", Watermark((1, 0, 0), observed=True), ("y",)),
+        )
+    )
+    lines = format_advice(owed)
+    assert sum(1 for line in lines if line.startswith("Since this repo")) == 2
+    assert any("`jb base build`" in line for line in lines)
+    assert any("`jb apply`" in line for line in lines)
