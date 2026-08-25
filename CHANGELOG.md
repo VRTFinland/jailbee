@@ -78,6 +78,22 @@
 
 ### Fixed
 
+- **`claude` no longer breaks in one container when another container
+  updates it.** The Claude version store (`~/.local/share/claude/versions`)
+  is a bind mount shared by every container of a repo, but
+  `~/.local/bin/claude` is a per-container symlink pinned to one exact
+  version at `jailbee new` time — and Claude's own updater prunes old
+  releases from the shared store. A `claude update` in any container could
+  therefore delete the version another container pointed at, leaving a
+  dangling launcher (`-bash: .../claude: No such file or directory`) that
+  never healed, because the relink only ran at `jailbee new`. The golden
+  image now ships `/etc/profile.d/jailbee-claude.sh`, which repoints a
+  missing or dangling launcher at the newest usable release in the store on
+  every login shell — the path every in-container `claude` invocation takes.
+  A healthy pin is left alone, so `claude.auto_update: false` keeps its
+  version. Requires a base-image rebuild (`jailbee base build`); existing
+  containers can be repaired in place with
+  `ln -sfn ~/.local/share/claude/versions/$(ls -1 ~/.local/share/claude/versions | sort -V | tail -1) ~/.local/bin/claude`.
 - **A stopped or missing registry mirror is no longer fatal.** `jailbee init`
   (which the docs tell you to run *before* `jailbee registry up`) and
   `jailbee apply` now warn and continue instead of aborting, and the background
