@@ -205,6 +205,18 @@ def test_container_label_state_reads_the_labels(mocker):
     assert record == pr_flow.PrRecord(number=12, head="user/x", author=True, adopted=False)
 
 
+def test_container_label_state_raises_on_a_malformed_pr_label(mocker):
+    """FIX 5 regression: a non-numeric `user.jailbee.pr` must fail closed, not
+    silently read as `number=None` (== "no PR"), which would turn OFF every
+    guard keyed on `pr_label` (--as rejection, the foreign-force
+    confirmation, offer_regen) for a container that plainly has a PR."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda name, key: {"user.jailbee.pr": "not-a-number"}.get(key)
+
+    with pytest.raises(pr_flow.MalformedPrLabelError):
+        pr_flow.ContainerLabelState(incus, "c1").read()
+
+
 def test_container_label_state_writes_pr_branch_first_and_number_last(mocker):
     incus = mocker.MagicMock()
 
@@ -262,7 +274,9 @@ def test_container_label_state_record_context_replaces_generic_warning(mocker):
 def test_adopt_returns_none_without_a_branch(tmp_path, mocker):
     state = mocker.MagicMock()
     assert (
-        pr_flow.adopt_existing_pr_for_branch(_super_scope(tmp_path), state, branch=None, yes=True)
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), state, branch=None, yes=True, record_context="on 'feat-foo'"
+        )
         is None
     )
 
@@ -271,7 +285,11 @@ def test_adopt_returns_none_when_no_pr_exists(tmp_path, mocker):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
     assert (
         pr_flow.adopt_existing_pr_for_branch(
-            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+            _super_scope(tmp_path),
+            mocker.MagicMock(),
+            branch="feat/foo",
+            yes=True,
+            record_context="on 'feat-foo'",
         )
         is None
     )
@@ -282,7 +300,11 @@ def test_adopt_skips_a_closed_or_merged_pr(tmp_path, mocker, state_value):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info(state=state_value))
     assert (
         pr_flow.adopt_existing_pr_for_branch(
-            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+            _super_scope(tmp_path),
+            mocker.MagicMock(),
+            branch="feat/foo",
+            yes=True,
+            record_context="on 'feat-foo'",
         )
         is None
     )
@@ -295,7 +317,11 @@ def test_adopt_skips_a_fork_head(tmp_path, mocker):
     )
     assert (
         pr_flow.adopt_existing_pr_for_branch(
-            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+            _super_scope(tmp_path),
+            mocker.MagicMock(),
+            branch="feat/foo",
+            yes=True,
+            record_context="on 'feat-foo'",
         )
         is None
     )
@@ -306,11 +332,17 @@ def test_adopt_records_the_pr_and_returns_it(tmp_path, mocker):
     state = mocker.MagicMock()
 
     result = pr_flow.adopt_existing_pr_for_branch(
-        _super_scope(tmp_path), state, branch="feat/foo", yes=True
+        _super_scope(tmp_path), state, branch="feat/foo", yes=True, record_context="on 'feat-foo'"
     )
 
     assert result == (7, "feat/foo")
-    state.record.assert_called_once_with(head="feat/foo", author=False, adopted=True, number=7)
+    state.record.assert_called_once_with(
+        head="feat/foo",
+        author=False,
+        adopted=True,
+        number=7,
+        context="Could not record PR #7 on 'feat-foo'",
+    )
 
 
 def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
@@ -318,7 +350,11 @@ def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
     with pytest.raises(typer.Exit) as excinfo:
         pr_flow.adopt_existing_pr_for_branch(
-            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=False
+            _super_scope(tmp_path),
+            mocker.MagicMock(),
+            branch="feat/foo",
+            yes=False,
+            record_context="on 'feat-foo'",
         )
     assert excinfo.value.exit_code == 1
 
@@ -329,7 +365,11 @@ def test_adopt_aborts_on_decline(tmp_path, mocker):
     mocker.patch("typer.confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.adopt_existing_pr_for_branch(
-            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=False
+            _super_scope(tmp_path),
+            mocker.MagicMock(),
+            branch="feat/foo",
+            yes=False,
+            record_context="on 'feat-foo'",
         )
 
 

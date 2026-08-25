@@ -289,6 +289,10 @@ class PrRecord:
     adopted: bool
 
 
+class MalformedPrLabelError(RuntimeError):
+    """`user.jailbee.pr` is set but is not a valid integer."""
+
+
 class PrState(Protocol):
     """Where a target's PR decision is persisted.
 
@@ -317,10 +321,26 @@ class ContainerLabelState:
         self._full = full
 
     def read(self) -> PrRecord:
+        """Read the labels into a `PrRecord`.
+
+        Raises `MalformedPrLabelError` when `user.jailbee.pr` is set but does
+        not parse as an integer, rather than silently treating it as "no
+        PR": every guard keyed on `pr_label`'s truthiness (`--as` rejection,
+        the foreign-force confirmation, `offer_regen`) would otherwise turn
+        OFF for a container that plainly has a PR, just with corrupted
+        state — a fail-open reading of a fail-closed guard. A label jailbee
+        wrote itself always parses; anything else needs a human, not a
+        silent fallback.
+        """
         raw = self._incus.config_get(self._full, "user.jailbee.pr")
-        try:
-            number = int(raw) if raw else None
-        except ValueError:
+        if raw:
+            try:
+                number = int(raw)
+            except ValueError as exc:
+                raise MalformedPrLabelError(
+                    f"Container '{self._full}' has a malformed PR label (user.jailbee.pr={raw!r})."
+                ) from exc
+        else:
             number = None
         return PrRecord(
             number=number,
@@ -372,6 +392,7 @@ def adopt_existing_pr_for_branch(
     *,
     branch: str | None,
     yes: bool,
+    record_context: str,
 ) -> tuple[int, str] | None:
     """Adopt the PR that already exists for the container's branch, if any.
 
@@ -391,6 +412,11 @@ def adopt_existing_pr_for_branch(
     Records the head branch and `adopted` — but deliberately not `author`:
     jailbee found this PR, it did not create it, and the foreign-head guards
     (`--force` confirmation, no description regeneration) must stay on.
+
+    `record_context` names where this landed (e.g. ``"on 'feat-foo'"`` or
+    ``"for submodule 'lib/a' on 'feat-foo'"``) — required, not optional, so a
+    label-write failure here always tells the user the PR number and where to
+    look, not just a generic "could not record" with no way to fix it by hand.
     """
     from jailbee import pr as pr_module
     from jailbee.lifecycle import _stdin_is_interactive
@@ -441,7 +467,13 @@ def adopt_existing_pr_for_branch(
             )
             raise typer.Abort()
 
-    state.record(head=found.head_ref, author=False, adopted=True, number=found.number)
+    state.record(
+        head=found.head_ref,
+        author=False,
+        adopted=True,
+        number=found.number,
+        context=f"Could not record PR #{found.number} {record_context}",
+    )
 
     return found.number, found.head_ref
 

@@ -3944,7 +3944,13 @@ def _adopt_pr_head(
     # head name would make the next run publish to the container branch.
     # Best-effort, like the create path's label writes. `number=None` leaves
     # the recorded PR number alone — `new` already wrote it.
-    state.record(head=pr_info.head_ref, author=False, adopted=True, number=None)
+    state.record(
+        head=pr_info.head_ref,
+        author=False,
+        adopted=True,
+        number=None,
+        context=f"Could not record the PR-head decision on '{short}'",
+    )
 
     return pr_info.head_ref
 
@@ -4103,7 +4109,11 @@ def pr_cmd(
     state = pr_flow.ContainerLabelState(incus, full)
 
     if open_only:
-        pr_num = state.read().number
+        try:
+            pr_num = state.read().number
+        except pr_flow.MalformedPrLabelError as exc:
+            error(str(exc))
+            raise typer.Exit(1) from exc
         if pr_num is None:
             error(f"Container '{short}' has no associated PR.")
             raise typer.Exit(1)
@@ -4119,7 +4129,11 @@ def pr_cmd(
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    record = state.read()
+    try:
+        record = state.read()
+    except pr_flow.MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
     is_author = record.author
     stored_pr_branch = record.head
     pr_label = str(record.number) if record.number is not None else None
@@ -4150,7 +4164,7 @@ def pr_cmd(
     # skips the lookup entirely.
     if not (is_author or stored_pr_branch or pr_label) and as_name is None:
         found_pr = pr_flow.adopt_existing_pr_for_branch(
-            scope, state, branch=container_branch, yes=yes
+            scope, state, branch=container_branch, yes=yes, record_context=f"on '{short}'"
         )
         if found_pr is not None:
             found_number, found_head = found_pr
@@ -4583,7 +4597,13 @@ def submodule_pr_cmd(
 
     is_update = bool(record.author or record.head)
     if not is_update and as_name is None:
-        found = pr_flow.adopt_existing_pr_for_branch(scope, state, branch=source_branch, yes=yes)
+        found = pr_flow.adopt_existing_pr_for_branch(
+            scope,
+            state,
+            branch=source_branch,
+            yes=yes,
+            record_context=f"for submodule '{subpath}' on '{short}'",
+        )
         if found is not None:
             pr_label = str(found[0])
             is_update = True
