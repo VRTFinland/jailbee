@@ -1311,6 +1311,11 @@ because a live number is worth its width in a view that refreshes and is a
 stale sample in one that does not. IP is off in both — enable it in the
 dashboard settings UI, or ask for it from `ls` with `--fields ip`.
 
+Four columns are dynamic and appear only when they have
+something to say: `job` (a background job is running), `ttl` (a container is
+in loose mode), `pr` (a container tracks a PR) and `mode` (a mount-mode
+container exists — on a clone-only host the column would be a constant).
+
 **Table output only.** `jailbee ls --format json` always emits its own built-in
 field set (`FieldSpec.default_json`), regardless of `ls.fields`/`ls.hide` —
 a personal display preference in `global.yaml` must never silently narrow
