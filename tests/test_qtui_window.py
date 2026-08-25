@@ -350,14 +350,43 @@ def test_paused_checks_off_manual_in_refresh_menu(qtbot):
 
 
 def test_columns_menu_reflects_the_enabled_set(qtbot):
-    from jailbee.dashboard import all_column_names
+    from jailbee.dashboard import all_column_names, dynamic_column_names
 
     win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "state"))
     qtbot.addWidget(win)
     checked = {a.text() for a in win.columns_menu.actions() if a.isChecked()}
 
     assert checked == {"name", "state"}
-    assert {a.text() for a in win.columns_menu.actions()} == set(all_column_names())
+    dynamic = dynamic_column_names()
+    expected_labels = {
+        f"{name} (shown only when it applies)" if name in dynamic else name
+        for name in all_column_names()
+    }
+    assert {a.text() for a in win.columns_menu.actions()} == expected_labels
+
+
+def test_columns_menu_marks_the_dynamic_columns(qtbot):
+    """A GUI user who ticks `pr` with no PR container must see why nothing
+    appeared — mirroring the TUI overlay's `(shown only when it applies)`
+    suffix, driven by the same `dynamic_column_names()` this
+    branch's TUI already uses. Fails if the menu goes back to a bare
+    `menu.addAction(name)` per column."""
+    from jailbee.dashboard import dynamic_column_names
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    labels_by_name = {}
+    for name in dynamic_column_names():
+        act = next(a for a in win.columns_menu.actions() if a.text().startswith(name))
+        labels_by_name[name] = act.text()
+
+    for name, label in labels_by_name.items():
+        assert label != name  # not a bare, unmarked action
+        assert "when it applies" in label
+
+    # enabled_columns() must still return bare names — nothing downstream
+    # (view_prefs, visible_fields) should ever see the decorated text.
+    assert all("(shown only" not in n for n in win.enabled_columns())
 
 
 def test_toggling_a_columns_action_emits_and_updates(qtbot):

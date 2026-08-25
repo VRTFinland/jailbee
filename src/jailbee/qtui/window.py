@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from jailbee.dashboard import all_column_names, default_columns, view_only_note, visible_fields
+from jailbee.dashboard import (
+    all_column_names,
+    default_columns,
+    dynamic_column_names,
+    view_only_note,
+    visible_fields,
+)
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
     STATE_COLORS,
@@ -158,8 +164,10 @@ class MainWindow(QMainWindow):
         menu = self.view_menu.addMenu("&Columns")
         self.columns_menu = menu
         self._column_actions: dict[str, QAction] = {}
+        dynamic = dynamic_column_names()
         for name in all_column_names():
-            act = menu.addAction(name)
+            label = f"{name} (shown only when it applies)" if name in dynamic else name
+            act = menu.addAction(label)
             act.setCheckable(True)
             act.setChecked(name in self._enabled_columns)
             act.triggered.connect(lambda checked=False, n=name: self._toggle_column(n, checked))
@@ -175,7 +183,10 @@ class MainWindow(QMainWindow):
             self._column_actions[name].setChecked(True)
             return
         current = set(self._enabled_columns)
-        current.add(name) if checked else current.discard(name)
+        if checked:
+            current.add(name)
+        else:
+            current.discard(name)
         self._enabled_columns = tuple(n for n in all_column_names() if n in current)
         self.columnsChanged.emit()
 

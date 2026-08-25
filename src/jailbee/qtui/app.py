@@ -41,8 +41,6 @@ from jailbee.qtui.window import MainWindow
 from jailbee.tui import error
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from jailbee.dashboard import RepoGroup
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
@@ -93,7 +91,6 @@ class AppController(QObject):
         interval: float,
         engine: object | None = None,
         paused: bool = False,
-        columns: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         self._window = window
@@ -101,13 +98,6 @@ class AppController(QObject):
         self._interval = interval
         self._engine = engine
         self._paused = paused
-        # An explicit override for `on_groups` to force onto `window.set_groups`;
-        # `run()` no longer sets this — the window owns the live, menu-driven
-        # enabled-column set (`self._window.enabled_columns()`), and passing
-        # `None` here each tick lets `set_groups` fall back to that instead of
-        # re-forcing a startup snapshot that would otherwise mask every toggle
-        # in the Columns menu.
-        self._columns = columns
         # Timestamp of the last successful refresh, so a cadence change (a
         # menu action, not a refresh) can still update the status line
         # immediately instead of waiting for the next gather.
@@ -120,7 +110,7 @@ class AppController(QObject):
         self._latest = groups
         now = datetime.now().astimezone()
         self._last_refresh_at = now
-        self._window.set_groups(groups, now=now, columns=self._columns)
+        self._window.set_groups(groups, now=now)
         self._window.set_refresh_ok(at=now, interval=self._interval, paused=self._paused)
 
     @Slot(str)
@@ -219,7 +209,17 @@ class AppController(QObject):
 
     @Slot()
     def on_columns_changed(self) -> None:
-        """The Columns menu toggled a column — persist the enabled set."""
+        """The Columns menu toggled a column — repaint immediately, then persist.
+
+        Without the repaint, the change only reaches the table on whatever
+        the *next* refresh tick happens to push — and with "Off (manual)"
+        refresh, that tick may never come, making the menu look completely
+        inert. `set_groups(None)`'s "columns" default already reads the
+        window's own live `enabled_columns()`, so re-pushing the latest
+        snapshot here picks up the toggle without re-gathering anything.
+        """
+        if self._latest:
+            self._window.set_groups(self._latest, now=datetime.now().astimezone())
         self._persist_view_state()
 
     def persist_on_close(self) -> None:

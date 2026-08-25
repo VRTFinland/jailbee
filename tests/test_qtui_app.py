@@ -162,11 +162,7 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
 
     window = mocker.Mock()
 
-    def _set_groups(_groups: object, *, now: object, columns: object) -> None:
-        # `columns` is a required keyword here on purpose: if `on_groups`
-        # ever stopped forwarding it to `window.set_groups`, this mock
-        # would raise instead of silently tolerating the omission (which
-        # is exactly what a default value here would do).
+    def _set_groups(_groups: object, *, now: object) -> None:
         handled_on.append(QThread.currentThread())
 
     window.set_groups.side_effect = _set_groups
@@ -329,6 +325,44 @@ def test_on_columns_changed_persists_view_state(mocker):
     assert frontend_arg == "qt"
     assert state_arg.columns == ("name", "ip")
     assert state_arg.folded == frozenset()
+
+
+def test_on_columns_changed_repaints_immediately(mocker):
+    """A column toggle must reach the table right away, not on whatever the
+    next refresh tick happens to push — with "Off (manual)" refresh, that
+    tick may never come, and the Columns menu would look completely inert.
+    This fails if on_columns_changed goes back to only persisting."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    groups = [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "ip")
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+    controller.on_groups(groups)  # populate self._latest, as a real refresh would
+    window.set_groups.reset_mock()
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_called_once()
+    assert window.set_groups.call_args.args[0] == groups
+
+
+def test_on_columns_changed_does_not_repaint_before_any_refresh(mocker):
+    """Before the first `on_groups`, `_latest` is empty — nothing to repaint,
+    and `window.set_groups` must not be called with a bogus empty snapshot."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name",)
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_not_called()
 
 
 def test_persist_view_state_is_noop_without_engine(mocker):
