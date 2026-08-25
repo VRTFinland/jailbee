@@ -238,9 +238,9 @@ jailbee submodule pr feat-foo --ready      # mark ready for review
 ```
 
 Base and head come from the submodule's own data, not the superproject's:
-base is `--base` > `submodule.<name>.branch` in the parent's `.gitmodules` >
-the sub-repo's `<remote>/HEAD` > `main`; head is `--as` > Claude's proposal >
-the branch the commits were read from. The remote is resolved per submodule,
+base is `--base` > `submodule.<name>.branch` declared in `.gitmodules` (found by
+descending from repo root, unless `.`) > the sub-repo's `<remote>/HEAD` > `main`; head
+is `--as` > Claude's proposal > the branch the commits were read from. The remote is resolved per submodule,
 since a submodule may name its upstream something the superproject doesn't.
 Merge order is stated, never enforced: merge the submodule PR first, so the
 superproject PR's gitlink bump then points at a merged commit.
