@@ -3888,11 +3888,8 @@ def _adopt_pr_head(
     ):
         return None
 
-    try:
-        number = int(raw)
-    except (TypeError, ValueError):
-        error(f"Container '{short}' has a malformed PR label (user.jailbee.pr={raw!r}).")
-        raise typer.Exit(1) from None
+    # state.read() at the call site has already validated the label.
+    number = int(raw)
 
     try:
         pr_info = pr_module.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
@@ -4106,7 +4103,7 @@ def pr_cmd(
     scope = pr_flow.PrScope(
         repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
     )
-    state = pr_flow.ContainerLabelState(incus, full)
+    state = pr_flow.ContainerLabelState(incus, full, short=short)
 
     if open_only:
         try:

@@ -316,9 +316,10 @@ class PrState(Protocol):
 class ContainerLabelState:
     """`PrState` over the container's `user.jailbee.pr*` labels."""
 
-    def __init__(self, incus: IncusType, full: str) -> None:
+    def __init__(self, incus: IncusType, full: str, short: str | None = None) -> None:
         self._incus = incus
         self._full = full
+        self._short = short or full
 
     def read(self) -> PrRecord:
         """Read the labels into a `PrRecord`.
@@ -338,7 +339,7 @@ class ContainerLabelState:
                 number = int(raw)
             except ValueError as exc:
                 raise MalformedPrLabelError(
-                    f"Container '{self._full}' has a malformed PR label (user.jailbee.pr={raw!r})."
+                    f"Container '{self._short}' has a malformed PR label (user.jailbee.pr={raw!r})."
                 ) from exc
         else:
             number = None
