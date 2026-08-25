@@ -19,7 +19,10 @@ def test_parse_version_accepts_release_triples() -> None:
     "raw",
     [
         "0.0.0+unknown",  # the __init__.py fallback
-        "1.2.3.dev4+gdeadbee",  # an editable install
+        # A PEP 440 dev version. Nothing in this project produces one — the
+        # static `pyproject.toml` version means even an editable install
+        # reports a plain X.Y.Z — but rejecting it is still correct.
+        "1.2.3.dev4+gdeadbee",
         "1.2",
         "1.2.3rc1",
         "v1.2.3",
@@ -27,8 +30,9 @@ def test_parse_version_accepts_release_triples() -> None:
     ],
 )
 def test_parse_version_rejects_non_releases(raw: str) -> None:
-    """A dev/editable version must not be compared against release-numbered
-    notes: returning None is how the whole mechanism stays silent for it."""
+    """A version that is not release-shaped must not be compared against
+    release-numbered notes: returning None is how the mechanism stays silent
+    for it."""
     from jailbee.upgrade import parse_version
 
     assert parse_version(raw) is None

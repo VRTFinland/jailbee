@@ -18,9 +18,11 @@
   runs — a partly failed `jb apply` (a restart or port-forward failure) does
   not count as having run. Repos are backfilled silently on first sight, so
   no backlog is invented for history jailbee never observed; only the
-  release that introduces the tracking can advise about itself. Editable
-  installs from a git tree are excluded by design: their version never
-  moves, so there is nothing to compare.
+  release that introduces the tracking can advise about itself. An install
+  whose version jailbee cannot read at all (it reports `0.0.0+unknown`, which
+  means the package metadata is missing) is silently excluded — there is
+  nothing to compare. Editable installs are not excluded: they report the
+  version in `pyproject.toml` and take part like any other.
 - **Generic agent support: `agents:` config key.** Claude Code's integration
   — shared credentials/settings mount, strict-mode egress, install/update at
   `jailbee new` time, autostart launch, `jailbee doctor` check — is now a

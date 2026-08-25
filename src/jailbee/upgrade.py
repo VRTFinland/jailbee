@@ -9,9 +9,12 @@ A release *declares* its requirements in `UPGRADE_NOTES`. Per repo, jailbee
 records the version at which each action last ran (`RepoUpgradeState`); the
 difference between that watermark and the running version is the advice.
 
-Only released versions take part: `parse_version` deliberately rejects
-anything but `X.Y.Z`, so an editable install from a git tree — whose
-`__version__` never moves — produces no advice at all.
+Only release-shaped versions take part: `parse_version` rejects anything but
+`X.Y.Z`, and an unparseable version produces no advice at all. In practice
+that is `0.0.0+unknown`, the `__init__.py` fallback for an install with no
+package metadata. An editable install is *not* excluded — `pyproject.toml`
+carries a static version, so `uv tool install -e .` reports the last released
+number and participates like any other install.
 """
 
 from __future__ import annotations
@@ -43,10 +46,12 @@ _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 def parse_version(raw: str) -> tuple[int, int, int] | None:
     """`"1.2.3"` -> `(1, 2, 3)`; anything else -> `None`.
 
-    Strict on purpose. `0.0.0+unknown` (the `__init__.py` fallback when the
-    package metadata is missing) and editable-install versions must not be
-    compared against release-numbered notes — `None` is how the mechanism
-    stays silent for them, which is the intended scope.
+    Strict on purpose: only a release-shaped version can be compared against
+    release-numbered notes. The one version this project actually produces
+    that fails here is `0.0.0+unknown` — the `__init__.py` fallback when the
+    package metadata cannot be read — and `None` is how the mechanism stays
+    silent for it. This does *not* exclude editable installs: `pyproject.toml`
+    pins a static `X.Y.Z`, so those parse and take part like any other.
     """
     m = _VERSION_RE.match(raw.strip())
     if m is None:
