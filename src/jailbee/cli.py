@@ -52,6 +52,25 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
+    """Record that `action` just ran successfully in this repo.
+
+    Bookkeeping for `jailbee.upgrade`'s advice, and a courtesy like the advice
+    itself: a state-DB problem must not turn a successful `base build` into a
+    failed command, hence the broad except.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.upgrade import record
+
+    try:
+        with Session(get_engine()) as session:
+            record(session, cfg.container_prefix, action, __version__, now=_now())
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -341,6 +360,9 @@ def apply(
 
     for name, err in result.port_failures:
         error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
+
+    if result.fully_successful:
+        _record_upgrade_action(cfg, "apply")
 
     if not result.fully_successful:
         raise typer.Exit(1)
@@ -5467,6 +5489,8 @@ def base_build_cmd(config: ConfigOption = None) -> None:
         # off the top of the screen.
         error(str(e))
         raise typer.Exit(1) from e
+
+    _record_upgrade_action(cfg, "base_build")
 
 
 @base_app.command("prune")

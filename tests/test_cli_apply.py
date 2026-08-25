@@ -163,3 +163,45 @@ def test_cli_apply_nonzero_exit_on_port_failures(mocker: MockerFixture) -> None:
     output = result.stdout + (result.stderr or "")
     assert "foo-feat-x" in output
     assert "already listening on port 5037" in output
+
+
+def test_fully_successful_apply_records_an_observed_watermark(mocker: MockerFixture) -> None:
+    from sqlmodel import Session, select
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RepoUpgradeState
+
+    mocker.patch("jailbee.apply.run_apply", return_value=_fake_result())
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    with Session(get_engine()) as session:
+        rows = list(session.exec(select(RepoUpgradeState)).all())
+    assert len(rows) == 1
+    assert rows[0].apply_observed is True
+
+
+def test_partly_failed_apply_records_no_watermark(mocker: MockerFixture) -> None:
+    """A run with restart failures did part of its job — it must not silence
+    the advice."""
+    from sqlmodel import Session, select
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RepoUpgradeState
+
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(restart_failures=[("c", "boom")]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 1
+    with Session(get_engine()) as session:
+        rows = list(session.exec(select(RepoUpgradeState)).all())
+    # The row may exist from the backfill on some other command in the same
+    # test process; what must never be true is `apply_observed`.
+    assert all(row.apply_observed is False for row in rows)
