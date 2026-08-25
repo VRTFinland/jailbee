@@ -135,7 +135,7 @@ fi
 # $HOME/.claude/, which is JailBee's shared directory mount. That retires the
 # file-level bind for .claude.json, whose inode any atomic rewrite on the host
 # would replace, leaving the container bound to the old one.
-# Not forced: `container.env` is documented to be able to override it.
+# Not forced: `container.env` can override it.
 if [ -z "${CLAUDE_CONFIG_DIR:-}" ]; then
     export CLAUDE_CONFIG_DIR="$HOME/.claude"
 fi

@@ -2248,7 +2248,7 @@ a real Claude Code. Only a real login proves the *actual CLI* writes to the
 new path. This is the gate; there is no other verification of that claim.
 
 Requires `claude.enabled: true`, a real Incus daemon, and network access for
-`jailbee base build` + Claude Code's own login flow. Run the five checks in
+`jailbee base build` + Claude Code's own login flow. Run the six checks in
 order and write down each command's real output next to it — a plausible
 sounding "should work" is not evidence, and several of these steps look
 identical whether they passed or silently no-opped.
@@ -2299,7 +2299,11 @@ build`:
 jailbee new feat/claudereloc --no-clone --no-autostart
 jailbee shell feat-claudereloc
 echo $CLAUDE_CONFIG_DIR
-# expect: /home/dev/.claude
+# expect: /home/dev/.claude — from BOTH the base profile's
+# `environment.CLAUDE_CONFIG_DIR` (every `incus exec`, this container's own
+# path too) and `/etc/profile.d/jailbee-env.sh` (this is a login shell).
+# Step 6 below isolates the profile source alone, on a container whose image
+# predates the `/etc/profile.d` export.
 claude
 # complete onboarding (fresh shared state) or resume (if state was carried
 # over), then exit the session
@@ -2328,6 +2332,9 @@ exit
 
 Uses the old container from Step 1 (`<prefix>-<old-name>` below), with its
 `claude` session still running from before `jailbee apply` ran in that step.
+Note this only proves the *already-running* session survives — it holds its
+config in memory, so it looks fine whether or not a fresh start would work.
+Step 6 below is the check that actually distinguishes a pass from a failure.
 
 ```bash
 incus config show <prefix>-<old-name> --expanded | grep -A2 claude-json
@@ -2338,6 +2345,29 @@ incus config show <prefix>-<old-name> --expanded | grep -A2 claude-json
 In the pane where `claude` has been running since before Step 1's `jailbee
 apply`, type something and confirm it still replies — expect it to still be
 responsive, with no crash, no restart and no session drop.
+
+### 6. Fresh `claude` in the old-image container, right after `jailbee apply`
+
+Same old container as Step 5 (`<prefix>-<old-name>`) — its *image* was never
+rebuilt, so it does not have the `/etc/profile.d/jailbee-env.sh` export. This
+is the positive check finding 1's fix makes possible: `jailbee apply` already
+put `CLAUDE_CONFIG_DIR` on the `<prefix>-base` profile, and Incus injects
+`environment.*` into every `incus exec` regardless of image contents or shell
+type — no rebuild, no re-create needed.
+
+```bash
+jailbee shell <old-name>
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — this container's image predates the
+# /etc/profile.d export, so this value can only be coming from the
+# <prefix>-base profile Step 1's `jailbee apply` just rewrote
+claude
+# expect: resumes the session relocated in Step 1 — no onboarding prompt.
+# This is the check that would have failed before finding 1's fix: the old
+# image's `claude` would have resolved $HOME/.claude.json (unmounted,
+# container-local) and re-onboarded from scratch.
+exit
+```
 
 Teardown:
 

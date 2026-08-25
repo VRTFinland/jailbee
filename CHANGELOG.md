@@ -88,6 +88,10 @@
   device), then re-create containers from the new image. `jailbee apply` moves
   `<shared_dir>/claude.json` to `<shared_dir>/claude/.claude.json`
   automatically; it never overwrites an existing destination.
+  `CLAUDE_CONFIG_DIR` is also set as a base-profile environment variable, so
+  between `jailbee apply` and re-creating a container, existing containers
+  already get it on every `incus exec` — no window where `claude` writes to
+  the wrong path, even before the image is rebuilt or the container re-created.
 
 ### Fixed
 
