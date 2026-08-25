@@ -71,6 +71,31 @@ def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]
         return
 
 
+def _advise_upgrade(cfg: "Config") -> None:
+    """Print any pending `base build` / `apply` advice for this repo.
+
+    Non-blocking and never interactive: it must work with no TTY, and in
+    background `jailbee new` it prints from the foreground parent rather than
+    into the detached job's log where nobody reads it.
+
+    Wrapped broadly on purpose — a locked state DB, a schema surprise, an
+    unreadable row: none of it may take down the command the user actually
+    ran. Advice is a courtesy.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.tui import hint
+    from jailbee.upgrade import advice_lines
+
+    try:
+        with Session(get_engine()) as session:
+            lines = advice_lines(session, cfg.container_prefix, __version__, now=_now())
+        hint(lines)
+    except Exception:  # advice is a courtesy; must never fail the command
+        return
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -418,6 +443,7 @@ def list_cmd(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
     show_submodules = submodules and repo_has_submodules(cfg)
 
     containers = list_containers(
@@ -643,6 +669,7 @@ def new_cmd(
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
 
     # --tmux/--shell are shorthands for `--attach <mode>` that additionally
     # force foreground creation. All four attach flags are mutually
@@ -1353,6 +1380,7 @@ def shell(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")
     raise typer.Exit(_attach_shell(cfg, incus, name, user))
 
