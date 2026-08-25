@@ -141,9 +141,7 @@ def base_profile_yaml(cfg: Config) -> str:
         # jailbee didn't spawn itself (a JetBrains IDE's integrated
         # terminal, a Claude Code IDE extension). Also reaches existing
         # containers via `jailbee apply` with no image rebuild required.
-        profile_config["environment.CLAUDE_CONFIG_DIR"] = (
-            f"/home/{CONTAINER_USERNAME}/.claude"
-        )
+        profile_config["environment.CLAUDE_CONFIG_DIR"] = f"/home/{CONTAINER_USERNAME}/.claude"
 
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point
