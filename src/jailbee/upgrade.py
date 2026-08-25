@@ -1,7 +1,7 @@
 """Upgrade advice: which releases need `jb base build` / `jb apply` re-run.
 
 Some releases change what `jailbee base build` produces (`provision/install.sh`,
-`provision/install.d/`, the provisioning env) or what `jailbee apply` writes
+`provision/install.d.available/`, the provisioning env) or what `jailbee apply` writes
 (profiles, ACL). Neither is re-run automatically, so a user who upgrades the
 tool keeps a stale golden image or stale profiles with nothing to tell them.
 
