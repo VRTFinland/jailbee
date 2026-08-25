@@ -2056,8 +2056,13 @@ tree, runs the shared-state migrations, and writes both the `<prefix>-base` and
 `<prefix>-binds` profiles into the nested daemon — then stops at
 `incus network get incusbr0` failing, because nothing created a bridge. A
 subsequent `jailbee apply` fails at the missing `<prefix>-net-strict` profile.
-So everything up to the network is real here; the network half is not, and
-`jailbee new` remains untested.
+Create the bridge first (`incus network create incusbr0`) and `jailbee init`
+goes all the way: ACL, `jailbee-loose`, and both net profiles. `jailbee base
+build` publishes a golden image at this depth too, and `jailbee new` produces a
+working container — given the two prerequisites in [Prerequisites for a nested
+`jailbee new`](#prerequisites-for-a-nested-jailbee-new). What still does not
+work here is `jailbee apply`, which regenerates `<prefix>-base` with the
+`dri-*` render-node devices that nesting rejects.
 
 The `jailbee port` recipe below needs none of it — proxy devices are
 per-instance and want no profile, bridge or ACL — but anything that reconciles
@@ -2263,12 +2268,14 @@ order and write down each command's real output next to it — a plausible
 sounding "should work" is not evidence, and several of these steps look
 identical whether they passed or silently no-opped.
 
-> **Partly verified already — see [Findings](#findings-nested-rig-2026-08-25)
-> at the end of this section.** Steps 1 and 2, and the central
-> `CLAUDE_CONFIG_DIR` claim, were verified on 2026-08-25 from inside a JailBee
-> container using the nested Incus rig plus a direct probe of the real `claude`
-> binary. Steps 4, 5 and 6 still need the host: they require containers built
-> from a rebuilt golden image and a real Claude Code login.
+> **Mostly verified already — see [Findings](#findings-nested-rig-2026-08-25)
+> at the end of this section.** On 2026-08-25 the whole pipeline (`init` →
+> `base build` → `new`) was run at nesting depth two from inside a JailBee
+> container, and Steps 1, 2, 4, 5 and the mechanism half of Step 6 all passed,
+> alongside a direct probe of the real `claude` binary. What no rig can supply
+> is a genuine Claude Code login, so "the CLI resumes rather than re-onboards"
+> is still an inference from verified parts rather than an observation. Run the
+> steps below on the host anyway if you want that last link.
 
 ### 1. Upgrade path on a repo that already has state
 
@@ -2457,7 +2464,68 @@ failing — the nested daemon has no bridge — and `jailbee apply` then fails a
 the missing `<prefix>-net-strict` profile. Neither touches the claude paths,
 which run earlier; a nested rig simply cannot complete a repo's network setup.
 
-**Still needs the host:** Steps 4, 5 and 6. All three need containers built
-from a rebuilt golden image, and Step 6 needs a real Claude Code login. Whether
-`jailbee base build` can publish an image at nesting depth two remains
-untested (a full apt provision two levels deep).
+**The whole pipeline runs at nesting depth two.** With `incus network create
+incusbr0` done first, `jailbee init` completes — ACL, `jailbee-loose`, both net
+profiles — and `jailbee base build` publishes a golden image (~870 MiB, a full
+apt provision two levels deep). `jailbee new` then works, after two rig-only
+prerequisites; see [Prerequisites for a nested `jailbee
+new`](#prerequisites-for-a-nested-jailbee-new) below.
+
+**Steps 4 and 6 pass in real containers built from a real golden image.** In a
+`jailbee new` container:
+
+```
+incus exec <c> -- env | grep CLAUDE_CONFIG          # non-login: base profile
+# observed: CLAUDE_CONFIG_DIR=/home/dev/.claude
+incus exec <c> -- su - dev -c 'echo $CLAUDE_CONFIG_DIR'   # login: profile.d
+# observed: /home/dev/.claude
+incus exec <c> -- cat /home/dev/.claude/.claude.json
+# observed: the migrated content, byte-identical
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: No such file or directory
+```
+
+Both routes to the variable work independently — which is the point of having
+two. Cross-container (Step 4): a second `jailbee new` container read the same
+file, and a write from the first was immediately visible in the second.
+
+**Step 5, and one artifact worth knowing about.** Hot-removing the file device
+from the `<prefix>-binds` profile detaches the mount from the *running*
+container and leaves it otherwise healthy, shared dir intact. But it leaves
+behind a stub:
+
+```
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: ---------- 1 root root 0 ... /home/dev/.claude.json
+```
+
+A zero-byte, mode-000, root-owned file, and it persists. It is inert while
+`CLAUDE_CONFIG_DIR` is set — nothing reads `$HOME/.claude.json` any more — but
+it is a concrete reason the CHANGELOG tells users to re-create containers after
+upgrading rather than only running `jailbee apply`.
+
+`jailbee apply` itself cannot finish in the nested rig: it regenerates
+`<prefix>-base` with the `dri-*` devices, which nesting rejects. The device
+removal above was therefore done directly, which is the same operation apply's
+profile rewrite performs.
+
+#### Prerequisites for a nested `jailbee new`
+
+Two host-container settings, both rig-only — neither is a JailBee bug:
+
+1. **`root:<uid>:1` in `/etc/subuid` and `/etc/subgid`.** JailBee's `raw.idmap`
+   identity-maps the host user's UID into the container so bind mounts stay
+   readable. At depth two, root's subuid range does not cover that UID and the
+   container refuses to start with `newuidmap: uid range [N-N+1) -> [N-N+1) not
+   allowed`. Append the line for your own `id -u`, then restart `incus.service`.
+2. **Remove the `dri-*` devices from `<prefix>-base`.** A nested container
+   rejects them with `The "mode" property may not be set when adding a device
+   to a nested container`. `profiles._host_render_nodes()` adds one per host
+   render node unconditionally, so they come back on every `jailbee apply`.
+
+**Still needs the host:** the one thing no rig can supply — a real Claude Code
+login, proving the CLI resumes an existing session at the new path rather than
+re-onboarding. Every mechanism that outcome depends on is verified above; only
+the end-to-end observation is missing. **Do not** copy a login into a rig
+container to fake it: two live copies of one credential rotate each other out,
+which is the failure that removed host-seeding in the first place.
