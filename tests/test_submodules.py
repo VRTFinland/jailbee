@@ -1534,8 +1534,7 @@ def test_declared_branch_for_top_relative_path_matches_a_top_level_entry_directl
         return (False, "")
 
     assert (
-        submodules.declared_branch_for_top_relative_path(run, "/repo", "libs/foo")
-        == "release/2.x"
+        submodules.declared_branch_for_top_relative_path(run, "/repo", "libs/foo") == "release/2.x"
     )
 
 
