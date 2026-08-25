@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
+from sqlmodel import Session
 
 
 def test_parse_version_accepts_release_triples() -> None:
@@ -313,3 +316,117 @@ def test_format_advice_renders_both_actions() -> None:
     assert sum(1 for line in lines if line.startswith("Since this repo")) == 2
     assert any("`jb base build`" in line for line in lines)
     assert any("`jb apply`" in line for line in lines)
+
+
+_NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+
+
+def test_load_or_backfill_creates_an_assumed_row_on_first_sight(db_engine) -> None:
+    """The bootstrap: at first sight the upgrade has just happened, so the row
+    records the current version as *assumed*, never observed."""
+    from jailbee.db.models import RepoUpgradeState
+    from jailbee.upgrade import load_or_backfill
+
+    with Session(db_engine) as session:
+        marks = load_or_backfill(session, "sampleapp", "1.4.0", now=_NOW)
+        row = session.get(RepoUpgradeState, "sampleapp")
+
+    assert row is not None
+    assert row.base_build_version == "1.4.0"
+    assert row.base_build_observed is False
+    assert row.apply_version == "1.4.0"
+    assert row.apply_observed is False
+    assert marks["base_build"].version == (1, 4, 0)
+    assert marks["base_build"].observed is False
+
+
+def test_load_or_backfill_does_not_rewrite_an_existing_row(db_engine) -> None:
+    """Called on every relevant command, including the dashboard's refresh
+    loop: after the first insert it must only read."""
+    from jailbee.upgrade import load_or_backfill
+
+    with Session(db_engine) as session:
+        load_or_backfill(session, "sampleapp", "1.4.0", now=_NOW)
+    with Session(db_engine) as session:
+        marks = load_or_backfill(session, "sampleapp", "1.9.0", now=_NOW)
+
+    assert marks["apply"].version == (1, 4, 0), "the stored watermark wins"
+
+
+def test_load_or_backfill_skips_an_unparseable_stored_version(db_engine) -> None:
+    """A row written by a dev build carries a version no comparison can use.
+    Dropping that action is silence, which beats a wrong hint."""
+    from jailbee.db.models import RepoUpgradeState
+    from jailbee.upgrade import load_or_backfill
+
+    with Session(db_engine) as session:
+        session.add(
+            RepoUpgradeState(
+                container_prefix="sampleapp",
+                base_build_version="0.0.0+unknown",
+                base_build_observed=True,
+                apply_version="1.4.0",
+                apply_observed=True,
+                updated_at=_NOW,
+            )
+        )
+        session.commit()
+        marks = load_or_backfill(session, "sampleapp", "1.9.0", now=_NOW)
+
+    assert "base_build" not in marks
+    assert marks["apply"].version == (1, 4, 0)
+
+
+def test_record_marks_one_action_observed(db_engine) -> None:
+    from jailbee.db.models import RepoUpgradeState
+    from jailbee.upgrade import load_or_backfill, record
+
+    with Session(db_engine) as session:
+        load_or_backfill(session, "sampleapp", "1.4.0", now=_NOW)
+        record(session, "sampleapp", "base_build", "1.9.0", now=_NOW)
+        row = session.get(RepoUpgradeState, "sampleapp")
+
+    assert row is not None
+    assert row.base_build_version == "1.9.0"
+    assert row.base_build_observed is True
+    assert row.apply_version == "1.4.0", "the other action is untouched"
+    assert row.apply_observed is False
+
+
+def test_record_creates_the_row_when_there_is_none(db_engine) -> None:
+    """A first-ever `jb base build` may run before anything backfilled. The
+    action that ran is observed; the other one gets the same assumed
+    semantics the backfill would have given it."""
+    from jailbee.db.models import RepoUpgradeState
+    from jailbee.upgrade import record
+
+    with Session(db_engine) as session:
+        record(session, "sampleapp", "base_build", "1.9.0", now=_NOW)
+        row = session.get(RepoUpgradeState, "sampleapp")
+
+    assert row is not None
+    assert row.base_build_observed is True
+    assert row.apply_version == "1.9.0"
+    assert row.apply_observed is False
+
+
+def test_advice_lines_is_silent_after_the_action_ran(db_engine) -> None:
+    from jailbee.upgrade import advice_lines, record
+
+    notes = (_note(1, 4, 0, "base_build", reason="install.sh installs fd"),)
+    with Session(db_engine) as session:
+        assert advice_lines(session, "sampleapp", "1.4.0", now=_NOW, notes=notes)
+        record(session, "sampleapp", "base_build", "1.4.0", now=_NOW)
+        assert advice_lines(session, "sampleapp", "1.4.0", now=_NOW, notes=notes) == []
+
+
+def test_advice_lines_reports_the_current_release_on_a_fresh_repo(db_engine) -> None:
+    """End to end over the boundary this design turns on."""
+    from jailbee.upgrade import advice_lines
+
+    notes = (_note(1, 4, 0, "base_build", reason="install.sh installs fd"),)
+    with Session(db_engine) as session:
+        lines = advice_lines(session, "sampleapp", "1.4.0", now=_NOW, notes=notes)
+
+    assert lines[0] == "jailbee 1.4.0 changed what `jb base build` produces:"
+    assert "install.sh installs fd" in lines[1]

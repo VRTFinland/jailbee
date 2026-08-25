@@ -18,7 +18,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from sqlmodel import Session
 
 Action = Literal["base_build", "apply"]
 
@@ -186,3 +191,104 @@ def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]
             lines.append(f"    - ... and {hidden} more (see the CHANGELOG)")
         lines.append(f"    Run `{command}` in this repo to pick these up.")
     return lines
+
+
+def load_or_backfill(
+    session: Session,
+    prefix: str,
+    current: str,
+    *,
+    now: datetime,
+) -> dict[Action, Watermark]:
+    """Return this repo's watermarks, writing the assumed row on first sight.
+
+    First sight means an upgrade has just happened, so an image built by
+    `current` cannot exist — the row is stored with `observed=False`, which
+    keeps the comparison's lower bound inclusive so `current`'s own notes
+    still fire. Anything older is deliberately water under the bridge: a repo
+    that predates this bookkeeping gets no retroactive backlog.
+
+    The insert happens once. Callers that run in a loop (the Qt dashboard's
+    refresh) read the existing row on every later pass.
+
+    An action whose stored version does not parse is omitted from the result,
+    so it produces no advice at all — silence beats a wrong hint.
+    """
+    from jailbee.db.models import RepoUpgradeState
+
+    row = session.get(RepoUpgradeState, prefix)
+    if row is None:
+        row = RepoUpgradeState(
+            container_prefix=prefix,
+            base_build_version=current,
+            base_build_observed=False,
+            apply_version=current,
+            apply_observed=False,
+            updated_at=now,
+        )
+        session.add(row)
+        session.commit()
+
+    stored: dict[Action, tuple[str, bool]] = {
+        "base_build": (row.base_build_version, row.base_build_observed),
+        "apply": (row.apply_version, row.apply_observed),
+    }
+    marks: dict[Action, Watermark] = {}
+    for action, (raw, observed) in stored.items():
+        version = parse_version(raw)
+        if version is not None:
+            marks[action] = Watermark(version=version, observed=observed)
+    return marks
+
+
+def record(
+    session: Session,
+    prefix: str,
+    action: Action,
+    version: str,
+    *,
+    now: datetime,
+) -> None:
+    """Mark `action` as observed at `version` for this repo.
+
+    Called only after the action actually succeeded — a half-finished run must
+    not silence the advice.
+
+    When no row exists yet (a first-ever `base build` on a fresh install), one
+    is created: the action that ran is observed, and the other gets the same
+    assumed semantics `load_or_backfill` would have given it.
+    """
+    from jailbee.db.models import RepoUpgradeState
+
+    row = session.get(RepoUpgradeState, prefix)
+    if row is None:
+        row = RepoUpgradeState(
+            container_prefix=prefix,
+            base_build_version=version,
+            base_build_observed=False,
+            apply_version=version,
+            apply_observed=False,
+            updated_at=now,
+        )
+    if action == "base_build":
+        row.base_build_version = version
+        row.base_build_observed = True
+    else:
+        row.apply_version = version
+        row.apply_observed = True
+    row.updated_at = now
+    session.add(row)
+    session.commit()
+
+
+def advice_lines(
+    session: Session,
+    prefix: str,
+    current: str,
+    *,
+    now: datetime,
+    notes: tuple[UpgradeNote, ...] | None = None,
+) -> list[str]:
+    """The whole read path: backfill if needed, compare, format."""
+    marks = load_or_backfill(session, prefix, current, now=now)
+    return format_advice(pending(current, marks, notes=notes))
