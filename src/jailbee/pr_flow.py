@@ -584,7 +584,7 @@ def apply_pr_updates(
             title_changed = edit[0] is not None
             body_changed = edit[1] is not None
         except pr_module.PrError as exc:
-            warn(f"Updating the PR description failed: {exc}")
+            warn(f"{scope.prefix}Updating the PR description failed: {exc}")
 
     state_note = ""
     if ready is not None:
@@ -592,7 +592,7 @@ def apply_pr_updates(
             pr_module.set_ready(scope.repo_root, number, ready)
             state_note = " (marked ready)" if ready else " (marked draft)"
         except pr_module.PrError as exc:
-            warn(f"Toggling PR draft state failed: {exc}")
+            warn(f"{scope.prefix}Toggling PR draft state failed: {exc}")
 
     return PrUpdate(title_changed=title_changed, body_changed=body_changed, state_note=state_note)
 

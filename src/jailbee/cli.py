@@ -1507,6 +1507,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pr_flow import PrState
+    from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import BridgePlan, FetchResult, PushResult, SourcePref
 
 
@@ -4331,6 +4332,16 @@ def _print_submodule_report(branch: str, report: list[tuple[str, str | None]]) -
     success(f"Submodules aligned to '{branch}'.")
 
 
+def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
+    """List the submodules that have commits to publish, one per line."""
+    from jailbee.tui import console
+
+    width = max(len(c.path) for c in candidates)
+    for c in candidates:
+        count = "?" if c.commits is None else str(c.commits)
+        console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
+
+
 @submodule_app.command("checkout")
 def submodule_checkout(
     name: Annotated[
@@ -4401,6 +4412,286 @@ def submodule_checkout(
         raise typer.Exit(1) from exc
 
     _print_submodule_report(resolved, report)
+
+
+@submodule_app.command("pr")
+def submodule_pr_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    path: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_submodule_path),
+    ] = None,
+    title: Annotated[str | None, typer.Option("--title", help="PR title")] = None,
+    body: Annotated[str | None, typer.Option("--body", help="PR body")] = None,
+    base: Annotated[
+        str | None,
+        typer.Option("--base", help="PR base branch (default: the submodule's own default)"),
+    ] = None,
+    ready: Annotated[
+        bool | None, typer.Option("--ready/--draft", help="Mark ready for review, or draft.")
+    ] = None,
+    description: Annotated[
+        bool,
+        typer.Option("--description", "-d", help="Regenerate the description (update only)."),
+    ] = False,
+    web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
+    no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Branch to publish FROM the submodule"),
+    ] = None,
+    as_name: Annotated[
+        str | None, typer.Option("--as", help="Explicit PR head branch name (new PRs only)")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Force-push with --force-with-lease")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmations")] = False,
+    open_only: Annotated[
+        bool, typer.Option("--open", help="Open the submodule's PR and exit")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Create or update a GitHub PR for one submodule.
+
+    Publishes the commits made inside a submodule in a container to that
+    submodule's own GitHub repository — a separate repo, so a separate PR from
+    the superproject's `jailbee pr`. One PR per run.
+
+    Without PATH, the submodule that has commits ahead of its base is targeted
+    automatically; when several do, they are listed and PATH is required (two
+    submodules are two repositories and two PRs).
+
+    The base branch comes from the submodule's own `.gitmodules` entry, else its
+    `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is
+    `--as`, else Claude's proposal, else the branch the commits came from.
+
+    Examples:
+
+      jailbee submodule pr feat-foo              # auto-target, draft PR
+      jailbee submodule pr feat-foo libs/foo     # explicit submodule
+      jailbee submodule pr feat-foo --ready      # mark ready for review
+      jailbee submodule pr feat-foo --open       # just open it in the browser
+    """
+    from jailbee import pr as pr_mod
+    from jailbee import pr_flow, submodule_pr, sync
+    from jailbee.lifecycle import container_repo_dir, short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    short = short_name(cfg, full)
+
+    # --open resolves from the recorded state alone: no preflight, no
+    # transport, no gh mutation (mirrors `jailbee pr --open`).
+    if open_only:
+        target_path = path
+        if target_path is None:
+            recorded = submodule_pr.recorded_paths(incus, full)
+            if len(recorded) != 1:
+                error(
+                    f"Container '{short}' has submodule PRs recorded for "
+                    f"{len(recorded)} paths; name one with PATH."
+                    if recorded
+                    else f"Container '{short}' has no submodule PR recorded."
+                )
+                raise typer.Exit(1)
+            target_path = recorded[0]
+        record = submodule_pr.SubmodulePrState(incus, full, target_path).read()
+        if record.number is None:
+            error(f"Submodule '{target_path}' has no PR recorded on '{short}'.")
+            raise typer.Exit(1)
+        pr_mod.open_pr_in_browser(cfg.repo_root / target_path, record.number)
+        return
+
+    try:
+        sync.assert_container_publishable(cfg, incus, short)
+    except sync.SyncError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    super_base = incus.config_get(full, "user.jailbee.base_branch") or cfg.default_branch
+    repo_dir = container_repo_dir(cfg, incus, full)
+    try:
+        subs = submodule_pr.detect_candidates(
+            cfg, incus, full, repo_dir=repo_dir, base_branch=super_base, short=short
+        )
+        target = submodule_pr.select_target(subs, path)
+    except submodule_pr.NoSubmoduleCandidatesError:
+        info(
+            f"No submodule in '{short}' has commits ahead of its base — nothing to "
+            f"open a PR for. Name one with PATH to publish it anyway."
+        )
+        return
+    except submodule_pr.AmbiguousSubmoduleTargetError as exc:
+        error(f"Several submodules in '{short}' have commits to publish:")
+        _print_submodule_pr_candidates(exc.candidates)
+        info("Pick one: `jailbee submodule pr <container> <path>`.")
+        raise typer.Exit(2) from exc
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(
+            2 if isinstance(exc, submodule_pr.UnknownSubmodulePathError) else 1
+        ) from exc
+
+    subpath = target.path
+    source_branch = branch or target.branch
+    remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
+    resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root / subpath,
+        remote=remote,
+        prefix=f"submodule '{subpath}': ",
+        subpath=subpath,
+    )
+    state = submodule_pr.SubmodulePrState(incus, full, subpath)
+    record = state.read()
+    pr_label = str(record.number) if record.number is not None else None
+
+    if as_name is not None and (record.author or record.head or pr_label):
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
+
+    if target.commits is None:
+        warn(
+            f"Could not count submodule '{subpath}''s commits (no base anchor and "
+            f"no {remote}/HEAD); publishing what it has."
+        )
+    if target.gitlink_stale:
+        info(
+            f"Submodule '{subpath}''s commits are not yet in the superproject's "
+            f"gitlink — commit the bump there when this PR is ready."
+        )
+    if target.dirty:
+        warn(f"Submodule '{subpath}' has uncommitted changes — they are NOT in the PR.")
+
+    is_update = bool(record.author or record.head)
+    if not is_update and as_name is None:
+        found = pr_flow.adopt_existing_pr_for_branch(scope, state, branch=source_branch, yes=yes)
+        if found is not None:
+            pr_label = str(found[0])
+            is_update = True
+            record = state.read()
+
+    is_foreign = bool(pr_label) and not record.author
+    if force and is_foreign:
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label or "", record.head, yes=yes)
+
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=is_update,
+        stored_head=record.head,
+        source_branch=source_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
+    )
+    publish_name = plan.publish_name
+    if publish_name is None:
+        error(
+            f"Submodule '{subpath}' is detached in '{short}' and no head branch name "
+            f"was chosen. Name one with --as, or pass --branch to publish an "
+            f"existing submodule branch."
+        )
+        raise typer.Exit(2)
+
+    # Publish step 4 of the spec: the submodule's own upstream must be a GitHub
+    # one, checked BEFORE anything is pushed. `create_pr` validates too, but
+    # only after the branch is already on the remote.
+    try:
+        pr_mod.assert_github_remote(scope.repo_root, remote, label="jailbee submodule pr")
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    try:
+        published = submodule_pr.publish_submodule_branch(
+            cfg,
+            incus,
+            full,
+            short,
+            subpath=subpath,
+            repo_dir=repo_dir,
+            branch=source_branch,
+            publish_name=publish_name,
+            remote=remote,
+            force=force,
+        )
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    resolved_title, resolved_body = ("", "")
+    if not is_update:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=plan.ai_text,
+            title=title,
+            body=body,
+            fallback_ref=published.src_ref,
+            publish_name=published.publish_name,
+            origin_label=f"container '{short}' submodule '{subpath}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update,
+            head=published.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee submodule pr",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    did_update = is_update or created.already_existed
+    update = None
+    if did_update and source_branch:
+        update = pr_flow.apply_pr_updates(
+            cfg,
+            incus,
+            full,
+            scope,
+            number=created.number,
+            branch=source_branch,
+            base=resolved_base,
+            title=title,
+            body=body,
+            description=description,
+            ready=ready,
+            ai_on=ai_on,
+            offer_regen=not is_foreign,
+        )
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=did_update,
+        publish_name=published.publish_name,
+        forced=published.forced,
+        ready=ready,
+        update=update,
+    )
+    if incus.config_get(full, "user.jailbee.pr"):
+        info(
+            "Merge this submodule PR first; the superproject PR's gitlink bump "
+            "then points at a merged commit."
+        )
+    if web:
+        pr_mod.open_pr_in_browser(scope.repo_root, created.number)
 
 
 net_app = typer.Typer(

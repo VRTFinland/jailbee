@@ -250,6 +250,44 @@ def complete_snapshot(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 @_never_raises
+def complete_submodule_path(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a submodule path from the container already on the command line.
+
+    Context-dependent like `complete_snapshot`: reads the container from
+    `ctx.params["name"]` and lists that container's submodule paths, so
+    `jailbee submodule pr feat-foo <TAB>` offers `lib/a`, `lib/b`. Returns []
+    when no container has been typed yet — guessing would query the wrong repo.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import container_repo_dir
+
+    typed = ctx.params.get("name") if ctx.params else None
+    if not isinstance(typed, str) or not typed:
+        return []
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, incus = loaded
+    full = _resolve_typed_container(cfg, incus, typed)
+    if full is None:
+        return []
+    try:
+        repo_dir = container_repo_dir(cfg, incus, full)
+        out = incus.exec(
+            full,
+            ["git", "-C", repo_dir, "submodule", "status", "--recursive"],
+            uid=cfg.container_user.uid,
+            timeout=QUERY_TIMEOUT,
+        )
+    except (IncusError, ValueError, OSError):
+        return []
+    paths = [
+        parts[1] for parts in (line.strip().split() for line in out.splitlines()) if len(parts) >= 2
+    ]
+    return sorted(p for p in paths if p.startswith(incomplete))
+
+
+@_never_raises
 def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a `jailbee port rm` handle from one container's forwards.
 
