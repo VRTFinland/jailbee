@@ -166,6 +166,13 @@ def resolve_pr_text_and_head(
     from jailbee import pr_ai
 
     if is_update:
+        # `None` here means two different things to the two callers: for
+        # `jailbee pr` it defaults the push to the container branch (see
+        # `sync.publish_branch_from_container`'s handling of a `None`
+        # publish_name); for `jailbee submodule pr` — which has no
+        # "container branch" fallback, only a submodule branch that may not
+        # exist (detached HEAD) — it lands in cli.py's "no head branch name
+        # was chosen" error instead.
         return HeadPlan(publish_name=stored_head or None, ai_text=None)
 
     if as_name is not None and not git_mod.check_ref_format(as_name):
@@ -610,15 +617,19 @@ def render_pr_outcome(
 ) -> None:
     """Print the final success line for a create or update outcome.
 
-    `update` is required (and used) when `is_update` is True; it is ignored
-    (and may be None) on the create path.
+    `update` is ignored on the create path (and may be None there). On the
+    update path a missing `update` (e.g. a detached submodule with no source
+    branch to regenerate a description from or a state to toggle) defaults to
+    a no-op — nothing changed, so the rendered line says exactly that — rather
+    than requiring every caller to construct one just to satisfy this
+    function.
     """
     if not is_update:
         kind = "PR" if ready else "Draft PR"
         success(f"{scope.prefix}{kind} #{number} created for '{publish_name}': {url}")
         return
 
-    assert update is not None, "render_pr_outcome: is_update=True requires update"
+    update = update or PrUpdate(title_changed=False, body_changed=False, state_note="")
     head_note = "head force-pushed (--force-with-lease)" if forced else "head moved"
     if update.title_changed and update.body_changed:
         detail = f"{head_note}, title and description refreshed"

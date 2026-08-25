@@ -740,3 +740,23 @@ def test_render_outcome_update_all_variants(tmp_path, mocker):
     success.assert_called_with(
         "PR #1 updated — head moved; description unchanged. (marked draft) U"
     )
+
+
+def test_render_outcome_update_defaults_a_missing_update_to_a_no_op(tmp_path, mocker):
+    """FIX 4: `update=None` on the update path (e.g. a detached submodule with
+    nothing to regenerate/toggle) used to hit an `assert update is not None`;
+    render_pr_outcome now defaults it to a no-op PrUpdate instead of requiring
+    every caller to construct one just to satisfy that precondition. Renders
+    identically to an explicit no-op PrUpdate (see the last case above)."""
+    success = mocker.patch("jailbee.pr_flow.success")
+    pr_flow.render_pr_outcome(
+        _super_scope(tmp_path),
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=False,
+        ready=None,
+        update=None,
+    )
+    success.assert_called_once_with("PR #1 updated — head moved; description unchanged. U")

@@ -4336,7 +4336,7 @@ def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
     """List the submodules that have commits to publish, one per line."""
     from jailbee.tui import console
 
-    width = max(len(c.path) for c in candidates)
+    width = max((len(c.path) for c in candidates), default=0)
     for c in candidates:
         count = "?" if c.commits is None else str(c.commits)
         console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
@@ -4599,8 +4599,8 @@ def submodule_pr_cmd(
             record = pr_flow.PrRecord(number=found[0], head=found[1], author=False, adopted=True)
 
     is_foreign = bool(pr_label) and not record.author
-    if force and is_foreign:
-        pr_flow.confirm_foreign_force_push(scope, short, pr_label or "", record.head, yes=yes)
+    if force and pr_label and not record.author:
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, record.head, yes=yes)
 
     plan = pr_flow.resolve_pr_text_and_head(
         cfg,
@@ -4700,10 +4700,11 @@ def submodule_pr_cmd(
     elif did_update:
         # The submodule is detached and no --branch resolved a source: there
         # is no branch to regenerate a description from or a state to toggle
-        # against. `render_pr_outcome` requires an `update` on the update
-        # path regardless, so a no-op one stands in here; warn only when the
-        # user actually asked for something that needed the missing branch —
-        # a bare re-run with no such flag has nothing to silently ignore.
+        # against. `render_pr_outcome` defaults a missing `update` to a no-op
+        # on the update path, so nothing further is needed here beyond the
+        # user-facing warning — and only when the user actually asked for
+        # something that needed the missing branch; a bare re-run with no
+        # such flag has nothing to silently ignore.
         if description or title is not None or body is not None or ready is not None:
             warn(
                 f"{scope.prefix}--description/--title/--body/--ready/--draft "
@@ -4711,7 +4712,6 @@ def submodule_pr_cmd(
                 f"is detached and no source branch was resolved. Pass --branch "
                 f"to select one."
             )
-        update = pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
     pr_flow.render_pr_outcome(
         scope,
         url=created.url,
