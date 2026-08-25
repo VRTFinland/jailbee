@@ -1564,14 +1564,17 @@ jailbee destroy feat-pickersmoke --force
 # From any repo (or none): launch the live view.
 jailbee dashboard
 # expect: alternate-screen TUI, one section per repo with its containers,
-#         a highlighted row, and a footer "↑/↓ move · Enter actions · r refresh · q quit".
+#         a highlighted row, and a footer hint line reading (at minimum)
+#         "↑/↓ (j/k) move · Enter menu · Space fold · t tmux · s shell ·
+#          r refresh · F2 / S settings · h / ? help · q quit".
 
 # Create activity in another terminal and watch it appear within a few seconds:
 jailbee new feat/dashsmoke --background
 # expect: the feat-dashsmoke row appears with a JOB phase, then clears when ready.
 
 # Navigate + act:
-#  ↑/↓ (or j/k) to move the highlight (skips repo headers, spans repos)
+#  ↑/↓ (or j/k) to move the highlight (spans repos; repo headers are cursor
+#       stops now, not skipped — see the folding recipe below)
 #  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
 #           start/destroy when Stopped). It opens inline BELOW the table —
 #           expect the container rows to stay on screen and keep refreshing
@@ -1611,6 +1614,56 @@ jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git 
 #  r -> forces an immediate full refresh (incl. git status)
 #  q -> quits (closes the action menu or help first, if open)
 #  Ctrl-C -> always quits, restoring the terminal, even with an overlay open
+
+# Folding a repo group:
+#  Space on a repo header -> the header collapses to "▸ <prefix> (N)" and its
+#     container rows disappear; Space again (▾) unfolds and the rows return.
+#  Space on any container row inside a group -> same fold/unfold, no need to
+#     move the cursor up to the header first.
+#  Enter on a header -> same effect as Space (mirrors the Qt card view's
+#     clickable header); confirm it does NOT open the action menu.
+#  Fold a group, then jailbee new inside it in another terminal -> the new
+#     container's row stays hidden until you unfold; the header's count goes
+#     up regardless.
+#  Fold every group -> confirm the panel title still reports the total
+#     container count plus an "N folded" note, and the cursor still has
+#     somewhere to land (the headers).
+
+# The settings overlay (F2 or S):
+jailbee dashboard
+#  F2 -> opens a panel below the table: "Fields" and "Repos" tabs, ↑/↓ move,
+#     Space toggles, Tab switches tabs, Esc closes. Changes apply and persist
+#     immediately -- there is no OK/Cancel; watch the live table update
+#     behind the panel as you toggle a column.
+#  S -> opens the same overlay. Terminals disagree on what F2 sends (some
+#     send nothing usable over SSH/tmux); if F2 does nothing on your setup,
+#     S is the reliable fallback -- try both once so you know which works
+#     for your terminal.
+#  On the Fields tab, toggle a column off then back on -> the table's header
+#     row and every container row gain/lose that column immediately.
+#  Toggle "pr" on with no PR container present -> column does not appear in
+#     the table; the overlay row for it carries a dim
+#     "(shown only when it applies)" note explaining why, rather than
+#     looking like a bug.
+#  Try to turn off the last enabled column -> refused (the checkbox stays
+#     checked); there is no such thing as a table with zero columns.
+#  Switch to the Repos tab (Tab) -> toggle a repo's fold state from here too;
+#     confirm it matches what Space does from the live table.
+#  A field vocabulary this long does not fit under a normal terminal height:
+#     confirm the panel shows only a window of rows around the cursor (not
+#     all ~20+ fields at once), with a dim "↑ N more" / "↓ N more" line when
+#     rows are hidden above/below, and that moving to the very last field
+#     scrolls it into view rather than losing it off the bottom.
+#  Esc -> closes the overlay, back to the plain table.
+
+# TUI and GUI settings are independent:
+#  With the TUI dashboard open, toggle a column or fold a repo in its
+#     overlay. Then, in another terminal, run `jailbee gui` and check
+#     View ▸ Columns and the card view's fold state: neither reflects what
+#     you just did in the TUI. Change something in the GUI, close it,
+#     reopen the TUI dashboard (or press F2 again) -- the TUI's own state is
+#     still exactly what you left it. Each front-end has its own row in
+#     state.sqlite's view_prefs table.
 
 # Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
 # (WT/AHEAD/↑/MERGE) update every ~10s. Tune with -i / --git-interval, or

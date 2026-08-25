@@ -248,9 +248,10 @@ ignores `fields` entirely.
 ### `jailbee dashboard`
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
-repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
-`Enter` action menu (or fold/unfold the repo group when the cursor is on its
-header), `Space` fold/unfold the repo group under the cursor, `F2`/`S`
+repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos; repo headers
+are cursor stops, not skipped), `Enter` action menu (or fold/unfold the repo
+group when the cursor is on its header), `Space` fold/unfold the repo group
+under the cursor (works from the header or any container row in it), `F2`/`S`
 settings overlay (columns + folding), `r` force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
