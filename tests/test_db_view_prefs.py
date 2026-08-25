@@ -93,3 +93,26 @@ def test_decode_names_drops_non_strings_and_empty_lists() -> None:
     assert decode_names("[]") is None
     assert decode_names('["name", 3, "state"]') == ("name", "state")
     assert decode_names('"name"') is None
+
+
+def test_decode_deeply_nested_json_degrades_instead_of_raising() -> None:
+    """Deeply nested JSON raises RecursionError, which does not descend from
+    ValueError. A hand-edited or corrupted row must not crash load_view_state."""
+    from sqlmodel import Session
+
+    from jailbee.db.models import ViewPrefs
+    from jailbee.db.view_prefs import FRONTEND_TUI, decode_names, load_view_state
+
+    # Direct decode: deeply nested JSON should return None, not raise
+    deeply_nested = "[" * 100000 + "]" * 100000
+    assert decode_names(deeply_nested) is None
+
+    # Through load_view_state: corrupted row must not crash
+    engine = _engine()
+    with Session(engine) as s:
+        s.add(ViewPrefs(frontend="tui", columns=deeply_nested, folded_repos="[]"))
+        s.commit()
+
+    state = load_view_state(engine, FRONTEND_TUI)
+    assert state.columns is None
+    assert state.folded == frozenset()

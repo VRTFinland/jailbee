@@ -51,7 +51,9 @@ def decode_names(raw: str | None) -> tuple[str, ...] | None:
         return None
     try:
         data = json.loads(raw)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
+        # RecursionError is raised by json.loads on deeply nested input and does
+        # not descend from ValueError, so it must be named explicitly.
         return None
     if not isinstance(data, list):
         return None
