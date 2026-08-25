@@ -308,3 +308,77 @@ if TYPE_CHECKING:
     from jailbee.pr_flow import PrState
 
     _: type[PrState] = SubmodulePrState
+
+
+@dataclass(frozen=True)
+class SubPublishResult:
+    """What was pushed, and how."""
+
+    src_ref: str
+    publish_name: str
+    forced: bool
+
+
+def publish_submodule_branch(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    short: str,
+    *,
+    subpath: str,
+    repo_dir: str,
+    branch: str | None,
+    publish_name: str,
+    remote: str,
+    force: bool,
+) -> SubPublishResult:
+    """Transport the submodule's objects to the host, then push them upstream.
+
+    Mirrors `sync.publish_branch_from_container` one level down: git's native
+    fast-forward rule rejects a diverged remote branch by default, `force`
+    takes a `--force-with-lease` anchor from the current remote sha, and only
+    the push is retried — re-running the transport or recomputing the lease
+    would unpin it from the remote state the user was shown.
+    """
+    from jailbee.retry import confirm_retry_quiet, with_remote_retry
+
+    submodules.transport_submodules_to_host(
+        cfg, incus, full, short, repo_dir=repo_dir, only=subpath
+    )
+
+    host_sub = Path(cfg.repo_root) / subpath
+    src = source_ref(short, subpath, branch)
+    if git.rev_parse(host_sub, src) is None:
+        raise SubmodulePrError(
+            f"Nothing to publish for submodule '{subpath}': '{src}' does not "
+            f"exist on the host after transport. The submodule may have no "
+            f"commits in the container, or its branch may have another name — "
+            f"pass --branch to select it."
+        )
+
+    lease = git.remote_branch_sha(host_sub, remote, publish_name) if force else None
+    try:
+        with_remote_retry(
+            lambda: git.push_to_remote(host_sub, remote, src, publish_name, force_with_lease=lease),
+            label=f"pushing submodule '{subpath}' branch '{publish_name}' to {remote}",
+            catch=git.GitError,
+            confirm=confirm_retry_quiet,
+        )
+    except git.GitError as exc:
+        hint = (
+            (
+                f"If you rebased or amended this submodule branch, re-run with "
+                f"--force (uses --force-with-lease).\nIf '{publish_name}' is an "
+                f"unrelated branch that already exists on {remote}, pick a "
+                f"different name with --as instead of forcing."
+            )
+            if not force
+            else "The remote moved since jailbee last checked; re-run to pick up "
+            "the change, or reconcile manually — jailbee never blindly overwrites."
+        )
+        raise SubmodulePrError(
+            f"Pushing submodule '{subpath}' branch '{publish_name}' to {remote} "
+            f"failed: {exc}\n{hint}"
+        ) from exc
+
+    return SubPublishResult(src_ref=src, publish_name=publish_name, forced=bool(lease))

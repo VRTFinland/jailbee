@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jailbee import submodule_pr
+from jailbee import git, submodule_pr
 from jailbee.incus import IncusError
 from tests.conftest import make_cfg
 
@@ -309,3 +309,93 @@ def test_recorded_paths_lists_the_map_keys():
     incus = MagicMock()
     incus.config_get.return_value = '{"lib/b": {"pr": 9}, "lib/a": {"pr": 12}}'
     assert submodule_pr.recorded_paths(incus, "c1") == ["lib/a", "lib/b"]
+
+
+def _publish(tmp_path, mocker, **kwargs):
+    defaults = dict(
+        subpath="lib/a",
+        repo_dir="/home/dev/repo",
+        branch="feat/foo",
+        publish_name="user/x",
+        remote="origin",
+        force=False,
+    )
+    defaults.update(kwargs)
+    return submodule_pr.publish_submodule_branch(
+        make_cfg(tmp_path),
+        MagicMock(),
+        "sampleapp-feat-foo",
+        "feat-foo",
+        **defaults,
+    )
+
+
+def test_publish_transports_only_the_target_submodule(tmp_path, mocker):
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    mocker.patch("jailbee.git.push_to_remote")
+
+    _publish(tmp_path, mocker)
+
+    assert transport.call_args.kwargs["only"] == "lib/a"
+
+
+def test_publish_pushes_the_branch_ref_to_the_submodule_remote(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    push = mocker.patch("jailbee.git.push_to_remote")
+
+    result = _publish(tmp_path, mocker, remote="upstream")
+
+    assert push.call_args.args[0] == tmp_path / "lib/a"
+    assert push.call_args.args[1] == "upstream"
+    assert push.call_args.args[2] == "refs/jailbee-sub/feat-foo/lib/a/heads/feat/foo"
+    assert push.call_args.args[3] == "user/x"
+    assert push.call_args.kwargs["force_with_lease"] is None
+    assert result.forced is False
+
+
+def test_publish_uses_the_head_ref_for_a_detached_submodule(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    push = mocker.patch("jailbee.git.push_to_remote")
+
+    _publish(tmp_path, mocker, branch=None)
+
+    assert push.call_args.args[2] == "refs/jailbee-sub/feat-foo/lib/a/HEAD"
+
+
+def test_publish_takes_a_lease_only_with_force(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    mocker.patch("jailbee.git.remote_branch_sha", return_value="deadbee")
+    push = mocker.patch("jailbee.git.push_to_remote")
+
+    result = _publish(tmp_path, mocker, force=True)
+
+    assert push.call_args.kwargs["force_with_lease"] == "deadbee"
+    assert result.forced is True
+
+
+def test_publish_raises_when_the_source_ref_is_missing(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    push = mocker.patch("jailbee.git.push_to_remote")
+
+    with pytest.raises(submodule_pr.SubmodulePrError) as excinfo:
+        _publish(tmp_path, mocker)
+
+    assert "refs/jailbee-sub/feat-foo/lib/a/heads/feat/foo" in str(excinfo.value)
+    push.assert_not_called()
+
+
+def test_publish_maps_a_push_failure_to_a_submodule_pr_error(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    mocker.patch("jailbee.git.push_to_remote", side_effect=git.GitError("rejected"))
+    mocker.patch("jailbee.retry.confirm_retry_quiet", return_value=False)
+
+    with pytest.raises(submodule_pr.SubmodulePrError) as excinfo:
+        _publish(tmp_path, mocker)
+
+    assert "user/x" in str(excinfo.value)
