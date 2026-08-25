@@ -202,6 +202,8 @@ def test_partly_failed_apply_records_no_watermark(mocker: MockerFixture) -> None
     assert result.exit_code == 1
     with Session(get_engine()) as session:
         rows = list(session.exec(select(RepoUpgradeState)).all())
-    # The row may exist from the backfill on some other command in the same
-    # test process; what must never be true is `apply_observed`.
-    assert all(row.apply_observed is False for row in rows)
+    # `apply` never reads the advice, so it is the only thing that could have
+    # written this table — and `_isolate_state_dir` gives every test its own
+    # `state.sqlite`. Nothing at all is the honest invariant: dropping the
+    # `fully_successful` guard makes `record` insert a row here.
+    assert rows == []

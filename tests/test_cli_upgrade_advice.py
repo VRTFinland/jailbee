@@ -55,18 +55,66 @@ def test_ls_asks_for_advice(mocker) -> None:
     assert advice.call_count == 1
 
 
+def test_new_asks_for_advice(mocker) -> None:
+    """`new` is the command that consumes the golden image, so a stale base
+    image is exactly what a user running it needs to hear about."""
+    from jailbee.cli import app
+    from jailbee.egress_pool import RefreshResult
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    mocker.patch("jailbee.incus.Incus")
+    # full_config declares extra_registries, which makes `new` demand a
+    # running mirror container. Nothing here is about the mirror.
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=False)),
+    )
+    mocker.patch("jailbee.egress_pool.register_repo")
+    mocker.patch(
+        "jailbee.egress_pool.refresh_pool",
+        return_value=RefreshResult(container_prefix="foo", status="ok"),
+    )
+    # Mount mode needs no real .git at cfg.repo_root; --no-autostart keeps
+    # creation to the one mocked call.
+    new_container = mocker.patch("jailbee.lifecycle.new_container", return_value="foo-smokebox")
+    advice = _stub_advice(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "smokebox",
+            "--mount",
+            "--no-autostart",
+            "--config",
+            str(FIXTURES / "full_config.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_count == 1
+    assert advice.call_count == 1
+
+
 def test_shell_asks_for_advice_before_attaching(mocker) -> None:
+    """Order is the guarantee, not just the two calls: `shell` ends in
+    `raise typer.Exit(_attach_shell(...))`, so advice placed after the attach
+    would never reach the user."""
     from jailbee.cli import app
 
     mocker.patch("jailbee.cli._resolve_attachable", return_value=(mocker.MagicMock(), "c1"))
     attach = mocker.patch("jailbee.cli._attach_shell", return_value=0)
     advice = _stub_advice(mocker)
 
+    # A shared parent is the only way mock records a cross-mock call order.
+    calls = mocker.MagicMock()
+    calls.attach_mock(advice, "advice")
+    calls.attach_mock(attach, "attach")
+
     result = runner.invoke(app, ["shell", "c1", "--config", str(FIXTURES / "full_config.yaml")])
 
     assert result.exit_code == 0, result.output
-    assert advice.call_count == 1
-    assert attach.call_count == 1
+    assert [name for name, _, _ in calls.mock_calls] == ["advice", "attach"]
 
 
 def test_a_broken_state_db_does_not_break_the_command(mocker) -> None:

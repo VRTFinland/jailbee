@@ -51,4 +51,8 @@ def test_failed_build_records_nothing(mocker) -> None:
     assert result.exit_code == 1
     with Session(get_engine()) as session:
         rows = list(session.exec(select(RepoUpgradeState)).all())
-    assert all(row.base_build_observed is False for row in rows)
+    # `base build` never reads the advice, so it is the only thing that could
+    # have written this table — and `_isolate_state_dir` gives every test its
+    # own `state.sqlite`. Nothing at all is the honest invariant: recording
+    # unconditionally would insert a row here.
+    assert rows == []
