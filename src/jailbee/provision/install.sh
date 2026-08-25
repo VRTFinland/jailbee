@@ -127,6 +127,18 @@ if [ -z "${SSH_AUTH_SOCK:-}" ]; then
     fi
     unset _jailbee_gpg_sock
 fi
+
+# Claude Code resolves its config home as `CLAUDE_CONFIG_DIR || $HOME/.claude`
+# and its global config as `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Setting
+# the variable to the value the default already resolves to therefore changes
+# exactly one thing: the global config file moves from $HOME/.claude.json into
+# $HOME/.claude/, which is JailBee's shared directory mount. That retires the
+# file-level bind for .claude.json, whose inode any atomic rewrite on the host
+# would replace, leaving the container bound to the old one.
+# Not forced: `container.env` is documented to be able to override it.
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ]; then
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+fi
 EOF
 chmod 0644 /etc/profile.d/jailbee-env.sh
 
