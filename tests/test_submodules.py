@@ -1518,3 +1518,43 @@ def test_declared_branch_for_path_returns_none_for_an_unknown_leaf():
         return (False, "")
 
     assert submodules.declared_branch_for_path(run, "/repo", "other") is None
+
+
+def test_declared_branch_for_top_relative_path_matches_a_top_level_entry_directly():
+    """A top-level submodule at `libs/foo` is one entry in `/repo/.gitmodules`,
+    not a leaf under `/repo/libs/.gitmodules` — the FIX 1 regression."""
+
+    def run(cwd, args):
+        assert cwd == "/repo"
+        joined = " ".join(args)
+        if "--get-regexp" in joined:
+            return (True, "submodule.foo.path libs/foo\n")
+        if "submodule.foo.branch" in joined:
+            return (True, "release/2.x\n")
+        return (False, "")
+
+    assert (
+        submodules.declared_branch_for_top_relative_path(run, "/repo", "libs/foo")
+        == "release/2.x"
+    )
+
+
+def test_declared_branch_for_top_relative_path_descends_into_a_nested_level():
+    def run(cwd, args):
+        joined = " ".join(args)
+        if cwd == "/repo" and "--get-regexp" in joined:
+            return (True, "submodule.lib.path lib\n")
+        if cwd == "/repo/lib" and "--get-regexp" in joined:
+            return (True, "submodule.a.path a\n")
+        if cwd == "/repo/lib" and "submodule.a.branch" in joined:
+            return (True, "develop\n")
+        return (False, "")
+
+    assert submodules.declared_branch_for_top_relative_path(run, "/repo", "lib/a") == "develop"
+
+
+def test_declared_branch_for_top_relative_path_returns_none_when_nothing_matches():
+    def run(cwd, args):
+        return (False, "")
+
+    assert submodules.declared_branch_for_top_relative_path(run, "/repo", "libs/foo") is None

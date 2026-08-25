@@ -190,32 +190,66 @@ def test_resolve_remote_falls_back_to_origin(tmp_path, mocker):
 
 
 def test_resolve_base_override_wins(tmp_path, mocker):
-    declared = mocker.patch("jailbee.submodules.declared_branch_for_path")
+    declared = mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path")
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override="release") == "release"
     declared.assert_not_called()
 
 
 def test_resolve_base_uses_the_gitmodules_declaration(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value="develop")
+    mocker.patch(
+        "jailbee.submodules.declared_branch_for_top_relative_path", return_value="develop"
+    )
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "develop"
 
 
-def test_resolve_base_reads_the_parent_level_for_a_nested_submodule(tmp_path, mocker):
-    declared = mocker.patch("jailbee.submodules.declared_branch_for_path", return_value="develop")
-    submodule_pr.resolve_base_branch(tmp_path, "lib/a/inner", override=None)
-    assert declared.call_args.args[1] == str(tmp_path / "lib/a")
-    assert declared.call_args.args[2] == "inner"
+def test_resolve_base_reads_a_top_level_submodule_from_the_repo_root_gitmodules(tmp_path):
+    """Regression test for the wrong-parent-level bug (FIX 1).
+
+    A top-level submodule at `libs/foo` is declared by `repo_root/.gitmodules`
+    with `path = libs/foo` — a single entry, not `repo_root/libs/.gitmodules`.
+    Uses the real `.gitmodules` parser end to end (no mocking of
+    `declared_branch_for_path`/`declared_branch_for_top_relative_path`): this
+    failed before the fix (the old rpartition-based code looked for
+    `repo_root/libs/.gitmodules`, which does not exist here, and silently fell
+    through to the remote-HEAD/`main` fallback) and passes after it.
+    """
+    gitmodules = tmp_path / ".gitmodules"
+    gitmodules.write_text(
+        '[submodule "foo"]\n'
+        "\tpath = libs/foo\n"
+        "\turl = https://example.com/foo.git\n"
+        "\tbranch = release/2.x\n"
+    )
+    assert submodule_pr.resolve_base_branch(tmp_path, "libs/foo", override=None) == "release/2.x"
+
+
+def test_resolve_base_descends_two_real_gitmodules_levels_for_a_nested_submodule(tmp_path):
+    """A nested submodule is declared by *its immediate parent's* `.gitmodules`.
+
+    `lib` is a top-level submodule of the superproject (declared in
+    `tmp_path/.gitmodules`); `a` is a submodule of `lib` itself (declared in
+    `tmp_path/lib/.gitmodules`). Real files at both levels, no mocking.
+    """
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "lib"]\n\tpath = lib\n\turl = https://example.com/lib.git\n'
+    )
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / ".gitmodules").write_text(
+        '[submodule "a"]\n\tpath = a\n\turl = https://example.com/a.git\n\tbranch = develop\n'
+    )
+    assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "develop"
 
 
 def test_resolve_base_uses_the_remote_head(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value=None)
+    mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value=None)
     mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
     mocker.patch("jailbee.git.run_capture", return_value=(True, "upstream/trunk\n"))
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "trunk"
 
 
 def test_resolve_base_falls_back_to_main(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value=None)
+    mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value=None)
     mocker.patch("jailbee.git.detect_upstream_remote", return_value="origin")
     mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "main"

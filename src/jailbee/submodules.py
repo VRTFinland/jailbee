@@ -174,6 +174,40 @@ def declared_branch_for_path(run: GitRun, parent_dir: str, leaf: str) -> str | N
     return None
 
 
+def declared_branch_for_top_relative_path(run: GitRun, repo_root: str, subpath: str) -> str | None:
+    """The branch `.gitmodules` declares for a *top-relative* `subpath`, or None.
+
+    `declared_branch_for_path` needs the immediate declaring level already
+    known; this descends the `.gitmodules` chain from `repo_root` to find it.
+    The naive approach — split `subpath` on its last `/` and treat everything
+    before it as the declaring level's directory — is wrong for the common
+    case: a top-level submodule at `libs/foo` is declared by
+    `repo_root/.gitmodules` with `path = libs/foo`, a single entry, not by
+    some `repo_root/libs/.gitmodules`. A path component boundary is not
+    necessarily a `.gitmodules` level boundary.
+
+    Instead, at each level read that level's `.gitmodules`: an entry whose
+    `path` equals the remaining subpath is the declaring entry (delegate the
+    final lookup to `declared_branch_for_path`, which also handles the `.`
+    convention); an entry whose `path` is a strict prefix of the remaining
+    subpath names an intermediate submodule to descend into, with the
+    remainder re-checked against *its* `.gitmodules`. Returns None when no
+    level in the chain accounts for the full `subpath`.
+    """
+    level_dir = repo_root
+    remaining = subpath
+    while True:
+        for _name, path in _gitmodules_paths(run, level_dir):
+            if path == remaining:
+                return declared_branch_for_path(run, level_dir, remaining)
+            if remaining.startswith(f"{path}/"):
+                level_dir = f"{level_dir}/{path}"
+                remaining = remaining[len(path) + 1 :]
+                break
+        else:
+            return None
+
+
 def _current_branch(run: GitRun, sub: str) -> str | None:
     """The submodule's current branch, or None when on a detached HEAD."""
     ok, out = run(sub, ["symbolic-ref", "--quiet", "--short", "HEAD"])

@@ -191,17 +191,19 @@ def resolve_remote(repo_root: Path, subpath: str) -> str:
 def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) -> str:
     """The branch a submodule PR targets in the submodule's own repository.
 
-    Order: `--base` > `submodule.<name>.branch` in the *parent level's*
-    `.gitmodules` > the sub-repo's `<remote>/HEAD` > `main`. The remote name is
-    resolved per submodule (see `resolve_remote`), which is why this cannot
-    reuse `submodules._detect_submodule_default` — that one hardcodes `origin`
-    for its container callers.
+    Order: `--base` > `submodule.<name>.branch` (found by descending the
+    `.gitmodules` chain from `repo_root` — see
+    `submodules.declared_branch_for_top_relative_path`) > the sub-repo's
+    `<remote>/HEAD` > `main`. The remote name is resolved per submodule (see
+    `resolve_remote`), which is why this cannot reuse
+    `submodules._detect_submodule_default` — that one hardcodes `origin` for
+    its container callers.
     """
     if override:
         return override
-    parent, _, leaf = subpath.rpartition("/")
-    parent_dir = str(repo_root / parent) if parent else str(repo_root)
-    declared = submodules.declared_branch_for_path(git.run_capture, parent_dir, leaf)
+    declared = submodules.declared_branch_for_top_relative_path(
+        git.run_capture, str(repo_root), subpath
+    )
     if declared:
         return declared
     host_sub = repo_root / subpath
