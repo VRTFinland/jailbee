@@ -2004,12 +2004,12 @@ def ls_field_specs(
             cell=lambda c: c.ip or "-",
             json=lambda c: c.ip,
             # `jailbee apply` writes /etc/hosts entries, so the address is
-            # rarely what you reach a container by — it costs 15 columns in
-            # every `ls` to answer a question most runs never ask. Still on
-            # by default in the dashboards, where a glance is free, and in
-            # JSON, where scripts depend on it.
+            # rarely what you reach a container by — it costs 15 columns to
+            # answer a question most views never ask. Off in the dashboards
+            # too, so the two default sets differ in exactly one column
+            # (`mem`); enable it in the dashboard settings UI or ask for it
+            # with `--fields ip`. Still on in JSON, where scripts depend on it.
             default_table=False,
-            default_dashboard=True,
         ),
         table_format.FieldSpec(
             name="memory_limit",

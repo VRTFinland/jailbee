@@ -1108,13 +1108,14 @@ def test_visible_fields_excludes_hidden_and_respects_default_table():
     assert "network" in names
 
 
-def test_dashboard_keeps_ip_and_mem_that_ls_drops_by_default():
-    """The two views have different defaults, and the dashboard's are wider.
+def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
+    """MEM is the one deliberate difference between the two default sets.
 
-    IP and MEM are off in `jailbee ls` (a one-shot listing pays their width
-    for a stale sample) but on here, where the view refreshes. Guards the
-    coupling that used to make one flag serve both: dropping them from `ls`
-    must not silently strip them from the live dashboards.
+    MEM is a live sample: it earns its width in a view that refreshes and not
+    in a one-shot listing. IP is off in both — `jailbee apply` writes
+    /etc/hosts entries, so the address is rarely how a container is reached,
+    and the dashboards used to pay 15 columns for it. Both stay reachable:
+    IP via the settings UI or `ls --fields ip`, MEM via `ls --fields mem`.
     """
     from datetime import UTC, datetime
 
@@ -1128,8 +1129,8 @@ def test_dashboard_keeps_ip_and_mem_that_ls_drops_by_default():
     dashboard_names = [f.name for f in dashboard.visible_fields(now, [c])]
     ls_names = [f.name for f in ls_field_specs(now=now, all_repos=False) if f.default_table]
 
-    assert "ip" in dashboard_names and "ip" not in ls_names
     assert "mem" in dashboard_names and "mem" not in ls_names
+    assert "ip" not in dashboard_names and "ip" not in ls_names
 
 
 def test_dashboard_hide_still_removes_a_dashboard_only_column():

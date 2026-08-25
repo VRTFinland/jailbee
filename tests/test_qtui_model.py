@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from jailbee import dashboard
+from jailbee.config import ColumnConfig
 from jailbee.dashboard import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.qtui import model as m
@@ -39,7 +40,11 @@ def test_container_cells_none_renders_cell_placeholder():
     c = ContainerInfo(
         name="p-foo", state="Stopped", network=None, ip=None, memory_limit=None, repo="p"
     )
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    # IP is no longer a default column in the dashboard, so select it explicitly
+    # to test that fields with None values fall back to their FieldSpec.cell placeholder.
+    fields = dashboard.visible_fields(
+        datetime.now().astimezone(), [c], ColumnConfig(fields=["ip", "network"])
+    )
     cells = m.container_cells(c, fields)
     by_name = dict(zip([f.name for f in fields], cells, strict=True))
     # These fields fall back to FieldSpec.cell's own placeholder, not "".

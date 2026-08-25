@@ -331,6 +331,11 @@ def test_memory_columns_are_dashboard_only_and_json_stays_stable():
     # JSON stays backward-compatible: memory_limit is emitted, mem is opt-in.
     assert by_name["memory_limit"].default_json is True
     assert by_name["mem"].default_json is False
+    # IP matches `ls`: off in the default table and in the dashboards alike.
+    # It stays on in JSON, where scripts depend on it.
+    assert by_name["ip"].default_table is False
+    assert shows_by_default_in_dashboard(by_name["ip"]) is False
+    assert by_name["ip"].default_json is True
 
 
 def test_ls_mem_cell_formats_used_and_limit():

@@ -1306,14 +1306,10 @@ dashboards.
 
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
-AHEAD ±, ↑, MERGE. The dashboards add IP and MEM, because a live number is
-worth its width in a view that refreshes and is a stale sample in one that
-does not. Both are reachable from `ls` with `--fields ip,mem` or an
-`ls.fields` list; conversely `dashboard.hide` prunes them from the
-dashboards. Four columns are dynamic and appear only when they have
-something to say: `job` (a background job is running), `ttl` (a container is
-in loose mode), `pr` (a container tracks a PR) and `mode` (a mount-mode
-container exists — on a clone-only host the column would be a constant).
+AHEAD ±, ↑, MERGE. The dashboards differ in exactly one column: they add MEM,
+because a live number is worth its width in a view that refreshes and is a
+stale sample in one that does not. IP is off in both — enable it in the
+dashboard settings UI, or ask for it from `ls` with `--fields ip`.
 
 **Table output only.** `jailbee ls --format json` always emits its own built-in
 field set (`FieldSpec.default_json`), regardless of `ls.fields`/`ls.hide` —
