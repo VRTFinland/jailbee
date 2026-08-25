@@ -210,10 +210,14 @@ def test_run_init_creates_user_shared_cache_dirs(tmp_path):
 
 
 def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
-    """The claude.json seed file is only written when claude.enabled."""
+    """The claude.json seed file is only written when claude.enabled — and
+    with it disabled, a pre-existing legacy `claude.json` must also be left
+    untouched (i.e. the relocation half is gated too, not just the seed)."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     cfg = with_agent(cfg, "claude", enabled=False)
+    (tmp_path / "shared").mkdir(parents=True)
+    (tmp_path / "shared" / "claude.json").write_text('{"legacy": true}')
     incus = MagicMock()
     incus.profile_exists.return_value = False
     incus.network_acl_exists.return_value = False
@@ -223,7 +227,7 @@ def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
     run_init(cfg, incus)
 
     assert not (tmp_path / "shared" / "claude" / ".claude.json").exists()
-    assert not (tmp_path / "shared" / "claude.json").exists()
+    assert (tmp_path / "shared" / "claude.json").read_text() == '{"legacy": true}'
 
 
 def test_init_creates_profiles(tmp_path):
@@ -950,3 +954,6 @@ def test_legacy_claude_json_survives_seeding(tmp_path):
     _ensure_integration_shared_dirs(cfg)
 
     assert (shared / "claude" / ".claude.json").read_text() == '{"onboarded": true}'
+    # Pins move-not-copy: a copy-instead-of-move implementation would still
+    # pass the assertion above but leave the legacy file behind.
+    assert not (shared / "claude.json").exists()
