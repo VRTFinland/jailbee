@@ -182,4 +182,12 @@ def global_config_issues(path: Path) -> list[str]:
     from jailbee.config import validate_column_blocks
 
     gcfg = _load_unsanitized(path)
-    return validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
+    issues = validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
+    if "dashboard" in gcfg.model_fields_set:
+        issues.append(
+            "global.dashboard: deprecated and ignored — the dashboards remember "
+            "their own columns now (press F2 in `jailbee dashboard`, or View ▸ "
+            "Columns in the GUI). Your block was imported once, on the first run "
+            "after upgrading; it can be deleted."
+        )
+    return issues

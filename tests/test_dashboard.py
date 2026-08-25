@@ -1359,17 +1359,6 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
     assert network.cell(loose) == "loose (2h)"
 
 
-def test_resolve_dashboard_columns_falls_back_to_global_without_a_cwd_repo(mocker):
-    from jailbee.global_config import GlobalConfig
-
-    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
-    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.fields == ["name", "state"]
-
-
 def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
     """A typo in the global `dashboard:` block must not lose the whole block —
     the dashboard used to swallow `load_global_config`'s `ConfigError` and
@@ -1386,84 +1375,78 @@ def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_
     assert gcfg.dashboard.fields == ["name"]
 
 
-def test_resolve_dashboard_columns_reads_a_global_only_block_from_disk(tmp_path, monkeypatch):
-    """`gie gui` outside a repo is ordinary, and `global.yaml` is the
-    documented normal home for this setting — so the real load path (no
-    mocked loader) must deliver it. It did not: the `dashboard:` key was
-    stripped by `_split_host_keys` before `GlobalConfig` validation, so
-    `gcfg.dashboard` was always the built-in default."""
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, local_diff]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+def test_seed_view_state_imports_the_global_dashboard_block_once(mocker):
+    """Nobody's columns change on upgrade: the deprecated global block is
+    resolved once into the front-end's row."""
+    from sqlmodel import SQLModel, create_engine
 
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.fields == ["name", "local_diff"]
-
-
-def test_resolve_dashboard_columns_global_hide_replaces_the_default_hide(tmp_path, monkeypatch):
-    """`hide` is a replacement, not an extension: naming only `ip` brings
-    REPO / FULL NAME / GIT STATUS / CREATED / TTL back into the table."""
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
-
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  hide: [ip]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.hide == ["ip"]
-    assert not set(DASHBOARD_DEFAULT_HIDE) & set(columns.hide)
-
-
-def test_resolve_dashboard_columns_layers_the_cwd_repos_config_over_global(
-    tmp_path, mocker, make_cfg
-):
+    from jailbee.db.view_prefs import FRONTEND_TUI, load_view_state
     from jailbee.global_config import GlobalConfig
 
-    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
-    cfg = make_cfg(tmp_path, dashboard={"fields": ["name", "ip"]})
-    path = tmp_path / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
-
-    columns = dashboard.resolve_dashboard_columns(path)
-
-    assert columns.fields == ["name", "ip"]
-
-
-def test_resolve_dashboard_columns_falls_back_when_cwd_config_fails_to_load(tmp_path, mocker):
-    from jailbee.global_config import GlobalConfig
-
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
     gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
     mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-    mocker.patch.object(dashboard, "load_config", side_effect=Exception("boom"))
 
-    columns = dashboard.resolve_dashboard_columns(tmp_path / ".jailbee" / "config.yaml")
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
-    assert columns.fields == ["name", "state"]
+    assert state.columns == ("name", "state")
+    assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "state")
 
 
-def test_resolve_dashboard_columns_with_no_dashboard_block_yields_the_default_hide(
-    tmp_path, mocker, make_cfg
-):
-    """A cwd repo with no `dashboard:` block must still resolve to
-    `DASHBOARD_DEFAULT_HIDE` — the safety net for the whole feature — by
-    falling through to the (real, unoverridden) global default rather than
-    an empty hide list."""
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+def test_seed_view_state_leaves_an_existing_row_alone(mocker):
+    """Seeding happens once. After that the YAML block is inert — editing it
+    must not reach back into a front-end the user has since configured."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
     from jailbee.global_config import GlobalConfig
 
-    cfg = make_cfg(tmp_path)
-    path = tmp_path / ".jailbee" / "config.yaml"
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name",)))
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name",)
+
+
+def test_seed_view_state_ignores_a_repo_level_block(mocker, tmp_path):
+    """The seeded value is a personal, cross-repo setting, so it comes from
+    the personal layer only. Seeding from whichever repo the user happened to
+    launch from first would let one repo silently define their view
+    everywhere."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
     mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    # A repo config is present but must not be consulted: seed_view_state
+    # takes no cwd_config argument at all.
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
-    columns = dashboard.resolve_dashboard_columns(path)
+    assert state.columns == dashboard.default_columns()
 
-    assert sorted(columns.hide) == sorted(DASHBOARD_DEFAULT_HIDE)
+
+def test_seed_view_state_seeds_the_two_frontends_independently(mocker):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_QT, FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name",)))
+
+    assert dashboard.seed_view_state(engine, FRONTEND_TUI).columns == ("name",)
+    assert dashboard.seed_view_state(engine, FRONTEND_QT).columns == ("name", "state")
 
 
 def _render_text(renderable: RenderableType) -> str:

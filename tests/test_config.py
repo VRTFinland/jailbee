@@ -3798,3 +3798,43 @@ def test_host_ports_rejects_unknown_key(tmp_path):
     )
     with pytest.raises(ConfigError):
         load_config(cfg_path)
+
+
+def test_a_global_dashboard_block_is_reported_as_deprecated(tmp_path) -> None:
+    """`jailbee config validate` is where a user finds out the block stopped
+    mattering. Only fires when the key is actually present — a default block
+    must stay silent."""
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  hide: [mem]\n")
+
+    issues = global_config_issues(path)
+
+    assert any("dashboard" in i and "deprecated" in i for i in issues)
+
+
+def test_no_dashboard_block_reports_no_deprecation(tmp_path) -> None:
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("ls:\n  hide: [mem]\n")
+
+    assert not any("deprecated" in i for i in global_config_issues(path))
+
+
+def test_a_repo_dashboard_block_reports_deprecated_and_not_seeded(make_cfg, tmp_path) -> None:
+    """A repo block is doubly dead: deprecated like the global one, and never
+    seeded — the seed reads the personal layer only, so this one is simply
+    dropped. That has to be said out loud, not left to be discovered."""
+    from jailbee.config import ColumnConfig
+
+    # `model_copy(update=...)` adds the updated keys to __pydantic_fields_set__
+    # in Pydantic v2, which is what `"dashboard" in cfg.model_fields_set` reads.
+    cfg = make_cfg(tmp_path).model_copy(update={"dashboard": ColumnConfig(hide=["mem"])})
+    assert "dashboard" in cfg.model_fields_set  # the precondition this test rests on
+
+    issues = cfg.validate_runtime()
+
+    assert any("deprecated" in i for i in issues)
+    assert any("not seeded" in i or "not imported" in i for i in issues)

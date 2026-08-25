@@ -18,11 +18,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
-from jailbee.dashboard import (
-    collect_config_paths,
-    enabled_from_column_config,
-    resolve_dashboard_columns,
-)
+from jailbee.dashboard import collect_config_paths, seed_view_state
+from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.qtui.actions import (
     TerminalNotFoundError,
     build_action,
@@ -438,16 +435,15 @@ def run(
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
-    # Resolved once for the whole run — a live-refreshing dashboard must not
-    # re-merge config on every refresh tick.
-    columns: tuple[str, ...] | None = enabled_from_column_config(
-        resolve_dashboard_columns(cwd_config)
-    )
-
     from jailbee.db import get_engine
     from jailbee.db.gui_state import load_gui_state
 
     engine = get_engine()
+
+    # Resolved once for the whole run — a live-refreshing dashboard must not
+    # re-merge config on every refresh tick.
+    columns: tuple[str, ...] | None = seed_view_state(engine, FRONTEND_QT).columns
+
     state = load_gui_state(engine)
 
     resolved = interval if interval is not None else state.refresh_interval

@@ -37,6 +37,7 @@ from jailbee.config import (
     format_loose_after,
     load_config,
 )
+from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
     GlobalConfig,
     default_global_config_path,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
+    from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
 
@@ -153,25 +155,27 @@ def _global_config_or_defaults() -> GlobalConfig:
     return gcfg
 
 
-def resolve_dashboard_columns(cwd_config: Path | None) -> ColumnConfig:
-    """The dashboard's effective column preference, resolved once per launch.
+def seed_view_state(engine: Engine, frontend: str) -> ViewState:
+    """``frontend``'s view state, seeding its columns on first use.
 
-    Both dashboards render one shared table across every registered repo
-    (`render`, `qtui/window.py`'s `set_groups`), so a per-repo-group answer
-    is impossible — this resolves against the directory the user is
-    standing in (``cwd_config``), falling back to the global ``dashboard:``
-    block when there is no cwd repo or its config fails to load. Callers
-    (the TUI's ``run`` loop, the Qt ``AppController``) call this once at
-    startup and reuse the result on every refresh — never per frame.
+    The ``dashboard:`` config block is deprecated. It is read exactly once
+    per front-end — here — so that upgrading changes nobody's columns, and is
+    inert afterwards: a later edit to the YAML must not reach back into a
+    front-end the user has since configured through its own UI.
+
+    Only the **global** layer is consulted. The seeded value becomes a
+    personal setting that applies in every repo, so seeding it from whichever
+    repo the user happened to launch from first would let one repo's block
+    silently define their view everywhere. A repo-level block is reported as
+    deprecated *and* as not seeded by ``Config.validate_runtime``.
     """
+    state = load_view_state(engine, frontend)
+    if state.columns is not None:
+        return state
     gcfg = _global_config_or_defaults()
-    if cwd_config is None:
-        return gcfg.dashboard
-    try:
-        cfg = load_config(cwd_config)
-    except Exception:  # same broad catch as _global_config_or_defaults: degrade, don't abort
-        return gcfg.dashboard
-    return cfg.effective_dashboard_columns(gcfg)
+    seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
+    save_view_state(engine, frontend, seeded)
+    return seeded
 
 
 def gather_rows(
@@ -475,7 +479,7 @@ def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
 
     The one remaining dashboard use of ``table_format.apply_column_config``,
     confined to seeding a front-end's `view_prefs` row from the deprecated
-    config block (see ``seed_columns``). Going through the old resolver is
+    config block (see ``seed_view_state``). Going through the old resolver is
     what guarantees the seeded set is *exactly* what that block used to
     render, including its two quirks: an explicit ``fields`` list wins
     outright, and ``hide`` replaces the built-in list rather than extending
@@ -1090,11 +1094,14 @@ def run(
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
+    from jailbee.db import get_engine
+    from jailbee.db.view_prefs import FRONTEND_TUI
+
     # Resolved once for the whole run — a live-refreshing dashboard must not
     # re-merge config on every frame.
-    enabled: tuple[str, ...] | None = enabled_from_column_config(
-        resolve_dashboard_columns(cwd_config)
-    )
+    engine = get_engine()
+    view_state = seed_view_state(engine, FRONTEND_TUI)
+    enabled: tuple[str, ...] | None = view_state.columns
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)

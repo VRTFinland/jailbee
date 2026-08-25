@@ -98,11 +98,12 @@ _DEFAULT_NODE_MAJOR = 24
 # apply the list rule to `fields`/`hide` — which *appends* a non-empty
 # overlay — so a global `fields: [name, state]` plus a repo
 # `fields: [name, ip]` produced `[name, state, name, ip]` and rendered NAME
-# twice. Splitting them out keeps `effective_ls_columns` /
-# `effective_dashboard_columns` the single merge mechanism, and it is what
-# makes a global-only `dashboard:` block reach the dashboards at all
-# (`dashboard.resolve_dashboard_columns` reads `GlobalConfig.dashboard`
-# directly when there is no cwd repo).
+# twice. Splitting them out keeps `Config._effective_columns` the single
+# merge mechanism for this shape. `dashboard` stays in this set even though
+# the `dashboard:` block itself is deprecated (see
+# `Config.validate_runtime`/`global_config.global_config_issues`): the key
+# is still validated on both layers, and a repo-level block would hit the
+# same list-append bug if it were ever let through to `deep_merge`.
 #
 # Note `loose_auto_revert` is *not* in this set even though it has exactly
 # the same "merged field-by-field, not through deep_merge" shape — see
@@ -2252,6 +2253,14 @@ class Config(BaseModel):
         # are still the raw, unrecovered blocks and a typo is still reported
         # as an error.
         issues.extend(validate_column_blocks([("ls", self.ls), ("dashboard", self.dashboard)]))
+        if "dashboard" in self.model_fields_set:
+            issues.append(
+                "dashboard: deprecated and ignored — the dashboards remember their "
+                "own columns now (press F2 in `jailbee dashboard`, or View ▸ Columns "
+                "in the GUI). A repo-level block is also not seeded: the setting is "
+                "personal and applies in every repo, so only "
+                "~/.config/jailbee/global.yaml was imported. This block can be deleted."
+            )
         return issues
 
 

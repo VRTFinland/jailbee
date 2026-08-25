@@ -108,7 +108,9 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     worker = mock_worker_cls.return_value
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     # persist_on_close() (in run()'s `finally`) also calls save_gui_state —
     # patch it too so it doesn't try to open a real session on the sentinel.
@@ -345,7 +347,9 @@ def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(
@@ -918,7 +922,9 @@ def test_run_uses_persisted_interval_when_cli_none(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(layout="table", refresh_interval=7.0, refresh_paused=False),
