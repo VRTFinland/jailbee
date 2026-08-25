@@ -277,6 +277,20 @@ unless you ask, and `--force` asks a second time.
 → [Commands](commands.md),
 [A branch that already has a PR](git-bridge.md#a-branch-that-already-has-a-pr)
 
+### How do I open a PR for a submodule?
+
+`jailbee submodule pr [<name>] [<path>]` — a separate command from `jailbee
+pr`, because a submodule is a separate GitHub repository. Without `<path>`,
+the submodule with commits ahead of its own base is targeted automatically;
+several ahead means naming one. The signal is the submodule's own base
+anchor, not the superproject's gitlink diff, so it sees the commits even
+before you've committed the gitlink bump in the superproject. Base and head
+branch names come from the submodule's own `.gitmodules`/remote data, not the
+superproject's. Merge the submodule PR first — the superproject PR's gitlink
+bump then points at a merged commit.
+
+→ [Submodule pull requests](git-bridge.md#submodules)
+
 ### How do stacked PRs work?
 
 Base the second container on the first one's branch
