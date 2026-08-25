@@ -128,6 +128,67 @@ def test_render_repos_tab_shows_folded_state():
     assert "[ ]  beta" in beta_line
 
 
+def test_render_windows_a_long_field_vocabulary():
+    """A vocabulary longer than the visible window must not draw every row —
+    that's exactly the unbounded-height bug the whole-branch review found:
+    the overlay drew all 22+ fields below the live table and Rich's
+    bottom-cropping ate the overlay first. This fails against the old
+    unwindowed renderer, which prints every one of the 40 names."""
+    from jailbee.dashboard_settings import render_settings
+
+    many_fields = tuple(f"field{i}" for i in range(40))
+    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
+    console = Console(width=90, no_color=True)
+    with console.capture() as cap:
+        console.print(render_settings(state, dynamic=frozenset()))
+    out = cap.get()
+
+    shown = sum(1 for name in many_fields if name in out)
+    assert shown < len(many_fields)
+
+
+def test_render_keeps_the_cursor_row_visible_near_the_end_of_a_long_list():
+    """The row under the cursor must always be in the rendered output. This
+    is the one that fails today: with the cursor near the bottom of a long
+    list, the unwindowed renderer still draws every row (so it would
+    trivially pass), but a windowed renderer that doesn't scroll to follow
+    the cursor would clip exactly this row."""
+    from jailbee.dashboard_settings import move_settings, render_settings
+
+    many_fields = tuple(f"field{i}" for i in range(40))
+    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
+    state = move_settings(state, 37)  # cursor near the end of the list
+    assert state.index == 37
+
+    console = Console(width=90, no_color=True)
+    with console.capture() as cap:
+        console.print(render_settings(state, dynamic=frozenset()))
+    out = cap.get()
+
+    assert "field37" in out
+
+
+def test_render_shows_continuation_markers_only_when_something_is_hidden():
+    from jailbee.dashboard_settings import move_settings, render_settings
+
+    many_fields = tuple(f"field{i}" for i in range(40))
+    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
+
+    console = Console(width=90, no_color=True)
+    with console.capture() as cap:
+        console.print(render_settings(state, dynamic=frozenset()))
+    top_lines = cap.get().split("\n")
+    assert not any("more" in line and "↑" in line for line in top_lines)
+    assert any("more" in line and "↓" in line for line in top_lines)
+
+    bottom = move_settings(state, 39)
+    with console.capture() as cap:
+        console.print(render_settings(bottom, dynamic=frozenset()))
+    bottom_lines = cap.get().split("\n")
+    assert any("more" in line and "↑" in line for line in bottom_lines)
+    assert not any("more" in line and "↓" in line for line in bottom_lines)
+
+
 def test_open_settings_rejects_an_empty_field_vocabulary():
     """A guard against a caller that resolved its field list wrongly: an
     empty overlay is indistinguishable from a broken one."""

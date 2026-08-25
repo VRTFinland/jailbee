@@ -25,6 +25,17 @@ if TYPE_CHECKING:
 
 Tab = Literal["fields", "repos"]
 
+# The overlay is drawn *below* the live table (see module docstring), so every
+# row it draws is a line the table loses to `vertical_overflow="ellipsis"`
+# cropping from the bottom. Reading the live console's height here would
+# couple this pure state machine's renderer to the terminal, so instead the
+# window is a fixed, conservative budget: 10 rows costs the panel roughly 16
+# lines total (tabs + blank + 10 rows + blank + hint + border), which fits
+# comfortably under a 24-line terminal alongside a small live table. This is
+# a deliberate trade-off, not a placeholder — see Important 1 in the
+# 2026-08-25 whole-branch review.
+_VISIBLE_ROWS = 10
+
 
 @dataclass(frozen=True)
 class SettingsState:
@@ -118,6 +129,20 @@ def enabled_names(state: SettingsState) -> tuple[str, ...]:
     return tuple(n for n in state.field_names if n in state.enabled)
 
 
+def _window_bounds(index: int, total: int, size: int) -> tuple[int, int]:
+    """The ``[start, end)`` slice of ``size`` rows that keeps ``index`` visible.
+
+    Scrolls the minimum amount to bring the cursor into view rather than
+    always centering it, and clamps so the window never runs past either end
+    of the list.
+    """
+    if total <= size:
+        return 0, total
+    start = max(0, index - size + 1)
+    start = min(start, total - size)
+    return start, start + size
+
+
 def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> RenderableType:
     """The overlay as a bordered panel, drawn below the live table.
 
@@ -125,6 +150,12 @@ def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> Rendera
     enabled. Those rows say so: an enabled column that does not appear would
     otherwise read as a bug rather than as the emptiness heuristic doing its
     job.
+
+    Only a fixed window of rows around the cursor is drawn (see
+    ``_VISIBLE_ROWS``) — drawing every row unconditionally would let a long
+    field vocabulary grow the panel past the terminal height, and Rich crops
+    a live render from the bottom, so an unwindowed panel loses its own
+    bottom rows first with no way to scroll them back into view.
     """
     tabs = " ".join(
         f"[reverse bold] {label} [/]" if state.tab == tab else f" {label} "
@@ -132,8 +163,13 @@ def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> Rendera
     )
     lines = [tabs, ""]
     rows = _rows(state)
+    total = len(rows)
+    start, end = _window_bounds(state.index, total, _VISIBLE_ROWS)
     on = state.enabled if state.tab == "fields" else None
-    for i, name in enumerate(rows):
+    if start > 0:
+        lines.append(f"[dim]↑ {start} more[/dim]")
+    for i in range(start, end):
+        name = rows[i]
         checked = (name in on) if on is not None else (name not in state.folded)
         box_mark = "[bold green]x[/]" if checked else " "
         cursor = "[bold cyan]▸[/] " if i == state.index else "  "
@@ -145,6 +181,8 @@ def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> Rendera
         style = "bold bright_white" if i == state.index else ""
         text = f"[{style}]{name}[/]" if style else name
         lines.append(f"{cursor}[{box_mark}]  {text}{note}")
+    if end < total:
+        lines.append(f"[dim]↓ {total - end} more[/dim]")
     lines += ["", "[dim]↑/↓ move  ·  Space toggle  ·  Tab switch  ·  Esc close[/dim]"]
     return Panel(
         "\n".join(lines),
