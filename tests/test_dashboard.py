@@ -2170,3 +2170,126 @@ def test_actions_for_container_no_clear_without_a_job():
     verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
 
     assert "job clear" not in verbs
+
+
+def test_fold_target_works_from_a_header_and_from_a_container():
+    """Space is forgiving: it folds the current row's group whether the cursor
+    is on the header or on any container inside it."""
+    groups = [dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")])]
+    assert dashboard.fold_target(groups, dashboard.Row("repo", "a")) == "a"
+    assert dashboard.fold_target(groups, dashboard.Row("container", "a-1")) == "a"
+    assert dashboard.fold_target(groups, dashboard.Row("container", "gone")) is None
+    assert dashboard.fold_target(groups, None) is None
+
+
+def test_toggle_folded_is_a_pure_set_flip():
+    assert dashboard.toggle_folded(frozenset(), "a") == frozenset({"a"})
+    assert dashboard.toggle_folded(frozenset({"a", "b"}), "a") == frozenset({"b"})
+
+
+def test_render_marks_a_folded_group_and_hides_its_rows(tmp_path):
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]),
+        dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-two", "beta")]),
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            folded=frozenset({"alpha"}),
+        )
+    )
+    # NAME cells show display_name (repo prefix stripped, see ContainerInfo);
+    # "beta-two" -> "two" is the neighbour's untouched row, distinct from
+    # "alpha-one" -> "one" so the two containers cannot be confused for
+    # each other in the assertion below.
+    assert "one" not in out  # folded away
+    assert "two" in out  # its neighbour is untouched
+    assert "▸" in out and "▾" in out  # collapsed and expanded markers both drawn
+    assert "1 folded" in out  # the title says what is hidden
+
+
+def test_render_marks_a_selected_repo_header(tmp_path):
+    """A header the cursor sits on must look selected.
+
+    Headers became cursor stops one commit earlier, where `render` did not
+    consult `selected` for them at all — so the stop was state-correct and
+    invisible, and pressing Down onto a header made the highlight vanish
+    with nothing replacing it. The gutter arrow is what marks the cursor row
+    for containers; a selected header carries it too, so both kinds of stop
+    read as one cursor.
+    """
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    kwargs = dict(now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True)
+
+    unselected = _render_text(dashboard.render([g], selected=None, **kwargs))
+    on_header = _render_text(
+        dashboard.render([g], selected=dashboard.Row("repo", "alpha"), **kwargs)
+    )
+
+    assert unselected != on_header  # the header renders differently as the cursor row
+    # The group is unfolded, so its fold marker is `▾`; `▸` can only be the
+    # selection gutter. That makes this assertion discriminating rather than
+    # matching whichever glyph happens to be present.
+    header_line = next(
+        ln for ln in on_header.splitlines() if "alpha" in ln and "alpha-one" not in ln
+    )
+    assert "▸" in header_line
+
+
+def test_render_counts_every_container_even_when_folded(tmp_path):
+    """The title is a census, not a row count: a folded repo's containers are
+    still there and still running."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    groups = [
+        dashboard.RepoGroup(
+            "alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")]
+        )
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            folded=frozenset({"alpha"}),
+        )
+    )
+    assert "2 containers" in out
+
+
+def test_show_if_is_computed_from_visible_containers_only(tmp_path):
+    """A folded group must not keep alive a column that has nothing to say on
+    screen. The PR container is folded away, so the PR column goes with it."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    with_pr = _ci("alpha-one", "alpha")
+    with_pr.pr_number = 7
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [with_pr]),
+        dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-one", "beta")]),
+    ]
+    kwargs = dict(
+        selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True
+    )
+    unfolded = _render_text(dashboard.render(groups, **kwargs))
+    folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
+
+    assert "PR" in unfolded
+    assert "PR" not in folded
+
+
+def test_fold_key_is_bound_to_space_and_documented():
+    """A key that is not in KEY_BINDINGS is invisible in the help overlay and
+    the hint line, which is how the two used to drift."""
+    assert dashboard.parse_key(b" ") == "fold"
+    binding = dashboard.binding_for_token("fold")
+    assert binding is not None
+    assert binding.hint and binding.label

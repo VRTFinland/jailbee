@@ -357,6 +357,26 @@ def container_of(row: Row | None) -> str | None:
     return row.key if row is not None and row.kind == "container" else None
 
 
+def fold_target(groups: list[RepoGroup], row: Row | None) -> str | None:
+    """The repo prefix a fold key should act on for ``row``, else None.
+
+    Accepts either kind of row: folding from inside a group is the common
+    gesture ("get this out of my way"), and requiring the cursor to be on the
+    header first would make the key feel arbitrary.
+    """
+    if row is None:
+        return None
+    if row.kind == "repo":
+        return row.key
+    group = _find_group(groups, row.key)
+    return group.prefix if group is not None else None
+
+
+def toggle_folded(folded: frozenset[str], prefix: str) -> frozenset[str]:
+    """``folded`` with ``prefix`` flipped."""
+    return folded - {prefix} if prefix in folded else folded | {prefix}
+
+
 _NETWORK_MODES: tuple[str, ...] = ("strict", "loose")
 
 
@@ -615,6 +635,14 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
     KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
+    KeyBinding(
+        "fold",
+        (b" ",),
+        "Space",
+        "fold/unfold the repo group",
+        "Navigate",
+        brief="fold",
+    ),
     KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
     KeyBinding(
         "action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"
@@ -797,6 +825,7 @@ def render(
     enabled: Sequence[str] | None = None,
     overlay: Overlay | None = None,
     notice: str | None = None,
+    folded: frozenset[str] = frozenset(),
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -813,7 +842,8 @@ def render(
     subtitle silently clipping it.
     """
     all_containers = [c for g in groups for c in g.containers]
-    fields = visible_fields(now, all_containers, enabled)
+    visible = [c for g in groups if g.prefix not in folded for c in g.containers]
+    fields = visible_fields(now, visible, enabled)
 
     table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
     for f in fields:
@@ -832,10 +862,22 @@ def render(
             if not first_group:
                 table.add_row(*([""] * len(fields)))  # blank spacer between groups
             first_group = False
+            is_folded = g.prefix in folded
+            marker = "▸" if is_folded else "▾"
             is_orphan = g.repo_root is None
-            label = f"{g.prefix}  (orphan)" if is_orphan else g.prefix
+            label = f"{marker} {g.prefix}  ({len(g.containers)})"
+            if is_orphan:
+                label += "  (orphan)"
             label_style = "bold yellow" if is_orphan else "bold cyan"
-            table.add_row(f"[{label_style}]{label}[/]", *([""] * (len(fields) - 1)))
+            header_sel = selected is not None and selected == Row("repo", g.prefix)
+            gutter = "[bold cyan]▸[/] " if header_sel else "  "
+            table.add_row(
+                gutter + f"[{label_style}]{label}[/]",
+                *([""] * (len(fields) - 1)),
+                style="bold bright_white" if header_sel else None,
+            )
+            if is_folded:
+                continue
             for c in g.containers:
                 is_sel = selected is not None and selected.kind == "container" and selected.key == c.name
                 cells: list[str] = []
@@ -857,8 +899,11 @@ def render(
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
     mark = "  [yellow]⟳[/]" if refreshing else ""
+    n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
+    folded_note = f" · {n_folded} folded" if n_folded else ""
     title = (
-        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers   {now:%H:%M:%S}{mark}"
+        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers"
+        f"{folded_note}   {now:%H:%M:%S}{mark}"
     )
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
     note = f"[yellow]{notice}[/yellow]  ·  " if notice else ""
@@ -1142,6 +1187,7 @@ def run(
     engine = get_engine()
     view_state = seed_view_state(engine, FRONTEND_TUI)
     enabled: tuple[str, ...] | None = view_state.columns
+    folded: frozenset[str] = view_state.folded
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)
@@ -1211,7 +1257,6 @@ def run(
     old_term = termios.tcgetattr(fd)
     selected: Row | None = None
     sel_index = 0
-    folded: frozenset[str] = frozenset()
     overlay: Overlay | None = None
     notice: str | None = None
     notice_until = 0.0
@@ -1294,6 +1339,7 @@ def run(
                         enabled=enabled,
                         overlay=overlay,
                         notice=notice,
+                        folded=folded,
                     ),
                     refresh=True,
                 )
@@ -1327,11 +1373,22 @@ def run(
                     if selected in rows:
                         sel_index = rows.index(selected)
                 elif key == "enter":
-                    container = container_of(selected)
-                    overlay = open_menu(groups, container)
-                    if overlay is None and container is not None:
-                        note = view_only_note(groups, container)
-                        set_notice(note or f"No actions available for '{container}'")
+                    if selected is not None and selected.kind == "repo":
+                        folded = toggle_folded(folded, selected.key)
+                        save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
+                    else:
+                        container = container_of(selected)
+                        overlay = open_menu(groups, container)
+                        if overlay is None and container is not None:
+                            note = view_only_note(groups, container)
+                            set_notice(note or f"No actions available for '{container}'")
+                elif key == "fold":
+                    prefix = fold_target(groups, selected)
+                    if prefix is None:
+                        set_notice("No repo group is selected")
+                    else:
+                        folded = toggle_folded(folded, prefix)
+                        save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
                 elif key.startswith("action:"):
