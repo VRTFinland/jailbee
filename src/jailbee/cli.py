@@ -1508,7 +1508,7 @@ if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pr_flow import PrState
     from jailbee.submodule_pr import SubCandidate
-    from jailbee.sync import BridgePlan, FetchResult, PushResult, SourcePref
+    from jailbee.sync import BridgePlan, FetchResult, PublishResult, PushResult, SourcePref
 
 
 def _resolve_existing(
@@ -1683,6 +1683,21 @@ def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> No
 
     for line in git_helpers.log_oneline(cfg.repo_root, range_spec):
         info(f"  {line}")
+
+
+def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult") -> None:
+    """Report the container fetch, then announce the push about to run.
+
+    Wired into `sync.publish_branch_from_container` as its `on_before_push`
+    hook, so everything `jailbee pr` did before the push is on screen before the
+    push starts. `git push` inherits its output and prints nothing until the
+    remote answers, so without this the terminal's last line is git's own fetch
+    output and a push waiting on remote authentication looks like a hung fetch.
+    """
+    _print_fetch_summary(cfg, short, publish.fetch)
+    if publish.dirty:
+        warn(f"Container '{short}' has uncommitted changes — they are NOT included in the PR.")
+    info(f"Pushing '{publish.publish_name}' to {cfg.upstream_remote}…")
 
 
 def _post_start_actions(
@@ -4209,7 +4224,13 @@ def pr_cmd(
     # not apply, so `is_foreign_pr_head` (resolved above) tailors it.
     try:
         publish = sync.publish_branch_from_container(
-            cfg, incus, short, branch=branch, publish_name=publish_name, force=force
+            cfg,
+            incus,
+            short,
+            branch=branch,
+            publish_name=publish_name,
+            force=force,
+            on_before_push=lambda result: _print_publish_progress(cfg, short, result),
         )
     except sync.SyncError as exc:
         error(str(exc))
@@ -4223,9 +4244,8 @@ def pr_cmd(
             )
         raise typer.Exit(1) from exc
 
-    _print_fetch_summary(cfg, short, publish.fetch)
-    if publish.dirty:
-        warn(f"Container '{short}' has uncommitted changes — they are NOT included in the PR.")
+    # The fetch summary and the dirty-tree warning were printed by
+    # `_print_publish_progress` before the push, not here.
 
     # --- Reconcile a local branch to the external name (create path) ---
     if not (is_author or stored_pr_branch) and publish.publish_name != publish.fetch.branch:

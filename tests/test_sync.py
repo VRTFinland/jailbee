@@ -4649,6 +4649,68 @@ def test_publish_defaults_to_container_branch(mocker, make_cfg, tmp_path):
     assert result.publish_name == "feat/foo"
 
 
+def test_publish_runs_the_hook_before_the_push(mocker, make_cfg, tmp_path):
+    """`on_before_push` fires after the fetch and *before* the push.
+
+    That order is the whole point: `git push` inherits its output and prints
+    nothing until the remote answers, so the caller's report of the fetch has
+    to reach the terminal first — otherwise a push blocked on remote
+    authentication is indistinguishable from a hung fetch.
+    """
+    from jailbee import sync
+    from jailbee.sync import FetchResult, PublishResult
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    fetch = FetchResult(
+        branch="dev-1", old_oid="old", new_oid="new", base_oid="old", commits_added=1
+    )
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=fetch)
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-dev-1")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.sync._container_status_dirty", return_value=True)
+    order: list[str] = []
+    mocker.patch("jailbee.git.push_to_remote", side_effect=lambda *a, **k: order.append("push"))
+    seen: list[PublishResult] = []
+
+    def hook(result: PublishResult) -> None:
+        order.append("hook")
+        seen.append(result)
+
+    result = sync.publish_branch_from_container(
+        cfg, incus, "dev-1", publish_name="user/nice", on_before_push=hook
+    )
+
+    assert order == ["hook", "push"]
+    assert seen[0] is result  # the same object, already fully resolved
+    assert seen[0].publish_name == "user/nice"
+    assert seen[0].dirty is True
+    assert seen[0].fetch is fetch
+
+
+def test_publish_runs_the_hook_even_when_the_push_fails(mocker, make_cfg, tmp_path):
+    """The fetch report belongs on screen above the push error, not lost with it."""
+    from jailbee import sync
+    from jailbee.git import GitError
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        return_value=f"{cfg.container_prefix}-feat-foo",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    _stub_publish_fetch(mocker)
+    mocker.patch("jailbee.sync.git.push_to_remote", side_effect=GitError("git push failed"))
+    hook = mocker.MagicMock()
+
+    with pytest.raises(sync.SyncError):
+        sync.publish_branch_from_container(cfg, incus, "feat-foo", on_before_push=hook)
+
+    hook.assert_called_once()
+
+
 # ---- retarget ------------------------------------------------------------
 
 
@@ -6227,3 +6289,27 @@ def test_container_status_preflight_does_not_take_the_index_lock(mocker):
     sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
     env = incus.exec.call_args.kwargs.get("env") or {}
     assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+def test_container_status_preflight_is_bounded_by_a_timeout(mocker):
+    """The probe must not be able to hang forever.
+
+    `jailbee pr` runs it between the container fetch and the push, where an
+    `incus exec` that never returns leaves the terminal silent after git's
+    fetch output — the most misleading place in the flow to stall.
+    """
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+    assert incus.exec.call_args.kwargs.get("timeout") == sync._STATUS_PROBE_TIMEOUT_S
+    assert sync._STATUS_PROBE_TIMEOUT_S > 0
+
+
+def test_container_status_preflight_timeout_becomes_a_sync_error(mocker):
+    """A timed-out probe reports as a SyncError, carrying incus's own detail."""
+    from jailbee.incus import IncusTimeoutError
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusTimeoutError("`incus exec c ...` timed out after 60s")
+    with pytest.raises(sync.SyncError, match="timed out after 60s"):
+        sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
