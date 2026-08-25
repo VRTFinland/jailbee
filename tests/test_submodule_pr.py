@@ -196,9 +196,7 @@ def test_resolve_base_override_wins(tmp_path, mocker):
 
 
 def test_resolve_base_uses_the_gitmodules_declaration(tmp_path, mocker):
-    mocker.patch(
-        "jailbee.submodules.declared_branch_for_top_relative_path", return_value="develop"
-    )
+    mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value="develop")
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "develop"
 
 
@@ -345,10 +343,29 @@ def test_recorded_paths_lists_the_map_keys():
     assert submodule_pr.recorded_paths(incus, "c1") == ["lib/a", "lib/b"]
 
 
-def _publish(tmp_path, mocker, **kwargs):
-    defaults = dict(
+def test_transport_submodule_to_host_transports_only_the_target_submodule(tmp_path, mocker):
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+
+    submodule_pr.transport_submodule_to_host(
+        make_cfg(tmp_path),
+        MagicMock(),
+        "sampleapp-feat-foo",
+        "feat-foo",
         subpath="lib/a",
         repo_dir="/home/dev/repo",
+    )
+
+    assert transport.call_args.kwargs["only"] == "lib/a"
+    assert transport.call_args.kwargs["repo_dir"] == "/home/dev/repo"
+
+
+def _publish(tmp_path, mocker, **kwargs):
+    """`publish_submodule_branch` no longer transports (FIX 2) — it assumes
+    the host sub-repo already has the objects, which is what
+    `transport_submodule_to_host` is for. These tests exercise the push logic
+    only and never mock the transport call, since it is never made here."""
+    defaults = dict(
+        subpath="lib/a",
         branch="feat/foo",
         publish_name="user/x",
         remote="origin",
@@ -357,25 +374,12 @@ def _publish(tmp_path, mocker, **kwargs):
     defaults.update(kwargs)
     return submodule_pr.publish_submodule_branch(
         make_cfg(tmp_path),
-        MagicMock(),
-        "sampleapp-feat-foo",
         "feat-foo",
         **defaults,
     )
 
 
-def test_publish_transports_only_the_target_submodule(tmp_path, mocker):
-    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host")
-    mocker.patch("jailbee.git.rev_parse", return_value="abc123")
-    mocker.patch("jailbee.git.push_to_remote")
-
-    _publish(tmp_path, mocker)
-
-    assert transport.call_args.kwargs["only"] == "lib/a"
-
-
 def test_publish_pushes_the_branch_ref_to_the_submodule_remote(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.git.rev_parse", return_value="abc123")
     push = mocker.patch("jailbee.git.push_to_remote")
 
@@ -390,7 +394,6 @@ def test_publish_pushes_the_branch_ref_to_the_submodule_remote(tmp_path, mocker)
 
 
 def test_publish_uses_the_head_ref_for_a_detached_submodule(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.git.rev_parse", return_value="abc123")
     push = mocker.patch("jailbee.git.push_to_remote")
 
@@ -400,7 +403,6 @@ def test_publish_uses_the_head_ref_for_a_detached_submodule(tmp_path, mocker):
 
 
 def test_publish_takes_a_lease_only_with_force(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.git.rev_parse", return_value="abc123")
     mocker.patch("jailbee.git.remote_branch_sha", return_value="deadbee")
     push = mocker.patch("jailbee.git.push_to_remote")
@@ -412,7 +414,6 @@ def test_publish_takes_a_lease_only_with_force(tmp_path, mocker):
 
 
 def test_publish_raises_when_the_source_ref_is_missing(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.git.rev_parse", return_value=None)
     push = mocker.patch("jailbee.git.push_to_remote")
 
@@ -423,8 +424,24 @@ def test_publish_raises_when_the_source_ref_is_missing(tmp_path, mocker):
     push.assert_not_called()
 
 
+def test_publish_with_force_and_a_missing_source_ref_never_computes_a_lease(tmp_path, mocker):
+    """A missing source ref must short-circuit before the lease lookup: no
+    point taking a `--force-with-lease` anchor for a push that never
+    happens. `git.remote_branch_sha` does a network round-trip
+    (`git ls-remote`), so calling it needlessly here would also mean an
+    unreachable remote turns "nothing to publish" into a network failure."""
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    lease = mocker.patch("jailbee.git.remote_branch_sha")
+    push = mocker.patch("jailbee.git.push_to_remote")
+
+    with pytest.raises(submodule_pr.SubmodulePrError):
+        _publish(tmp_path, mocker, force=True)
+
+    lease.assert_not_called()
+    push.assert_not_called()
+
+
 def test_publish_maps_a_push_failure_to_a_submodule_pr_error(tmp_path, mocker):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.git.rev_parse", return_value="abc123")
     mocker.patch("jailbee.git.push_to_remote", side_effect=git.GitError("rejected"))
     mocker.patch("jailbee.retry.confirm_retry_quiet", return_value=False)

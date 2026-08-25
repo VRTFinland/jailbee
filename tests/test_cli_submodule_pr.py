@@ -61,6 +61,13 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None):
         "jailbee.submodule_pr.detect_candidates",
         return_value=candidates if candidates is not None else [_candidate()],
     )
+    # Real transport clones/fetches over `incus.exec` and real `git`; the
+    # fixture never creates an actual host sub-repo under tmp_path, so this
+    # is mocked out for every test. It now runs BEFORE resolve_remote/
+    # resolve_base_branch/assert_github_remote (FIX 2 — see
+    # test_transport_runs_before_the_steps_that_read_the_host_subrepo, which
+    # gives it a real side_effect to check the ordering).
+    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
     mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
     mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="develop")
     mocker.patch(
@@ -71,9 +78,13 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None):
     )
     record = mocker.patch("jailbee.submodule_pr.SubmodulePrState.record")
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
-    # The GitHub pre-flight would shell out to `git remote get-url` in a
-    # non-repo tmp_path and fail every test; the test that cares re-patches it
-    # with a side_effect.
+    # `assert_github_remote` shells out to `git remote get-url` in the host
+    # sub-repo (`scope.repo_root`); the fixture never creates a real one
+    # there (transport_submodule_to_host is mocked above), so this needs
+    # mocking too. Before FIX 2, this call ran BEFORE the transport, so a
+    # never-seen-on-host submodule hit this same "not a repo" failure for
+    # real, not just in tests, and reported it as "git is not installed".
+    # The test that cares re-patches it with a side_effect.
     mocker.patch("jailbee.pr.assert_github_remote")
     return cfg_mock, incus_mock, record
 
@@ -245,6 +256,55 @@ def test_non_github_submodule_upstream_exits_1_before_publishing(mocker, tmp_pat
     assert result.exit_code == 1
     assert "GitHub" in result.output
     publish.assert_not_called()
+
+
+def test_transport_runs_before_the_steps_that_read_the_host_subrepo(mocker, tmp_path):
+    """FIX 2 regression: for a submodule the host has never seen (added
+    inside the container, or a host clone where `git submodule update
+    --init` never ran for this path), the host sub-repo does not exist
+    until `transport_submodule_to_host` creates it. `resolve_remote`,
+    `resolve_base_branch` and `assert_github_remote` all read that sub-repo,
+    so the transport must run before all three — an earlier ordering ran it
+    only inside `publish_submodule_branch`, after those three already read
+    (and misread, or crashed on) a directory that did not exist yet.
+    """
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(mocker, tmp_path)
+    calls: list[str] = []
+    mocker.patch(
+        "jailbee.submodule_pr.transport_submodule_to_host",
+        side_effect=lambda *a, **k: calls.append("transport"),
+    )
+
+    def _remote(*a, **k):
+        calls.append("resolve_remote")
+        return "origin"
+
+    def _base(*a, **k):
+        calls.append("resolve_base_branch")
+        return "develop"
+
+    def _github(*a, **k):
+        calls.append("assert_github_remote")
+
+    mocker.patch("jailbee.submodule_pr.resolve_remote", side_effect=_remote)
+    mocker.patch("jailbee.submodule_pr.resolve_base_branch", side_effect=_base)
+    mocker.patch("jailbee.pr.assert_github_remote", side_effect=_github)
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
+    )
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
+    mocker.patch("jailbee.pr.create_pr", return_value=_created())
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[0] == "transport"
+    assert calls.index("transport") < calls.index("resolve_remote")
+    assert calls.index("transport") < calls.index("resolve_base_branch")
+    assert calls.index("transport") < calls.index("assert_github_remote")
 
 
 def test_publish_failure_exits_1(mocker, tmp_path):

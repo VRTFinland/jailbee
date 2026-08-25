@@ -321,7 +321,7 @@ class SubPublishResult:
     forced: bool
 
 
-def publish_submodule_branch(
+def transport_submodule_to_host(
     cfg: Config,
     incus: Incus,
     full: str,
@@ -329,24 +329,49 @@ def publish_submodule_branch(
     *,
     subpath: str,
     repo_dir: str,
+) -> None:
+    """Fetch `subpath`'s objects into the host sub-repo, creating it if needed.
+
+    A thin wrapper over `submodules.transport_submodules_to_host` restricted
+    to one submodule (`only=subpath`). Split out as its own step — rather than
+    folded into `publish_submodule_branch` — because it must run BEFORE
+    `resolve_remote`, `resolve_base_branch` and the GitHub upstream check:
+    all three read the host sub-repo at `cfg.repo_root / subpath`, which for a
+    submodule the host has never seen (added inside the container, or a host
+    clone where `git submodule update --init` never ran for this path) does
+    not exist until this call creates it. Running the transport after those
+    reads (as an earlier ordering did) makes the never-seen-on-host case
+    unreachable: `resolve_remote`/`resolve_base_branch` silently default, and
+    the GitHub check's `git remote get-url` in a missing directory raises
+    `FileNotFoundError`, reported as "git is not installed".
+    """
+    submodules.transport_submodules_to_host(
+        cfg, incus, full, short, repo_dir=repo_dir, only=subpath
+    )
+
+
+def publish_submodule_branch(
+    cfg: Config,
+    short: str,
+    *,
+    subpath: str,
     branch: str | None,
     publish_name: str,
     remote: str,
     force: bool,
 ) -> SubPublishResult:
-    """Transport the submodule's objects to the host, then push them upstream.
+    """Push the submodule's already-transported objects upstream.
 
-    Mirrors `sync.publish_branch_from_container` one level down: git's native
-    fast-forward rule rejects a diverged remote branch by default, `force`
-    takes a `--force-with-lease` anchor from the current remote sha, and only
-    the push is retried — re-running the transport or recomputing the lease
+    Assumes `transport_submodule_to_host` has already fetched `subpath`'s
+    objects into the host sub-repo (see its docstring for why that must
+    happen earlier, before `resolve_remote`/`resolve_base_branch`/the GitHub
+    check run, rather than here). Mirrors `sync.publish_branch_from_container`
+    one level down: git's native fast-forward rule rejects a diverged remote
+    branch by default, `force` takes a `--force-with-lease` anchor from the
+    current remote sha, and only the push is retried — recomputing the lease
     would unpin it from the remote state the user was shown.
     """
     from jailbee.retry import confirm_retry_quiet, with_remote_retry
-
-    submodules.transport_submodules_to_host(
-        cfg, incus, full, short, repo_dir=repo_dir, only=subpath
-    )
 
     host_sub = Path(cfg.repo_root) / subpath
     src = source_ref(short, subpath, branch)

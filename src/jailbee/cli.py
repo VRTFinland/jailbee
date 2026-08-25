@@ -4542,6 +4542,17 @@ def submodule_pr_cmd(
 
     subpath = target.path
     source_branch = branch or target.branch
+
+    # Step 2 of the spec's pipeline: transport this submodule's objects to
+    # the host BEFORE anything below reads the host sub-repo. For a
+    # submodule the host has never seen (added inside the container, or a
+    # host clone where `git submodule update --init` never ran for this
+    # path), the sub-repo does not exist until this call clones it — see
+    # `submodule_pr.transport_submodule_to_host`'s docstring.
+    submodule_pr.transport_submodule_to_host(
+        cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
+    )
+
     remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
     resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
     scope = pr_flow.PrScope(
@@ -4618,11 +4629,8 @@ def submodule_pr_cmd(
     try:
         published = submodule_pr.publish_submodule_branch(
             cfg,
-            incus,
-            full,
             short,
             subpath=subpath,
-            repo_dir=repo_dir,
             branch=source_branch,
             publish_name=publish_name,
             remote=remote,
