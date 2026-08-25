@@ -187,7 +187,8 @@ def global_config_issues(path: Path) -> list[str]:
         issues.append(
             "global.dashboard: deprecated and ignored — the dashboards remember "
             "their own columns now (press F2 in `jailbee dashboard`, or View ▸ "
-            "Columns in the GUI). Your block was imported once, on the first run "
-            "after upgrading; it can be deleted."
+            "Columns in the GUI). This block is imported into each dashboard's own "
+            "settings the first time you open that dashboard after upgrading; it "
+            "can be deleted once you have opened both the TUI and the GUI."
         )
     return issues

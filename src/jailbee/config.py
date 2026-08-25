@@ -2254,9 +2254,10 @@ class Config(BaseModel):
             issues.append(
                 "dashboard: deprecated and ignored — the dashboards remember their "
                 "own columns now (press F2 in `jailbee dashboard`, or View ▸ Columns "
-                "in the GUI). A repo-level block is also not seeded: the setting is "
-                "personal and applies in every repo, so only "
-                "~/.config/jailbee/global.yaml was imported. This block can be deleted."
+                "in the GUI). A repo-level block is also not seeded at all: only "
+                "~/.config/jailbee/global.yaml is imported, into each dashboard's own "
+                "settings the first time you open that dashboard after upgrading. "
+                "This repo-level block can be deleted."
             )
         return issues
 

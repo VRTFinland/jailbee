@@ -423,14 +423,14 @@ appear only when they apply, unlike `ls --fields`, where naming a column
 forces it on.
 
 **`dashboard:` in config is deprecated** — still accepted so an existing
-config keeps loading, but ignored. It was imported once into each
-front-end's row on the first run after upgrading; only
-`~/.config/jailbee/global.yaml` was read — a repo-level `dashboard:` block
-is reported and dropped, not seeded, since the setting is personal and
-applies in every repo. `jailbee config validate` reports both. The Qt
-dashboard's Compact card style renders a hardcoded field selection
-regardless — use another card style to see any other enabled column, such
-as `local_diff`.
+config keeps loading, but ignored. It is imported into each front-end's own
+row the first time you open that dashboard after upgrading, and can be
+deleted once both have been opened; only `~/.config/jailbee/global.yaml` is
+read this way — a repo-level `dashboard:` block is reported and dropped,
+not seeded, since the setting is personal and applies in every repo.
+`jailbee config validate` reports both. The Qt dashboard's Compact card
+style renders a hardcoded field selection regardless — use another card
+style to see any other enabled column, such as `local_diff`.
 
 ## `pull`
 

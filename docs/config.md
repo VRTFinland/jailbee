@@ -45,7 +45,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `chrome.enabled` | global | Personal — turn on if you want `jailbee chrome` / auto-launch. Default `false`. |
 | `chrome.dark_mode` | global | Personal preference |
 | `chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`) |
-| `ls` / `dashboard` (column preference) | global | Which columns you want to see is personal; see [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns) |
+| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). `dashboard:` is deprecated — the dashboards keep their own view state instead, not a config block at either layer. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
@@ -1380,11 +1380,12 @@ naming a column forces it on — there a name is a one-shot request, here it is
 a standing preference.
 
 **`dashboard:` is deprecated.** The key is still accepted, so an existing
-config keeps loading, but it is ignored: it was imported once into each
-front-end's row on the first run after upgrading, and can now be deleted.
-`jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` was
-imported — the setting is personal and applies in every repo, so a
-repo-level `dashboard:` block was reported and dropped rather than seeded.
+config keeps loading, but it is ignored: it is imported into each
+front-end's own settings the first time you open that dashboard after
+upgrading, and can be deleted once both have been opened at least once.
+`jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` is
+imported this way — the setting is personal and applies in every repo, so a
+repo-level `dashboard:` block is reported and dropped rather than seeded.
 `ls:` is unaffected and still lives in config.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a

@@ -108,10 +108,15 @@
   it with `ls --fields ip`.
 - **`dashboard:` in `global.yaml` and `.jailbee/config.yaml` is deprecated.**
   Each dashboard front-end now remembers its own columns, editable in the UI.
-  Your global block was imported once on first run; the key is still accepted
-  but ignored, and can be deleted. **A repo-level `dashboard:` block is
-  dropped, not imported** — the setting is personal and cross-repo, so only
-  the global file was read. `jailbee config validate` reports both.
+  Your global block is imported into each front-end's own settings the first
+  time you open that dashboard after upgrading; the key is still accepted but
+  ignored, and can be deleted once both the TUI and the GUI have been opened.
+  **A repo-level `dashboard:` block is dropped, not imported** — the setting
+  is personal and cross-repo, so only the global file is read this way.
+  `jailbee config validate` reports both, and — like the existing
+  `golden.python` deprecation — this now makes `config validate` exit 2 for a
+  config that previously validated clean, so upgrading can turn a green CI or
+  pre-commit hook red until the block is removed.
 
 ### Fixed
 
