@@ -69,7 +69,16 @@ class UpgradeNote:
     reason: str
 
 
-UPGRADE_NOTES: tuple[UpgradeNote, ...] = ()
+UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
+    UpgradeNote(
+        version=(1, 2, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "install.sh masks Ubuntu's apt-daily timers and heals a pruned "
+            "`claude` launcher at login"
+        ),
+    ),
+)
 """What each release requires, ascending by version. Maintained by hand.
 
 Add an entry whenever a change alters what `jailbee base build` produces or
