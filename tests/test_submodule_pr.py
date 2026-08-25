@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -176,3 +177,135 @@ def test_select_raises_with_the_candidates_when_ambiguous():
     with pytest.raises(submodule_pr.AmbiguousSubmoduleTargetError) as excinfo:
         submodule_pr.select_target([_sub("lib/a"), _sub("lib/b")], None)
     assert [c.path for c in excinfo.value.candidates] == ["lib/a", "lib/b"]
+
+
+def test_resolve_remote_uses_the_submodules_own_remote(tmp_path, mocker):
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
+    assert submodule_pr.resolve_remote(tmp_path, "lib/a") == "upstream"
+
+
+def test_resolve_remote_falls_back_to_origin(tmp_path, mocker):
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value=None)
+    assert submodule_pr.resolve_remote(tmp_path, "lib/a") == "origin"
+
+
+def test_resolve_base_override_wins(tmp_path, mocker):
+    declared = mocker.patch("jailbee.submodules.declared_branch_for_path")
+    assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override="release") == "release"
+    declared.assert_not_called()
+
+
+def test_resolve_base_uses_the_gitmodules_declaration(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value="develop")
+    assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "develop"
+
+
+def test_resolve_base_reads_the_parent_level_for_a_nested_submodule(tmp_path, mocker):
+    declared = mocker.patch("jailbee.submodules.declared_branch_for_path", return_value="develop")
+    submodule_pr.resolve_base_branch(tmp_path, "lib/a/inner", override=None)
+    assert declared.call_args.args[1] == str(tmp_path / "lib/a")
+    assert declared.call_args.args[2] == "inner"
+
+
+def test_resolve_base_uses_the_remote_head(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value=None)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
+    mocker.patch("jailbee.git.run_capture", return_value=(True, "upstream/trunk\n"))
+    assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "trunk"
+
+
+def test_resolve_base_falls_back_to_main(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.declared_branch_for_path", return_value=None)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "main"
+
+
+def test_source_ref_for_a_branch():
+    assert (
+        submodule_pr.source_ref("feat-foo", "lib/a", "feat/foo")
+        == "refs/jailbee-sub/feat-foo/lib/a/heads/feat/foo"
+    )
+
+
+def test_source_ref_for_a_detached_submodule():
+    assert (
+        submodule_pr.source_ref("feat-foo", "lib/a", None) == "refs/jailbee-sub/feat-foo/lib/a/HEAD"
+    )
+
+
+def _state(incus, subpath="lib/a"):
+    return submodule_pr.SubmodulePrState(incus, "sampleapp-feat-foo", subpath)
+
+
+def test_state_reads_an_empty_map_as_a_blank_record(mocker):
+    from jailbee.pr_flow import PrRecord
+
+    incus = MagicMock()
+    incus.config_get.return_value = None
+    assert _state(incus).read() == PrRecord(number=None, head=None, author=False, adopted=False)
+
+
+def test_state_reads_a_recorded_entry(mocker):
+    from jailbee.pr_flow import PrRecord
+
+    incus = MagicMock()
+    incus.config_get.return_value = (
+        '{"lib/a": {"pr": 12, "branch": "user/x", "author": true, "adopted": false}}'
+    )
+    assert _state(incus).read() == PrRecord(number=12, head="user/x", author=True, adopted=False)
+
+
+def test_state_ignores_another_paths_entry():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"lib/b": {"pr": 12, "branch": "user/x"}}'
+    assert _state(incus).read().number is None
+
+
+def test_state_survives_malformed_json():
+    incus = MagicMock()
+    incus.config_get.return_value = "{not json"
+    assert _state(incus).read().number is None
+
+
+def test_state_record_writes_one_merged_map():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"lib/b": {"pr": 9, "branch": "old"}}'
+
+    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+
+    key, value = incus.config_set.call_args.args[1:3]
+    assert key == submodule_pr.STATE_KEY
+    written = json.loads(value)
+    assert written["lib/b"]["pr"] == 9
+    assert written["lib/a"] == {
+        "pr": 12,
+        "branch": "user/x",
+        "author": True,
+        "adopted": False,
+    }
+
+
+def test_state_record_keeps_the_existing_number_when_none():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"lib/a": {"pr": 12, "branch": "user/x"}}'
+
+    _state(incus).record(head="user/x", author=False, adopted=True, number=None)
+
+    written = json.loads(incus.config_set.call_args.args[2])
+    assert written["lib/a"]["pr"] == 12
+    assert written["lib/a"]["adopted"] is True
+
+
+def test_state_record_survives_a_failed_write():
+    incus = MagicMock()
+    incus.config_get.return_value = None
+    incus.config_set.side_effect = IncusError("boom")
+
+    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+
+
+def test_recorded_paths_lists_the_map_keys():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"lib/b": {"pr": 9}, "lib/a": {"pr": 12}}'
+    assert submodule_pr.recorded_paths(incus, "c1") == ["lib/a", "lib/b"]

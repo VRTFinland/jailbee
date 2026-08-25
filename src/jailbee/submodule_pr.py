@@ -14,16 +14,18 @@ through the `Incus` wrapper, host git through `git.py`, and `gh` through
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jailbee import git, submodules
 from jailbee.incus import IncusError
 
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
-
-    # Task 10 implements the publish flow that uses this; unused for now.
+    from jailbee.pr_flow import PrRecord
 
 
 class SubmodulePrError(RuntimeError):
@@ -171,3 +173,138 @@ def select_target(subs: list[SubCandidate], path: str | None) -> SubCandidate:
     if len(ahead) > 1:
         raise AmbiguousSubmoduleTargetError(ahead)
     return ahead[0]
+
+
+STATE_KEY = "user.jailbee.sub_pr"
+
+
+def resolve_remote(repo_root: Path, subpath: str) -> str:
+    """The upstream remote of the host sub-repo at `subpath`.
+
+    Resolved against the submodule's own directory rather than inherited from
+    `cfg.upstream_remote`: a submodule is a separate repository and may name
+    its upstream something the superproject does not.
+    """
+    return git.detect_upstream_remote(repo_root / subpath) or git.DEFAULT_REMOTE
+
+
+def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) -> str:
+    """The branch a submodule PR targets in the submodule's own repository.
+
+    Order: `--base` > `submodule.<name>.branch` in the *parent level's*
+    `.gitmodules` > the sub-repo's `<remote>/HEAD` > `main`. The remote name is
+    resolved per submodule (see `resolve_remote`), which is why this cannot
+    reuse `submodules._detect_submodule_default` — that one hardcodes `origin`
+    for its container callers.
+    """
+    if override:
+        return override
+    parent, _, leaf = subpath.rpartition("/")
+    parent_dir = str(repo_root / parent) if parent else str(repo_root)
+    declared = submodules.declared_branch_for_path(git.run_capture, parent_dir, leaf)
+    if declared:
+        return declared
+    host_sub = repo_root / subpath
+    remote = resolve_remote(repo_root, subpath)
+    ok, out = git.run_capture(
+        str(host_sub), ["symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"]
+    )
+    ref = out.strip() if ok else ""
+    if ref:
+        return ref.split("/", 1)[1] if "/" in ref else ref
+    return "main"
+
+
+def source_ref(short: str, subpath: str, branch: str | None) -> str:
+    """The host ref holding the submodule commits to publish.
+
+    `submodules.transport_submodules_to_host` writes both forms; a detached
+    submodule has no branch ref, so its HEAD is the only source.
+    """
+    prefix = f"refs/jailbee-sub/{short}/{subpath}"
+    return f"{prefix}/heads/{branch}" if branch else f"{prefix}/HEAD"
+
+
+def _load_map(incus: Incus, full: str) -> dict[str, dict[str, object]]:
+    """The container's submodule-PR map, or {} when unset or malformed."""
+    raw = incus.config_get(full, STATE_KEY)
+    if not raw:
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {k: v for k, v in loaded.items() if isinstance(k, str) and isinstance(v, dict)}
+
+
+def recorded_paths(incus: Incus, full: str) -> list[str]:
+    """Submodule paths that have a PR recorded on this container, sorted."""
+    return sorted(_load_map(incus, full))
+
+
+class SubmodulePrState:
+    """`pr_flow.PrState` over one entry of the `user.jailbee.sub_pr` JSON map.
+
+    A single key rather than one flat key per submodule: submodule paths
+    contain slashes, so flat keys would need sanitising and `a/b` would then
+    collide with `a_b`. The write is one atomic `config_set`, so the careful
+    write ordering `jailbee pr` needs across three labels has no counterpart
+    here.
+    """
+
+    def __init__(self, incus: Incus, full: str, subpath: str) -> None:
+        self._incus = incus
+        self._full = full
+        self._subpath = subpath
+
+    def read(self) -> PrRecord:
+        from jailbee.pr_flow import PrRecord
+
+        entry = _load_map(self._incus, self._full).get(self._subpath, {})
+        number = entry.get("pr")
+        head = entry.get("branch")
+        return PrRecord(
+            number=number if isinstance(number, int) else None,
+            head=head if isinstance(head, str) and head else None,
+            author=bool(entry.get("author")),
+            adopted=bool(entry.get("adopted")),
+        )
+
+    def record(
+        self,
+        *,
+        head: str,
+        author: bool,
+        adopted: bool,
+        number: int | None,
+        context: str | None = None,
+    ) -> None:
+        """Merge this submodule's decision into the map, best-effort.
+
+        `number=None` keeps whatever number is already recorded — the adoption
+        path can learn the head before the number. `context`, when given,
+        replaces the generic failure warning with a caller-supplied one.
+        """
+        current = _load_map(self._incus, self._full)
+        entry = dict(current.get(self._subpath, {}))
+        entry["branch"] = head
+        entry["author"] = author
+        entry["adopted"] = adopted
+        if number is not None:
+            entry["pr"] = number
+        current[self._subpath] = entry
+        try:
+            self._incus.config_set(self._full, STATE_KEY, json.dumps(current, sort_keys=True))
+        except IncusError as exc:
+            from jailbee.tui import warn
+
+            default_context = f"Could not record the submodule PR decision for '{self._subpath}'"
+            warn(f"{context or default_context}: {exc}")
+
+
+if TYPE_CHECKING:
+    from jailbee.pr_flow import PrState
+
+    _: type[PrState] = SubmodulePrState
