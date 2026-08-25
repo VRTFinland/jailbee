@@ -4587,7 +4587,16 @@ def submodule_pr_cmd(
         if found is not None:
             pr_label = str(found[0])
             is_update = True
-            record = state.read()
+            # Build the record in-process rather than re-reading it: `state.record`
+            # (called by `adopt_existing_pr_for_branch`) is best-effort, and a
+            # failed write would otherwise make `state.read()` hand back a blank
+            # `PrRecord` here — `record.head is None` then makes
+            # `resolve_pr_text_and_head` treat this as a headless detached
+            # submodule and fail with a nonsense usage error, even though the
+            # user just confirmed adopting a real PR. Same anti-pattern
+            # `jailbee pr`'s adoption path avoids above (see the "Use the value
+            # in-process" comment near `_adopt_pr_head`).
+            record = pr_flow.PrRecord(number=found[0], head=found[1], author=False, adopted=True)
 
     is_foreign = bool(pr_label) and not record.author
     if force and is_foreign:

@@ -33,7 +33,7 @@ def _created(number=123, already=False):
     )
 
 
-def _setup(mocker, tmp_path, *, candidates=None, state_record=None):
+def _setup(mocker, tmp_path, *, candidates=None, state_record=None, mock_state_record=True):
     """Wire cfg/incus/detection/publish mocks for the happy path."""
     from jailbee.pr_flow import PrRecord
 
@@ -76,7 +76,9 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None):
         if state_record is not None
         else PrRecord(None, None, False, False),
     )
-    record = mocker.patch("jailbee.submodule_pr.SubmodulePrState.record")
+    record = (
+        mocker.patch("jailbee.submodule_pr.SubmodulePrState.record") if mock_state_record else None
+    )
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
     # `assert_github_remote` shells out to `git remote get-url` in the host
     # sub-repo (`scope.repo_root`); the fixture never creates a real one
@@ -239,6 +241,54 @@ def test_update_path_views_the_existing_pr(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     create.assert_not_called()
     view.assert_called_once()
+
+
+def test_adopted_pr_publishes_to_the_adopted_head_even_when_recording_it_fails(mocker, tmp_path):
+    """FIX 3 regression: `adopt_existing_pr_for_branch` records the adoption
+    via `state.record`, which is best-effort (a container-label write can
+    fail). Re-reading `state` afterwards would then hand back a blank
+    `PrRecord` (the write never landed), and `resolve_pr_text_and_head`
+    would treat a still-attached submodule as headless and fail with a
+    nonsense "no head branch name was chosen" error — even though the user
+    just confirmed adopting a real, open PR. The run must publish to the
+    adopted head built in-process instead, independent of whether the label
+    write succeeded.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.pr import PrInfo
+    from jailbee.submodule_pr import SubPublishResult
+
+    _cfg_mock, incus_mock, _record_mock = _setup(mocker, tmp_path, mock_state_record=False)
+    # SubmodulePrState.record is unmocked for this test (mock_state_record=
+    # False), so it runs for real and calls incus.config_set — make that
+    # fail, simulating a container that cannot take a label write right when
+    # the PR is adopted.
+    incus_mock.config_set.side_effect = IncusError("container is frozen")
+    mocker.patch(
+        "jailbee.pr.find_pr_for_branch",
+        return_value=PrInfo(
+            number=42,
+            head_ref="user/existing",
+            head_sha="abc123",
+            state="OPEN",
+            base_ref="main",
+            author_login="octocat",
+            is_cross_repository=False,
+        ),
+    )
+    publish = mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="user/existing", forced=False),
+    )
+    view = mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(42, True))
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    create.assert_not_called()
+    view.assert_called_once_with(tmp_path / "lib/a", "user/existing")
+    assert publish.call_args.kwargs["publish_name"] == "user/existing"
 
 
 def test_non_github_submodule_upstream_exits_1_before_publishing(mocker, tmp_path):
