@@ -3902,24 +3902,6 @@ app.command(
 )(push)
 
 
-def _confirm_pr_branch_name(proposed: str, container_branch: str) -> str:
-    """Confirm/edit the proposed PR head name on a TTY; return it unchanged off-TTY.
-
-    Enter accepts `proposed`; a typed value replaces it (re-prompts until it is a
-    valid git ref). Never prompts when the proposal equals the container branch
-    (nothing to review) or when stdin is not a TTY.
-    """
-    from jailbee import git as git_mod
-
-    if proposed == container_branch or not sys.stdin.isatty():
-        return proposed
-    while True:
-        chosen: str = typer.prompt("PR head branch name", default=proposed).strip()
-        if git_mod.check_ref_format(chosen):
-            return chosen
-        warn(f"'{chosen}' is not a valid branch name.")
-
-
 def _adopt_pr_head(
     cfg: "Config",
     incus: "IncusType",
@@ -4113,53 +4095,6 @@ def _adopt_existing_pr_for_branch(
     return found.number, found.head_ref
 
 
-def _reject_as_on_pr_update(as_name: str, pr_label: str | None) -> None:
-    """Exit 2: `--as` cannot retarget the head of an already-existing PR.
-
-    The update path always pushes to the PR's recorded head branch, so an `--as`
-    name would publish some other branch and leave the PR untouched. Applies on
-    every run of a container that has a PR (jailbee-authored or adopted from
-    `jailbee new --pr`), not just the first.
-    """
-    target = f"PR #{pr_label}" if pr_label else "the container's PR"
-    error(
-        f"--as cannot be combined with {target}: pushing to '{as_name}' would "
-        f"update a different branch and leave {target} untouched. Drop --as to "
-        f"update {target}."
-    )
-    raise typer.Exit(2)
-
-
-def _confirm_foreign_force_push(short: str, pr_label: str, head: str | None, *, yes: bool) -> None:
-    """Confirm a `--force` push onto the head of a PR jailbee did not create.
-
-    Force-pushing an adopted `jailbee new --pr` container's head rewrites history on
-    a branch someone else may own, so it takes its own confirmation on top of
-    the one-time adoption. `--yes` skips it; without a TTY it is an error.
-    """
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    head_desc = f"'{head}'" if head else "head branch"
-    if yes:
-        return
-    if not _stdin_is_interactive():
-        error(
-            f"--force on '{short}' would overwrite PR #{pr_label}'s head {head_desc}, "
-            f"a PR jailbee did not create. That needs confirmation — re-run with --yes "
-            f"when there is no terminal to ask on."
-        )
-        raise typer.Exit(1)
-    warn(
-        f"--force will overwrite PR #{pr_label}'s head {head_desc} with this "
-        f"container's history. Commits pushed there by anyone else are lost."
-    )
-    if not typer.confirm(
-        f"Force-push over PR #{pr_label}'s head {head_desc}?",
-        default=False,
-    ):
-        raise typer.Abort()
-
-
 def pr_cmd(
     name: Annotated[
         str | None,
@@ -4295,7 +4230,7 @@ def pr_cmd(
     """
     from jailbee import git as git_mod
     from jailbee import pr as pr_mod
-    from jailbee import pr_ai, sync
+    from jailbee import pr_ai, pr_flow, sync
     from jailbee.lifecycle import short_name
 
     if no_draft:
@@ -4308,6 +4243,9 @@ def pr_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
+    )
 
     if open_only:
         pr_num_raw = incus.config_get(full, "user.jailbee.pr")
@@ -4339,7 +4277,7 @@ def pr_cmd(
     # label always leads to the update path) can only push to that PR's head.
     # Checked BEFORE the adoption prompt so a usage error never adopts a PR.
     if as_name is not None and (is_author or stored_pr_branch or pr_label):
-        _reject_as_on_pr_update(as_name, pr_label)
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
     # A `jailbee new --pr` container already has a PR. Publishing its commits to
     # that PR's head is allowed once the user confirms; the confirmation is
@@ -4375,7 +4313,7 @@ def pr_cmd(
     # description?" offer is suppressed — adoption only ever promised commits.
     is_foreign_pr_head = bool(pr_label) and not is_author
     if force and pr_label and not is_author:
-        _confirm_foreign_force_push(short, pr_label, stored_pr_branch, yes=yes)
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, stored_pr_branch, yes=yes)
 
     resolved_base = base or incus.config_get(full, "user.jailbee.base_branch")
     if not resolved_base:
@@ -4429,7 +4367,7 @@ def pr_cmd(
         if as_name is not None:
             publish_name = as_name
         elif need_branch_ai and ai_text is not None and container_branch:
-            publish_name = _confirm_pr_branch_name(ai_text.branch, container_branch)
+            publish_name = pr_flow.confirm_pr_branch_name(ai_text.branch, container_branch)
         else:
             publish_name = container_branch
 
