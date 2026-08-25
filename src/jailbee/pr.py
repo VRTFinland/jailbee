@@ -325,7 +325,7 @@ def create_pr(
     body: str,
     remote: str,
     draft: bool = True,
-    label: str = "--pr",
+    label: str = "jailbee pr",
 ) -> PrCreated:
     """Create a GitHub PR for `head` via `gh pr create` (non-interactive).
 
@@ -333,6 +333,12 @@ def create_pr(
     PR for `head` already exists, the existing PR is looked up with
     `gh pr view <head>` and returned with `already_existed=True`, making
     repeated invocations idempotent for the caller.
+
+    The `label` parameter names the caller in error messages. It defaults to
+    "jailbee pr" because create_pr is reached only from the `jailbee pr`
+    command (never from `jailbee new --pr`). When forwarded to
+    _validate_github_origin, this corrects the old pre-flight message that
+    named "--pr", a flag that doesn't exist for this command.
     """
     _validate_github_origin(repo_root, remote, label=label)
     cmd = [

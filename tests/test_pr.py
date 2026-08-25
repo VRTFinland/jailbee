@@ -1023,3 +1023,43 @@ def test_assert_github_remote_rejects_a_missing_remote(mocker, tmp_path):
     mocker.patch("subprocess.run", return_value=mocker.Mock(returncode=2, stdout="", stderr=""))
     with pytest.raises(pr.PrResolveError):
         pr.assert_github_remote(tmp_path, "upstream", label="jailbee submodule pr")
+
+
+def test_create_pr_default_label_gh_missing_renders_jailbee_pr(mocker, tmp_path):
+    from jailbee import pr
+
+    mocker.patch("jailbee.pr._validate_github_origin")
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    with pytest.raises(pr.PrCreateError) as excinfo:
+        pr.create_pr(
+            tmp_path,
+            head="feat/x",
+            base="main",
+            title="t",
+            body="b",
+            remote="origin",
+        )
+    # Verify exact string with default label "jailbee pr"
+    assert str(excinfo.value) == (
+        "jailbee pr requires the 'gh' CLI. Install: https://cli.github.com/"
+    )
+
+
+def test_create_pr_default_label_no_github_remote(mocker, tmp_path):
+    from jailbee import pr
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(returncode=0, stdout="git@gitlab.com:acme/x.git\n", stderr=""),
+    )
+    with pytest.raises(pr.PrResolveError) as excinfo:
+        pr.create_pr(
+            tmp_path,
+            head="feat/x",
+            base="main",
+            title="t",
+            body="b",
+            remote="origin",
+        )
+    # Verify exact string with default label "jailbee pr" forwarded to _validate_github_origin
+    assert "jailbee pr requires a GitHub 'origin' remote in" in str(excinfo.value)
