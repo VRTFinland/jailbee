@@ -116,6 +116,7 @@ def generate_pr_text(
     fixed_title: str | None = None,
     fixed_body: str | None = None,
     timeout: int | None = None,
+    subpath: str | None = None,
 ) -> PrText | None:
     """Ask the in-container Claude CLI for a PR title and body.
 
@@ -126,11 +127,17 @@ def generate_pr_text(
 
     ``timeout`` defaults to `claude.ai_pr_timeout`; pass it only to override
     the configured budget.
+
+    ``subpath`` names a submodule, top-relative, whose directory the generation
+    runs in — the prompt inspects *that* repository's commits, PR template and
+    naming convention, which is the point of running it there.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, short_name
 
     repo_dir = container_repo_dir(cfg, incus, full_name)
+    if subpath:
+        repo_dir = f"{repo_dir}/{subpath}"
     prompt = _build_prompt(branch, base, fixed_title, fixed_body, cfg.claude.pr_prompt)
     # `claude` lives at ~/.local/bin/claude, which is not on the default
     # `incus exec --user` PATH. Run it through a login shell (`bash -lc`) so

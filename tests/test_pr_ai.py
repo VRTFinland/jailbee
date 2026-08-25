@@ -551,3 +551,66 @@ def test_generate_threads_configured_pr_prompt_into_the_prompt(mocker, make_cfg,
 
     env_prompt = incus.exec.call_args.kwargs["env"]["JAILBEE_PR_PROMPT"]
     assert "Always mention the JIRA id." in env_prompt
+
+
+# ---------------------------------------------------------------------------
+# generate_pr_text with subpath
+# ---------------------------------------------------------------------------
+
+
+def _generation_incus(mocker):
+    """An Incus mock whose exec returns one valid generation reply."""
+    incus = mocker.MagicMock()
+    inner = json.dumps({"title": "t", "body": "b", "branch": "feat/x"})
+    incus.exec.return_value = _envelope(inner)
+    return incus
+
+
+def test_generate_runs_in_the_repo_root_by_default(mocker, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import make_cfg
+
+    incus = _generation_incus(mocker)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(make_cfg(tmp_path), incus, "c1", branch="feat/x", base="main")
+
+    assert incus.exec.call_args.kwargs["cwd"] == "/home/dev/repo"
+
+
+def test_generate_runs_in_the_submodule_when_subpath_is_given(mocker, tmp_path):
+    from jailbee.pr_ai import generate_pr_text
+    from tests.conftest import make_cfg
+
+    incus = _generation_incus(mocker)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    generate_pr_text(
+        make_cfg(tmp_path),
+        incus,
+        "c1",
+        branch="feat/x",
+        base="main",
+        subpath="libs/foo",
+    )
+
+    assert incus.exec.call_args.kwargs["cwd"] == "/home/dev/repo/libs/foo"
+
+
+def test_generate_returns_the_parsed_text_with_a_subpath(mocker, tmp_path):
+    from jailbee.pr_ai import PrText, generate_pr_text
+    from tests.conftest import make_cfg
+
+    incus = _generation_incus(mocker)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    result = generate_pr_text(
+        make_cfg(tmp_path),
+        incus,
+        "c1",
+        branch="feat/x",
+        base="main",
+        subpath="libs/foo",
+    )
+
+    assert result == PrText(title="t", body="b", branch="feat/x")
