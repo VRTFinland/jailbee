@@ -63,10 +63,11 @@ from jailbee.tui import console, error
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from sqlalchemy.engine import Engine
+
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
-    from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
 
@@ -964,7 +965,9 @@ def render(
             if is_folded:
                 continue
             for c in g.containers:
-                is_sel = selected is not None and selected.kind == "container" and selected.key == c.name
+                is_sel = (
+                    selected is not None and selected.kind == "container" and selected.key == c.name
+                )
                 cells: list[str] = []
                 for f in fields:
                     if f.name == "name":
@@ -1402,7 +1405,10 @@ def run(
                     last_full = shared_last_full
                     refreshing = shared_refreshing
                 rows = selectable_rows(groups, folded)
-                if isinstance(overlay, MenuState) and Row("container", overlay.container) not in rows:
+                if (
+                    isinstance(overlay, MenuState)
+                    and Row("container", overlay.container) not in rows
+                ):
                     # The menu's container vanished under it (destroyed, or its
                     # repo dropped out of the registry) — close rather than
                     # dispatch at a name that is no longer there.

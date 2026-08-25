@@ -2316,7 +2316,10 @@ def test_render_counts_every_container_even_when_folded(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     groups = [
         dashboard.RepoGroup(
-            "alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")]
+            "alpha",
+            "/a",
+            tmp_path / "a.yaml",
+            [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
         )
     ]
     out = _render_text(
@@ -2343,9 +2346,7 @@ def test_show_if_is_computed_from_visible_containers_only(tmp_path):
         dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [with_pr]),
         dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-one", "beta")]),
     ]
-    kwargs = dict(
-        selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True
-    )
+    kwargs = dict(selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True)
     unfolded = _render_text(dashboard.render(groups, **kwargs))
     folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
 

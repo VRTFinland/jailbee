@@ -119,8 +119,8 @@ def test_render_repos_tab_shows_folded_state():
     out = cap.get()
 
     lines = out.split("\n")
-    alpha_line = [line for line in lines if " alpha " in line][0]
-    beta_line = [line for line in lines if " beta " in line][0]
+    alpha_line = next(line for line in lines if " alpha " in line)
+    beta_line = next(line for line in lines if " beta " in line)
 
     # alpha is not folded → checkbox is [x]
     assert "[x]  alpha" in alpha_line
@@ -134,6 +134,4 @@ def test_open_settings_rejects_an_empty_field_vocabulary():
     from jailbee.dashboard_settings import open_settings
 
     with pytest.raises(ValueError):
-        open_settings(
-            field_names=(), enabled=frozenset(), repo_prefixes=REPOS, folded=frozenset()
-        )
+        open_settings(field_names=(), enabled=frozenset(), repo_prefixes=REPOS, folded=frozenset())
