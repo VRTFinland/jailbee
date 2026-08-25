@@ -167,3 +167,139 @@ def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker
     )
     assert result is None
     confirm.assert_not_called()
+
+
+def _pr_info(number=7, head="feat/foo", state="OPEN", cross=False, owner=None):
+    from jailbee.pr import PrInfo
+
+    return PrInfo(
+        number=number,
+        head_ref=head,
+        head_sha="abc",
+        state=state,
+        base_ref="main",
+        author_login="someone",
+        is_cross_repository=cross,
+        head_repo_owner=owner,
+    )
+
+
+def test_container_label_state_reads_the_labels(mocker):
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.pr": "12",
+        "user.jailbee.pr_branch": "user/x",
+        "user.jailbee.pr_author": "1",
+    }.get(key)
+
+    record = pr_flow.ContainerLabelState(incus, "c1").read()
+
+    assert record == pr_flow.PrRecord(number=12, head="user/x", author=True, adopted=False)
+
+
+def test_container_label_state_writes_pr_branch_first_and_number_last(mocker):
+    incus = mocker.MagicMock()
+
+    pr_flow.ContainerLabelState(incus, "c1").record(
+        head="user/x", author=True, adopted=False, number=12
+    )
+
+    keys = [call.args[1] for call in incus.config_set.call_args_list]
+    assert keys == ["user.jailbee.pr_branch", "user.jailbee.pr_author", "user.jailbee.pr"]
+
+
+def test_container_label_state_omits_the_number_when_none(mocker):
+    incus = mocker.MagicMock()
+
+    pr_flow.ContainerLabelState(incus, "c1").record(
+        head="user/x", author=False, adopted=True, number=None
+    )
+
+    keys = [call.args[1] for call in incus.config_set.call_args_list]
+    assert keys == ["user.jailbee.pr_branch", "user.jailbee.pr_adopted"]
+
+
+def test_container_label_state_survives_a_failed_write(mocker):
+    from jailbee.incus import IncusError
+
+    incus = mocker.MagicMock()
+    incus.config_set.side_effect = IncusError("boom")
+
+    # Best-effort, like the original: warns rather than raising.
+    pr_flow.ContainerLabelState(incus, "c1").record(
+        head="user/x", author=True, adopted=False, number=12
+    )
+
+
+def test_adopt_returns_none_without_a_branch(tmp_path, mocker):
+    state = mocker.MagicMock()
+    assert (
+        pr_flow.adopt_existing_pr_for_branch(_super_scope(tmp_path), state, branch=None, yes=True)
+        is None
+    )
+
+
+def test_adopt_returns_none_when_no_pr_exists(tmp_path, mocker):
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
+    assert (
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("state_value", ["CLOSED", "MERGED"])
+def test_adopt_skips_a_closed_or_merged_pr(tmp_path, mocker, state_value):
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info(state=state_value))
+    assert (
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+        )
+        is None
+    )
+
+
+def test_adopt_skips_a_fork_head(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.pr.find_pr_for_branch",
+        return_value=_pr_info(cross=True, owner="someone-else"),
+    )
+    assert (
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=True
+        )
+        is None
+    )
+
+
+def test_adopt_records_the_pr_and_returns_it(tmp_path, mocker):
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
+    state = mocker.MagicMock()
+
+    result = pr_flow.adopt_existing_pr_for_branch(
+        _super_scope(tmp_path), state, branch="feat/foo", yes=True
+    )
+
+    assert result == (7, "feat/foo")
+    state.record.assert_called_once_with(head="feat/foo", author=False, adopted=True, number=7)
+
+
+def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    with pytest.raises(typer.Exit) as excinfo:
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=False
+        )
+    assert excinfo.value.exit_code == 1
+
+
+def test_adopt_aborts_on_decline(tmp_path, mocker):
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    with pytest.raises(typer.Abort):
+        pr_flow.adopt_existing_pr_for_branch(
+            _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=False
+        )

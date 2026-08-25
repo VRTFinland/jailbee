@@ -1506,6 +1506,7 @@ if TYPE_CHECKING:
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.pr_flow import PrState
     from jailbee.sync import BridgePlan, FetchResult, PushResult, SourcePref
 
 
@@ -3853,6 +3854,7 @@ def _adopt_pr_head(
     incus: "IncusType",
     full: str,
     short: str,
+    state: "PrState",
     *,
     yes: bool,
 ) -> str | None:
@@ -3872,7 +3874,6 @@ def _adopt_pr_head(
     on an update-path container — not just the first.)
     """
     from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
     from jailbee.lifecycle import _stdin_is_interactive
 
     raw = incus.config_get(full, "user.jailbee.pr")
@@ -3940,105 +3941,11 @@ def _adopt_pr_head(
 
     # pr_branch FIRST — see the docstring: an adopted flag without a recorded
     # head name would make the next run publish to the container branch.
-    # Best-effort, like the create path's label writes.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", pr_info.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-    except IncusError as exc:
-        warn(f"Could not record the PR-head decision on '{short}': {exc}")
+    # Best-effort, like the create path's label writes. `number=None` leaves
+    # the recorded PR number alone — `new` already wrote it.
+    state.record(head=pr_info.head_ref, author=False, adopted=True, number=None)
 
     return pr_info.head_ref
-
-
-def _adopt_existing_pr_for_branch(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    short: str,
-    *,
-    container_branch: str | None,
-    yes: bool,
-) -> tuple[int, str] | None:
-    """Adopt the PR that already exists for the container's branch, if any.
-
-    A container made with `jailbee new <existing-branch>` carries no PR label, yet
-    that branch may already have a PR open — and without this lookup the create
-    path would propose a fresh head branch name and open a *second* PR for the
-    same work. (When the proposed name happens to equal the branch, `gh pr
-    create` fails with "already exists" and `pr.create_pr` recovers, but that
-    fallback also records `user.jailbee.pr_author`, claiming a PR jailbee never opened.)
-
-    Returns `(number, head_ref)` for the adopted PR, or None when the create
-    path should proceed untouched: no PR for the branch, a closed/merged one
-    (not a target for further work), or a fork PR (whose head lives in the
-    fork, so our branch is a genuinely different thing). Exits non-zero on a
-    declined or unavailable confirmation.
-
-    Records `user.jailbee.pr_branch` / `user.jailbee.pr_adopted` / `user.jailbee.pr` — but
-    deliberately not `user.jailbee.pr_author`: jailbee found this PR, it did not create
-    it, and the foreign-head guards (`--force` confirmation, no description
-    regeneration) must stay on.
-    """
-    from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if not container_branch:
-        return None
-
-    found = pr_module.find_pr_for_branch(cfg.repo_root, container_branch)
-    if found is None:
-        return None
-
-    if found.state != "OPEN":
-        info(
-            f"Branch '{container_branch}' had PR #{found.number} ({found.state}); "
-            f"opening a new one."
-        )
-        return None
-    if found.is_cross_repository:
-        owner = found.head_repo_owner or "<fork-owner>"
-        info(
-            f"PR #{found.number} matches this branch by name but its head lives "
-            f"in the fork '{owner}', so it is a different branch; opening a new PR."
-        )
-        return None
-
-    author = f"@{found.author_login}" if found.author_login else "an unknown author"
-    info(
-        f"Branch '{container_branch}' already has PR #{found.number} by {author} "
-        f"(OPEN); head '{found.head_ref}' → base '{found.base_ref}'."
-    )
-
-    if not yes:
-        if not _stdin_is_interactive():
-            error(
-                f"Branch '{container_branch}' already has PR #{found.number}. "
-                f"Pushing this container's commits to it needs confirmation — "
-                f"re-run with --yes when there is no terminal to ask on."
-            )
-            raise typer.Exit(1)
-        if not typer.confirm(
-            f"Push this container's commits to PR #{found.number} instead of opening a new one?",
-            default=True,
-        ):
-            info(
-                "Aborted. To open a separate PR from this container, re-run with "
-                "'--as <other-branch-name>'."
-            )
-            raise typer.Abort()
-
-    # pr_branch first, pr last — same reasoning as `_adopt_pr_head` and the
-    # create path: an interrupted write must leave the container asking again
-    # rather than publishing to the wrong head.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", found.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-        incus.config_set(full, "user.jailbee.pr", str(found.number))
-    except IncusError as exc:
-        warn(f"Could not record PR #{found.number} on '{short}': {exc}")
-
-    return found.number, found.head_ref
 
 
 def pr_cmd(
@@ -4192,6 +4099,7 @@ def pr_cmd(
     scope = pr_flow.PrScope(
         repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
     )
+    state = pr_flow.ContainerLabelState(incus, full)
 
     if open_only:
         pr_num_raw = incus.config_get(full, "user.jailbee.pr")
@@ -4214,9 +4122,10 @@ def pr_cmd(
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    is_author = bool(incus.config_get(full, "user.jailbee.pr_author"))
-    stored_pr_branch = incus.config_get(full, "user.jailbee.pr_branch")
-    pr_label = incus.config_get(full, "user.jailbee.pr")
+    record = state.read()
+    is_author = record.author
+    stored_pr_branch = record.head
+    pr_label = str(record.number) if record.number is not None else None
 
     # `--as` names the head of a PR still to be created. A container that
     # already has one (authored, adopted, or about to be adopted below — a PR
@@ -4228,7 +4137,7 @@ def pr_cmd(
     # A `jailbee new --pr` container already has a PR. Publishing its commits to
     # that PR's head is allowed once the user confirms; the confirmation is
     # recorded, so from then on this behaves like an authored-PR container.
-    adopted_head = _adopt_pr_head(cfg, incus, full, short, yes=yes)
+    adopted_head = _adopt_pr_head(cfg, incus, full, short, state, yes=yes)
     if adopted_head is not None:
         # Use the value in-process rather than re-reading the label: the run
         # must publish to the right head even if the label write failed.
@@ -4243,8 +4152,8 @@ def pr_cmd(
     # a duplicate. `--as` is a deliberate request for a different head, so it
     # skips the lookup entirely.
     if not (is_author or stored_pr_branch or pr_label) and as_name is None:
-        found_pr = _adopt_existing_pr_for_branch(
-            cfg, incus, full, short, container_branch=container_branch, yes=yes
+        found_pr = pr_flow.adopt_existing_pr_for_branch(
+            scope, state, branch=container_branch, yes=yes
         )
         if found_pr is not None:
             found_number, found_head = found_pr

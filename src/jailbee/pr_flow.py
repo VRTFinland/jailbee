@@ -20,11 +20,11 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Never, Protocol
 
 import typer
 
-from jailbee.tui import error, warn
+from jailbee.tui import error, info, warn
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -183,3 +183,149 @@ def resolve_pr_description_update(
         warn(f"Claude PR-text generation failed; {scope.prefix}description left unchanged.")
         return None
     return (text.title, text.body)
+
+
+@dataclass(frozen=True)
+class PrRecord:
+    """What is remembered about a target's PR between runs."""
+
+    number: int | None
+    head: str | None
+    author: bool
+    adopted: bool
+
+
+class PrState(Protocol):
+    """Where a target's PR decision is persisted.
+
+    Two implementations: `ContainerLabelState` (the superproject, container
+    labels) and `submodule_pr.SubmodulePrState` (one submodule, a JSON map).
+    """
+
+    def read(self) -> PrRecord: ...
+
+    def record(self, *, head: str, author: bool, adopted: bool, number: int | None) -> None: ...
+
+
+class ContainerLabelState:
+    """`PrState` over the container's `user.jailbee.pr*` labels."""
+
+    def __init__(self, incus: IncusType, full: str) -> None:
+        self._incus = incus
+        self._full = full
+
+    def read(self) -> PrRecord:
+        raw = self._incus.config_get(self._full, "user.jailbee.pr")
+        try:
+            number = int(raw) if raw else None
+        except ValueError:
+            number = None
+        return PrRecord(
+            number=number,
+            head=self._incus.config_get(self._full, "user.jailbee.pr_branch") or None,
+            author=bool(self._incus.config_get(self._full, "user.jailbee.pr_author")),
+            adopted=bool(self._incus.config_get(self._full, "user.jailbee.pr_adopted")),
+        )
+
+    def record(self, *, head: str, author: bool, adopted: bool, number: int | None) -> None:
+        """Write the decision, best-effort.
+
+        Write order matters for a partial (interrupted) write. `pr_branch` goes
+        FIRST so that even a partially-written container resolves the correct
+        PR head on the re-run UPDATE path (a missing `pr_branch` would push to
+        the container branch — the wrong head). `user.jailbee.pr` goes LAST
+        because the entry guard keys on `pr` present WITHOUT `pr_author` (== a
+        `jailbee new --pr` review container).
+        """
+        from jailbee.incus import IncusError
+
+        try:
+            self._incus.config_set(self._full, "user.jailbee.pr_branch", head)
+            if author:
+                self._incus.config_set(self._full, "user.jailbee.pr_author", "1")
+            if adopted:
+                self._incus.config_set(self._full, "user.jailbee.pr_adopted", "1")
+            if number is not None:
+                self._incus.config_set(self._full, "user.jailbee.pr", str(number))
+        except IncusError as exc:
+            warn(f"Could not record the PR decision: {exc}")
+
+
+def adopt_existing_pr_for_branch(
+    scope: PrScope,
+    state: PrState,
+    *,
+    branch: str | None,
+    yes: bool,
+) -> tuple[int, str] | None:
+    """Adopt the PR that already exists for the container's branch, if any.
+
+    A container made with `jailbee new <existing-branch>` carries no PR label, yet
+    that branch may already have a PR open — and without this lookup the create
+    path would propose a fresh head branch name and open a *second* PR for the
+    same work. (When the proposed name happens to equal the branch, `gh pr
+    create` fails with "already exists" and `pr.create_pr` recovers, but that
+    fallback also records `user.jailbee.pr_author`, claiming a PR jailbee never opened.)
+
+    Returns `(number, head_ref)` for the adopted PR, or None when the create
+    path should proceed untouched: no PR for the branch, a closed/merged one
+    (not a target for further work), or a fork PR (whose head lives in the
+    fork, so our branch is a genuinely different thing). Exits non-zero on a
+    declined or unavailable confirmation.
+
+    Records the head branch and `adopted` — but deliberately not `author`:
+    jailbee found this PR, it did not create it, and the foreign-head guards
+    (`--force` confirmation, no description regeneration) must stay on.
+    """
+    from jailbee import pr as pr_module
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    if not branch:
+        return None
+
+    found = pr_module.find_pr_for_branch(scope.repo_root, branch)
+    if found is None:
+        return None
+
+    if found.state != "OPEN":
+        info(
+            f"{scope.prefix}Branch '{branch}' had PR #{found.number} ({found.state}); "
+            f"opening a new one."
+        )
+        return None
+    if found.is_cross_repository:
+        owner = found.head_repo_owner or "<fork-owner>"
+        info(
+            f"{scope.prefix}PR #{found.number} matches this branch by name but its "
+            f"head lives in the fork '{owner}', so it is a different branch; "
+            f"opening a new PR."
+        )
+        return None
+
+    author = f"@{found.author_login}" if found.author_login else "an unknown author"
+    info(
+        f"{scope.prefix}Branch '{branch}' already has PR #{found.number} by {author} "
+        f"(OPEN); head '{found.head_ref}' → base '{found.base_ref}'."
+    )
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error(
+                f"{scope.prefix}Branch '{branch}' already has PR #{found.number}. "
+                f"Pushing this container's commits to it needs confirmation — "
+                f"re-run with --yes when there is no terminal to ask on."
+            )
+            raise typer.Exit(1)
+        if not typer.confirm(
+            f"Push this container's commits to PR #{found.number} instead of opening a new one?",
+            default=True,
+        ):
+            info(
+                "Aborted. To open a separate PR from this container, re-run with "
+                "'--as <other-branch-name>'."
+            )
+            raise typer.Abort()
+
+    state.record(head=found.head_ref, author=False, adopted=True, number=found.number)
+
+    return found.number, found.head_ref
