@@ -629,8 +629,10 @@ Exit codes: 2 for usage errors (ambiguous target with no PATH, unknown PATH,
 `--as` once a PR is recorded, a detached submodule with no resolvable head
 name, `--open` with PRs recorded for more than one path); 1 for operational
 failures (preflight, a non-GitHub submodule upstream, publish failure, `gh`
-failure, `--open` with no PR recorded); 0 for success and for "no submodule
-has commits ahead of its base."
+failure, `--open` with no PR recorded, `--force` onto a foreign/adopted PR
+head with no TTY to confirm on, first-run adoption of an existing PR with no
+TTY to confirm on); 0 for success and for "no submodule has commits ahead of
+its base."
 
 ## Network
 
