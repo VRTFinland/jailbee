@@ -105,6 +105,12 @@ def test_render_marks_state_and_flags_dynamic_columns():
 
 
 def test_render_repos_tab_shows_folded_state():
+    """Repos tab shows folded state: unchecked ([ ]) if folded, checked ([x]) if not.
+
+    A checkbox semantically reads as "shown", so folded means unchecked. The
+    fixture has beta folded and alpha unfolded, so the test must assert that
+    beta's marker is [ ] and alpha's is [x] — just checking that both names
+    appear in the output would pass under inverted polarity."""
     from jailbee.dashboard_settings import render_settings, switch_tab
 
     console = Console(width=90, no_color=True)
@@ -112,7 +118,14 @@ def test_render_repos_tab_shows_folded_state():
         console.print(render_settings(switch_tab(_state()), dynamic=frozenset()))
     out = cap.get()
 
-    assert "alpha" in out and "beta" in out
+    lines = out.split("\n")
+    alpha_line = [line for line in lines if " alpha " in line][0]
+    beta_line = [line for line in lines if " beta " in line][0]
+
+    # alpha is not folded → checkbox is [x]
+    assert "[x]  alpha" in alpha_line
+    # beta is folded → checkbox is [ ]
+    assert "[ ]  beta" in beta_line
 
 
 def test_open_settings_rejects_an_empty_field_vocabulary():
