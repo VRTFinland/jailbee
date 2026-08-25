@@ -858,9 +858,10 @@ class ColumnConfig(BaseModel):
 # global layer — where `GlobalConfig.dashboard`'s default already carries
 # `DASHBOARD_DEFAULT_HIDE` (see `global_config._DASHBOARD_DEFAULT`) — a
 # repo's own block defaults to a plain, unset `ColumnConfig`; the
-# dashboard-hide default is applied later, when `effective_dashboard_columns`
-# merges the repo block over the global one. So both repo fields share one
-# default here. Used by `load_config`'s sanitize short-circuit.
+# dashboard-hide default is applied later, when `dashboard.seed_view_state`
+# reads the global block into a front-end's `view_prefs` row. So both repo
+# fields share one default here. Used by `load_config`'s sanitize
+# short-circuit.
 _COLUMN_DEFAULT = ColumnConfig()
 
 
@@ -2029,10 +2030,6 @@ class Config(BaseModel):
     def effective_ls_columns(self, gcfg: GlobalConfig) -> ColumnConfig:
         """Column preference for ``jailbee ls``: repo block over global block."""
         return self._effective_columns(gcfg.ls, self.ls)
-
-    def effective_dashboard_columns(self, gcfg: GlobalConfig) -> ColumnConfig:
-        """Column preference for the dashboards: repo block over global block."""
-        return self._effective_columns(gcfg.dashboard, self.dashboard)
 
     def effective_host_mounts(self) -> list[HostMount]:
         """User's host_mounts plus auto-additions driven by gpg / ssh /

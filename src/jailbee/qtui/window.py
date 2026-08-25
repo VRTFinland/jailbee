@@ -55,9 +55,8 @@ def _filtered_columns(names: Sequence[str]) -> tuple[str, ...]:
     or hand-edited set (a renamed/removed column, or a caller passing
     arbitrary names directly) must not be able to leave the window with
     zero enabled columns, the exact state the last-column guard in
-    ``_toggle_column`` exists to prevent. Shared by ``__init__`` and
-    ``set_enabled_columns`` so the class is self-consistent regardless of
-    which one a caller uses.
+    ``_toggle_column`` exists to prevent. Used by ``__init__`` when
+    restoring a persisted column set via the ``enabled_columns`` keyword.
     """
     filtered = tuple(n for n in all_column_names() if n in set(names))
     return filtered or default_columns()
@@ -182,12 +181,6 @@ class MainWindow(QMainWindow):
 
     def enabled_columns(self) -> tuple[str, ...]:
         return self._enabled_columns
-
-    def set_enabled_columns(self, names: Sequence[str]) -> None:
-        """Restore a persisted set, syncing the menu's check states."""
-        self._enabled_columns = _filtered_columns(names)
-        for name, act in self._column_actions.items():
-            act.setChecked(name in self._enabled_columns)
 
     def _switch_layout(self, name: str) -> None:
         self._layout = name
