@@ -101,7 +101,12 @@ class AppController(QObject):
         self._interval = interval
         self._engine = engine
         self._paused = paused
-        # Resolved once by `run()` at startup — never re-merged per refresh tick.
+        # An explicit override for `on_groups` to force onto `window.set_groups`;
+        # `run()` no longer sets this — the window owns the live, menu-driven
+        # enabled-column set (`self._window.enabled_columns()`), and passing
+        # `None` here each tick lets `set_groups` fall back to that instead of
+        # re-forcing a startup snapshot that would otherwise mask every toggle
+        # in the Columns menu.
         self._columns = columns
         # Timestamp of the last successful refresh, so a cadence change (a
         # menu action, not a refresh) can still update the status line
@@ -172,6 +177,26 @@ class AppController(QObject):
             ),
         )
 
+    def _persist_view_state(self) -> None:
+        """Write the Qt dashboard's own view state — columns and folded repos.
+
+        Separate from `_persist`, which owns the Qt widget state in
+        `gui_state`. Two writers, two rows: nothing here can clobber the
+        TUI's row, and nothing here belongs in a table about window layout.
+        """
+        if self._engine is None:
+            return
+        from jailbee.db.view_prefs import FRONTEND_QT, ViewState, save_view_state
+
+        save_view_state(
+            self._engine,  # type: ignore[arg-type]  # Engine at runtime; typed as object to keep app.py PySide-only imports
+            FRONTEND_QT,
+            ViewState(
+                columns=self._window.enabled_columns(),
+                folded=frozenset(self._window.collapsed_repos()),
+            ),
+        )
+
     @Slot(str)
     def on_layout_changed(self, name: str) -> None:
         """The View menu switched layout — persist the new choice."""
@@ -184,15 +209,18 @@ class AppController(QObject):
 
     @Slot()
     def on_collapsed_changed(self) -> None:
-        """A card group was expanded/collapsed.
+        """A card group was expanded/collapsed — persist the folded set.
 
-        The folded set itself is not persisted here any more — it moved to
-        ``view_prefs`` and is not yet wired up on this side (a later task
-        does that). This still calls ``_persist()`` to save the rest of the
-        GUI-state row (layout, header, card style, refresh cadence), so a
-        fold is not wasted as a persistence trigger, only as data.
+        Routed to ``_persist_view_state``, not ``_persist``: the folded set
+        lives in ``view_prefs``, not ``gui_state``, so this must never touch
+        the widget-layout row.
         """
-        self._persist()
+        self._persist_view_state()
+
+    @Slot()
+    def on_columns_changed(self) -> None:
+        """The Columns menu toggled a column — persist the enabled set."""
+        self._persist_view_state()
 
     def persist_on_close(self) -> None:
         """Save the full GUI-state snapshot (incl. table column widths/order)
@@ -420,6 +448,7 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
     window.layoutChanged.connect(controller.on_layout_changed)
     window.cardStyleChanged.connect(controller.on_card_style_changed)
     window.card_view.collapsedChanged.connect(controller.on_collapsed_changed)
+    window.columnsChanged.connect(controller.on_columns_changed)
 
 
 def run(
@@ -442,7 +471,7 @@ def run(
 
     # Resolved once for the whole run — a live-refreshing dashboard must not
     # re-merge config on every refresh tick.
-    columns: tuple[str, ...] | None = seed_view_state(engine, FRONTEND_QT).columns
+    view_state = seed_view_state(engine, FRONTEND_QT)
 
     state = load_gui_state(engine)
 
@@ -460,7 +489,9 @@ def run(
         layout=state.layout,
         header_state=state.table_header_state,
         card_style=state.card_style,
+        enabled_columns=view_state.columns,
     )
+    window.card_view.set_collapsed(set(view_state.folded))
 
     thread = QThread()
     worker = RefreshWorker(
@@ -476,9 +507,7 @@ def run(
     # Kept on the GUI thread (never moveToThread'd) so cross-thread worker
     # signals resolve to queued connections; held in a local so it isn't
     # garbage-collected while `app.exec()` runs.
-    controller = AppController(
-        window, worker, interval=resolved, engine=engine, paused=paused, columns=columns
-    )
+    controller = AppController(window, worker, interval=resolved, engine=engine, paused=paused)
     _wire(window, worker, controller)
     if paused:
         worker.set_paused(True)

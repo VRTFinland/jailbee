@@ -347,3 +347,44 @@ def test_paused_checks_off_manual_in_refresh_menu(qtbot):
     qtbot.addWidget(win)
     checked = [a.text() for a in win.refresh_menu.actions() if a.isCheckable() and a.isChecked()]
     assert checked == ["Off (manual)"]
+
+
+def test_columns_menu_reflects_the_enabled_set(qtbot):
+    from jailbee.dashboard import all_column_names
+
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    checked = {a.text() for a in win.columns_menu.actions() if a.isChecked()}
+
+    assert checked == {"name", "state"}
+    assert {a.text() for a in win.columns_menu.actions()} == set(all_column_names())
+
+
+def test_toggling_a_columns_action_emits_and_updates(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    seen: list[int] = []
+    win.columnsChanged.connect(lambda: seen.append(1))
+
+    act = next(a for a in win.columns_menu.actions() if a.text() == "ip")
+    # `act.trigger()` toggles the checkable action AND emits `triggered(checked)`
+    # in one call — the same effect `setChecked` + `triggered.emit(bool)` would
+    # have, but the latter is unusable here: this PySide6 build (6.11.1)
+    # resolves a bare `.emit(True)` on an overloaded `triggered` signal to its
+    # zero-arg overload and raises (`triggered() only accepts 0 argument(s)`),
+    # confirmed with a bare `QAction` outside any of this module's code.
+    act.trigger()
+
+    assert "ip" in win.enabled_columns()
+    assert seen  # the controller is told, so it can persist
+
+
+def test_the_last_column_cannot_be_unchecked(qtbot):
+    """Same rule as the TUI overlay: a table with no columns looks broken."""
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name",))
+    qtbot.addWidget(win)
+    act = next(a for a in win.columns_menu.actions() if a.text() == "name")
+    act.trigger()  # see the note in test_toggling_a_columns_action_emits_and_updates
+
+    assert win.enabled_columns() == ("name",)
+    assert act.isChecked() is True  # the action snaps back

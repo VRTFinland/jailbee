@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QActionGroup, QColor, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from jailbee.dashboard import view_only_note, visible_fields
+from jailbee.dashboard import all_column_names, default_columns, view_only_note, visible_fields
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
     STATE_COLORS,
@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
     autoRefreshDisabled = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); "Off (manual)" was selected
     layoutChanged = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: "table" | "cards"
     cardStyleChanged = Signal(str)  # noqa: N815 - Qt signal naming; payload: "compact" | "grid"
+    columnsChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the enabled column set changed
 
     def __init__(
         self,
@@ -67,6 +68,7 @@ class MainWindow(QMainWindow):
         layout: str = "cards",
         card_style: str = "compact",
         header_state: str | None = None,
+        enabled_columns: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         self._git_enabled = git_enabled
@@ -74,6 +76,9 @@ class MainWindow(QMainWindow):
         self._layout = layout if layout in _LAYOUT_INDEX else "cards"
         self._card_style = card_style if card_style in ("compact", "grid") else "compact"
         self._pending_header_state = header_state
+        self._enabled_columns: tuple[str, ...] = (
+            tuple(enabled_columns) if enabled_columns is not None else default_columns()
+        )
         self.setWindowTitle("jailbee dashboard")
         self.resize(1000, 640)
         self.setMinimumSize(360, 420)  # narrow-friendly: card view needs little width
@@ -95,6 +100,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar()
         self._build_view_menu(self._layout)
+        self._build_columns_menu()
         self._build_card_style_menu(self._card_style)
         self._build_refresh_menu(interval, paused=paused)
 
@@ -126,6 +132,47 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _checked=False, n=name: self._switch_card_style(n))
         self._card_style_action_group = group
         menu.menuAction().setVisible(self._layout == "cards")
+
+    def _build_columns_menu(self) -> None:
+        """A checkable action per column, under View.
+
+        The Qt counterpart of the TUI's settings overlay, and deliberately
+        independent of it: the two front-ends keep separate `view_prefs`
+        rows, so a wide table here and a narrow one there is a supported
+        setup rather than a bug.
+        """
+        menu = self.view_menu.addMenu("&Columns")
+        self.columns_menu = menu
+        self._column_actions: dict[str, QAction] = {}
+        for name in all_column_names():
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(name in self._enabled_columns)
+            act.triggered.connect(lambda checked=False, n=name: self._toggle_column(n, checked))
+            self._column_actions[name] = act
+
+    def _toggle_column(self, name: str, checked: bool) -> None:
+        """Flip one column, refusing to leave the table with none.
+
+        A dashboard rendering zero columns reads as broken rather than as
+        configured, so the last one is pinned and its action snaps back.
+        """
+        if not checked and len(self._enabled_columns) == 1:
+            self._column_actions[name].setChecked(True)
+            return
+        current = set(self._enabled_columns)
+        current.add(name) if checked else current.discard(name)
+        self._enabled_columns = tuple(n for n in all_column_names() if n in current)
+        self.columnsChanged.emit()
+
+    def enabled_columns(self) -> tuple[str, ...]:
+        return self._enabled_columns
+
+    def set_enabled_columns(self, names: Sequence[str]) -> None:
+        """Restore a persisted set, syncing the menu's check states."""
+        self._enabled_columns = tuple(n for n in all_column_names() if n in set(names))
+        for name, act in self._column_actions.items():
+            act.setChecked(name in self._enabled_columns)
 
     def _switch_layout(self, name: str) -> None:
         self._layout = name
@@ -219,12 +266,21 @@ class MainWindow(QMainWindow):
         now: datetime,
         columns: Sequence[str] | None = None,
     ) -> None:
-        """(Re)populate the tree, preserving the selection by container name."""
+        """(Re)populate the tree, preserving the selection by container name.
+
+        ``columns``, when given, overrides the window's own enabled set for
+        this call only (existing callers/tests rely on that); ``None`` (the
+        common case — a periodic refresh) renders the live, menu-driven
+        ``self._enabled_columns`` instead, so a toggle in the Columns menu
+        takes effect on the next refresh without the caller having to know
+        about it.
+        """
         self._groups = groups
         prev = self._selected_name()
+        active_columns = columns if columns is not None else self._enabled_columns
 
         all_containers = [c for g in groups for c in g.containers]
-        fields = visible_fields(now, all_containers, enabled=columns)
+        fields = visible_fields(now, all_containers, enabled=active_columns)
         headers = column_headers(fields)
         self.tree.setColumnCount(len(headers))
         self.tree.setHeaderLabels(headers)
@@ -255,7 +311,7 @@ class MainWindow(QMainWindow):
         if to_reselect is not None:
             self.tree.setCurrentItem(to_reselect)
 
-        self.card_view.set_groups(groups, now=now, columns=columns)
+        self.card_view.set_groups(groups, now=now, columns=active_columns)
 
     def menu_labels_for(self, container_name: str) -> list[str]:
         """Action labels for ``container_name`` (empty if unknown/orphan)."""
