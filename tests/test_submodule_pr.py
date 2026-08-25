@@ -100,6 +100,40 @@ def test_gitlink_stale_when_the_superproject_records_another_commit():
     assert sub.gitlink_stale is True
 
 
+def test_gitlink_stale_false_when_the_shas_match():
+    sub = submodule_pr.SubCandidate(
+        path="lib/a",
+        commits=2,
+        branch="feat/foo",
+        dirty=False,
+        head_sha="aaa",
+        recorded_sha="aaa",
+        subject="s",
+    )
+    assert sub.gitlink_stale is False
+
+
+@pytest.mark.parametrize(
+    ("head_sha", "recorded_sha"),
+    [
+        pytest.param("", "", id="both-empty"),
+        pytest.param("", "aaa", id="head-empty"),
+        pytest.param("aaa", "", id="recorded-empty"),
+    ],
+)
+def test_gitlink_stale_false_when_a_sha_is_empty(head_sha, recorded_sha):
+    sub = submodule_pr.SubCandidate(
+        path="lib/a",
+        commits=2,
+        branch="feat/foo",
+        dirty=False,
+        head_sha=head_sha,
+        recorded_sha=recorded_sha,
+        subject="s",
+    )
+    assert sub.gitlink_stale is False
+
+
 def _sub(path, commits=2):
     return submodule_pr.SubCandidate(
         path=path,
@@ -118,7 +152,7 @@ def test_select_explicit_path_wins_even_with_no_commits():
 
 
 def test_select_explicit_unknown_path_raises():
-    with pytest.raises(submodule_pr.UnknownSubmodulePath) as excinfo:
+    with pytest.raises(submodule_pr.UnknownSubmodulePathError) as excinfo:
         submodule_pr.select_target([_sub("lib/a")], "lib/nope")
     assert "lib/a" in str(excinfo.value)
 
@@ -134,11 +168,11 @@ def test_select_auto_ignores_an_unknown_count():
 
 
 def test_select_raises_when_nothing_is_ahead():
-    with pytest.raises(submodule_pr.NoSubmoduleCandidates):
+    with pytest.raises(submodule_pr.NoSubmoduleCandidatesError):
         submodule_pr.select_target([_sub("lib/a", commits=0)], None)
 
 
 def test_select_raises_with_the_candidates_when_ambiguous():
-    with pytest.raises(submodule_pr.AmbiguousSubmoduleTarget) as excinfo:
+    with pytest.raises(submodule_pr.AmbiguousSubmoduleTargetError) as excinfo:
         submodule_pr.select_target([_sub("lib/a"), _sub("lib/b")], None)
     assert [c.path for c in excinfo.value.candidates] == ["lib/a", "lib/b"]

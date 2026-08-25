@@ -30,21 +30,15 @@ class SubmodulePrError(RuntimeError):
     """Base for every `jailbee submodule pr` failure."""
 
 
-# N818 (exception names must end in "Error") is suppressed on the three
-# subclasses below: their names are this module's public interface, fixed by
-# the submodule-pr design spec and depended on verbatim by
-# tests/test_submodule_pr.py and by Task 10's cli.py presentation layer.
-
-
-class NoSubmoduleCandidates(SubmodulePrError):  # noqa: N818
+class NoSubmoduleCandidatesError(SubmodulePrError):
     """No submodule has commits ahead of its base."""
 
 
-class UnknownSubmodulePath(SubmodulePrError):  # noqa: N818
+class UnknownSubmodulePathError(SubmodulePrError):
     """The requested path is not a submodule of this container's repo."""
 
 
-class AmbiguousSubmoduleTarget(SubmodulePrError):  # noqa: N818
+class AmbiguousSubmoduleTargetError(SubmodulePrError):
     """More than one submodule is ahead; the user must pick one."""
 
     def __init__(self, candidates: list[SubCandidate]) -> None:
@@ -159,21 +153,21 @@ def select_target(subs: list[SubCandidate], path: str | None) -> SubCandidate:
 
     An explicit `path` always wins, commits or not — the user named it. Without
     one, exactly one submodule ahead of its base is targeted; several raise
-    `AmbiguousSubmoduleTarget` (two submodules are two repositories and two
-    PRs, so the user picks), none raises `NoSubmoduleCandidates`. A submodule
-    whose count is unknown is never auto-targeted.
+    `AmbiguousSubmoduleTargetError` (two submodules are two repositories and
+    two PRs, so the user picks), none raises `NoSubmoduleCandidatesError`. A
+    submodule whose count is unknown is never auto-targeted.
     """
     if path is not None:
         for sub in subs:
             if sub.path == path:
                 return sub
         known = ", ".join(s.path for s in subs) or "none"
-        raise UnknownSubmodulePath(
+        raise UnknownSubmodulePathError(
             f"'{path}' is not a submodule of this container's repo (known: {known})"
         )
     ahead = [s for s in subs if s.commits is not None and s.commits > 0]
     if not ahead:
-        raise NoSubmoduleCandidates("no submodule has commits ahead of its base")
+        raise NoSubmoduleCandidatesError("no submodule has commits ahead of its base")
     if len(ahead) > 1:
-        raise AmbiguousSubmoduleTarget(ahead)
+        raise AmbiguousSubmoduleTargetError(ahead)
     return ahead[0]
