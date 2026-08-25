@@ -75,6 +75,19 @@
   proxying to the now-unresolvable mirror host, so `docker pull` inside the
   container fails. Set `docker_registry_mirror.enabled: true` (or declare the
   stack and rebuild the golden image).
+- **BREAKING: Claude Code's `~/.claude.json` moved inside the shared `~/.claude`
+  mount.** The golden image now exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so
+  Claude Code reads and writes `~/.claude/.claude.json` instead of
+  `~/.claude.json`, and the separate file-level bind mount
+  (`<shared_dir>/claude.json`, Incus device `claude-json`) is gone. A
+  file-level bind cannot survive an atomic rewrite: temp-file + rename
+  replaces the inode and the container keeps the old, unlinked one — so any
+  host-side write to that file was invisible inside the container.
+  **To upgrade:** run `jailbee base build` (for the new environment variable)
+  and `jailbee apply` in each repo (to move the existing file and drop the
+  device), then re-create containers from the new image. `jailbee apply` moves
+  `<shared_dir>/claude.json` to `<shared_dir>/claude/.claude.json`
+  automatically; it never overwrites an existing destination.
 
 ### Fixed
 

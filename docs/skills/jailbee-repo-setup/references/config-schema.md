@@ -610,7 +610,7 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state. |
 | `claude.plugins_enabled` | bool | `true` | When `true`, `effective_egress_allow` also opens the Claude plugin-marketplace hosts so the in-container CLI can install plugins. |
 | `claude.autostart` | bool | `false` | When `true` (and `enabled`), `run_autostart` launches the `claude` CLI as an autostart step. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |
@@ -649,8 +649,8 @@ JailBee owns that and states it after the project block.
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when
 `claude.enabled` is `true`. Manual entries in `shared_caches:` with names
-`claude`, `claude-json`, or `claude-install` suppress the auto-add (same
-precedent as `effective_host_mounts`).
+`claude` or `claude-install` suppress the auto-add (same precedent as
+`effective_host_mounts`).
 
 ## install.d snippet resolution
 

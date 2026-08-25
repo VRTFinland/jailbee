@@ -238,15 +238,15 @@ harder rather than guessing at what to add.
 A browser-based OAuth or device-code sign-in is awkward inside a container:
 the login state usually lives in a path that's per-container by default, so
 it's lost on every rebuild unless that path is explicitly shared. Claude
-solves this by sharing `~/.claude.json` (see [Claude](#9-claude) below) across
-every container of the repo. Where a vendor also offers a plain API key,
-that's the simpler and more portable path — no shared login-state file
-needed, and it works the same whether the container was just created or has
-been running for weeks.
+solves this by sharing the `~/.claude` directory (see [Claude](#9-claude)
+below) across every container of the repo. Where a vendor also offers a plain
+API key, that's the simpler and more portable path — no shared login-state
+file needed, and it works the same whether the container was just created or
+has been running for weeks.
 
 | Preset | Env var | Notes |
 |---|---|---|
-| `claude` | — | Browser/device flow; solved via the shared `~/.claude.json`, not an API key. |
+| `claude` | — | Browser/device flow; solved via the shared `~/.claude` directory, not an API key. |
 | `codex` | `OPENAI_API_KEY` | The ChatGPT-login sign-in hosts are undocumented upstream; the API-key path is the one with a documented host list. |
 | `gemini` | `GEMINI_API_KEY` | API-key path only — the OAuth/Code Assist path uses a different set of hosts (see the table below) and has no key. |
 | `aider` | provider-dependent (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | Aider proxies whichever model backend you configure; the key follows that backend, not aider itself. |

@@ -375,11 +375,13 @@ the in-container Claude can drive `jailbee`.
 
 ### Does it read my host `~/.claude`?
 
-No. `<shared_dir>/claude` and `<shared_dir>/claude.json` are mounted as
-`~/.claude` / `~/.claude.json`, so one login, settings, MCP servers and agents
-are shared across the repo's containers and survive
-`jailbee destroy` / `jailbee new`. Claude runs its onboarding once, inside the
-first container.
+No. `<shared_dir>/claude` is mounted as `~/.claude`, so one login, settings,
+MCP servers and agents are shared across the repo's containers and survive
+`jailbee destroy` / `jailbee new`. Claude Code's global config
+(`.claude.json`) lives **inside** that mount: the golden image exports
+`CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+`(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Claude runs its onboarding once,
+inside the first container.
 
 → [Claude Code in the container](getting-started.md#claude-code-in-the-container)
 
