@@ -187,10 +187,23 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
     length, so a phantom name inflates that count without ever being a real,
     keepable column — reaching zero real columns from a single ordinary
     toggle. Filtering here, before either guard sees the set, is what keeps
-    that count honest. This filtering is read-only: the *stored* row is
-    never rewritten, so a column that disappears in one release and comes
-    back in another is restored from the user's original preference rather
-    than permanently dropped.
+    that count honest.
+
+    This function itself never writes: the filtered value is only returned,
+    not saved back over the stored row. That does **not** mean an unknown
+    name survives in storage, though — the filtered value becomes the
+    long-lived ``enabled`` / ``self._enabled_columns`` each front-end holds
+    for the rest of the session, and *unrelated* actions save that same
+    value verbatim (folding a repo group, in both the TUI and the Qt
+    window, saves a `ViewState` built from it). So the first save triggered
+    by anything, not just a columns edit, drops the unknown name from
+    storage for good. A column removed in one release and reintroduced in
+    a later one will not come back for a user who reopens the dashboard and
+    triggers any such save in between. This is accepted, not an oversight:
+    preserving it would mean threading an unfiltered set through both
+    front-ends' save sites, or teaching :mod:`jailbee.db.view_prefs` the
+    column vocabulary it deliberately knows nothing about, for a narrow
+    scenario not judged worth that machinery.
     """
     state = load_view_state(engine, frontend)
     if state.columns is not None:

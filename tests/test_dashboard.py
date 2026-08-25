@@ -1528,10 +1528,16 @@ def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(m
 
 
 def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
-    """Filtering happens only on the way out. The stored row itself must keep
-    the phantom name — a column that comes back in a later release should
-    reappear in the user's preference, not stay erased because it once
-    filtered out clean."""
+    """`seed_view_state` itself never writes: filtering happens only on the
+    value it returns, not on the stored row, which still has the phantom
+    name right after this call.
+
+    That is narrower than "the name survives the session" — it does not,
+    in general. Both front-ends hold the filtered value as their long-lived
+    `enabled` / `_enabled_columns`, and the next save triggered by *any*
+    action (e.g. folding a repo group) writes that filtered value back,
+    dropping the phantom from storage for good. This test only pins down
+    that this one function is not that save."""
     from sqlmodel import SQLModel, create_engine
 
     from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
