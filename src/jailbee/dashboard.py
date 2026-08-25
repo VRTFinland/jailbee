@@ -177,10 +177,26 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
     repo the user happened to launch from first would let one repo's block
     silently define their view everywhere. A repo-level block is reported as
     deprecated *and* as not seeded by ``Config.validate_runtime``.
+
+    A stored column set is filtered against :func:`all_column_names` on the
+    way out, falling back to :func:`default_columns` if nothing survives —
+    ``decode_names`` only validates JSON shape, not column vocabulary, so a
+    renamed or removed column would otherwise reach both front-ends raw. Each
+    front-end's own last-column guard (``dashboard_settings.toggle_current``
+    here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
+    length, so a phantom name inflates that count without ever being a real,
+    keepable column — reaching zero real columns from a single ordinary
+    toggle. Filtering here, before either guard sees the set, is what keeps
+    that count honest. This filtering is read-only: the *stored* row is
+    never rewritten, so a column that disappears in one release and comes
+    back in another is restored from the user's original preference rather
+    than permanently dropped.
     """
     state = load_view_state(engine, frontend)
     if state.columns is not None:
-        return state
+        known = frozenset(all_column_names())
+        filtered = tuple(n for n in state.columns if n in known)
+        return replace(state, columns=filtered or default_columns())
     gcfg = _global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
     save_view_state(engine, frontend, seeded)

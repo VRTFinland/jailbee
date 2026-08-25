@@ -1486,6 +1486,67 @@ def test_seed_view_state_seeds_the_two_frontends_independently(mocker):
     assert dashboard.seed_view_state(engine, FRONTEND_QT).columns == ("name", "state")
 
 
+def test_seed_view_state_filters_a_stale_column_name(mocker):
+    """A column that has since been renamed or removed must not survive into
+    the returned state — an all-phantom set would otherwise be able to reach
+    the front-ends' last-column guards without those guards ever firing
+    (the stored length is nonzero, but nothing real is left after both the
+    TUI's and the Qt window's own filtering skip the unknown name)."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "old_removed_col")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name",)
+
+
+def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(mocker):
+    """The empty-after-filtering case: if nothing in the stored set is a real
+    column any more, the built-in default set is used instead of an empty
+    tuple — the same "never zero columns" invariant the menu guard enforces
+    at the other end."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("old_removed_col",)))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == dashboard.default_columns()
+
+
+def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
+    """Filtering happens only on the way out. The stored row itself must keep
+    the phantom name — a column that comes back in a later release should
+    reappear in the user's preference, not stay erased because it once
+    filtered out clean."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "old_removed_col")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "old_removed_col")
+
+
 def _render_text(renderable: RenderableType) -> str:
     console = Console(record=True, width=200)
     console.print(renderable)

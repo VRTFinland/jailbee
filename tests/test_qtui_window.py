@@ -387,4 +387,23 @@ def test_the_last_column_cannot_be_unchecked(qtbot):
     act.trigger()  # see the note in test_toggling_a_columns_action_emits_and_updates
 
     assert win.enabled_columns() == ("name",)
+
+
+def test_a_stale_persisted_column_name_cannot_reach_zero_columns(qtbot):
+    """A persisted set can contain a name from a renamed/removed column
+    (``decode_names`` only validates JSON shape, not column vocabulary).
+    Unfiltered, that phantom would inflate the stored length past 1 without
+    the last-column guard noticing, and then get dropped by `_toggle_column`'s
+    own filtering anyway — reaching zero real columns from a single toggle.
+    The window must filter it out at construction instead, so only the one
+    real name remains and the ordinary last-column guard protects it."""
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "old_removed_col"))
+    qtbot.addWidget(win)
+    act = next(a for a in win.columns_menu.actions() if a.text() == "name")
+    act.trigger()
+
+    # Written as an equality against the real survivor, not a truthiness or
+    # membership check, so it fails on the empty-tuple outcome specifically —
+    # not merely on the phantom name still being present somewhere.
+    assert win.enabled_columns() == ("name",)
     assert act.isChecked() is True  # the action snaps back

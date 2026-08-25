@@ -48,6 +48,21 @@ _CADENCE_PRESETS = (1.0, 2.0, 3.0, 5.0, 10.0, 30.0)
 _LAYOUT_INDEX = {"table": 0, "cards": 1}
 
 
+def _filtered_columns(names: Sequence[str]) -> tuple[str, ...]:
+    """``names`` reduced to real columns, in canonical order.
+
+    Falls back to :func:`default_columns` when nothing survives — a stale
+    or hand-edited set (a renamed/removed column, or a caller passing
+    arbitrary names directly) must not be able to leave the window with
+    zero enabled columns, the exact state the last-column guard in
+    ``_toggle_column`` exists to prevent. Shared by ``__init__`` and
+    ``set_enabled_columns`` so the class is self-consistent regardless of
+    which one a caller uses.
+    """
+    filtered = tuple(n for n in all_column_names() if n in set(names))
+    return filtered or default_columns()
+
+
 class MainWindow(QMainWindow):
     """Live container view; emits action requests for the app to execute."""
 
@@ -77,7 +92,7 @@ class MainWindow(QMainWindow):
         self._card_style = card_style if card_style in ("compact", "grid") else "compact"
         self._pending_header_state = header_state
         self._enabled_columns: tuple[str, ...] = (
-            tuple(enabled_columns) if enabled_columns is not None else default_columns()
+            _filtered_columns(enabled_columns) if enabled_columns is not None else default_columns()
         )
         self.setWindowTitle("jailbee dashboard")
         self.resize(1000, 640)
@@ -170,7 +185,7 @@ class MainWindow(QMainWindow):
 
     def set_enabled_columns(self, names: Sequence[str]) -> None:
         """Restore a persisted set, syncing the menu's check states."""
-        self._enabled_columns = tuple(n for n in all_column_names() if n in set(names))
+        self._enabled_columns = _filtered_columns(names)
         for name, act in self._column_actions.items():
             act.setChecked(name in self._enabled_columns)
 
