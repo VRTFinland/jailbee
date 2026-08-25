@@ -4538,10 +4538,16 @@ def submodule_pr_cmd(
         )
         target = submodule_pr.select_target(subs, path)
     except submodule_pr.NoSubmoduleCandidatesError:
-        info(
-            f"No submodule in '{short}' has commits ahead of its base — nothing to "
-            f"open a PR for. Name one with PATH to publish it anyway."
-        )
+        if not subs:
+            # "Name one with PATH" is unactionable advice when there is
+            # nothing to name — distinguish "no submodules at all" from
+            # "submodules exist, none are ahead".
+            info(f"Container '{short}' has no submodules.")
+        else:
+            info(
+                f"No submodule in '{short}' has commits ahead of its base — nothing to "
+                f"open a PR for. Name one with PATH to publish it anyway."
+            )
         return
     except submodule_pr.AmbiguousSubmoduleTargetError as exc:
         error(f"Several submodules in '{short}' have commits to publish:")

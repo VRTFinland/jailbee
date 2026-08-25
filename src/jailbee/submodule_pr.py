@@ -288,16 +288,24 @@ class SubmodulePrState:
         `number=None` keeps whatever number is already recorded — the adoption
         path can learn the head before the number. `context`, when given,
         replaces the generic failure warning with a caller-supplied one.
+
+        The read-modify-write (`_load_map` through `config_set`) is one try
+        block, not just the write: `_load_map` itself calls
+        `incus.config_get`, which can raise `IncusError` too, and the whole
+        point of best-effort here is that a state-write failure after a
+        successful `gh pr create` degrades to a warning rather than crashing
+        the run — `ContainerLabelState.record` guards its own writes the same
+        way.
         """
-        current = _load_map(self._incus, self._full)
-        entry = dict(current.get(self._subpath, {}))
-        entry["branch"] = head
-        entry["author"] = author
-        entry["adopted"] = adopted
-        if number is not None:
-            entry["pr"] = number
-        current[self._subpath] = entry
         try:
+            current = _load_map(self._incus, self._full)
+            entry = dict(current.get(self._subpath, {}))
+            entry["branch"] = head
+            entry["author"] = author
+            entry["adopted"] = adopted
+            if number is not None:
+                entry["pr"] = number
+            current[self._subpath] = entry
             self._incus.config_set(self._full, STATE_KEY, json.dumps(current, sort_keys=True))
         except IncusError as exc:
             from jailbee.tui import warn

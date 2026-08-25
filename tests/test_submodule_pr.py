@@ -337,6 +337,23 @@ def test_state_record_survives_a_failed_write():
     _state(incus).record(head="user/x", author=True, adopted=False, number=12)
 
 
+def test_state_record_survives_a_failed_read(mocker):
+    """FIX 6 regression: the read-modify-write in `record` must be ONE try
+    block. `_load_map` calls `incus.config_get`, which can raise IncusError
+    too (e.g. a frozen container) — degrading to a warning here matters
+    exactly as much as it does for a failed `config_set`: a PR create can
+    have already succeeded on GitHub by the time this runs, and the run must
+    not crash after that."""
+    warn = mocker.patch("jailbee.tui.warn")
+    incus = MagicMock()
+    incus.config_get.side_effect = IncusError("container is frozen")
+
+    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+
+    incus.config_set.assert_not_called()
+    warn.assert_called_once()
+
+
 def test_recorded_paths_lists_the_map_keys():
     incus = MagicMock()
     incus.config_get.return_value = '{"lib/b": {"pr": 9}, "lib/a": {"pr": 12}}'

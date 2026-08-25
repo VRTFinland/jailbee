@@ -151,6 +151,21 @@ def test_no_candidates_exits_0_with_an_explanation(mocker, tmp_path):
 
     assert result.exit_code == 0
     assert "no submodule" in result.output.lower()
+    assert "Name one with PATH" in result.output
+
+
+def test_no_submodules_at_all_exits_0_without_the_unactionable_path_advice(mocker, tmp_path):
+    """FIX 6 regression: "Name one with PATH to publish it anyway" is
+    unactionable when the container has no submodules at all — there is
+    nothing to name. Distinguish it from the "submodules exist, none are
+    ahead" case above."""
+    _setup(mocker, tmp_path, candidates=[])
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "no submodules" in result.output.lower()
+    assert "PATH" not in result.output
 
 
 def test_unknown_path_exits_2(mocker, tmp_path):

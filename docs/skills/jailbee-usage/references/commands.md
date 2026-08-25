@@ -598,18 +598,22 @@ yet in the superproject's gitlink"), never as an error.
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create. |
 | `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
-| `--yes` / `-y` | Skip confirmations. Required when there is no TTY. |
+| `--yes` / `-y` | Skip confirmations. Required when there is no TTY. Does **not** skip the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | **Different meaning than in `jailbee pr`:** which branch to read **from the submodule** in the container — the escape hatch for a detached submodule or for publishing a branch other than the one checked out there. |
 | `--open` | Read the recorded PR for PATH and open it; no preflight, no transport, no `gh` mutation. Requires PATH when PRs are recorded for more than one path. No recorded PR is exit 1. |
 
-Base branch: `--base` > `submodule.<name>.branch` in the *parent level's*
-`.gitmodules` (unless `.`) > the sub-repo's `<remote>/HEAD` > `main`. The
-remote is resolved **per submodule**, since a submodule may name its upstream
-something the superproject does not — this cannot reuse the container-side
-submodule-default logic, which hardcodes `origin` for its own callers.
+Base branch: `--base` > `submodule.<name>.branch` declared in `.gitmodules`
+(unless `.`) > the sub-repo's `<remote>/HEAD` > `main`. The declaring
+`.gitmodules` is found by descending from the repo root level by level —
+correct for both a top-level submodule (`libs/foo`, declared by
+`repo_root/.gitmodules`) and a nested one (declared by its immediate
+parent's `.gitmodules`). The remote is resolved **per submodule**, since a
+submodule may name its upstream something the superproject does not — this
+cannot reuse the container-side submodule-default logic, which hardcodes
+`origin` for its own callers.
 
 Head branch (the name pushed to the submodule's upstream): `--as` > Claude's
 proposal (`claude.ai_pr_branch`, confirmed interactively) > the branch the
