@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -1450,11 +1451,22 @@ def test_seed_view_state_leaves_an_existing_row_alone(mocker):
     assert state.columns == ("name",)
 
 
-def test_seed_view_state_ignores_a_repo_level_block(mocker, tmp_path):
-    """The seeded value is a personal, cross-repo setting, so it comes from
-    the personal layer only. Seeding from whichever repo the user happened to
+def test_seed_view_state_ignores_a_repo_level_block(mocker):
+    """The seeded value is a personal, cross-repo setting, so it must come
+    from the global layer only — never the repo layer, even when one exists
+    and disagrees with it. Seeding from whichever repo the user happened to
     launch from first would let one repo silently define their view
-    everywhere."""
+    everywhere.
+
+    The global and (mocked) repo layers are given *different* `dashboard:`
+    blocks on purpose: if `seed_view_state` ever started consulting the
+    repo layer, the result would flip to the repo's columns and
+    `load_config` would stop being uncalled. The previous version of this
+    test had no repo config to differ against, so it passed identically
+    against an implementation that *did* consult one — it only pinned
+    "default global config -> default columns", never the "repo is
+    ignored" claim in its own name.
+    """
     from sqlmodel import SQLModel, create_engine
 
     from jailbee.db.view_prefs import FRONTEND_TUI
@@ -1462,12 +1474,15 @@ def test_seed_view_state_ignores_a_repo_level_block(mocker, tmp_path):
 
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
-    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
-    # A repo config is present but must not be consulted: seed_view_state
-    # takes no cwd_config argument at all.
+    gcfg = GlobalConfig(dashboard=dashboard.ColumnConfig(fields=["name", "state"]))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    repo_cfg = mocker.Mock(dashboard=dashboard.ColumnConfig(fields=["ip", "mem"]))
+    load_config = mocker.patch.object(dashboard, "load_config", return_value=repo_cfg)
+
     state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
-    assert state.columns == dashboard.default_columns()
+    assert state.columns == ("name", "state")  # the global block's answer, not the repo's
+    load_config.assert_not_called()  # the repo layer is never even read
 
 
 def test_seed_view_state_seeds_the_two_frontends_independently(mocker):
@@ -2304,10 +2319,51 @@ def test_render_marks_a_selected_repo_header(tmp_path):
     # The group is unfolded, so its fold marker is `▾`; `▸` can only be the
     # selection gutter. That makes this assertion discriminating rather than
     # matching whichever glyph happens to be present.
-    header_line = next(
-        ln for ln in on_header.splitlines() if "alpha" in ln and "alpha-one" not in ln
-    )
+    #
+    # The exclusion clause must name what the container row actually
+    # contains: `display_name` strips the `<repo>-` prefix, so the row reads
+    # "one", never "alpha-one" — filtering on the full name was inert (it
+    # excluded nothing, since that string never appears in either line) and
+    # would have let the container's own row satisfy this `next()` by
+    # accident if it had ever picked up a `▸` of its own.
+    header_line = next(ln for ln in on_header.splitlines() if "alpha" in ln and "one" not in ln)
     assert "▸" in header_line
+
+
+def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path):
+    """`render` used to give the group-header row's first cell a 2-char
+    gutter unconditionally, but a container row's first cell only got one
+    when `f.name == "name"`. With `name` disabled via the settings overlay
+    and some other field first, the header ends up indented two columns to
+    the right of its own container rows — this is now reachable since
+    disabling `name` from the settings UI is a real, supported action.
+    Fails against the old `f.name == "name"` gating, which never puts a
+    gutter on the container row here (its first field is `state`, not
+    `name`) while the header row still gets one unconditionally."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state", "network"),  # `name` disabled; `state` is first
+        )
+    )
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    header_line = next(ln for ln in lines if "alpha" in ln)
+    data_line = next(ln for ln in lines if "Running" in ln)
+    # Both lines start with the Panel's own border+padding ("│ "), identical
+    # on every row, so strip exactly that one border character before
+    # measuring each row's own indentation — comparing the raw lines
+    # (border included) would always read indent 0 for both, since neither
+    # starts with a literal space.
+    header_indent = len(header_line[1:]) - len(header_line[1:].lstrip(" "))
+    data_indent = len(data_line[1:]) - len(data_line[1:].lstrip(" "))
+    assert header_indent == data_indent
 
 
 def test_render_counts_every_container_even_when_folded(tmp_path):
@@ -2434,3 +2490,107 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
     assert "one" in out
     assert "settings" in out
     assert "Fields" in out
+
+
+# ---------------------------------------------------------------------------
+# run() loop: a fake terminal, driven by a scripted key sequence
+# ---------------------------------------------------------------------------
+
+
+def _drive_run(mocker, key_sequence: list[bytes]) -> int:
+    """Run the real ``dashboard.run()`` key loop with a fake terminal.
+
+    Feeds ``key_sequence`` one key per main-loop iteration (``os.read`` is
+    mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
+    always terminates even if a test's own key list doesn't. Everything
+    that would touch a real terminal, the state DB, or Incus is mocked;
+    ``gather_live`` returns no containers, so these tests exercise overlay
+    and persistence behaviour without depending on the background
+    refresher thread ever publishing a snapshot before the key loop reads
+    it (a real race the tests must not depend on winning).
+    """
+    mocker.patch.object(
+        dashboard, "collect_config_paths", return_value=[Path("/x/.jailbee/config.yaml")]
+    )
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
+    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+
+    mock_stdin = mocker.Mock()
+    mock_stdin.isatty.return_value = True
+    mock_stdin.fileno.return_value = 0
+    mocker.patch.object(dashboard.sys, "stdin", mock_stdin)
+    mock_stdout = mocker.Mock()
+    mock_stdout.isatty.return_value = True
+    mocker.patch.object(dashboard.sys, "stdout", mock_stdout)
+
+    mocker.patch.object(dashboard.termios, "tcgetattr", return_value=object())
+    mocker.patch.object(dashboard.termios, "tcsetattr")
+    mocker.patch.object(dashboard.tty, "setcbreak")
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+
+    padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
+
+    return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+
+
+def test_run_degrades_when_save_view_state_fails(mocker):
+    """A DB write failure on the keypress path (fold key, Enter on a header,
+    the settings overlay toggle) must not crash the session.
+
+    Before this branch the TUI never wrote to the DB at all, so a failing
+    write is a new failure mode: ``run()``'s own ``try`` only catches
+    ``KeyboardInterrupt``, so an unguarded ``save_view_state`` propagating
+    a ``database is locked`` (or any other write failure) would end the
+    whole dashboard with a traceback. Fails if ``persist_view_state``'s
+    try/except is removed and the exception is left to propagate.
+    """
+    save = mocker.patch.object(
+        dashboard, "save_view_state", side_effect=OSError("database is locked")
+    )
+    # "S" opens the settings overlay, Space toggles the field under the
+    # cursor (a fold-key press on the Fields tab) — one of the three
+    # persist_view_state call sites, reached with no live groups at all.
+    rc = _drive_run(mocker, [b"S", b" "])
+
+    assert rc == 0  # run() returned normally, no exception propagated
+    save.assert_called_once()  # the write was attempted, and it failed
+
+
+def test_run_persists_view_state_when_the_write_succeeds(mocker):
+    """Sanity check for the harness itself: the same key sequence, without
+    a failing ``save_view_state``, writes through normally."""
+    from jailbee.db.view_prefs import FRONTEND_TUI
+
+    save = mocker.patch.object(dashboard, "save_view_state")
+    rc = _drive_run(mocker, [b"S", b" "])
+
+    assert rc == 0
+    save.assert_called_once()
+    _engine, frontend, state = save.call_args.args
+    assert frontend == FRONTEND_TUI
+    assert isinstance(state, dashboard.ViewState)
+
+
+def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
+    """F2/S must mirror ``h``'s own toggle: pressing it while another
+    overlay (the action menu, help) is open switches to settings, not just
+    closes whatever was open.
+
+    There is no live group in this harness (``gather_live`` returns
+    ``[]``), so a bare-table fold keypress (`Space` with no overlay open)
+    has nothing to act on and never reaches ``save_view_state`` — see
+    ``fold_target``. That makes ``save_view_state`` firing after
+    ``h`` then ``S`` then `Space` a discriminating signal that ``S``
+    actually opened the settings overlay (whose own `Space`/fold handling
+    unconditionally calls ``persist_view_state``), rather than merely
+    closing help and leaving the bare table's fold key to reject the
+    keypress silently. Fails if `"settings"` goes back to being grouped
+    with `("cancel", "quit")`, which only closes whatever overlay is open.
+    """
+    save = mocker.patch.object(dashboard, "save_view_state")
+    rc = _drive_run(mocker, [b"h", b"S", b" "])
+
+    assert rc == 0
+    save.assert_called_once()

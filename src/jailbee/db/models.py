@@ -163,6 +163,13 @@ class ViewPrefs(SQLModel, table=True):
     ``folded_repos`` is a JSON list of folded repo prefixes. Prefixes that
     are not currently registered are kept, so a repo whose containers are
     momentarily gone does not silently unfold.
+
+    Two concurrent dashboards of the *same* front-end (two `jailbee
+    dashboard` processes, or two `jailbee gui` windows) share this one row
+    with no merge: each write is a full overwrite, so whichever process
+    saves last wins and the other's unsaved change is silently lost. This
+    is not guarded against — an unusual setup, and the two front-ends
+    already tolerate losing a concurrent write (see `db/view_prefs.py`).
     """
 
     __tablename__ = "view_prefs"

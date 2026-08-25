@@ -583,6 +583,18 @@ def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
     render, including its two quirks: an explicit ``fields`` list wins
     outright, and ``hide`` replaces the built-in list rather than extending
     it.
+
+    That guarantee holds fully for a ``fields:`` block — naming a column
+    forces ``default_dashboard=True`` on it (see
+    ``table_format.apply_column_config``), overriding whatever the current
+    built-in default says. It does **not** hold for a ``hide:``-shaped
+    block (``fields`` empty/absent): a column *not* named in ``hide``
+    passes through with its current spec unchanged, so its inclusion here
+    is decided by :func:`table_format.shows_by_default_in_dashboard` as it
+    stands *today* — not as it stood when the block was written. IP left
+    the dashboard defaults in this same release (Part 1), so a ``hide:``
+    block that never mentioned ``ip`` seeds a set without it, even though
+    that block used to render IP for its user.
     """
     resolved = table_format.apply_column_config(
         ls_field_specs(now=datetime.now(UTC), all_repos=False),
@@ -620,6 +632,11 @@ def settings_repo_prefixes(groups: list[RepoGroup], folded: frozenset[str]) -> t
     A folded repo whose containers have since gone draws no group at all, so
     listing only ``groups`` would leave it folded forever with no way back.
     Deduped, on-screen groups first, absent folded prefixes sorted after them.
+
+    This is a snapshot taken once, when the overlay opens (see
+    ``open_settings_overlay`` in ``run()``) — a repo registered or a
+    container created/destroyed while the Repos tab is open does not appear
+    or disappear from the list until the overlay is closed and reopened.
     """
     on_screen = [g.prefix for g in groups if g.containers]
     return tuple(dict.fromkeys(on_screen + sorted(folded)))
@@ -932,10 +949,12 @@ def render(
     fields = visible_fields(now, visible, enabled)
 
     table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
-    for f in fields:
-        # The NAME column carries a 2-char arrow gutter on data rows; pad its
-        # header so the column lines up.
-        header = ("  " + f.header) if f.name == "name" else f.header
+    for i, f in enumerate(fields):
+        # The *first* column carries a 2-char arrow gutter on data rows,
+        # whichever field that happens to be — the settings overlay lets
+        # `name` be disabled, so the gutter cannot be pinned to that field
+        # by name. Pad its header so the column lines up.
+        header = ("  " + f.header) if i == 0 else f.header
         table.add_column(header, justify=f.justify)
 
     if not all_containers:
@@ -969,13 +988,17 @@ def render(
                     selected is not None and selected.kind == "container" and selected.key == c.name
                 )
                 cells: list[str] = []
-                for f in fields:
-                    if f.name == "name":
+                for i, f in enumerate(fields):
+                    # `name` shows the full container name (not the
+                    # repo-prefix-stripped display name) for an orphan row,
+                    # since there is no known repo to have stripped a prefix
+                    # from — independent of whether `name` happens to be the
+                    # first column.
+                    value = c.name if (f.name == "name" and is_orphan) else f.cell(c)
+                    if i == 0:
                         gutter = "[bold cyan]▸[/] " if is_sel else "  "
-                        name_val = c.name if is_orphan else f.cell(c)
-                        cells.append(gutter + name_val)
-                    else:
-                        cells.append(f.cell(c))
+                        value = gutter + value
+                    cells.append(value)
                 table.add_row(*cells, style="bold bright_white" if is_sel else None)
 
     body: list[RenderableType] = [table, ""]
@@ -1365,6 +1388,37 @@ def run(
         notice = text
         notice_until = time.monotonic() + _NOTICE_SECONDS
 
+    def persist_view_state(state: ViewState) -> None:
+        """Write ``state`` to ``view_prefs``, degrading instead of crashing.
+
+        Three call sites in this loop commit to SQLite straight from a
+        keypress (the fold key, Enter on a header, the overlay toggle).
+        ``run()``'s own ``try`` only catches ``KeyboardInterrupt``, so a
+        write failure here (``database is locked`` against a concurrent
+        background worker, a read-only state dir) would otherwise end the
+        whole session with a traceback. The fold/toggle already took effect
+        on screen by the time this runs — only persistence is lost.
+        """
+        try:
+            save_view_state(engine, FRONTEND_TUI, state)
+        except Exception:
+            log.debug("failed to save dashboard view state", exc_info=True)
+            set_notice("could not save view settings")
+
+    def open_settings_overlay() -> SettingsState:
+        """A fresh settings overlay over the current ``groups``/``folded``.
+
+        A small closure rather than inlining twice: opening from the plain
+        table and switching in from another overlay (see the `F2` handling
+        below) both need it.
+        """
+        return open_settings(
+            field_names=all_column_names(),
+            enabled=frozenset(enabled if enabled is not None else default_columns()),
+            repo_prefixes=settings_repo_prefixes(groups, folded),
+            folded=folded,
+        )
+
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     try:
         tty.setcbreak(fd)
@@ -1446,12 +1500,21 @@ def run(
                 if key == "interrupt":
                     break
                 if overlay is not None:
-                    if key in ("cancel", "quit", "settings"):
+                    if key in ("cancel", "quit"):
                         overlay = None
                     elif key == "help":
                         # One slot, so help replaces the menu rather than
                         # stacking on it — and toggles itself shut.
                         overlay = None if overlay == "help" else "help"
+                    elif key == "settings":
+                        # Mirrors help's own toggle, one line up: F2/S
+                        # switches to settings from any other overlay (the
+                        # action menu, help) instead of just closing it, and
+                        # toggles itself shut when settings is already open.
+                        if isinstance(overlay, SettingsState):
+                            overlay = None
+                        else:
+                            overlay = open_settings_overlay()
                     elif isinstance(overlay, SettingsState):
                         if key in ("up", "down"):
                             overlay = move_settings(overlay, -1 if key == "up" else 1)
@@ -1461,7 +1524,7 @@ def run(
                             overlay = toggle_current(overlay)
                             enabled = enabled_names(overlay)
                             folded = overlay.folded
-                            save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
+                            persist_view_state(ViewState(enabled, folded))
                     elif isinstance(overlay, MenuState):
                         if key in ("up", "down"):
                             overlay = move_menu(overlay, -1 if key == "up" else 1)
@@ -1481,7 +1544,7 @@ def run(
                 elif key == "enter":
                     if selected is not None and selected.kind == "repo":
                         folded = toggle_folded(folded, selected.key)
-                        save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
+                        persist_view_state(ViewState(enabled, folded))
                     else:
                         container = container_of(selected)
                         overlay = open_menu(groups, container)
@@ -1494,16 +1557,11 @@ def run(
                         set_notice("No repo group is selected")
                     else:
                         folded = toggle_folded(folded, prefix)
-                        save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
+                        persist_view_state(ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
                 elif key == "settings":
-                    overlay = open_settings(
-                        field_names=all_column_names(),
-                        enabled=frozenset(enabled if enabled is not None else default_columns()),
-                        repo_prefixes=settings_repo_prefixes(groups, folded),
-                        folded=folded,
-                    )
+                    overlay = open_settings_overlay()
                 elif key.startswith("action:"):
                     container = container_of(selected)
                     verb = quick_verb(groups, container, key)
