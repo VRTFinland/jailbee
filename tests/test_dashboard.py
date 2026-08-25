@@ -467,32 +467,69 @@ def test_carry_forward_git_status_empty_prev_is_noop():
     assert new[0].containers[0].git_status is None
 
 
-def test_selectable_names_flattens_in_group_order():
+def test_selectable_rows_interleaves_headers_and_containers():
+    """Repo headers are selectable rows. That is what lets `Space` reach a
+    group whose containers are hidden — and it makes the cursor behave like
+    the tree it is drawing."""
     groups = [
-        dashboard.RepoGroup(
-            "a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a"), _ci("a-2", "a")]
-        ),
-        dashboard.RepoGroup("b", None, None, [_ci("b-1", "b")]),
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a"), _ci("a-2", "a")]),
+        dashboard.RepoGroup("b", "/b", None, [_ci("b-1", "b")]),
     ]
-    assert dashboard.selectable_names(groups) == ["a-1", "a-2", "b-1"]
+    rows = dashboard.selectable_rows(groups)
+    assert rows == [
+        dashboard.Row("repo", "a"),
+        dashboard.Row("container", "a-1"),
+        dashboard.Row("container", "a-2"),
+        dashboard.Row("repo", "b"),
+        dashboard.Row("container", "b-1"),
+    ]
+
+
+def test_selectable_rows_skips_a_folded_groups_containers():
+    """A folded group keeps its header — that is how you unfold it — and
+    contributes none of its containers. Its neighbours are untouched."""
+    groups = [
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")]),
+        dashboard.RepoGroup("b", "/b", None, [_ci("b-1", "b")]),
+    ]
+    assert dashboard.selectable_rows(groups, frozenset({"a"})) == [
+        dashboard.Row("repo", "a"),
+        dashboard.Row("repo", "b"),
+        dashboard.Row("container", "b-1"),
+    ]
+
+
+def test_selectable_rows_omits_an_empty_group():
+    """An empty group draws no header either — `render` already skips it, and
+    a cursor stop on an invisible row would be a dead keypress."""
+    groups = [dashboard.RepoGroup("a", "/a", None, [])]
+    assert dashboard.selectable_rows(groups) == []
 
 
 def test_move_selection_clamps_at_edges():
-    names = ["x", "y", "z"]
-    assert dashboard.move_selection(names, None, 1) == "x"
-    assert dashboard.move_selection(names, "x", -1) == "x"  # clamp at top
-    assert dashboard.move_selection(names, "z", 1) == "z"  # clamp at bottom
-    assert dashboard.move_selection(names, "y", 1) == "z"
-    assert dashboard.move_selection([], "y", 1) is None
+    rows = [dashboard.Row("repo", "x"), dashboard.Row("container", "x-1")]
+    assert dashboard.move_selection(rows, None, 1) == rows[0]
+    assert dashboard.move_selection(rows, rows[0], -1) == rows[0]  # clamp at top
+    assert dashboard.move_selection(rows, rows[1], 1) == rows[1]  # clamp at bottom
+    assert dashboard.move_selection(rows, rows[0], 1) == rows[1]
+    assert dashboard.move_selection([], rows[0], 1) is None
 
 
 def test_reconcile_selection_keeps_or_clamps():
-    assert dashboard.reconcile_selection(["a", "b"], "b", 0) == "b"
-    # 'b' vanished, last_index 1 clamps into the new shorter list
-    assert dashboard.reconcile_selection(["a"], "b", 1) == "a"
-    assert dashboard.reconcile_selection([], "b", 0) is None
-    # nothing selected yet -> first
-    assert dashboard.reconcile_selection(["a", "b"], None, 0) == "a"
+    a, b = dashboard.Row("container", "a"), dashboard.Row("container", "b")
+    assert dashboard.reconcile_selection([a, b], b, 0) == b
+    assert dashboard.reconcile_selection([a], b, 1) == a
+    assert dashboard.reconcile_selection([], b, 0) is None
+    assert dashboard.reconcile_selection([a, b], None, 0) == a
+
+
+def test_container_of_narrows_a_header_row_to_none():
+    """The action path takes a container name. A header row has none, so it
+    falls into the existing 'nothing selected' notice rather than needing new
+    gating at every call site."""
+    assert dashboard.container_of(dashboard.Row("container", "a-1")) == "a-1"
+    assert dashboard.container_of(dashboard.Row("repo", "a")) is None
+    assert dashboard.container_of(None) is None
 
 
 def _session_verbs(actions: list[tuple[str, str]]) -> list[str]:
@@ -1503,7 +1540,7 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
     out = _render_text(
         dashboard.render(
             groups,
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=now,
             last_refresh_age=1.0,
             interval=3.0,
@@ -1601,7 +1638,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     out = _render_text(
         dashboard.render(
             [g],
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
@@ -1627,7 +1664,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     kwargs = {
-        "selected": "alpha-one",
+        "selected": dashboard.Row("container", "alpha-one"),
         "now": datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
         "last_refresh_age": 1.0,
         "interval": 3.0,
@@ -1847,7 +1884,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
     out = _render_text(
         dashboard.render(
             [g],
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,

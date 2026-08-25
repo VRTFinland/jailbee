@@ -292,29 +292,69 @@ def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[Repo
                 c.git_status = prev_status[c.name]
 
 
-def selectable_names(groups: list[RepoGroup]) -> list[str]:
-    """Flat list of container names in display order (headers excluded)."""
-    return [c.name for g in groups for c in g.containers]
+@dataclass(frozen=True)
+class Row:
+    """One cursor stop in the dashboard: a repo header or a container.
+
+    Headers are selectable so a folded group can be reached and unfolded, and
+    so the cursor behaves like the tree it is drawing. ``key`` is the repo
+    prefix for a header and the container name for a container — the two
+    namespaces are kept apart by ``kind`` rather than by a sentinel prefix,
+    which would break the moment a container name looked like a repo one.
+    """
+
+    kind: Literal["repo", "container"]
+    key: str
 
 
-def move_selection(names: list[str], current: str | None, delta: int) -> str | None:
+def selectable_rows(groups: list[RepoGroup], folded: frozenset[str] = frozenset()) -> list[Row]:
+    """Cursor stops in display order.
+
+    Every non-empty group contributes its header, folded or not; a folded
+    group contributes none of its containers. An empty group contributes
+    nothing at all, because :func:`render` draws no header for one and a
+    cursor stop on an invisible row is a dead keypress.
+    """
+    rows: list[Row] = []
+    for g in groups:
+        if not g.containers:
+            continue
+        rows.append(Row("repo", g.prefix))
+        if g.prefix in folded:
+            continue
+        rows += [Row("container", c.name) for c in g.containers]
+    return rows
+
+
+def move_selection(rows: list[Row], current: Row | None, delta: int) -> Row | None:
     """Move the highlight by ``delta`` rows, clamped at both ends."""
-    if not names:
+    if not rows:
         return None
-    if current not in names:
-        return names[0]
-    idx = names.index(current)
-    return names[max(0, min(len(names) - 1, idx + delta))]
+    if current not in rows:
+        return rows[0]
+    idx = rows.index(current)
+    return rows[max(0, min(len(rows) - 1, idx + delta))]
 
 
-def reconcile_selection(names: list[str], current: str | None, last_index: int) -> str | None:
+def reconcile_selection(rows: list[Row], current: Row | None, last_index: int) -> Row | None:
     """Keep ``current`` if still present; else clamp ``last_index`` into the
     refreshed list (nearest remaining row). None when the list is empty."""
-    if not names:
+    if not rows:
         return None
-    if current in names:
+    if current in rows:
         return current
-    return names[min(last_index, len(names) - 1)]
+    return rows[min(last_index, len(rows) - 1)]
+
+
+def container_of(row: Row | None) -> str | None:
+    """The container a row acts on, or None for a header or no selection.
+
+    Every action path (``open_menu``, ``quick_verb``, ``view_only_note``,
+    ``dispatch``) takes a container name, so a header row narrows to None
+    here and falls into their existing "nothing selected" handling rather
+    than each of them learning about rows.
+    """
+    return row.key if row is not None and row.kind == "container" else None
 
 
 _NETWORK_MODES: tuple[str, ...] = ("strict", "loose")
@@ -747,7 +787,7 @@ def _hint_line(overlay: Overlay | None) -> str:
 
 def render(
     groups: list[RepoGroup],
-    selected: str | None,
+    selected: Row | None,
     *,
     now: datetime,
     last_refresh_age: float,
@@ -797,7 +837,7 @@ def render(
             label_style = "bold yellow" if is_orphan else "bold cyan"
             table.add_row(f"[{label_style}]{label}[/]", *([""] * (len(fields) - 1)))
             for c in g.containers:
-                is_sel = c.name == selected
+                is_sel = selected is not None and selected.kind == "container" and selected.key == c.name
                 cells: list[str] = []
                 for f in fields:
                     if f.name == "name":
@@ -1169,8 +1209,9 @@ def run(
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
-    selected: str | None = None
+    selected: Row | None = None
     sel_index = 0
+    folded: frozenset[str] = frozenset()
     overlay: Overlay | None = None
     notice: str | None = None
     notice_until = 0.0
@@ -1225,19 +1266,19 @@ def run(
                     groups = shared_groups
                     last_full = shared_last_full
                     refreshing = shared_refreshing
-                names = selectable_names(groups)
-                if isinstance(overlay, MenuState) and overlay.container not in names:
+                rows = selectable_rows(groups, folded)
+                if isinstance(overlay, MenuState) and Row("container", overlay.container) not in rows:
                     # The menu's container vanished under it (destroyed, or its
                     # repo dropped out of the registry) — close rather than
                     # dispatch at a name that is no longer there.
                     set_notice(f"'{overlay.container}' is gone — menu closed")
                     overlay = None
                 if isinstance(overlay, MenuState):
-                    selected = overlay.container  # pinned while the menu is open
+                    selected = Row("container", overlay.container)  # pinned while the menu is open
                 else:
-                    selected = reconcile_selection(names, selected, sel_index)
-                if selected in names:
-                    sel_index = names.index(selected)
+                    selected = reconcile_selection(rows, selected, sel_index)
+                if selected in rows:
+                    sel_index = rows.index(selected)
                 if notice is not None and time.monotonic() >= notice_until:
                     notice = None
                 age = (time.monotonic() - last_full) if last_full else 0.0
@@ -1282,22 +1323,24 @@ def run(
                 if key == "quit":
                     break
                 if key in ("up", "down"):
-                    selected = move_selection(names, selected, -1 if key == "up" else 1)
-                    if selected in names:
-                        sel_index = names.index(selected)
+                    selected = move_selection(rows, selected, -1 if key == "up" else 1)
+                    if selected in rows:
+                        sel_index = rows.index(selected)
                 elif key == "enter":
-                    overlay = open_menu(groups, selected)
-                    if overlay is None and selected is not None:
-                        note = view_only_note(groups, selected)
-                        set_notice(note or f"No actions available for '{selected}'")
+                    container = container_of(selected)
+                    overlay = open_menu(groups, container)
+                    if overlay is None and container is not None:
+                        note = view_only_note(groups, container)
+                        set_notice(note or f"No actions available for '{container}'")
                 elif key == "help":
                     overlay = "help"
                 elif key.startswith("action:"):
-                    verb = quick_verb(groups, selected, key)
-                    if verb is not None and selected is not None:
-                        dispatch(selected, verb)
+                    container = container_of(selected)
+                    verb = quick_verb(groups, container, key)
+                    if verb is not None and container is not None:
+                        dispatch(container, verb)
                     else:
-                        set_notice(quick_reject_note(groups, selected, key))
+                        set_notice(quick_reject_note(groups, container, key))
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:
