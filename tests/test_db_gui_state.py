@@ -58,19 +58,15 @@ def test_save_is_upsert_not_duplicate() -> None:
     assert rows[0].layout == "table"
 
 
-def test_card_style_and_collapsed_repos_round_trip() -> None:
+def test_card_style_round_trips() -> None:
     from jailbee.db.gui_state import load_gui_state, save_gui_state
     from jailbee.db.models import GuiState
 
     engine = _engine()
-    save_gui_state(
-        engine,
-        GuiState(id=1, card_style="grid", collapsed_repos='["gisgro","other"]'),
-    )
+    save_gui_state(engine, GuiState(id=1, card_style="grid"))
     loaded = load_gui_state(engine)
 
     assert loaded.card_style == "grid"
-    assert loaded.collapsed_repos == '["gisgro","other"]'
 
 
 def test_defaults_when_never_saved() -> None:
@@ -78,4 +74,3 @@ def test_defaults_when_never_saved() -> None:
 
     loaded = load_gui_state(_engine())
     assert loaded.card_style == "compact"
-    assert loaded.collapsed_repos is None

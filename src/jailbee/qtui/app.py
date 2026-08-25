@@ -7,7 +7,6 @@ layer and executes actions as ``jailbee`` subprocesses.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -168,7 +167,6 @@ class AppController(QObject):
                 refresh_interval=self._interval,
                 refresh_paused=self._paused,
                 card_style=self._window.current_card_style(),
-                collapsed_repos=json.dumps(sorted(self._window.collapsed_repos())),
             ),
         )
 
@@ -444,15 +442,6 @@ def run(
     paused = state.refresh_paused
     git_enabled = not no_git
 
-    def _decode_collapsed(raw: str | None) -> set[str]:
-        if not raw:
-            return set()
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            return set()
-        return {str(x) for x in data} if isinstance(data, list) else set()
-
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
         git_enabled=git_enabled,
@@ -462,7 +451,6 @@ def run(
         header_state=state.table_header_state,
         card_style=state.card_style,
     )
-    window.card_view.set_collapsed(_decode_collapsed(state.collapsed_repos))
 
     thread = QThread()
     worker = RefreshWorker(

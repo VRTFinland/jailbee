@@ -35,7 +35,6 @@ def load_gui_state(engine: Engine) -> GuiState:
             refresh_interval=row.refresh_interval,
             refresh_paused=row.refresh_paused,
             card_style=row.card_style,
-            collapsed_repos=row.collapsed_repos,
         )
 
 
@@ -51,5 +50,4 @@ def save_gui_state(engine: Engine, state: GuiState) -> None:
         row.refresh_interval = state.refresh_interval
         row.refresh_paused = state.refresh_paused
         row.card_style = state.card_style
-        row.collapsed_repos = state.collapsed_repos
         session.commit()

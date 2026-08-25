@@ -262,7 +262,6 @@ def test_controller_persists_on_layout_change(mocker):
     window.current_layout.return_value = "table"
     window.table_header_state.return_value = "Zm9v"
     window.current_card_style.return_value = "compact"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -289,7 +288,6 @@ def test_persist_on_close_writes_snapshot(mocker):
     window.current_layout.return_value = "cards"
     window.table_header_state.return_value = "AAAA"
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = {"gisgro"}
     controller = qapp.AppController(
         window, mocker.Mock(), interval=5.0, engine=mocker.sentinel.engine, paused=True
     )
@@ -300,10 +298,9 @@ def test_persist_on_close_writes_snapshot(mocker):
     assert state.refresh_interval == 5.0
     assert state.refresh_paused is True
     assert state.card_style == "grid"
-    assert state.collapsed_repos == '["gisgro"]'
 
 
-def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
+def test_persist_writes_card_style(qtbot, mocker):
     """Round-trips through a real in-memory engine (not a mocked
     save_gui_state) to exercise the actual GuiState(...) construction in
     _persist, mirroring test_db_gui_state.py's _engine() helper."""
@@ -319,19 +316,16 @@ def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
     controller = qapp.AppController(window, mocker.Mock(), interval=3.0, engine=engine)
 
     window._switch_card_style("grid")
-    window.card_view.set_collapsed({"gisgro"})
-    controller.on_collapsed_changed()
+    controller.on_card_style_changed("grid")
 
     saved = load_gui_state(engine)
     assert saved.card_style == "grid"
-    assert saved.collapsed_repos == '["gisgro"]'
 
 
 def test_on_card_style_changed_persists(mocker):
     save = mocker.patch("jailbee.db.gui_state.save_gui_state")
     window = mocker.Mock()
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -341,14 +335,12 @@ def test_on_card_style_changed_persists(mocker):
     save.assert_called_once()
     _engine_arg, state_arg = save.call_args.args
     assert state_arg.card_style == "grid"
-    assert state_arg.collapsed_repos == "[]"
 
 
-def test_run_restores_card_style_and_collapsed_repos(mocker):
+def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
     mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
-    window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
@@ -361,7 +353,6 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
             refresh_interval=7.0,
             refresh_paused=False,
             card_style="grid",
-            collapsed_repos='["a", "b"]',
         ),
     )
     mocker.patch("jailbee.db.gui_state.save_gui_state")
@@ -370,28 +361,6 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
 
     _args, kwargs = mock_window_cls.call_args
     assert kwargs["card_style"] == "grid"
-    window.card_view.set_collapsed.assert_called_once_with({"a", "b"})
-
-
-def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
-    mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
-    mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
-    window = mock_window_cls.return_value
-    mocker.patch("jailbee.qtui.app.QThread")
-    mocker.patch("jailbee.qtui.app.RefreshWorker")
-    mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
-    from jailbee.db.models import GuiState
-
-    mocker.patch(
-        "jailbee.db.gui_state.load_gui_state",
-        return_value=GuiState(collapsed_repos="not-json"),
-    )
-    mocker.patch("jailbee.db.gui_state.save_gui_state")
-
-    qapp.run(mocker.Mock(), None, interval=None, git_interval=10.0, no_git=False)
-
-    window.card_view.set_collapsed.assert_called_once_with(set())
 
 
 def _controller_with_group(

@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db.models import SchemaMeta
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def state_dir() -> Path:
@@ -75,11 +75,36 @@ def _migrate_to_v4(conn: Connection) -> None:
         conn.exec_driver_sql("ALTER TABLE gui_state ADD COLUMN collapsed_repos VARCHAR")
 
 
+def _migrate_to_v5(conn: Connection) -> None:
+    """v4 -> v5: move the Qt card view's folded set from
+    ``gui_state.collapsed_repos`` into ``view_prefs('qt').folded_repos``.
+
+    ``create_all`` (run before the migration loop in ``_ensure_schema``)
+    already created ``view_prefs``, so this step only copies. It inserts
+    only when no ``qt`` row exists: ``_ensure_schema`` re-runs the whole
+    chain if the process dies before the version bump, and a second copy
+    would revert folds the user has changed since. The physical
+    ``gui_state.collapsed_repos`` column is deliberately left in place —
+    SQLite column drops are avoidable here, and an unused nullable column
+    is harmless.
+    """
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(gui_state)")}
+    if "collapsed_repos" not in cols:
+        return
+    conn.exec_driver_sql(
+        "INSERT INTO view_prefs (frontend, columns, folded_repos) "
+        "SELECT 'qt', NULL, collapsed_repos FROM gui_state "
+        "WHERE id = 1 AND collapsed_repos IS NOT NULL "
+        "  AND NOT EXISTS (SELECT 1 FROM view_prefs WHERE frontend = 'qt')"
+    )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
