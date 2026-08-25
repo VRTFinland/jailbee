@@ -24,11 +24,12 @@ from typing import TYPE_CHECKING, Never, Protocol
 
 import typer
 
-from jailbee.tui import error, info, warn
+from jailbee.tui import error, info, success, warn
 
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus as IncusType
+    from jailbee.pr import PrCreated
     from jailbee.pr_ai import PrText
 
 
@@ -290,7 +291,15 @@ class PrState(Protocol):
 
     def read(self) -> PrRecord: ...
 
-    def record(self, *, head: str, author: bool, adopted: bool, number: int | None) -> None: ...
+    def record(
+        self,
+        *,
+        head: str,
+        author: bool,
+        adopted: bool,
+        number: int | None,
+        context: str | None = None,
+    ) -> None: ...
 
 
 class ContainerLabelState:
@@ -313,7 +322,15 @@ class ContainerLabelState:
             adopted=bool(self._incus.config_get(self._full, "user.jailbee.pr_adopted")),
         )
 
-    def record(self, *, head: str, author: bool, adopted: bool, number: int | None) -> None:
+    def record(
+        self,
+        *,
+        head: str,
+        author: bool,
+        adopted: bool,
+        number: int | None,
+        context: str | None = None,
+    ) -> None:
         """Write the decision, best-effort.
 
         Write order matters for a partial (interrupted) write. `pr_branch` goes
@@ -322,6 +339,11 @@ class ContainerLabelState:
         the container branch — the wrong head). `user.jailbee.pr` goes LAST
         because the entry guard keys on `pr` present WITHOUT `pr_author` (== a
         `jailbee new --pr` review container).
+
+        `context` replaces the generic failure warning with a caller-supplied
+        one — used on the create path, where a label-write failure means the
+        PR already exists on GitHub and the next run would otherwise open a
+        second one; the generic message doesn't convey that.
         """
         from jailbee.incus import IncusError
 
@@ -334,7 +356,7 @@ class ContainerLabelState:
             if number is not None:
                 self._incus.config_set(self._full, "user.jailbee.pr", str(number))
         except IncusError as exc:
-            warn(f"Could not record the PR decision: {exc}")
+            warn(f"{context or 'Could not record the PR decision'}: {exc}")
 
 
 def adopt_existing_pr_for_branch(
@@ -415,3 +437,195 @@ def adopt_existing_pr_for_branch(
     state.record(head=found.head_ref, author=False, adopted=True, number=found.number)
 
     return found.number, found.head_ref
+
+
+def resolve_create_text(
+    scope: PrScope,
+    *,
+    ai_on: bool,
+    ai_text: PrText | None,
+    title: str | None,
+    body: str | None,
+    fallback_ref: str,
+    publish_name: str,
+    origin_label: str,
+) -> tuple[str, str]:
+    """Resolve the create path's title/body.
+
+    Explicit `title`/`body` win. Otherwise, when `ai_on` and AI text was
+    generated, it fills whichever side was not given explicitly. A title still
+    missing falls back to the commit subject at `fallback_ref`, then to
+    `publish_name`. A body still missing falls back to a placeholder naming
+    `origin_label` (e.g. ``container 'feat-foo'``).
+    """
+    from jailbee import git as git_mod
+
+    resolved_title = title
+    resolved_body = body
+    if ai_on and ai_text is not None:
+        if title is None:
+            resolved_title = ai_text.title
+        if body is None:
+            resolved_body = ai_text.body
+    if resolved_title is None:
+        resolved_title = git_mod.commit_subject(scope.repo_root, fallback_ref) or publish_name
+    if resolved_body is None:
+        resolved_body = f"Draft PR created by jailbee from {origin_label}. Description pending."
+    return resolved_title, resolved_body
+
+
+def create_or_view_pr(
+    scope: PrScope,
+    state: PrState,
+    *,
+    is_update: bool,
+    head: str,
+    base: str,
+    title: str,
+    body: str,
+    draft: bool,
+    label: str,
+    record_context: str | None = None,
+) -> PrCreated:
+    """Return the container's PR: an existing one on update, else a new one.
+
+    On update, `head`'s existing PR is looked up with `pr.view_existing_pr` —
+    `base`/`title`/`body`/`draft`/`label` are unused on that path. On create,
+    `pr.create_pr` opens the PR and the authorship is recorded via
+    `state.record`. Raises `pr.PrError` for the caller to map to a CLI exit.
+
+    `record_context` is a description of what a label-write failure would mean
+    (e.g. ``"failed to record the PR label on 'feat-foo'"``); when given, the
+    PR number (only known after creation) is prepended and forwarded as
+    `state.record`'s `context=` so the resulting warning still tells the user
+    the PR already exists on GitHub. Omitted, `state.record` falls back to its
+    own generic message.
+    """
+    from jailbee import pr as pr_module
+
+    if is_update:
+        return pr_module.view_existing_pr(scope.repo_root, head)
+
+    created = pr_module.create_pr(
+        scope.repo_root,
+        head=head,
+        base=base,
+        title=title,
+        body=body,
+        remote=scope.remote,
+        draft=draft,
+        label=label,
+    )
+    if record_context is not None:
+        state.record(
+            head=head,
+            author=True,
+            adopted=False,
+            number=created.number,
+            context=f"PR #{created.number} created, but {record_context}",
+        )
+    else:
+        state.record(head=head, author=True, adopted=False, number=created.number)
+    return created
+
+
+@dataclass(frozen=True)
+class PrUpdate:
+    """What changed while applying updates to an existing PR."""
+
+    title_changed: bool
+    body_changed: bool
+    state_note: str
+
+
+def apply_pr_updates(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    scope: PrScope,
+    *,
+    number: int,
+    branch: str,
+    base: str,
+    title: str | None,
+    body: str | None,
+    description: bool,
+    ready: bool | None,
+    ai_on: bool,
+    offer_regen: bool,
+) -> PrUpdate:
+    """Apply description and ready/draft updates to an already-existing PR.
+
+    Callers only invoke this on the update path (an authored container, or a
+    create call that turned out to already exist). Each side is best-effort:
+    a failure warns and leaves the corresponding `*_changed`/`state_note`
+    untouched rather than raising.
+    """
+    from jailbee import pr as pr_module
+
+    title_changed = False
+    body_changed = False
+    edit = resolve_pr_description_update(
+        cfg,
+        incus,
+        full,
+        scope,
+        branch=branch,
+        base=base,
+        title=title,
+        body=body,
+        description=description,
+        ai_on=ai_on,
+        offer_regen=offer_regen,
+    )
+    if edit is not None:
+        try:
+            pr_module.edit_pr(scope.repo_root, number, title=edit[0], body=edit[1])
+            title_changed = edit[0] is not None
+            body_changed = edit[1] is not None
+        except pr_module.PrError as exc:
+            warn(f"Updating the PR description failed: {exc}")
+
+    state_note = ""
+    if ready is not None:
+        try:
+            pr_module.set_ready(scope.repo_root, number, ready)
+            state_note = " (marked ready)" if ready else " (marked draft)"
+        except pr_module.PrError as exc:
+            warn(f"Toggling PR draft state failed: {exc}")
+
+    return PrUpdate(title_changed=title_changed, body_changed=body_changed, state_note=state_note)
+
+
+def render_pr_outcome(
+    scope: PrScope,
+    *,
+    url: str,
+    number: int,
+    is_update: bool,
+    publish_name: str,
+    forced: bool,
+    ready: bool | None,
+    update: PrUpdate | None,
+) -> None:
+    """Print the final success line for a create or update outcome.
+
+    `update` is required (and used) when `is_update` is True; it is ignored
+    (and may be None) on the create path.
+    """
+    if not is_update:
+        kind = "PR" if ready else "Draft PR"
+        success(f"{scope.prefix}{kind} #{number} created for '{publish_name}': {url}")
+        return
+
+    assert update is not None, "render_pr_outcome: is_update=True requires update"
+    head_note = "head force-pushed (--force-with-lease)" if forced else "head moved"
+    if update.title_changed and update.body_changed:
+        detail = f"{head_note}, title and description refreshed"
+    elif update.body_changed:
+        detail = f"{head_note}, description refreshed"
+    elif update.title_changed:
+        detail = f"{head_note}, title updated"
+    else:
+        detail = f"{head_note}; description unchanged"
+    success(f"{scope.prefix}PR #{number} updated — {detail}.{update.state_note} {url}")

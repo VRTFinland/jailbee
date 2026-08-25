@@ -239,6 +239,26 @@ def test_container_label_state_survives_a_failed_write(mocker):
     )
 
 
+def test_container_label_state_record_context_replaces_generic_warning(mocker):
+    from jailbee.incus import IncusError
+
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    incus = mocker.MagicMock()
+    incus.config_set.side_effect = IncusError("boom")
+
+    pr_flow.ContainerLabelState(incus, "c1").record(
+        head="user/x",
+        author=True,
+        adopted=False,
+        number=123,
+        context="PR #123 created, but failed to record the PR label on 'feat-foo'",
+    )
+
+    warn.assert_called_once_with(
+        "PR #123 created, but failed to record the PR label on 'feat-foo': boom"
+    )
+
+
 def test_adopt_returns_none_without_a_branch(tmp_path, mocker):
     state = mocker.MagicMock()
     assert (
@@ -438,3 +458,285 @@ def test_no_source_branch_skips_generation(tmp_path, mocker):
     plan = _plan(tmp_path, mocker, cfg=cfg, source_branch=None)
     assert plan == pr_flow.HeadPlan(publish_name=None, ai_text=None)
     gen.assert_not_called()
+
+
+def _created(number=123, already=False):
+    from jailbee.pr import PrCreated
+
+    return PrCreated(
+        number=number,
+        url=f"https://github.com/acme/widgets/pull/{number}",
+        already_existed=already,
+    )
+
+
+def test_create_text_prefers_explicit_fields(tmp_path):
+    title, body = pr_flow.resolve_create_text(
+        _super_scope(tmp_path),
+        ai_on=True,
+        ai_text=_text(),
+        title="Mine",
+        body="Body",
+        fallback_ref="refs/jailbee/feat-foo/feat/foo",
+        publish_name="feat/foo",
+        origin_label="container 'feat-foo'",
+    )
+    assert (title, body) == ("Mine", "Body")
+
+
+def test_create_text_uses_the_ai_when_on(tmp_path):
+    title, body = pr_flow.resolve_create_text(
+        _super_scope(tmp_path),
+        ai_on=True,
+        ai_text=_text(),
+        title=None,
+        body=None,
+        fallback_ref="refs/jailbee/feat-foo/feat/foo",
+        publish_name="feat/foo",
+        origin_label="container 'feat-foo'",
+    )
+    assert (title, body) == ("AI title", "AI body")
+
+
+def test_create_text_falls_back_to_the_commit_subject(tmp_path, mocker):
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    title, body = pr_flow.resolve_create_text(
+        _super_scope(tmp_path),
+        ai_on=False,
+        ai_text=None,
+        title=None,
+        body=None,
+        fallback_ref="refs/jailbee/feat-foo/feat/foo",
+        publish_name="feat/foo",
+        origin_label="container 'feat-foo'",
+    )
+    assert title == "feat: do thing"
+    assert "container 'feat-foo'" in body
+
+
+def test_create_text_falls_back_to_the_publish_name(tmp_path, mocker):
+    mocker.patch("jailbee.git.commit_subject", return_value=None)
+    title, _ = pr_flow.resolve_create_text(
+        _super_scope(tmp_path),
+        ai_on=False,
+        ai_text=None,
+        title=None,
+        body=None,
+        fallback_ref="refs/jailbee/feat-foo/feat/foo",
+        publish_name="feat/foo",
+        origin_label="container 'feat-foo'",
+    )
+    assert title == "feat/foo"
+
+
+def test_create_or_view_records_authorship_on_create(tmp_path, mocker):
+    mocker.patch("jailbee.pr.create_pr", return_value=_created())
+    state = mocker.MagicMock()
+
+    created = pr_flow.create_or_view_pr(
+        _super_scope(tmp_path),
+        state,
+        is_update=False,
+        head="feat/foo",
+        base="main",
+        title="t",
+        body="b",
+        draft=True,
+        label="jailbee pr",
+    )
+
+    assert created.number == 123
+    state.record.assert_called_once_with(head="feat/foo", author=True, adopted=False, number=123)
+
+
+def test_create_or_view_does_not_record_on_update(tmp_path, mocker):
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
+    create = mocker.patch("jailbee.pr.create_pr")
+    state = mocker.MagicMock()
+
+    pr_flow.create_or_view_pr(
+        _super_scope(tmp_path),
+        state,
+        is_update=True,
+        head="feat/foo",
+        base="main",
+        title="t",
+        body="b",
+        draft=True,
+        label="jailbee pr",
+    )
+
+    create.assert_not_called()
+    state.record.assert_not_called()
+
+
+def test_create_or_view_forwards_record_context_with_the_pr_number(tmp_path, mocker):
+    mocker.patch("jailbee.pr.create_pr", return_value=_created(number=456))
+    state = mocker.MagicMock()
+
+    pr_flow.create_or_view_pr(
+        _super_scope(tmp_path),
+        state,
+        is_update=False,
+        head="feat/foo",
+        base="main",
+        title="t",
+        body="b",
+        draft=True,
+        label="jailbee pr",
+        record_context="failed to record the PR label on 'feat-foo'",
+    )
+
+    state.record.assert_called_once_with(
+        head="feat/foo",
+        author=True,
+        adopted=False,
+        number=456,
+        context="PR #456 created, but failed to record the PR label on 'feat-foo'",
+    )
+
+
+def test_apply_updates_edits_and_toggles(tmp_path, mocker):
+    mocker.patch("jailbee.pr_flow.resolve_pr_description_update", return_value=("t", "b"))
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    ready = mocker.patch("jailbee.pr.set_ready")
+
+    result = pr_flow.apply_pr_updates(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        number=123,
+        branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ready=True,
+        ai_on=True,
+        offer_regen=True,
+    )
+
+    edit.assert_called_once()
+    ready.assert_called_once_with(tmp_path, 123, True)
+    assert result == pr_flow.PrUpdate(
+        title_changed=True, body_changed=True, state_note=" (marked ready)"
+    )
+
+
+def test_apply_updates_warns_but_survives_an_edit_failure(tmp_path, mocker):
+    from jailbee.pr import PrEditError
+
+    mocker.patch("jailbee.pr_flow.resolve_pr_description_update", return_value=("t", "b"))
+    mocker.patch("jailbee.pr.edit_pr", side_effect=PrEditError("boom"))
+
+    result = pr_flow.apply_pr_updates(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        number=123,
+        branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ready=None,
+        ai_on=True,
+        offer_regen=True,
+    )
+
+    assert result == pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
+
+
+def test_render_outcome_create_draft(tmp_path, mocker):
+    success = mocker.patch("jailbee.pr_flow.success")
+    pr_flow.render_pr_outcome(
+        _super_scope(tmp_path),
+        url="https://github.com/acme/widgets/pull/123",
+        number=123,
+        is_update=False,
+        publish_name="feat/foo",
+        forced=False,
+        ready=False,
+        update=None,
+    )
+    success.assert_called_once_with(
+        "Draft PR #123 created for 'feat/foo': https://github.com/acme/widgets/pull/123"
+    )
+
+
+def test_render_outcome_create_ready(tmp_path, mocker):
+    success = mocker.patch("jailbee.pr_flow.success")
+    pr_flow.render_pr_outcome(
+        _super_scope(tmp_path),
+        url="https://github.com/acme/widgets/pull/123",
+        number=123,
+        is_update=False,
+        publish_name="feat/foo",
+        forced=False,
+        ready=True,
+        update=None,
+    )
+    success.assert_called_once_with(
+        "PR #123 created for 'feat/foo': https://github.com/acme/widgets/pull/123"
+    )
+
+
+def test_render_outcome_update_all_variants(tmp_path, mocker):
+    success = mocker.patch("jailbee.pr_flow.success")
+    scope = _super_scope(tmp_path)
+
+    pr_flow.render_pr_outcome(
+        scope,
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=True,
+        ready=None,
+        update=pr_flow.PrUpdate(title_changed=True, body_changed=True, state_note=""),
+    )
+    success.assert_called_with(
+        "PR #1 updated — head force-pushed (--force-with-lease), title and description refreshed. U"
+    )
+
+    pr_flow.render_pr_outcome(
+        scope,
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=False,
+        ready=None,
+        update=pr_flow.PrUpdate(title_changed=False, body_changed=True, state_note=""),
+    )
+    success.assert_called_with("PR #1 updated — head moved, description refreshed. U")
+
+    pr_flow.render_pr_outcome(
+        scope,
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=False,
+        ready=None,
+        update=pr_flow.PrUpdate(title_changed=True, body_changed=False, state_note=""),
+    )
+    success.assert_called_with("PR #1 updated — head moved, title updated. U")
+
+    pr_flow.render_pr_outcome(
+        scope,
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=False,
+        ready=None,
+        update=pr_flow.PrUpdate(
+            title_changed=False, body_changed=False, state_note=" (marked draft)"
+        ),
+    )
+    success.assert_called_with(
+        "PR #1 updated — head moved; description unchanged. (marked draft) U"
+    )

@@ -4102,11 +4102,7 @@ def pr_cmd(
     state = pr_flow.ContainerLabelState(incus, full)
 
     if open_only:
-        pr_num_raw = incus.config_get(full, "user.jailbee.pr")
-        try:
-            pr_num = int(pr_num_raw) if pr_num_raw else None
-        except ValueError:
-            pr_num = None
+        pr_num = state.read().number
         if pr_num is None:
             error(f"Container '{short}' has no associated PR.")
             raise typer.Exit(1)
@@ -4243,118 +4239,66 @@ def pr_cmd(
                 except git_mod.GitError as exc:
                     warn(f"Could not rename local branch: {exc}")
 
-    if is_author or stored_pr_branch:
-        # UPDATE: the branch head was already pushed above. Never re-create,
-        # and never run AI unless the user asked to touch the description.
-        try:
-            created = pr_mod.view_existing_pr(cfg.repo_root, publish.publish_name)
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-    else:
-        # CREATE: resolve title/body (reuse the AI text decided above) and open
-        # the PR. AI title/body are applied ONLY when ai_pr_description is on,
-        # and only to the side the user did not pass explicitly.
-        resolved_title = title
-        resolved_body = body
-        if ai_on and ai_text is not None:
-            if title is None:
-                resolved_title = ai_text.title
-            if body is None:
-                resolved_body = ai_text.body
-        if resolved_title is None:
-            src_ref = f"refs/jailbee/{short}/{publish.fetch.branch}"
-            resolved_title = git_mod.commit_subject(cfg.repo_root, src_ref) or publish.publish_name
-        if resolved_body is None:
-            resolved_body = (
-                f"Draft PR created by jailbee from container '{short}'. Description pending."
-            )
+    is_update_path = bool(is_author or stored_pr_branch)
+    resolved_title, resolved_body = ("", "")
+    if not is_update_path:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=ai_text,
+            title=title,
+            body=body,
+            fallback_ref=f"refs/jailbee/{short}/{publish.fetch.branch}",
+            publish_name=publish.publish_name,
+            origin_label=f"container '{short}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update_path,
+            head=publish.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee pr",
+            record_context=f"failed to record the PR label on '{short}'",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
-        try:
-            created = pr_mod.create_pr(
-                cfg.repo_root,
-                head=publish.publish_name,
-                base=resolved_base,
-                title=resolved_title,
-                body=resolved_body,
-                remote=cfg.upstream_remote,
-                draft=ready is not True,
-            )
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-
-        from jailbee.incus import IncusError
-
-        try:
-            # Write order matters for a partial (interrupted) write; user.jailbee.pr
-            # is written LAST. The entry guard keys on user.jailbee.pr present
-            # WITHOUT pr_author (== a "jailbee new --pr" review container), so pr
-            # must never land before pr_author. pr_branch is written FIRST so
-            # that even a partially-written author container still resolves the
-            # correct PR head name on the re-run UPDATE path (a missing
-            # pr_branch would push to the container branch — the wrong head).
-            incus.config_set(full, "user.jailbee.pr_branch", publish.publish_name)
-            incus.config_set(full, "user.jailbee.pr_author", "1")
-            incus.config_set(full, "user.jailbee.pr", str(created.number))
-        except IncusError as exc:  # label write is best-effort
-            warn(
-                f"PR #{created.number} created, but failed to record the PR "
-                f"label on '{short}': {exc}"
-            )
-
-    number = created.number
     is_update = is_author or created.already_existed
-
-    title_changed = False
-    body_changed = False
+    update = None
     if is_update:
-        edit = pr_flow.resolve_pr_description_update(
+        update = pr_flow.apply_pr_updates(
             cfg,
             incus,
             full,
             scope,
+            number=created.number,
             branch=publish.fetch.branch,
             base=resolved_base,
             title=title,
             body=body,
             description=description,
+            ready=ready,
             ai_on=ai_on,
             offer_regen=not is_foreign_pr_head,
         )
-        if edit is not None:
-            try:
-                pr_mod.edit_pr(cfg.repo_root, number, title=edit[0], body=edit[1])
-                title_changed = edit[0] is not None
-                body_changed = edit[1] is not None
-            except pr_mod.PrError as exc:
-                warn(f"Updating the PR description failed: {exc}")
-
-    state_note = ""
-    if is_update and ready is not None:
-        try:
-            pr_mod.set_ready(cfg.repo_root, number, ready)
-            state_note = " (marked ready)" if ready else " (marked draft)"
-        except pr_mod.PrError as exc:
-            warn(f"Toggling PR draft state failed: {exc}")
-
-    if not is_update:
-        kind = "PR" if ready else "Draft PR"
-        success(f"{kind} #{number} created for '{publish.publish_name}': {created.url}")
-    else:
-        head_note = "head force-pushed (--force-with-lease)" if publish.forced else "head moved"
-        if title_changed and body_changed:
-            detail = f"{head_note}, title and description refreshed"
-        elif body_changed:
-            detail = f"{head_note}, description refreshed"
-        elif title_changed:
-            detail = f"{head_note}, title updated"
-        else:
-            detail = f"{head_note}; description unchanged"
-        success(f"PR #{number} updated — {detail}.{state_note} {created.url}")
-
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=is_update,
+        publish_name=publish.publish_name,
+        forced=publish.forced,
+        ready=ready,
+        update=update,
+    )
     if web:
-        pr_mod.open_pr_in_browser(cfg.repo_root, number)
+        pr_mod.open_pr_in_browser(cfg.repo_root, created.number)
 
 
 # `jailbee pr` is the visible, canonical command; `jailbee git pr` is a hidden alias.
