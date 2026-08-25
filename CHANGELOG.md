@@ -20,6 +20,28 @@
   existing top-level `claude:` block remains a supported legacy alias —
   translated into `agents.claude` at load — and defining both at once is a
   `ConfigError`.
+- **`jailbee submodule pr [CONTAINER] [PATH]`** opens or updates a pull
+  request in a submodule's own GitHub repository, for commits made inside
+  that submodule in a container. A submodule is a separate repo, so it needs
+  its own PR — `jailbee pr` publishes only the superproject branch and the
+  two commands are independent, with one PR produced per run. Target
+  selection is automatic when exactly one submodule has commits ahead of its
+  own base anchor (`refs/jailbee/base/<super-base>`, pinned at container
+  creation) — deliberately not the superproject's gitlink diff `jailbee ls`
+  uses, so commits made inside a submodule are seen even before the gitlink
+  bump lands in the superproject; several candidates are listed and require
+  `PATH`. Base and head branch names are resolved from the submodule's own
+  data (`.gitmodules`, its own remote's `HEAD`, or Claude's proposal when
+  `claude.ai_pr_branch` is on), not inherited from the superproject, and the
+  chosen head is remembered per submodule path so a re-run updates the same
+  PR. Flags mirror `jailbee pr` (`--title`, `--body`, `--base`, `--as`,
+  `--ready`/`--draft`, `--description`, `--no-ai`, `--force`, `--yes`,
+  `--web`, `--open`), with `--branch/-b` repointed to mean "read from the
+  submodule" rather than the superproject. The whole decision matrix
+  (AI title/branch generation, PR adoption, foreign-head guards, outcome
+  rendering) is shared with `jailbee pr` via a new internal `pr_flow` module
+  — `jailbee pr`'s own behaviour is unchanged. See
+  [Submodule pull requests](docs/git-bridge.md#submodules).
 
 ### Changed
 

@@ -1298,6 +1298,46 @@ jailbee submodule checkout 2>&1 | grep "detached HEAD"
 git checkout main && git branch -D feat/align-smoke
 ```
 
+## `jailbee submodule pr` smoke test
+
+> Host-only. Requires a superproject with a submodule that has a GitHub remote
+> of its own, and `gh auth login` on the host for that remote. This is the one
+> part of the feature no unit test can cover: the real push goes to a real
+> GitHub submodule remote.
+
+```bash
+jailbee new feat-sub
+jailbee shell feat-sub
+# inside container, inside the submodule:
+cd ~/SampleApp/libs/foo
+echo "submodule pr smoke" > sub.txt && git add . && git commit -m "feat: submodule pr smoke"
+exit
+
+jailbee submodule pr feat-sub
+# expect: transport summary, git push output, then
+#         "Draft PR #<N> created for 'libs/foo': https://github.com/..."
+gh pr view <N> --repo <submodule-org>/<submodule-repo>   # base is the submodule's own default branch
+git -C libs/foo log --oneline <base>..<head>             # only the submodule commits, nothing from the superproject
+incus config get <prefix>-feat-sub user.jailbee.sub_pr    # → {"libs/foo": {"pr": <N>, ...}}
+
+# Re-run: updates the same PR rather than opening a second one (the recorded
+# head name is what protects this).
+jailbee shell feat-sub
+cd ~/SampleApp/libs/foo && echo more > more.txt && git add . && git commit -m "more" && exit
+jailbee submodule pr feat-sub
+# expect: "PR #<N> updated — head moved..." — same PR number as above
+gh pr list --repo <submodule-org>/<submodule-repo> --head <head>   # exactly one open PR
+
+# --open opens it in the browser without touching anything.
+jailbee submodule pr feat-sub --open
+
+jailbee destroy feat-sub --force
+```
+
+Two submodules with commits ahead is worth checking too: `jailbee submodule
+pr feat-sub` with no `<path>` should list both candidates and exit 2 asking
+you to name one.
+
 ## `jailbee new` clone source (`new.clone_from` / `new.autofetch`) smoke test
 
 ```bash

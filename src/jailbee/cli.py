@@ -1506,6 +1506,8 @@ if TYPE_CHECKING:
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.pr_flow import PrState
+    from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import BridgePlan, FetchResult, PushResult, SourcePref
 
 
@@ -3062,60 +3064,6 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     return pr_info.head_ref, fetch_result.ref
 
 
-def _resolve_pr_description_update(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    *,
-    branch: str,
-    base: str,
-    title: str | None,
-    body: str | None,
-    description: bool,
-    ai_on: bool,
-    offer_regen: bool = True,
-) -> tuple[str | None, str | None] | None:
-    """Decide the (title, body) to apply on a PR update, or None to skip.
-
-    Explicit --title/--body win (either may stay None → left unchanged).
-    Otherwise --description, or an interactive TTY confirmation, triggers a
-    Claude regeneration of both fields. Returns None when nothing should change.
-
-    `offer_regen=False` suppresses only the interactive offer — used on a PR
-    jailbee did not create, where silently rewriting the author's description is
-    never what the user asked for. Explicit --description/--title/--body still
-    apply.
-    """
-    from jailbee import pr_ai
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if title is not None or body is not None:
-        return (title, body)
-
-    want_regen = description
-    if not want_regen and offer_regen and _stdin_is_interactive() and ai_on:
-        want_regen = typer.confirm("Update the PR description with Claude?", default=False)
-    if not want_regen:
-        return None
-    if not ai_on:
-        warn(
-            "Cannot regenerate the description without Claude "
-            "(needs claude.enabled + ai_pr_description, and no --no-ai). Skipping."
-        )
-        return None
-
-    from jailbee.tui import console
-
-    with console.status("Regenerating PR description with Claude…"):
-        text = pr_ai.generate_pr_text(
-            cfg, incus, full, branch=branch, base=base, fixed_title=None, fixed_body=None
-        )
-    if text is None:
-        warn("Claude PR-text generation failed; description left unchanged.")
-        return None
-    return (text.title, text.body)
-
-
 def _pick_push_source(
     cfg: "Config",
     *,
@@ -3902,29 +3850,12 @@ app.command(
 )(push)
 
 
-def _confirm_pr_branch_name(proposed: str, container_branch: str) -> str:
-    """Confirm/edit the proposed PR head name on a TTY; return it unchanged off-TTY.
-
-    Enter accepts `proposed`; a typed value replaces it (re-prompts until it is a
-    valid git ref). Never prompts when the proposal equals the container branch
-    (nothing to review) or when stdin is not a TTY.
-    """
-    from jailbee import git as git_mod
-
-    if proposed == container_branch or not sys.stdin.isatty():
-        return proposed
-    while True:
-        chosen: str = typer.prompt("PR head branch name", default=proposed).strip()
-        if git_mod.check_ref_format(chosen):
-            return chosen
-        warn(f"'{chosen}' is not a valid branch name.")
-
-
 def _adopt_pr_head(
     cfg: "Config",
     incus: "IncusType",
     full: str,
     short: str,
+    state: "PrState",
     *,
     yes: bool,
 ) -> str | None:
@@ -3944,7 +3875,6 @@ def _adopt_pr_head(
     on an update-path container — not just the first.)
     """
     from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
     from jailbee.lifecycle import _stdin_is_interactive
 
     raw = incus.config_get(full, "user.jailbee.pr")
@@ -3958,11 +3888,8 @@ def _adopt_pr_head(
     ):
         return None
 
-    try:
-        number = int(raw)
-    except (TypeError, ValueError):
-        error(f"Container '{short}' has a malformed PR label (user.jailbee.pr={raw!r}).")
-        raise typer.Exit(1) from None
+    # state.read() at the call site has already validated the label.
+    number = int(raw)
 
     try:
         pr_info = pr_module.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
@@ -4012,152 +3939,17 @@ def _adopt_pr_head(
 
     # pr_branch FIRST — see the docstring: an adopted flag without a recorded
     # head name would make the next run publish to the container branch.
-    # Best-effort, like the create path's label writes.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", pr_info.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-    except IncusError as exc:
-        warn(f"Could not record the PR-head decision on '{short}': {exc}")
+    # Best-effort, like the create path's label writes. `number=None` leaves
+    # the recorded PR number alone — `new` already wrote it.
+    state.record(
+        head=pr_info.head_ref,
+        author=False,
+        adopted=True,
+        number=None,
+        context=f"Could not record the PR-head decision on '{short}'",
+    )
 
     return pr_info.head_ref
-
-
-def _adopt_existing_pr_for_branch(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    short: str,
-    *,
-    container_branch: str | None,
-    yes: bool,
-) -> tuple[int, str] | None:
-    """Adopt the PR that already exists for the container's branch, if any.
-
-    A container made with `jailbee new <existing-branch>` carries no PR label, yet
-    that branch may already have a PR open — and without this lookup the create
-    path would propose a fresh head branch name and open a *second* PR for the
-    same work. (When the proposed name happens to equal the branch, `gh pr
-    create` fails with "already exists" and `pr.create_pr` recovers, but that
-    fallback also records `user.jailbee.pr_author`, claiming a PR jailbee never opened.)
-
-    Returns `(number, head_ref)` for the adopted PR, or None when the create
-    path should proceed untouched: no PR for the branch, a closed/merged one
-    (not a target for further work), or a fork PR (whose head lives in the
-    fork, so our branch is a genuinely different thing). Exits non-zero on a
-    declined or unavailable confirmation.
-
-    Records `user.jailbee.pr_branch` / `user.jailbee.pr_adopted` / `user.jailbee.pr` — but
-    deliberately not `user.jailbee.pr_author`: jailbee found this PR, it did not create
-    it, and the foreign-head guards (`--force` confirmation, no description
-    regeneration) must stay on.
-    """
-    from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if not container_branch:
-        return None
-
-    found = pr_module.find_pr_for_branch(cfg.repo_root, container_branch)
-    if found is None:
-        return None
-
-    if found.state != "OPEN":
-        info(
-            f"Branch '{container_branch}' had PR #{found.number} ({found.state}); "
-            f"opening a new one."
-        )
-        return None
-    if found.is_cross_repository:
-        owner = found.head_repo_owner or "<fork-owner>"
-        info(
-            f"PR #{found.number} matches this branch by name but its head lives "
-            f"in the fork '{owner}', so it is a different branch; opening a new PR."
-        )
-        return None
-
-    author = f"@{found.author_login}" if found.author_login else "an unknown author"
-    info(
-        f"Branch '{container_branch}' already has PR #{found.number} by {author} "
-        f"(OPEN); head '{found.head_ref}' → base '{found.base_ref}'."
-    )
-
-    if not yes:
-        if not _stdin_is_interactive():
-            error(
-                f"Branch '{container_branch}' already has PR #{found.number}. "
-                f"Pushing this container's commits to it needs confirmation — "
-                f"re-run with --yes when there is no terminal to ask on."
-            )
-            raise typer.Exit(1)
-        if not typer.confirm(
-            f"Push this container's commits to PR #{found.number} instead of opening a new one?",
-            default=True,
-        ):
-            info(
-                "Aborted. To open a separate PR from this container, re-run with "
-                "'--as <other-branch-name>'."
-            )
-            raise typer.Abort()
-
-    # pr_branch first, pr last — same reasoning as `_adopt_pr_head` and the
-    # create path: an interrupted write must leave the container asking again
-    # rather than publishing to the wrong head.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", found.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-        incus.config_set(full, "user.jailbee.pr", str(found.number))
-    except IncusError as exc:
-        warn(f"Could not record PR #{found.number} on '{short}': {exc}")
-
-    return found.number, found.head_ref
-
-
-def _reject_as_on_pr_update(as_name: str, pr_label: str | None) -> None:
-    """Exit 2: `--as` cannot retarget the head of an already-existing PR.
-
-    The update path always pushes to the PR's recorded head branch, so an `--as`
-    name would publish some other branch and leave the PR untouched. Applies on
-    every run of a container that has a PR (jailbee-authored or adopted from
-    `jailbee new --pr`), not just the first.
-    """
-    target = f"PR #{pr_label}" if pr_label else "the container's PR"
-    error(
-        f"--as cannot be combined with {target}: pushing to '{as_name}' would "
-        f"update a different branch and leave {target} untouched. Drop --as to "
-        f"update {target}."
-    )
-    raise typer.Exit(2)
-
-
-def _confirm_foreign_force_push(short: str, pr_label: str, head: str | None, *, yes: bool) -> None:
-    """Confirm a `--force` push onto the head of a PR jailbee did not create.
-
-    Force-pushing an adopted `jailbee new --pr` container's head rewrites history on
-    a branch someone else may own, so it takes its own confirmation on top of
-    the one-time adoption. `--yes` skips it; without a TTY it is an error.
-    """
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    head_desc = f"'{head}'" if head else "head branch"
-    if yes:
-        return
-    if not _stdin_is_interactive():
-        error(
-            f"--force on '{short}' would overwrite PR #{pr_label}'s head {head_desc}, "
-            f"a PR jailbee did not create. That needs confirmation — re-run with --yes "
-            f"when there is no terminal to ask on."
-        )
-        raise typer.Exit(1)
-    warn(
-        f"--force will overwrite PR #{pr_label}'s head {head_desc} with this "
-        f"container's history. Commits pushed there by anyone else are lost."
-    )
-    if not typer.confirm(
-        f"Force-push over PR #{pr_label}'s head {head_desc}?",
-        default=False,
-    ):
-        raise typer.Abort()
 
 
 def pr_cmd(
@@ -4295,7 +4087,7 @@ def pr_cmd(
     """
     from jailbee import git as git_mod
     from jailbee import pr as pr_mod
-    from jailbee import pr_ai, sync
+    from jailbee import pr_flow, sync
     from jailbee.lifecycle import short_name
 
     if no_draft:
@@ -4308,13 +4100,17 @@ def pr_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
+    )
+    state = pr_flow.ContainerLabelState(incus, full, short=short)
 
     if open_only:
-        pr_num_raw = incus.config_get(full, "user.jailbee.pr")
         try:
-            pr_num = int(pr_num_raw) if pr_num_raw else None
-        except ValueError:
-            pr_num = None
+            pr_num = state.read().number
+        except pr_flow.MalformedPrLabelError as exc:
+            error(str(exc))
+            raise typer.Exit(1) from exc
         if pr_num is None:
             error(f"Container '{short}' has no associated PR.")
             raise typer.Exit(1)
@@ -4330,21 +4126,26 @@ def pr_cmd(
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    is_author = bool(incus.config_get(full, "user.jailbee.pr_author"))
-    stored_pr_branch = incus.config_get(full, "user.jailbee.pr_branch")
-    pr_label = incus.config_get(full, "user.jailbee.pr")
+    try:
+        record = state.read()
+    except pr_flow.MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    is_author = record.author
+    stored_pr_branch = record.head
+    pr_label = str(record.number) if record.number is not None else None
 
     # `--as` names the head of a PR still to be created. A container that
     # already has one (authored, adopted, or about to be adopted below — a PR
     # label always leads to the update path) can only push to that PR's head.
     # Checked BEFORE the adoption prompt so a usage error never adopts a PR.
     if as_name is not None and (is_author or stored_pr_branch or pr_label):
-        _reject_as_on_pr_update(as_name, pr_label)
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
     # A `jailbee new --pr` container already has a PR. Publishing its commits to
     # that PR's head is allowed once the user confirms; the confirmation is
     # recorded, so from then on this behaves like an authored-PR container.
-    adopted_head = _adopt_pr_head(cfg, incus, full, short, yes=yes)
+    adopted_head = _adopt_pr_head(cfg, incus, full, short, state, yes=yes)
     if adopted_head is not None:
         # Use the value in-process rather than re-reading the label: the run
         # must publish to the right head even if the label write failed.
@@ -4359,8 +4160,8 @@ def pr_cmd(
     # a duplicate. `--as` is a deliberate request for a different head, so it
     # skips the lookup entirely.
     if not (is_author or stored_pr_branch or pr_label) and as_name is None:
-        found_pr = _adopt_existing_pr_for_branch(
-            cfg, incus, full, short, container_branch=container_branch, yes=yes
+        found_pr = pr_flow.adopt_existing_pr_for_branch(
+            scope, state, branch=container_branch, yes=yes, record_context=f"on '{short}'"
         )
         if found_pr is not None:
             found_number, found_head = found_pr
@@ -4375,7 +4176,7 @@ def pr_cmd(
     # description?" offer is suppressed — adoption only ever promised commits.
     is_foreign_pr_head = bool(pr_label) and not is_author
     if force and pr_label and not is_author:
-        _confirm_foreign_force_push(short, pr_label, stored_pr_branch, yes=yes)
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, stored_pr_branch, yes=yes)
 
     resolved_base = base or incus.config_get(full, "user.jailbee.base_branch")
     if not resolved_base:
@@ -4386,52 +4187,22 @@ def pr_cmd(
         raise typer.Exit(1)
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
-    branch_ai_on = cfg.claude.enabled and cfg.claude.ai_pr_branch and not no_ai
-
-    # --- Decide the publish name + generate title/body (create path only) ---
-    # `ai_pr_branch` and `ai_pr_description` are INDEPENDENT toggles.
-    # `generate_pr_text` is a single call that yields title, body AND branch, so
-    # run it when EITHER feature needs it and apply each part only if its own
-    # flag is on.
-    ai_text = None  # PrText | None, reused for title/body below
-    publish_name: str | None = None
-    if is_author or stored_pr_branch:
-        # UPDATE: reuse the stored external name; never regenerate the branch.
-        publish_name = stored_pr_branch or None  # None -> publish() defaults to container branch
-    else:
-        # CREATE.
-        if as_name is not None and not git_mod.check_ref_format(as_name):
-            error(f"--as '{as_name}' is not a valid branch name.")
-            raise typer.Exit(2)
-        need_desc_ai = ai_on and not (title and body)  # AI needed for title/body
-        need_branch_ai = branch_ai_on and as_name is None  # AI needed for the branch name
-        gen = (need_desc_ai or need_branch_ai) and bool(container_branch)
-        if gen and container_branch:
-            from jailbee.tui import console
-
-            with console.status(f"Generating PR title/description with Claude in '{short}'…"):
-                ai_text = pr_ai.generate_pr_text(
-                    cfg,
-                    incus,
-                    full,
-                    branch=container_branch,
-                    base=resolved_base,
-                    fixed_title=title,
-                    fixed_body=body,
-                )
-            if ai_text is None:
-                warn(
-                    "Claude PR-text generation failed; using a placeholder. "
-                    "Edit the PR later with `jailbee pr --description`."
-                )
-        # PR head branch name: --as wins; else the AI-proposed name only when
-        # ai_pr_branch is on; else the container branch.
-        if as_name is not None:
-            publish_name = as_name
-        elif need_branch_ai and ai_text is not None and container_branch:
-            publish_name = _confirm_pr_branch_name(ai_text.branch, container_branch)
-        else:
-            publish_name = container_branch
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=bool(record.author or stored_pr_branch),
+        stored_head=stored_pr_branch,
+        source_branch=container_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}'…",
+    )
+    publish_name, ai_text = plan.publish_name, plan.ai_text
 
     # --- Publish (fetch + push under the chosen name) ---
     # On a foreign PR head the generic push-failure hint's "--as" advice does
@@ -4480,117 +4251,66 @@ def pr_cmd(
                 except git_mod.GitError as exc:
                     warn(f"Could not rename local branch: {exc}")
 
-    if is_author or stored_pr_branch:
-        # UPDATE: the branch head was already pushed above. Never re-create,
-        # and never run AI unless the user asked to touch the description.
-        try:
-            created = pr_mod.view_existing_pr(cfg.repo_root, publish.publish_name)
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-    else:
-        # CREATE: resolve title/body (reuse the AI text decided above) and open
-        # the PR. AI title/body are applied ONLY when ai_pr_description is on,
-        # and only to the side the user did not pass explicitly.
-        resolved_title = title
-        resolved_body = body
-        if ai_on and ai_text is not None:
-            if title is None:
-                resolved_title = ai_text.title
-            if body is None:
-                resolved_body = ai_text.body
-        if resolved_title is None:
-            src_ref = f"refs/jailbee/{short}/{publish.fetch.branch}"
-            resolved_title = git_mod.commit_subject(cfg.repo_root, src_ref) or publish.publish_name
-        if resolved_body is None:
-            resolved_body = (
-                f"Draft PR created by jailbee from container '{short}'. Description pending."
-            )
+    is_update_path = bool(is_author or stored_pr_branch)
+    resolved_title, resolved_body = ("", "")
+    if not is_update_path:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=ai_text,
+            title=title,
+            body=body,
+            fallback_ref=f"refs/jailbee/{short}/{publish.fetch.branch}",
+            publish_name=publish.publish_name,
+            origin_label=f"container '{short}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update_path,
+            head=publish.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee pr",
+            record_context=f"failed to record the PR label on '{short}'",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
-        try:
-            created = pr_mod.create_pr(
-                cfg.repo_root,
-                head=publish.publish_name,
-                base=resolved_base,
-                title=resolved_title,
-                body=resolved_body,
-                remote=cfg.upstream_remote,
-                draft=ready is not True,
-            )
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-
-        from jailbee.incus import IncusError
-
-        try:
-            # Write order matters for a partial (interrupted) write; user.jailbee.pr
-            # is written LAST. The entry guard keys on user.jailbee.pr present
-            # WITHOUT pr_author (== a "jailbee new --pr" review container), so pr
-            # must never land before pr_author. pr_branch is written FIRST so
-            # that even a partially-written author container still resolves the
-            # correct PR head name on the re-run UPDATE path (a missing
-            # pr_branch would push to the container branch — the wrong head).
-            incus.config_set(full, "user.jailbee.pr_branch", publish.publish_name)
-            incus.config_set(full, "user.jailbee.pr_author", "1")
-            incus.config_set(full, "user.jailbee.pr", str(created.number))
-        except IncusError as exc:  # label write is best-effort
-            warn(
-                f"PR #{created.number} created, but failed to record the PR "
-                f"label on '{short}': {exc}"
-            )
-
-    number = created.number
     is_update = is_author or created.already_existed
-
-    title_changed = False
-    body_changed = False
+    update = None
     if is_update:
-        edit = _resolve_pr_description_update(
+        update = pr_flow.apply_pr_updates(
             cfg,
             incus,
             full,
+            scope,
+            number=created.number,
             branch=publish.fetch.branch,
             base=resolved_base,
             title=title,
             body=body,
             description=description,
+            ready=ready,
             ai_on=ai_on,
             offer_regen=not is_foreign_pr_head,
         )
-        if edit is not None:
-            try:
-                pr_mod.edit_pr(cfg.repo_root, number, title=edit[0], body=edit[1])
-                title_changed = edit[0] is not None
-                body_changed = edit[1] is not None
-            except pr_mod.PrError as exc:
-                warn(f"Updating the PR description failed: {exc}")
-
-    state_note = ""
-    if is_update and ready is not None:
-        try:
-            pr_mod.set_ready(cfg.repo_root, number, ready)
-            state_note = " (marked ready)" if ready else " (marked draft)"
-        except pr_mod.PrError as exc:
-            warn(f"Toggling PR draft state failed: {exc}")
-
-    if not is_update:
-        kind = "PR" if ready else "Draft PR"
-        success(f"{kind} #{number} created for '{publish.publish_name}': {created.url}")
-    else:
-        head_note = "head force-pushed (--force-with-lease)" if publish.forced else "head moved"
-        if title_changed and body_changed:
-            detail = f"{head_note}, title and description refreshed"
-        elif body_changed:
-            detail = f"{head_note}, description refreshed"
-        elif title_changed:
-            detail = f"{head_note}, title updated"
-        else:
-            detail = f"{head_note}; description unchanged"
-        success(f"PR #{number} updated — {detail}.{state_note} {created.url}")
-
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=is_update,
+        publish_name=publish.publish_name,
+        forced=publish.forced,
+        ready=ready,
+        update=update,
+    )
     if web:
-        pr_mod.open_pr_in_browser(cfg.repo_root, number)
+        pr_mod.open_pr_in_browser(cfg.repo_root, created.number)
 
 
 # `jailbee pr` is the visible, canonical command; `jailbee git pr` is a hidden alias.
@@ -4621,6 +4341,16 @@ def _print_submodule_report(branch: str, report: list[tuple[str, str | None]]) -
         else:
             console.print(f"  {path}  [yellow]⚠ on '{current}' (expected '{branch}')[/yellow]")
     success(f"Submodules aligned to '{branch}'.")
+
+
+def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
+    """List the submodules that have commits to publish, one per line."""
+    from jailbee.tui import console
+
+    width = max((len(c.path) for c in candidates), default=0)
+    for c in candidates:
+        count = "?" if c.commits is None else str(c.commits)
+        console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
 
 
 @submodule_app.command("checkout")
@@ -4693,6 +4423,335 @@ def submodule_checkout(
         raise typer.Exit(1) from exc
 
     _print_submodule_report(resolved, report)
+
+
+@submodule_app.command("pr")
+def submodule_pr_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    path: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_submodule_path),
+    ] = None,
+    title: Annotated[str | None, typer.Option("--title", help="PR title")] = None,
+    body: Annotated[str | None, typer.Option("--body", help="PR body")] = None,
+    base: Annotated[
+        str | None,
+        typer.Option("--base", help="PR base branch (default: the submodule's own default)"),
+    ] = None,
+    ready: Annotated[
+        bool | None, typer.Option("--ready/--draft", help="Mark ready for review, or draft.")
+    ] = None,
+    description: Annotated[
+        bool,
+        typer.Option("--description", "-d", help="Regenerate the description (update only)."),
+    ] = False,
+    web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
+    no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Branch to publish FROM the submodule"),
+    ] = None,
+    as_name: Annotated[
+        str | None, typer.Option("--as", help="Explicit PR head branch name (new PRs only)")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Force-push with --force-with-lease")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmations")] = False,
+    open_only: Annotated[
+        bool, typer.Option("--open", help="Open the submodule's PR and exit")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Create or update a GitHub PR for one submodule.
+
+    Publishes the commits made inside a submodule in a container to that
+    submodule's own GitHub repository — a separate repo, so a separate PR from
+    the superproject's `jailbee pr`. One PR per run.
+
+    Without PATH, the submodule that has commits ahead of its base is targeted
+    automatically; when several do, they are listed and PATH is required (two
+    submodules are two repositories and two PRs).
+
+    The base branch comes from the submodule's own `.gitmodules` entry, else its
+    `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is
+    `--as`, else Claude's proposal, else the branch the commits came from.
+
+    Examples:
+
+      jailbee submodule pr feat-foo              # auto-target, draft PR
+      jailbee submodule pr feat-foo libs/foo     # explicit submodule
+      jailbee submodule pr feat-foo --ready      # mark ready for review
+      jailbee submodule pr feat-foo --open       # just open it in the browser
+    """
+    from jailbee import pr as pr_mod
+    from jailbee import pr_flow, submodule_pr, sync
+    from jailbee.lifecycle import container_repo_dir, short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    short = short_name(cfg, full)
+
+    # --open resolves from the recorded state alone: no preflight, no
+    # transport, no gh mutation (mirrors `jailbee pr --open`).
+    if open_only:
+        target_path = path
+        if target_path is None:
+            recorded = submodule_pr.recorded_paths(incus, full)
+            if not recorded:
+                error(f"Container '{short}' has no submodule PR recorded.")
+                raise typer.Exit(1)
+            if len(recorded) != 1:
+                # Same condition as AmbiguousSubmoduleTargetError on the normal
+                # path ("disambiguate with PATH") — same exit code, so a script
+                # checking $? sees one meaning regardless of --open.
+                error(
+                    f"Container '{short}' has submodule PRs recorded for "
+                    f"{len(recorded)} paths; name one with PATH."
+                )
+                raise typer.Exit(2)
+            target_path = recorded[0]
+        record = submodule_pr.SubmodulePrState(incus, full, target_path).read()
+        if record.number is None:
+            error(f"Submodule '{target_path}' has no PR recorded on '{short}'.")
+            raise typer.Exit(1)
+        pr_mod.open_pr_in_browser(cfg.repo_root / target_path, record.number)
+        return
+
+    try:
+        sync.assert_container_publishable(cfg, incus, short)
+    except sync.SyncError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    super_base = incus.config_get(full, "user.jailbee.base_branch") or cfg.default_branch
+    repo_dir = container_repo_dir(cfg, incus, full)
+    try:
+        subs = submodule_pr.detect_candidates(
+            cfg, incus, full, repo_dir=repo_dir, base_branch=super_base, short=short
+        )
+        target = submodule_pr.select_target(subs, path)
+    except submodule_pr.NoSubmoduleCandidatesError:
+        if not subs:
+            # "Name one with PATH" is unactionable advice when there is
+            # nothing to name — distinguish "no submodules at all" from
+            # "submodules exist, none are ahead".
+            info(f"Container '{short}' has no submodules.")
+        else:
+            info(
+                f"No submodule in '{short}' has commits ahead of its base — nothing to "
+                f"open a PR for. Name one with PATH to publish it anyway."
+            )
+        return
+    except submodule_pr.AmbiguousSubmoduleTargetError as exc:
+        error(f"Several submodules in '{short}' have commits to publish:")
+        _print_submodule_pr_candidates(exc.candidates)
+        info("Pick one: `jailbee submodule pr <container> <path>`.")
+        raise typer.Exit(2) from exc
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(
+            2 if isinstance(exc, submodule_pr.UnknownSubmodulePathError) else 1
+        ) from exc
+
+    subpath = target.path
+    source_branch = branch or target.branch
+
+    # Step 2 of the spec's pipeline: transport this submodule's objects to
+    # the host BEFORE anything below reads the host sub-repo. For a
+    # submodule the host has never seen (added inside the container, or a
+    # host clone where `git submodule update --init` never ran for this
+    # path), the sub-repo does not exist until this call clones it — see
+    # `submodule_pr.transport_submodule_to_host`'s docstring.
+    submodule_pr.transport_submodule_to_host(
+        cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
+    )
+
+    remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
+    resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root / subpath,
+        remote=remote,
+        prefix=f"submodule '{subpath}': ",
+        subpath=subpath,
+    )
+    state = submodule_pr.SubmodulePrState(incus, full, subpath)
+    record = state.read()
+    pr_label = str(record.number) if record.number is not None else None
+
+    if as_name is not None and (record.author or record.head or pr_label):
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
+
+    if target.commits is None:
+        warn(
+            f"Could not count submodule '{subpath}''s commits (no base anchor and "
+            f"no {remote}/HEAD); publishing what it has."
+        )
+    if target.gitlink_stale:
+        info(
+            f"Submodule '{subpath}''s commits are not yet in the superproject's "
+            f"gitlink — commit the bump there when this PR is ready."
+        )
+    if target.dirty:
+        warn(f"Submodule '{subpath}' has uncommitted changes — they are NOT in the PR.")
+
+    is_update = bool(record.author or record.head)
+    if not is_update and as_name is None:
+        found = pr_flow.adopt_existing_pr_for_branch(
+            scope,
+            state,
+            branch=source_branch,
+            yes=yes,
+            record_context=f"for submodule '{subpath}' on '{short}'",
+        )
+        if found is not None:
+            pr_label = str(found[0])
+            is_update = True
+            # Build the record in-process rather than re-reading it: `state.record`
+            # (called by `adopt_existing_pr_for_branch`) is best-effort, and a
+            # failed write would otherwise make `state.read()` hand back a blank
+            # `PrRecord` here — `record.head is None` then makes
+            # `resolve_pr_text_and_head` treat this as a headless detached
+            # submodule and fail with a nonsense usage error, even though the
+            # user just confirmed adopting a real PR. Same anti-pattern
+            # `jailbee pr`'s adoption path avoids above (see the "Use the value
+            # in-process" comment near `_adopt_pr_head`).
+            record = pr_flow.PrRecord(number=found[0], head=found[1], author=False, adopted=True)
+
+    is_foreign = bool(pr_label) and not record.author
+    if force and pr_label and not record.author:
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, record.head, yes=yes)
+
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=is_update,
+        stored_head=record.head,
+        source_branch=source_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
+    )
+    publish_name = plan.publish_name
+    if publish_name is None:
+        error(
+            f"Submodule '{subpath}' is detached in '{short}' and no head branch name "
+            f"was chosen. Name one with --as, or pass --branch to publish an "
+            f"existing submodule branch."
+        )
+        raise typer.Exit(2)
+
+    # Publish step 4 of the spec: the submodule's own upstream must be a GitHub
+    # one, checked BEFORE anything is pushed. `create_pr` validates too, but
+    # only after the branch is already on the remote.
+    try:
+        pr_mod.assert_github_remote(scope.repo_root, remote, label="jailbee submodule pr")
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    try:
+        published = submodule_pr.publish_submodule_branch(
+            cfg,
+            short,
+            subpath=subpath,
+            branch=source_branch,
+            publish_name=publish_name,
+            remote=remote,
+            force=force,
+        )
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    resolved_title, resolved_body = ("", "")
+    if not is_update:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=plan.ai_text,
+            title=title,
+            body=body,
+            fallback_ref=published.src_ref,
+            publish_name=published.publish_name,
+            origin_label=f"container '{short}' submodule '{subpath}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update,
+            head=published.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee submodule pr",
+            record_context=f"failed to record the PR label for submodule '{subpath}' on '{short}'",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    did_update = is_update or created.already_existed
+    update = None
+    if did_update and source_branch:
+        update = pr_flow.apply_pr_updates(
+            cfg,
+            incus,
+            full,
+            scope,
+            number=created.number,
+            branch=source_branch,
+            base=resolved_base,
+            title=title,
+            body=body,
+            description=description,
+            ready=ready,
+            ai_on=ai_on,
+            offer_regen=not is_foreign,
+        )
+    elif did_update:
+        # The submodule is detached and no --branch resolved a source: there
+        # is no branch to regenerate a description from or a state to toggle
+        # against. `render_pr_outcome` defaults a missing `update` to a no-op
+        # on the update path, so nothing further is needed here beyond the
+        # user-facing warning — and only when the user actually asked for
+        # something that needed the missing branch; a bare re-run with no
+        # such flag has nothing to silently ignore.
+        if description or title is not None or body is not None or ready is not None:
+            warn(
+                f"{scope.prefix}--description/--title/--body/--ready/--draft "
+                f"could not be applied to PR #{created.number}: the submodule "
+                f"is detached and no source branch was resolved. Pass --branch "
+                f"to select one."
+            )
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=did_update,
+        publish_name=published.publish_name,
+        forced=published.forced,
+        ready=ready,
+        update=update,
+    )
+    if incus.config_get(full, "user.jailbee.pr"):
+        info(
+            "Merge this submodule PR first; the superproject PR's gitlink bump "
+            "then points at a merged commit."
+        )
+    if web:
+        pr_mod.open_pr_in_browser(scope.repo_root, created.number)
 
 
 net_app = typer.Typer(

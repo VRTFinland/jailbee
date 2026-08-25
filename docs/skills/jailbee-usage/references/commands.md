@@ -26,7 +26,7 @@ Common conventions:
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
-- [Submodules (`submodule checkout`)](#submodules)
+- [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`)](#network)
 - [GUI (`ide`, `chrome`, `chrome-pool`)](#gui)
 - [Mounts (`mount`, `unmount`)](#mounts)
@@ -562,6 +562,81 @@ ahead of the superproject's recorded gitlink keeps that newer branch checked
 out and warns — bump the pointer with `git add <sub> && git commit` in the
 superproject. A dirty or genuinely diverged submodule is left on its detached
 HEAD, also with a warning.
+
+### `jailbee submodule pr [NAME] [PATH]`
+
+Create or update a GitHub PR in a **submodule's own** repository, from commits
+made inside it in a container — a separate repo from the superproject, so a
+separate PR from `jailbee pr`. One PR per run; independent of `jailbee pr`
+(neither command is a precondition for the other).
+
+```bash
+jailbee submodule pr feat-foo              # auto-target, draft PR
+jailbee submodule pr feat-foo libs/foo     # explicit submodule
+jailbee submodule pr feat-foo --ready      # mark ready for review
+jailbee submodule pr feat-foo --open       # just open it in the browser
+```
+
+Without PATH, the submodule that has commits ahead of its own base is targeted
+automatically; several ahead prints a table (path, commits, last subject) and
+exits 2 asking you to name one — two submodules are two repositories and two
+PRs. None ahead is reported as a fact (exit 0), not an error; name one with
+PATH to publish it anyway.
+
+The candidate signal is deliberately the submodule's **own**
+`refs/jailbee/base/<super-base>` anchor (seeded at container creation), not
+the superproject's gitlink diff `jailbee ls` uses. This matters: when commits
+were made inside the submodule but the gitlink bump has not been committed in
+the superproject yet, the gitlink diff reads zero while the anchor sees
+exactly the commits the PR is for — reported as an info line ("commits not
+yet in the superproject's gitlink"), never as an error.
+
+| Flag | Effect |
+|---|---|
+| `--title <t>` / `--body <b>` | Set PR title / body (override AI per field). |
+| `--base <branch>` | PR base branch (default: the submodule's own default — see below). |
+| `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create. |
+| `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
+| `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
+| `--yes` / `-y` | Skip confirmations. Required when there is no TTY. Does **not** skip the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
+| `--no-ai` | Skip AI generation of the title/body/branch. |
+| `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
+| `--web` | Open the PR in the browser afterwards. |
+| `-b` / `--branch <b>` | **Different meaning than in `jailbee pr`:** which branch to read **from the submodule** in the container — the escape hatch for a detached submodule or for publishing a branch other than the one checked out there. |
+| `--open` | Read the recorded PR for PATH and open it; no preflight, no transport, no `gh` mutation. Requires PATH when PRs are recorded for more than one path. No recorded PR is exit 1. |
+
+Base branch: `--base` > `submodule.<name>.branch` declared in `.gitmodules`
+(unless `.`) > the sub-repo's `<remote>/HEAD` > `main`. The declaring
+`.gitmodules` is found by descending from the repo root level by level —
+correct for both a top-level submodule (`libs/foo`, declared by
+`repo_root/.gitmodules`) and a nested one (declared by its immediate
+parent's `.gitmodules`). The remote is resolved **per submodule**, since a
+submodule may name its upstream something the superproject does not — this
+cannot reuse the container-side submodule-default logic, which hardcodes
+`origin` for its own callers.
+
+Head branch (the name pushed to the submodule's upstream): `--as` > Claude's
+proposal (`claude.ai_pr_branch`, confirmed interactively) > the branch the
+commits were read from (`--branch`, else the submodule's current branch in
+the container). A detached submodule with no `--branch` still publishes (from
+its `HEAD` ref) but needs `--as` or the AI to name the branch; without either,
+exit 2 explains why. The chosen head is remembered in one container config
+key, `user.jailbee.sub_pr` (a JSON map keyed by submodule path), so a re-run
+updates that PR instead of opening a second one for the same work.
+
+On success, when the container also has a superproject PR
+(`user.jailbee.pr`), JailBee notes the merge order as information, never a
+gate: merge the submodule PR first, so the superproject PR's gitlink bump
+then points at a merged commit.
+
+Exit codes: 2 for usage errors (ambiguous target with no PATH, unknown PATH,
+`--as` once a PR is recorded, a detached submodule with no resolvable head
+name, `--open` with PRs recorded for more than one path); 1 for operational
+failures (preflight, a non-GitHub submodule upstream, publish failure, `gh`
+failure, `--open` with no PR recorded, `--force` onto a foreign/adopted PR
+head with no TTY to confirm on, first-run adoption of an existing PR with no
+TTY to confirm on); 0 for success and for "no submodule has commits ahead of
+its base."
 
 ## Network
 

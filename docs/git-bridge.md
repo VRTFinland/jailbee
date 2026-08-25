@@ -223,6 +223,28 @@ Each submodule also carries its own base anchor, seeded from the gitlink
 recorded at the superproject's `refs/jailbee/base/<base>`, which is what lets
 per-submodule comparisons stay meaningful on a stacked branch.
 
+**Submodule pull requests.** `jailbee submodule pr [<name>] [<path>]` opens or
+updates a PR in a submodule's own GitHub repository — a separate repo from the
+superproject, so a separate PR from `jailbee pr`. Its signal is that same base
+anchor, never the superproject's gitlink diff `jailbee ls` uses: when you've
+committed inside a submodule but not yet committed the gitlink bump in the
+superproject, the gitlink diff reads zero while the anchor sees exactly the
+commits the PR is for. That gap is reported as information, not an error.
+
+```bash
+jailbee submodule pr feat-foo              # auto-target, draft PR
+jailbee submodule pr feat-foo libs/foo     # explicit submodule
+jailbee submodule pr feat-foo --ready      # mark ready for review
+```
+
+Base and head come from the submodule's own data, not the superproject's:
+base is `--base` > `submodule.<name>.branch` declared in `.gitmodules` (found by
+descending from repo root, unless `.`) > the sub-repo's `<remote>/HEAD` > `main`; head
+is `--as` > Claude's proposal > the branch the commits were read from. The remote is resolved per submodule,
+since a submodule may name its upstream something the superproject doesn't.
+Merge order is stated, never enforced: merge the submodule PR first, so the
+superproject PR's gitlink bump then points at a merged commit.
+
 ## Stacked PRs
 
 When PR1 (`feat/a`) is waiting for review and PR2 builds on top of it,

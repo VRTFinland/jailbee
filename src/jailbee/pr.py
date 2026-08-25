@@ -325,6 +325,7 @@ def create_pr(
     body: str,
     remote: str,
     draft: bool = True,
+    label: str = "jailbee pr",
 ) -> PrCreated:
     """Create a GitHub PR for `head` via `gh pr create` (non-interactive).
 
@@ -332,8 +333,14 @@ def create_pr(
     PR for `head` already exists, the existing PR is looked up with
     `gh pr view <head>` and returned with `already_existed=True`, making
     repeated invocations idempotent for the caller.
+
+    The `label` parameter names the caller in error messages. It defaults to
+    "jailbee pr" because create_pr is reached only from the `jailbee pr`
+    command (never from `jailbee new --pr`). When forwarded to
+    _validate_github_origin, this corrects the old pre-flight message that
+    named "--pr", a flag that doesn't exist for this command.
     """
-    _validate_github_origin(repo_root, remote)
+    _validate_github_origin(repo_root, remote, label=label)
     cmd = [
         "gh",
         "pr",
@@ -353,7 +360,7 @@ def create_pr(
         proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
     except FileNotFoundError as e:
         raise PrCreateError(
-            "jailbee pr requires the 'gh' CLI. Install: https://cli.github.com/"
+            f"{label} requires the 'gh' CLI. Install: https://cli.github.com/"
         ) from e
     if proc.returncode != 0:
         stderr = proc.stderr
@@ -424,7 +431,7 @@ def _run_gh_mutation(repo_root: Path, cmd: list[str], label: str) -> None:
         raise PrEditError(f"'{label}' failed: {proc.stderr.strip()}")
 
 
-def _validate_github_origin(repo_root: Path, remote: str) -> None:
+def _validate_github_origin(repo_root: Path, remote: str, *, label: str = "--pr") -> None:
     """Fail fast unless `remote` exists in `repo_root` and points at GitHub."""
     try:
         proc = subprocess.run(
@@ -435,14 +442,25 @@ def _validate_github_origin(repo_root: Path, remote: str) -> None:
             check=False,
         )
     except (FileNotFoundError, OSError) as e:
-        raise PrResolveError("--pr requires git to be installed and on PATH") from e
+        raise PrResolveError(f"{label} requires git to be installed and on PATH") from e
     if proc.returncode != 0:
-        raise PrResolveError(f"--pr requires a GitHub '{remote}' remote in {repo_root}")
+        raise PrResolveError(f"{label} requires a GitHub '{remote}' remote in {repo_root}")
     if "github.com" not in proc.stdout:
         raise PrResolveError(
-            f"--pr requires a GitHub '{remote}' remote in {repo_root} "
+            f"{label} requires a GitHub '{remote}' remote in {repo_root} "
             f"(found: {proc.stdout.strip()})"
         )
+
+
+def assert_github_remote(repo_root: Path, remote: str, *, label: str = "--pr") -> None:
+    """Fail unless `remote` exists in `repo_root` and points at GitHub.
+
+    The public form of `_validate_github_origin`, for callers that must check
+    before they publish. `create_pr` validates too, but only once the branch is
+    already on the remote — too late for a submodule whose upstream turns out
+    not to be a GitHub one.
+    """
+    _validate_github_origin(repo_root, remote, label=label)
 
 
 def _raise_from_gh_failure(number: int, stderr: str) -> Never:

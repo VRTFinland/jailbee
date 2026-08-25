@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -527,6 +527,46 @@ to the repository. `claude.ai_pr_timeout` (default 600 s) bounds the whole run;
 on expiry `jailbee pr` warns and falls back to a placeholder title/body, which
 you can replace later with `jailbee pr --description`. Raise the timeout for a
 large tree, or when `claude.pr_prompt` asks for slower work.
+
+## Publishing a submodule PR — `jailbee submodule pr`
+
+The counterpart of `jailbee pr` for work done **inside a submodule**. A
+submodule is its own GitHub repository, so it needs its own PR — `jailbee pr`
+only ever publishes the superproject branch. One PR per run; the two commands
+don't depend on each other.
+
+```bash
+jailbee submodule pr feat-foo              # auto-target, draft PR
+jailbee submodule pr feat-foo libs/foo     # explicit submodule (path is top-relative)
+jailbee submodule pr feat-foo --ready      # mark ready for review
+jailbee submodule pr feat-foo --open       # just open it in the browser
+```
+
+Without a path, the submodule with commits ahead of its own base is targeted
+automatically; several ahead lists them and asks you to name one (two
+submodules are two repositories and two PRs). None ahead is reported as a
+plain fact, not an error.
+
+The key thing to know: the signal is the submodule's **own** base anchor
+(pinned when the container was created), not the superproject's gitlink diff
+`jailbee ls` shows. So if you've committed inside the submodule but haven't
+yet committed the gitlink bump in the superproject, `jailbee submodule pr`
+still sees exactly the commits to publish — `jailbee ls`'s AHEAD column would
+read zero for the same container. That gap is reported as information, never
+an error.
+
+Base and head branch names come from the submodule's **own** git data, not
+the superproject's: base is `--base` > the submodule's `.gitmodules` entry >
+its own `<remote>/HEAD` > `main`; head is `--as` > Claude's proposal > the
+branch the commits came from. The chosen head is remembered per submodule
+path, so re-running updates that PR instead of opening a second one. Note
+that `--branch/-b` means something different here than in `jailbee pr`: it
+selects which branch to read **from the submodule**, and is the escape hatch
+for a detached submodule.
+
+When the container also has a superproject PR, a successful run notes the
+merge order as information only: merge the submodule PR first, so the
+superproject PR's gitlink bump then points at a merged commit.
 
 ## Using `gh` / `git push` to GitHub from inside a container
 
