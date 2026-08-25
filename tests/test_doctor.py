@@ -1260,3 +1260,59 @@ def test_doctor_skips_the_port_check_without_incus_too(tmp_path):
     skipped = [r for r in results if "skipped" in r.detail]
     assert len(skipped) == 1
     assert "port forwards" in skipped[0].detail
+
+
+# ---- upgrade advice: `jb doctor` surfaces an owed base build / apply ----
+
+
+def test_doctor_reports_pending_upgrade_actions(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch(
+        "jailbee.upgrade.advice_lines",
+        return_value=[
+            "jailbee 1.4.0 changed what `jb base build` produces:",
+            "    - install.sh installs fd",
+        ],
+    )
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is False
+    assert "jb base build" in got.detail
+
+
+def test_doctor_is_happy_when_nothing_is_pending(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+
+
+def test_doctor_upgrade_check_survives_a_broken_state_db(make_cfg, tmp_path, mocker) -> None:
+    """Same rule as the CLI hint: this check may not be the thing that makes
+    `jailbee doctor` crash."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", side_effect=RuntimeError("db is locked"))
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+    assert "could not be read" in got.detail
+
+
+def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    names = {r.name for r in results}
+    assert "upgrade actions" in names
