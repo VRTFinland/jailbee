@@ -141,3 +141,27 @@ class GuiState(SQLModel, table=True):
     refresh_paused: bool = False
     card_style: str = "compact"  # "compact" | "grid"
     collapsed_repos: str | None = None  # JSON list[str] of collapsed repo prefixes
+
+
+class RepoUpgradeState(SQLModel, table=True):
+    """Per-repo record of the version at which `base build` / `apply` last ran.
+
+    Per repo, not global: both are repo-scoped operations (`golden.alias` is
+    derived from `container_prefix`, `apply` runs from a repo root), so
+    running `base build` in one repo must not silence another that has its
+    own golden image.
+
+    The `*_observed` flags separate a run jailbee actually saw from the
+    assumption written when a repo is first seen. See `jailbee.upgrade` —
+    the flag decides whether that version's own upgrade notes are considered
+    satisfied.
+    """
+
+    __tablename__ = "repo_upgrade_state"
+
+    container_prefix: str = Field(primary_key=True)
+    base_build_version: str
+    base_build_observed: bool
+    apply_version: str
+    apply_observed: bool
+    updated_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))

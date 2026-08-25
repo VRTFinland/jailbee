@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db.models import SchemaMeta
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def state_dir() -> Path:
@@ -75,11 +75,20 @@ def _migrate_to_v4(conn: Connection) -> None:
         conn.exec_driver_sql("ALTER TABLE gui_state ADD COLUMN collapsed_repos VARCHAR")
 
 
+def _migrate_to_v5(conn: Connection) -> None:
+    """v4 -> v5: add the repo_upgrade_state table. ``create_all`` (run before
+    the migration loop in ``_ensure_schema``) already creates the new table,
+    so this step is an idempotent no-op guard whose job is to let the version
+    bump to 5 — the same shape as ``_migrate_to_v3``."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
