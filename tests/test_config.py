@@ -3533,6 +3533,37 @@ def test_load_config_column_warnings_empty_by_default(tmp_path, mocker) -> None:
     assert cfg.column_warnings() == []
 
 
+def test_load_config_repo_ls_hide_only_still_inherits_global_fields_after_sanitize(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    """`sanitize_column_blocks` must only touch the sub-field it is actually
+    correcting: a repo `ls:` block that sets `hide` (with one bad name to
+    sanitize) but never mentions `fields` must still inherit the global
+    `fields` through `effective_ls_columns` after going through
+    `load_config` — if the sanitizer reconstructed the whole `ColumnConfig`
+    instead of touching only `hide`, it would mark `fields` as explicitly
+    set too (to its own default, `None`), which would override the global
+    `fields` list with `None` instead of inheriting it, corrupting the merge
+    for every repo that ever has a `hide` typo, not just the sanitizer's own
+    unit tests. `ls` is the live path this guards; the equivalent for the
+    deprecated `dashboard:` block was deleted along with
+    `effective_dashboard_columns`."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, global_path = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="ls:\n  fields: [name, state]\n",
+        repo_yaml="ls:\n  hide: [ip, nosuchfield]\n",
+    )
+
+    cfg = load_config(cfg_path)
+    gcfg = _load_global_yaml(global_path)
+
+    eff = cfg.effective_ls_columns(gcfg)
+    assert eff.fields == ["name", "state"]
+    assert eff.hide == ["ip"]
+
+
 # ---------- load_config_from_text seam
 
 
