@@ -296,6 +296,15 @@ def init(config: ConfigOption = None) -> None:
         error(str(e))
         raise typer.Exit(1) from e
 
+    # `run_init` writes exactly what `apply` writes — profiles, ACL, shared
+    # dirs — so it satisfies an `apply` upgrade note just as `apply` does.
+    # Recorded here, at the point that work is known to have succeeded, and
+    # not at the end of the command: the steps below (systemd units, repo
+    # registration) are not part of what the note is about, and a freshly
+    # inited repo must not be told to `jailbee apply` for changes `jailbee
+    # init` just made.
+    _record_upgrade_action(cfg, "apply")
+
     # Install the singleton refresh timer + register this repo so it
     # gets refreshed on the next 60s tick (and stays up to date going
     # forward).
