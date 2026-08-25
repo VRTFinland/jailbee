@@ -480,6 +480,26 @@ def test_generation_failure_falls_back_to_the_source_branch(tmp_path, mocker):
     assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
 
 
+def test_generation_failure_on_a_submodule_names_the_submodule_command(tmp_path, mocker):
+    """The failure warning points the user at `{scope.command} --description`
+    to fix it up by hand. For a submodule scope that must read `jailbee
+    submodule pr --description`, not the superproject's `jailbee pr
+    --description` — closes the gap left untested after the shared-flow
+    extraction (`scope.command` is a `PrScope` property, exercised elsewhere
+    only via the superproject scope's default)."""
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=None)
+    warn = mocker.patch("jailbee.pr_flow.warn")
+
+    plan = _plan(tmp_path, mocker, cfg=cfg, scope=_sub_scope(tmp_path))
+
+    assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
+    warn.assert_called_once()
+    assert "jailbee submodule pr --description" in warn.call_args.args[0]
+
+
 def test_generation_passes_the_scope_subpath(tmp_path, mocker):
     from tests.conftest import make_cfg, with_agent
 
