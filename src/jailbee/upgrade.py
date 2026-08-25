@@ -193,6 +193,26 @@ def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]
     return lines
 
 
+def _bootstrap_row(
+    prefix: str, version: str, now: datetime
+) -> RepoUpgradeState:  # type: ignore[name-defined]  # noqa: F821
+    """Construct the assumed-bootstrap row: both watermarks at `version`,
+    neither observed. This is the single place the bootstrap shape is defined,
+    so all callers that need to create a fresh row share the same structure.
+    Local import of RepoUpgradeState keeps the module dependency deferred.
+    """
+    from jailbee.db.models import RepoUpgradeState
+
+    return RepoUpgradeState(
+        container_prefix=prefix,
+        base_build_version=version,
+        base_build_observed=False,
+        apply_version=version,
+        apply_observed=False,
+        updated_at=now,
+    )
+
+
 def load_or_backfill(
     session: Session,
     prefix: str,
@@ -218,14 +238,7 @@ def load_or_backfill(
 
     row = session.get(RepoUpgradeState, prefix)
     if row is None:
-        row = RepoUpgradeState(
-            container_prefix=prefix,
-            base_build_version=current,
-            base_build_observed=False,
-            apply_version=current,
-            apply_observed=False,
-            updated_at=now,
-        )
+        row = _bootstrap_row(prefix, current, now)
         session.add(row)
         session.commit()
 
@@ -262,14 +275,9 @@ def record(
 
     row = session.get(RepoUpgradeState, prefix)
     if row is None:
-        row = RepoUpgradeState(
-            container_prefix=prefix,
-            base_build_version=version,
-            base_build_observed=False,
-            apply_version=version,
-            apply_observed=False,
-            updated_at=now,
-        )
+        row = _bootstrap_row(prefix, version, now)
+    # Assignment is no-op on freshly-bootstrapped path (where version was just
+    # set), but load-bearing on existing-row path (where version may differ).
     if action == "base_build":
         row.base_build_version = version
         row.base_build_observed = True
