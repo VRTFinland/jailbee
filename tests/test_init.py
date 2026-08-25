@@ -794,6 +794,81 @@ def test_relocate_claude_json_moves_a_legacy_file(tmp_path):
     assert not (shared / "claude.json").exists()
 
 
+def test_relocate_claude_json_announces_the_move(mocker, tmp_path):
+    """The migration touches the user's Claude identity — it must say so,
+    not move it silently (mirrors the SSH seed's `success(...)` announcement)."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_warns_when_orphaning_the_legacy_file(mocker, tmp_path):
+    """The skip-because-destination-exists branch is finding 2's orphaning
+    case (a later `apply` can never migrate the legacy file again) and must
+    warn, naming both paths, rather than silently leaving the user unaware."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_skips_a_symlink_source(mocker, tmp_path):
+    """A symlink source must not be renamed: `rename()` moves the link, not
+    its target, leaving a dangling symlink at the destination inside the
+    container."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    real = tmp_path / "real-claude.json"
+    real.write_text('{"real": true}')
+    source = shared / "claude.json"
+    source.symlink_to(real)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert source.is_symlink()
+    assert not (shared / "claude" / ".claude.json").exists()
+    out = recording.export_text()
+    assert str(source) in out
+
+
 def test_relocate_claude_json_is_a_noop_without_a_legacy_file(tmp_path):
     from jailbee.init_command import _relocate_claude_json
 

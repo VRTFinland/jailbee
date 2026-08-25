@@ -126,14 +126,35 @@ def _relocate_claude_json(cfg: Config) -> None:
     Idempotent and never destructive: with the destination already present the
     source is a leftover from before the move, so it is left exactly as it is
     rather than overwriting live state or deleting the user's copy.
+
+    Caller ordering note: `apply.run_apply` calls this before rewriting the
+    binds profile (which is what stops declaring the `claude-json` disk
+    device whose source this moves). If `apply` aborts in between, the binds
+    profile still references the now-moved-away source, and any `incus
+    start`/`profile assign` fails with "Missing source path ..." until the
+    next `apply` re-runs (this function is idempotent, so that self-heals).
     """
     assert cfg.shared_dir is not None  # set by load_config
     source = cfg.shared_dir / "claude.json"
     target = cfg.shared_dir / "claude" / ".claude.json"
+    if source.is_symlink():
+        warn(
+            f"{source} is a symlink — leaving it in place, not relocating to {target}. "
+            "Move it into place by hand if it should back Claude Code's global config."
+        )
+        return
     if not source.is_file() or target.exists():
+        if source.is_file() and target.exists():
+            warn(
+                f"Legacy {source} left in place — {target} already exists. "
+                "If the legacy file holds real Claude Code state, merge it "
+                "into the destination by hand; jailbee never overwrites an "
+                "existing destination."
+            )
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     source.rename(target)
+    success(f"Moved {source} → {target}")
 
 
 def _seed_claude_json(cfg: Config) -> None:
