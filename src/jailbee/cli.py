@@ -4083,7 +4083,7 @@ def pr_cmd(
     """
     from jailbee import git as git_mod
     from jailbee import pr as pr_mod
-    from jailbee import pr_ai, pr_flow, sync
+    from jailbee import pr_flow, sync
     from jailbee.lifecycle import short_name
 
     if no_draft:
@@ -4179,52 +4179,22 @@ def pr_cmd(
         raise typer.Exit(1)
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
-    branch_ai_on = cfg.claude.enabled and cfg.claude.ai_pr_branch and not no_ai
-
-    # --- Decide the publish name + generate title/body (create path only) ---
-    # `ai_pr_branch` and `ai_pr_description` are INDEPENDENT toggles.
-    # `generate_pr_text` is a single call that yields title, body AND branch, so
-    # run it when EITHER feature needs it and apply each part only if its own
-    # flag is on.
-    ai_text = None  # PrText | None, reused for title/body below
-    publish_name: str | None = None
-    if is_author or stored_pr_branch:
-        # UPDATE: reuse the stored external name; never regenerate the branch.
-        publish_name = stored_pr_branch or None  # None -> publish() defaults to container branch
-    else:
-        # CREATE.
-        if as_name is not None and not git_mod.check_ref_format(as_name):
-            error(f"--as '{as_name}' is not a valid branch name.")
-            raise typer.Exit(2)
-        need_desc_ai = ai_on and not (title and body)  # AI needed for title/body
-        need_branch_ai = branch_ai_on and as_name is None  # AI needed for the branch name
-        gen = (need_desc_ai or need_branch_ai) and bool(container_branch)
-        if gen and container_branch:
-            from jailbee.tui import console
-
-            with console.status(f"Generating PR title/description with Claude in '{short}'…"):
-                ai_text = pr_ai.generate_pr_text(
-                    cfg,
-                    incus,
-                    full,
-                    branch=container_branch,
-                    base=resolved_base,
-                    fixed_title=title,
-                    fixed_body=body,
-                )
-            if ai_text is None:
-                warn(
-                    "Claude PR-text generation failed; using a placeholder. "
-                    "Edit the PR later with `jailbee pr --description`."
-                )
-        # PR head branch name: --as wins; else the AI-proposed name only when
-        # ai_pr_branch is on; else the container branch.
-        if as_name is not None:
-            publish_name = as_name
-        elif need_branch_ai and ai_text is not None and container_branch:
-            publish_name = pr_flow.confirm_pr_branch_name(ai_text.branch, container_branch)
-        else:
-            publish_name = container_branch
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=bool(record.author or stored_pr_branch),
+        stored_head=stored_pr_branch,
+        source_branch=container_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}'…",
+    )
+    publish_name, ai_text = plan.publish_name, plan.ai_text
 
     # --- Publish (fetch + push under the chosen name) ---
     # On a foreign PR head the generic push-failure hint's "--as" advice does

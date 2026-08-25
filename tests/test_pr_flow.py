@@ -35,6 +35,14 @@ def test_noun_is_prefixed_for_a_submodule(tmp_path):
     assert _sub_scope(tmp_path).noun("12") == "submodule 'libs/foo': PR #12"
 
 
+def test_command_is_jailbee_pr_for_the_superproject(tmp_path):
+    assert _super_scope(tmp_path).command == "jailbee pr"
+
+
+def test_command_is_jailbee_submodule_pr_for_a_submodule(tmp_path):
+    assert _sub_scope(tmp_path).command == "jailbee submodule pr"
+
+
 def test_reject_as_on_pr_update_exits_2(tmp_path):
     with pytest.raises(typer.Exit) as excinfo:
         pr_flow.reject_as_on_pr_update(_super_scope(tmp_path), "user/x", "12")
@@ -303,3 +311,130 @@ def test_adopt_aborts_on_decline(tmp_path, mocker):
         pr_flow.adopt_existing_pr_for_branch(
             _super_scope(tmp_path), mocker.MagicMock(), branch="feat/foo", yes=False
         )
+
+
+def _text(branch="user/ai"):
+    from jailbee.pr_ai import PrText
+
+    return PrText(title="AI title", body="AI body", branch=branch)
+
+
+def _plan(tmp_path, mocker, *, cfg=None, scope=None, **kwargs):
+    defaults = dict(
+        is_update=False,
+        stored_head=None,
+        source_branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        as_name=None,
+        no_ai=False,
+        status_label="Generating…",
+    )
+    defaults.update(kwargs)
+    return pr_flow.resolve_pr_text_and_head(
+        cfg if cfg is not None else _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        scope if scope is not None else _super_scope(tmp_path),
+        **defaults,
+    )
+
+
+def test_update_reuses_the_stored_head_and_never_generates(tmp_path, mocker):
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, is_update=True, stored_head="user/x")
+    assert plan == pr_flow.HeadPlan(publish_name="user/x", ai_text=None)
+    gen.assert_not_called()
+
+
+def test_as_name_wins_over_the_ai(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    plan = _plan(tmp_path, mocker, cfg=cfg, as_name="user/mine")
+    assert plan.publish_name == "user/mine"
+
+
+def test_invalid_as_name_exits_2(tmp_path, mocker):
+    mocker.patch("jailbee.git.check_ref_format", return_value=False)
+    with pytest.raises(typer.Exit) as excinfo:
+        _plan(tmp_path, mocker, as_name="bad name")
+    assert excinfo.value.exit_code == 2
+
+
+def test_no_ai_keeps_the_source_branch(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, cfg=cfg, no_ai=True)
+    assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
+    gen.assert_not_called()
+
+
+def test_ai_branch_off_keeps_the_source_branch_but_still_generates_text(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True, ai_pr_branch=False)
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
+    plan = _plan(tmp_path, mocker, cfg=cfg)
+    assert plan.publish_name == "feat/foo"
+    assert plan.ai_text is not None
+
+
+def test_ai_description_off_still_proposes_a_branch(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True, ai_pr_description=False)
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+    plan = _plan(tmp_path, mocker, cfg=cfg)
+    assert plan.publish_name == "user/ai"
+
+
+def test_both_toggles_off_skips_generation_entirely(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path),
+        "claude",
+        enabled=True,
+        ai_pr_branch=False,
+        ai_pr_description=False,
+    )
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, cfg=cfg)
+    assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
+    gen.assert_not_called()
+
+
+def test_generation_failure_falls_back_to_the_source_branch(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=None)
+    plan = _plan(tmp_path, mocker, cfg=cfg)
+    assert plan == pr_flow.HeadPlan(publish_name="feat/foo", ai_text=None)
+
+
+def test_generation_passes_the_scope_subpath(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+    _plan(tmp_path, mocker, cfg=cfg, scope=_sub_scope(tmp_path))
+    assert gen.call_args.kwargs["subpath"] == "libs/foo"
+
+
+def test_no_source_branch_skips_generation(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    plan = _plan(tmp_path, mocker, cfg=cfg, source_branch=None)
+    assert plan == pr_flow.HeadPlan(publish_name=None, ai_text=None)
+    gen.assert_not_called()

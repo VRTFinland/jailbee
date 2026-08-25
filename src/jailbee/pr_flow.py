@@ -29,6 +29,7 @@ from jailbee.tui import error, info, warn
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus as IncusType
+    from jailbee.pr_ai import PrText
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,11 @@ class PrScope:
         """How to name the PR under discussion in a message."""
         base = f"PR #{pr_label}" if pr_label else "the container's PR"
         return f"{self.prefix}{base}"
+
+    @property
+    def command(self) -> str:
+        """The CLI invocation to point users at for follow-up commands."""
+        return "jailbee submodule pr" if self.subpath else "jailbee pr"
 
 
 def reject_as_on_pr_update(scope: PrScope, as_name: str, pr_label: str | None) -> Never:
@@ -118,6 +124,86 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
         if git_mod.check_ref_format(chosen):
             return chosen
         warn(f"'{chosen}' is not a valid branch name.")
+
+
+@dataclass(frozen=True)
+class HeadPlan:
+    """The publish name and the AI text a create/update run decided on."""
+
+    publish_name: str | None
+    ai_text: PrText | None
+
+
+def resolve_pr_text_and_head(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    scope: PrScope,
+    *,
+    is_update: bool,
+    stored_head: str | None,
+    source_branch: str | None,
+    base: str,
+    title: str | None,
+    body: str | None,
+    as_name: str | None,
+    no_ai: bool,
+    status_label: str,
+) -> HeadPlan:
+    """Decide the PR head name and (on create) generate the title/body.
+
+    `ai_pr_branch` and `ai_pr_description` are INDEPENDENT toggles.
+    `generate_pr_text` is a single call that yields title, body AND branch, so
+    it runs when EITHER feature needs it and each part is applied only if its
+    own flag is on.
+
+    On the update path the stored external name is reused and the branch is
+    never regenerated — `publish_name=None` lets the publish step default to
+    the source branch.
+    """
+    from jailbee import git as git_mod
+    from jailbee import pr_ai
+
+    if is_update:
+        return HeadPlan(publish_name=stored_head or None, ai_text=None)
+
+    if as_name is not None and not git_mod.check_ref_format(as_name):
+        error(f"--as '{as_name}' is not a valid branch name.")
+        raise typer.Exit(2)
+
+    ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    branch_ai_on = cfg.claude.enabled and cfg.claude.ai_pr_branch and not no_ai
+    need_desc_ai = ai_on and not (title and body)
+    need_branch_ai = branch_ai_on and as_name is None
+    ai_text: PrText | None = None
+    if (need_desc_ai or need_branch_ai) and source_branch:
+        from jailbee.tui import console
+
+        with console.status(status_label):
+            ai_text = pr_ai.generate_pr_text(
+                cfg,
+                incus,
+                full,
+                branch=source_branch,
+                base=base,
+                fixed_title=title,
+                fixed_body=body,
+                subpath=scope.subpath,
+            )
+        if ai_text is None:
+            warn(
+                f"{scope.prefix}Claude PR-text generation failed; using a "
+                f"placeholder. Edit the PR later with `{scope.command} --description`."
+            )
+
+    if as_name is not None:
+        return HeadPlan(publish_name=as_name, ai_text=ai_text)
+    if need_branch_ai and ai_text is not None and source_branch:
+        return HeadPlan(
+            publish_name=confirm_pr_branch_name(ai_text.branch, source_branch),
+            ai_text=ai_text,
+        )
+    return HeadPlan(publish_name=source_branch, ai_text=ai_text)
 
 
 def resolve_pr_description_update(
