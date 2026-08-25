@@ -37,6 +37,15 @@ from jailbee.config import (
     format_loose_after,
     load_config,
 )
+from jailbee.dashboard_settings import (
+    SettingsState,
+    enabled_names,
+    move_settings,
+    open_settings,
+    render_settings,
+    switch_tab,
+    toggle_current,
+)
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
     GlobalConfig,
@@ -553,6 +562,39 @@ def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
     return tuple(f.name for f in resolved if table_format.shows_by_default_in_dashboard(f))
 
 
+def all_column_names() -> tuple[str, ...]:
+    """Every real column name, in canonical order — the Fields tab's list.
+
+    The same vocabulary ``jailbee ls --fields`` accepts, including columns off
+    by default in both views (``full_name``, ``git_status``, ``ip``, …): an
+    enabled set decides inclusion by membership, so any of them can be turned
+    on. ``repo`` is redundant under per-repo grouping but is not special-cased
+    — the user may want it.
+    """
+    return tuple(f.name for f in ls_field_specs(now=datetime.now(UTC), all_repos=False))
+
+
+def dynamic_column_names() -> frozenset[str]:
+    """Columns whose ``show_if`` can prune them even when enabled.
+
+    The settings overlay marks these so that an enabled column which does not
+    appear reads as the emptiness heuristic working, not as a bug.
+    """
+    specs = ls_field_specs(now=datetime.now(UTC), all_repos=False)
+    return frozenset(f.name for f in specs if f.show_if is not None)
+
+
+def settings_repo_prefixes(groups: list[RepoGroup], folded: frozenset[str]) -> tuple[str, ...]:
+    """The Repos tab's list: what is on screen, plus what is folded away.
+
+    A folded repo whose containers have since gone draws no group at all, so
+    listing only ``groups`` would leave it folded forever with no way back.
+    Deduped, on-screen groups first, absent folded prefixes sorted after them.
+    """
+    on_screen = [g.prefix for g in groups if g.containers]
+    return tuple(dict.fromkeys(on_screen + sorted(folded)))
+
+
 def visible_fields(
     now: datetime,
     all_containers: list[ContainerInfo],
@@ -654,6 +696,15 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
     KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
+    KeyBinding(
+        "settings",
+        (b"\x1bOQ", b"\x1b[12~", b"S"),
+        "F2 / S",
+        "columns and repo folding",
+        "View",
+        brief="settings",
+    ),
+    KeyBinding("tab", (b"\t",), "", "", "View"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
@@ -708,9 +759,9 @@ class MenuState:
     index: int = 0
 
 
-# What occupies the slot under the table. Both overlays are mutually exclusive
-# by construction — "menu and help open at once" is not a representable state.
-Overlay = MenuState | Literal["help"]
+# What occupies the slot under the table. All three overlays are mutually
+# exclusive by construction — no combination of them is a representable state.
+Overlay = MenuState | SettingsState | Literal["help"]
 
 
 def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
@@ -806,6 +857,11 @@ def _hint_line(overlay: Overlay | None) -> str:
     """The keybinding hint shown on the last line of the panel body."""
     if isinstance(overlay, MenuState):
         return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+    if isinstance(overlay, SettingsState):
+        return (
+            "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
+            "[bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
+        )
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
     return "  ·  ".join(
@@ -892,7 +948,12 @@ def render(
 
     body: list[RenderableType] = [table, ""]
     if overlay is not None:
-        panel = _render_menu(overlay) if isinstance(overlay, MenuState) else _render_help()
+        if isinstance(overlay, MenuState):
+            panel = _render_menu(overlay)
+        elif isinstance(overlay, SettingsState):
+            panel = render_settings(overlay, dynamic=dynamic_column_names())
+        else:
+            panel = _render_help()
         body += [panel, ""]
     body.append(_hint_line(overlay))
 
@@ -1350,12 +1411,22 @@ def run(
                 if key == "interrupt":
                     break
                 if overlay is not None:
-                    if key in ("cancel", "quit"):
+                    if key in ("cancel", "quit", "settings"):
                         overlay = None
                     elif key == "help":
                         # One slot, so help replaces the menu rather than
                         # stacking on it — and toggles itself shut.
                         overlay = None if overlay == "help" else "help"
+                    elif isinstance(overlay, SettingsState):
+                        if key in ("up", "down"):
+                            overlay = move_settings(overlay, -1 if key == "up" else 1)
+                        elif key == "tab":
+                            overlay = switch_tab(overlay)
+                        elif key == "fold":
+                            overlay = toggle_current(overlay)
+                            enabled = enabled_names(overlay)
+                            folded = overlay.folded
+                            save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
                     elif isinstance(overlay, MenuState):
                         if key in ("up", "down"):
                             overlay = move_menu(overlay, -1 if key == "up" else 1)
@@ -1391,6 +1462,13 @@ def run(
                         save_view_state(engine, FRONTEND_TUI, ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
+                elif key == "settings":
+                    overlay = open_settings(
+                        field_names=all_column_names(),
+                        enabled=frozenset(enabled if enabled is not None else default_columns()),
+                        repo_prefixes=settings_repo_prefixes(groups, folded),
+                        folded=folded,
+                    )
                 elif key.startswith("action:"):
                     container = container_of(selected)
                     verb = quick_verb(groups, container, key)

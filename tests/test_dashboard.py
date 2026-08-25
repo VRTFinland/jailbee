@@ -2293,3 +2293,76 @@ def test_fold_key_is_bound_to_space_and_documented():
     binding = dashboard.binding_for_token("fold")
     assert binding is not None
     assert binding.hint and binding.label
+
+
+def test_settings_key_is_bound_to_f2_and_shift_s():
+    """Both F2 encodings, because terminals disagree, plus a letter that works
+    everywhere. `s` is already shell, so the alias is `S`."""
+    assert dashboard.parse_key(b"\x1bOQ") == "settings"
+    assert dashboard.parse_key(b"\x1b[12~") == "settings"
+    assert dashboard.parse_key(b"S") == "settings"
+    binding = dashboard.binding_for_token("settings")
+    assert binding is not None and binding.hint
+
+
+def test_all_column_names_is_the_full_ls_vocabulary():
+    """The Fields tab offers every real column, including ones off by default
+    in both views — that is the point of an enabled set over a hide list."""
+    from datetime import UTC, datetime
+
+    from jailbee.lifecycle import ls_field_specs
+
+    names = dashboard.all_column_names()
+    expected = [f.name for f in ls_field_specs(now=datetime(2026, 6, 8, tzinfo=UTC))]
+    assert list(names) == expected
+    assert "full_name" in names and "git_status" in names and "ip" in names
+
+
+def test_dynamic_column_names_are_exactly_the_show_if_ones():
+    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode"})
+
+
+def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
+    """Otherwise a repo whose containers are gone could never be unfolded:
+    it draws no group, so the Repos tab would not list it."""
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", None, [_ci("alpha-one", "alpha")]),
+        dashboard.RepoGroup("empty", "/e", None, []),
+    ]
+    prefixes = dashboard.settings_repo_prefixes(groups, frozenset({"alpha", "vanished"}))
+
+    assert "alpha" in prefixes
+    assert "vanished" in prefixes  # folded but absent — still reachable
+    assert "empty" not in prefixes  # draws nothing, folds nothing
+    assert len(prefixes) == len(set(prefixes))  # no duplicate for a folded on-screen repo
+
+
+def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
+    from jailbee.dashboard_settings import open_settings
+
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    overlay = open_settings(
+        field_names=dashboard.all_column_names(),
+        enabled=frozenset(dashboard.default_columns()),
+        repo_prefixes=("alpha",),
+        folded=frozenset(),
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay=overlay,
+        )
+    )
+    # The live table stays on screen behind the panel — that is the whole
+    # reason the overlay is a panel and not a full-screen modal.
+    # (The container row renders as "one": display_name strips the repo
+    # prefix, same as the menu-overlay table-visibility check above.)
+    assert "one" in out
+    assert "settings" in out
+    assert "Fields" in out
