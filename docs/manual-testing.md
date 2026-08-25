@@ -2234,3 +2234,114 @@ incus delete <prefix>-probe --force
 incus profile delete <prefix>-base
 sudo systemctl stop incus.service
 ```
+
+## `.claude.json` relocation smoke test
+
+Claude Code's global config moved from a file-level bind mount
+(`<shared_dir>/claude.json` → `~/.claude.json`) to living inside the existing
+`claude` directory mount (`<shared_dir>/claude/.claude.json` → `~/.claude`),
+via `CLAUDE_CONFIG_DIR=$HOME/.claude` exported from the golden image. Unit
+tests cover the relocate/seed helpers
+(`init_command._relocate_claude_json` / `_seed_claude_json`) and the
+`install.sh` env export in isolation — they mock the filesystem and never run
+a real Claude Code. Only a real login proves the *actual CLI* writes to the
+new path. This is the gate; there is no other verification of that claim.
+
+Requires `claude.enabled: true`, a real Incus daemon, and network access for
+`jailbee base build` + Claude Code's own login flow. Run the five checks in
+order and write down each command's real output next to it — a plausible
+sounding "should work" is not evidence, and several of these steps look
+identical whether they passed or silently no-opped.
+
+### 1. Upgrade path on a repo that already has state
+
+Start from a container built **before** this change, with a non-trivial
+`<shared_dir>/claude.json` (i.e. Claude Code has been logged in at least
+once). If convenient, leave a `claude` session running inside that old
+container in a `jailbee tmux <name>` pane — reused by Step 5 below.
+
+```bash
+ls -la <shared_dir>/claude.json
+# expect: a regular file, not a symlink; clearly bigger than the 3-byte
+# "{}\n" seed (a real config, from an actual login)
+sha256sum <shared_dir>/claude.json
+
+jailbee base build      # rebuilds the golden image with the CLAUDE_CONFIG_DIR export
+jailbee apply            # runs _relocate_claude_json then _seed_claude_json, updates <prefix>-binds
+
+ls -la <shared_dir>/claude.json
+# expect: "No such file or directory" — relocated, not copied
+ls -la <shared_dir>/claude/.claude.json
+sha256sum <shared_dir>/claude/.claude.json
+# expect: identical hash to the sha256sum taken above, before `jailbee apply`
+
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 0 — the file-level device is gone from the profile
+```
+
+### 2. Fresh repo
+
+```bash
+# in a repo whose <shared_dir> does not exist yet
+jailbee init
+cat <shared_dir>/claude/.claude.json
+# expect: {}
+ls <shared_dir>/claude.json
+# expect: "No such file or directory" — never created
+```
+
+### 3. The variable actually relocates the file
+
+In a container built from the image produced by Step 1's `jailbee base
+build`:
+
+```bash
+jailbee new feat/claudereloc --no-clone --no-autostart
+jailbee shell feat-claudereloc
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude
+claude
+# complete onboarding (fresh shared state) or resume (if state was carried
+# over), then exit the session
+exit
+
+ls -la <shared_dir>/claude/.claude.json
+# expect: mtime just updated by the run above
+ls <shared_dir>/claude.json 2>&1
+# expect: "No such file or directory" — Claude Code never wrote back to the
+# old path
+```
+
+### 4. State survives across containers of the repo
+
+```bash
+jailbee new feat/claudereloc2 --no-clone --no-autostart
+jailbee shell feat-claudereloc2
+claude
+# expect: no onboarding prompt
+/mcp
+# expect: the same MCP servers configured from the Step 3 container, if any
+exit
+```
+
+### 5. Live device removal
+
+Uses the old container from Step 1 (`<prefix>-<old-name>` below), with its
+`claude` session still running from before `jailbee apply` ran in that step.
+
+```bash
+incus config show <prefix>-<old-name> --expanded | grep -A2 claude-json
+# expect: no output — the device is gone from the running container's
+# expanded config, not just from the profile source
+```
+
+In the pane where `claude` has been running since before Step 1's `jailbee
+apply`, type something and confirm it still replies — expect it to still be
+responsive, with no crash, no restart and no session drop.
+
+Teardown:
+
+```bash
+jailbee destroy feat-claudereloc --force
+jailbee destroy feat-claudereloc2 --force
+```
