@@ -341,8 +341,8 @@ def test_migrate_to_v3_is_idempotent() -> None:
 
 def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     """An existing v3 DB (gui_state without card_style/collapsed_repos) is
-    migrated in place to v5: both columns are added, a pre-existing row is
-    back-filled with the default card_style, and unrelated tables
+    migrated in place straight to v5: v4 adds both columns, a pre-existing row
+    is back-filled with the default card_style, and unrelated tables
     (registered_repo) survive. Re-running the bootstrap is a no-op."""
     from jailbee.db import _ensure_schema
     from jailbee.db.models import GuiState, RegisteredRepo, SchemaMeta

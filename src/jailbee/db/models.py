@@ -154,7 +154,9 @@ class RepoUpgradeState(SQLModel, table=True):
     The `*_observed` flags separate a run jailbee actually saw from the
     assumption written when a repo is first seen. See `jailbee.upgrade` —
     the flag decides whether that version's own upgrade notes are considered
-    satisfied.
+    satisfied: an observed run sets an exclusive lower bound (that version's
+    notes are already satisfied), while an assumed one is inclusive (that
+    version's notes are not yet covered).
     """
 
     __tablename__ = "repo_upgrade_state"
