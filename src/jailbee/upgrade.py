@@ -213,6 +213,10 @@ def _bootstrap_row(prefix: str, version: str, now: datetime) -> RepoUpgradeState
     """Construct the assumed-bootstrap row: both watermarks at `version`,
     neither observed. This is the single place the bootstrap shape is defined,
     so all callers that need to create a fresh row share the same structure.
+
+    The `RepoUpgradeState` import is local on purpose: it keeps `db.models`
+    (and the SQLModel metadata it registers) off this module's import graph,
+    so the pure comparison helpers above stay importable without a DB.
     """
     from jailbee.db.models import RepoUpgradeState
 
@@ -224,6 +228,17 @@ def _bootstrap_row(prefix: str, version: str, now: datetime) -> RepoUpgradeState
         apply_observed=False,
         updated_at=now,
     )
+
+
+def _set_watermark(row: RepoUpgradeState, action: Action, version: str, *, observed: bool) -> None:
+    """Write one action's watermark onto `row`. The only place the
+    action-to-column mapping lives, shared by the repair path and `record`."""
+    if action == "base_build":
+        row.base_build_version = version
+        row.base_build_observed = observed
+    else:
+        row.apply_version = version
+        row.apply_observed = observed
 
 
 def load_or_backfill(
@@ -241,11 +256,18 @@ def load_or_backfill(
     still fire. Anything older is deliberately water under the bridge: a repo
     that predates this bookkeeping gets no retroactive backlog.
 
-    The insert happens once. Callers that run in a loop (the Qt dashboard's
-    refresh) read the existing row on every later pass.
+    The row is written once, at first sight, and thereafter only read — the
+    stored watermark is the record of history and a later run must never
+    overwrite it. The single exception is the repair below.
 
-    An action whose stored version does not parse is omitted from the result,
-    so it produces no advice at all — silence beats a wrong hint.
+    An action whose stored version does not parse cannot be compared against
+    release-numbered notes, and since the row is otherwise never rewritten,
+    simply dropping it would silence that action's advice for the life of the
+    repo. It is repaired instead: rewritten as an assumed watermark at
+    `current`, exactly the state a first sight under this version would have
+    produced. (Such a version can only come from an install with no package
+    metadata — `0.0.0+unknown`. Under one of those `pending` returns nothing
+    anyway, so the repair is invisible until a real release runs.)
     """
     from jailbee.db.models import RepoUpgradeState
 
@@ -255,15 +277,31 @@ def load_or_backfill(
         session.add(row)
         session.commit()
 
+    # Reading the columns into a plain dict here is load-bearing, not
+    # stylistic: `commit()` above expires the instance, so these attribute
+    # accesses are what re-SELECT them while the session is still open.
+    # Deferring them past the caller's `with Session(...)` would raise
+    # DetachedInstanceError.
     stored: dict[Action, tuple[str, bool]] = {
         "base_build": (row.base_build_version, row.base_build_observed),
         "apply": (row.apply_version, row.apply_observed),
     }
     marks: dict[Action, Watermark] = {}
+    repaired = False
     for action, (raw, observed) in stored.items():
         version = parse_version(raw)
-        if version is not None:
-            marks[action] = Watermark(version=version, observed=observed)
+        if version is None:
+            version = parse_version(current)
+            if version is None:
+                continue
+            observed = False
+            _set_watermark(row, action, current, observed=False)
+            repaired = True
+        marks[action] = Watermark(version=version, observed=observed)
+    if repaired:
+        row.updated_at = now
+        session.add(row)
+        session.commit()
     return marks
 
 
@@ -291,12 +329,7 @@ def record(
         row = _bootstrap_row(prefix, version, now)
     # Assignment is no-op on freshly-bootstrapped path (where version was just
     # set), but load-bearing on existing-row path (where version may differ).
-    if action == "base_build":
-        row.base_build_version = version
-        row.base_build_observed = True
-    else:
-        row.apply_version = version
-        row.apply_observed = True
+    _set_watermark(row, action, version, observed=True)
     row.updated_at = now
     session.add(row)
     session.commit()

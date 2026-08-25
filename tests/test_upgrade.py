@@ -345,8 +345,8 @@ def test_load_or_backfill_creates_an_assumed_row_on_first_sight(db_engine) -> No
 
 
 def test_load_or_backfill_does_not_rewrite_an_existing_row(db_engine) -> None:
-    """Called on every relevant command, including the dashboard's refresh
-    loop: after the first insert it must only read."""
+    """The stored watermark is the record of history: after the first insert
+    every later call only reads it."""
     from jailbee.upgrade import load_or_backfill
 
     with Session(db_engine) as session:
@@ -357,25 +357,83 @@ def test_load_or_backfill_does_not_rewrite_an_existing_row(db_engine) -> None:
     assert marks["apply"].version == (1, 4, 0), "the stored watermark wins"
 
 
-def test_load_or_backfill_skips_an_unparseable_stored_version(db_engine) -> None:
-    """A row written by a dev build carries a version no comparison can use.
-    Dropping that action is silence, which beats a wrong hint."""
+def _poisoned_row(session, **overrides) -> None:
+    """Store a row whose `base_build` watermark no comparison can use.
+
+    That is what a run under an install with no package metadata writes:
+    `__version__` is `0.0.0+unknown` and nothing validates it on the way in.
+    """
+    from jailbee.db.models import RepoUpgradeState
+
+    fields = {
+        "container_prefix": "sampleapp",
+        "base_build_version": "0.0.0+unknown",
+        "base_build_observed": True,
+        "apply_version": "1.4.0",
+        "apply_observed": True,
+        "updated_at": _NOW,
+        **overrides,
+    }
+    session.add(RepoUpgradeState(**fields))
+    session.commit()
+
+
+def test_load_or_backfill_repairs_an_unparseable_stored_version(db_engine) -> None:
+    """Dropping the action instead would silence it for the life of the repo:
+    the row is never rewritten, so nothing would ever restore the watermark.
+    It is repaired to the assumed state a first sight would have produced."""
+    from jailbee.upgrade import load_or_backfill
+
+    with Session(db_engine) as session:
+        _poisoned_row(session)
+        marks = load_or_backfill(session, "sampleapp", "1.9.0", now=_NOW)
+
+    assert marks["base_build"].version == (1, 9, 0)
+    assert marks["base_build"].observed is False, "a repair is an assumption, not an observation"
+    assert marks["apply"].version == (1, 4, 0), "the parseable action is untouched"
+
+
+def test_load_or_backfill_persists_the_repair(db_engine) -> None:
+    """The repair is written back, so the poisoned value is gone for good
+    rather than being papered over on every read."""
     from jailbee.db.models import RepoUpgradeState
     from jailbee.upgrade import load_or_backfill
 
     with Session(db_engine) as session:
-        session.add(
-            RepoUpgradeState(
-                container_prefix="sampleapp",
-                base_build_version="0.0.0+unknown",
-                base_build_observed=True,
-                apply_version="1.4.0",
-                apply_observed=True,
-                updated_at=_NOW,
-            )
-        )
-        session.commit()
-        marks = load_or_backfill(session, "sampleapp", "1.9.0", now=_NOW)
+        _poisoned_row(session)
+        load_or_backfill(session, "sampleapp", "1.9.0", now=_NOW)
+    with Session(db_engine) as session:
+        row = session.get(RepoUpgradeState, "sampleapp")
+
+    assert row is not None
+    assert row.base_build_version == "1.9.0"
+    assert row.base_build_observed is False
+    assert row.apply_version == "1.4.0"
+    assert row.apply_observed is True
+
+
+def test_a_poisoned_row_does_not_silence_advice_forever(db_engine) -> None:
+    """The whole point of the repair, end to end: the action's advice comes
+    back the first time a real release runs against the poisoned row."""
+    from jailbee.upgrade import advice_lines
+
+    notes = (_note(1, 9, 0, "base_build", reason="install.sh installs fd"),)
+    with Session(db_engine) as session:
+        _poisoned_row(session)
+        lines = advice_lines(session, "sampleapp", "1.9.0", now=_NOW, notes=notes)
+
+    assert lines, "the unparseable watermark must not silence base_build"
+    assert "install.sh installs fd" in "\n".join(lines)
+
+
+def test_load_or_backfill_leaves_a_poisoned_row_alone_under_a_dev_version(db_engine) -> None:
+    """`current` unparseable means there is nothing to repair *to*. The action
+    is dropped, which costs nothing: `pending` is empty for such a version."""
+    from jailbee.upgrade import load_or_backfill
+
+    with Session(db_engine) as session:
+        _poisoned_row(session)
+        marks = load_or_backfill(session, "sampleapp", "0.0.0+unknown", now=_NOW)
 
     assert "base_build" not in marks
     assert marks["apply"].version == (1, 4, 0)
