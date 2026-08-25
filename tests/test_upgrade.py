@@ -31,18 +31,102 @@ def test_parse_version_rejects_non_releases(raw: str) -> None:
     assert parse_version(raw) is None
 
 
+def _manifest_shape_errors(notes: tuple) -> list[str]:
+    """Every way a manifest can be malformed, as messages. Returns [] when clean.
+
+    A helper rather than inline assertions so the same predicates guard the
+    real manifest and are themselves exercised by the synthetic cases below —
+    `UPGRADE_NOTES` ships empty, so asserting against it alone can never fail.
+    """
+    from jailbee.upgrade import ACTIONS
+
+    errors: list[str] = []
+    versions = [n.version for n in notes]
+
+    if versions != sorted(versions):
+        errors.append("versions not in ascending order")
+
+    if len(versions) != len(set(versions)):
+        errors.append("one entry per version")
+
+    for note in notes:
+        if not note.actions:
+            errors.append(f"{note.version}: an entry with no actions says nothing")
+        if note.actions and not note.actions <= set(ACTIONS):
+            errors.append(f"{note.version}: unknown action")
+        if not note.reason.strip():
+            errors.append(f"{note.version}: reason is what the user reads")
+
+    return errors
+
+
 def test_manifest_is_ascending_and_well_formed() -> None:
     """Guards the hand-maintained manifest's shape. Passes trivially while it
-    is empty; the moment an entry is added it must be ordered and complete."""
-    from jailbee.upgrade import ACTIONS, UPGRADE_NOTES
+    is empty; the moment an entry is added it must be ordered and complete.
 
-    versions = [n.version for n in UPGRADE_NOTES]
-    assert versions == sorted(versions)
-    assert len(versions) == len(set(versions)), "one entry per version"
-    for note in UPGRADE_NOTES:
-        assert note.actions, f"{note.version}: an entry with no actions says nothing"
-        assert note.actions <= set(ACTIONS), f"{note.version}: unknown action"
-        assert note.reason.strip(), f"{note.version}: reason is what the user reads"
+    The shape-checking predicates themselves are exercised by synthetic cases
+    below, since the real manifest is empty."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    assert _manifest_shape_errors(UPGRADE_NOTES) == []
+
+
+def test_manifest_shape_rejects_descending_versions() -> None:
+    """Versions must be in ascending order."""
+    notes = (
+        _note(2, 0, 0, "base_build", reason="later"),
+        _note(1, 0, 0, "base_build", reason="earlier"),
+    )
+    errors = _manifest_shape_errors(notes)
+    assert errors, "should reject descending versions"
+
+
+def test_manifest_shape_rejects_duplicate_versions() -> None:
+    """Each version must appear at most once."""
+    notes = (
+        _note(1, 0, 0, "base_build", reason="first"),
+        _note(1, 0, 0, "apply", reason="duplicate"),
+    )
+    errors = _manifest_shape_errors(notes)
+    assert errors, "should reject duplicate versions"
+
+
+def test_manifest_shape_rejects_empty_actions() -> None:
+    """Every note must declare at least one action."""
+    from jailbee.upgrade import UpgradeNote
+
+    notes = (UpgradeNote((1, 0, 0), frozenset(), "no actions"),)
+    errors = _manifest_shape_errors(notes)
+    assert errors, "should reject empty actions"
+
+
+def test_manifest_shape_rejects_unknown_action() -> None:
+    """All declared actions must be in ACTIONS."""
+    from jailbee.upgrade import UpgradeNote
+
+    notes = (UpgradeNote((1, 0, 0), frozenset({"unknown"}), "bad"),)  # type: ignore[arg-type]
+    errors = _manifest_shape_errors(notes)
+    assert errors, "should reject unknown action"
+
+
+def test_manifest_shape_rejects_blank_reason() -> None:
+    """Reason must be non-empty when stripped."""
+    from jailbee.upgrade import UpgradeNote
+
+    notes = (UpgradeNote((1, 0, 0), frozenset({"base_build"}), "   "),)
+    errors = _manifest_shape_errors(notes)
+    assert errors, "should reject blank reason"
+
+
+def test_manifest_shape_accepts_well_formed() -> None:
+    """A multi-entry manifest with all predicates satisfied."""
+    notes = (
+        _note(1, 0, 0, "base_build", reason="first release"),
+        _note(1, 1, 0, "apply", reason="second release"),
+        _note(2, 0, 0, "base_build", "apply", reason="third release"),
+    )
+    errors = _manifest_shape_errors(notes)
+    assert errors == [], f"well-formed manifest should be clean: {errors}"
 
 
 def _note(major: int, minor: int, patch: int, *actions: str, reason: str = "r"):
