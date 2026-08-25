@@ -27,7 +27,8 @@ import typer
 from jailbee.tui import error, warn
 
 if TYPE_CHECKING:
-    pass
+    from jailbee.config import Config
+    from jailbee.incus import Incus as IncusType
 
 
 @dataclass(frozen=True)
@@ -117,3 +118,68 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
         if git_mod.check_ref_format(chosen):
             return chosen
         warn(f"'{chosen}' is not a valid branch name.")
+
+
+def resolve_pr_description_update(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    scope: PrScope,
+    *,
+    branch: str,
+    base: str,
+    title: str | None,
+    body: str | None,
+    description: bool,
+    ai_on: bool,
+    offer_regen: bool = True,
+) -> tuple[str | None, str | None] | None:
+    """Decide the (title, body) to apply on a PR update, or None to skip.
+
+    Explicit --title/--body win (either may stay None → left unchanged).
+    Otherwise --description, or an interactive TTY confirmation, triggers a
+    Claude regeneration of both fields. Returns None when nothing should change.
+
+    `offer_regen=False` suppresses only the interactive offer — used on a PR
+    jailbee did not create, where silently rewriting the author's description is
+    never what the user asked for. Explicit --description/--title/--body still
+    apply.
+    """
+    from jailbee import pr_ai
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    if title is not None or body is not None:
+        return (title, body)
+
+    want_regen = description
+    if not want_regen and offer_regen and _stdin_is_interactive() and ai_on:
+        want_regen = typer.confirm(
+            f"Update {scope.prefix}the PR description with Claude?",
+            default=False,
+        )
+    if not want_regen:
+        return None
+    if not ai_on:
+        warn(
+            f"Cannot regenerate {scope.prefix}the description without Claude "
+            "(needs claude.enabled + ai_pr_description, and no --no-ai). Skipping."
+        )
+        return None
+
+    from jailbee.tui import console
+
+    with console.status("Regenerating PR description with Claude…"):
+        text = pr_ai.generate_pr_text(
+            cfg,
+            incus,
+            full,
+            branch=branch,
+            base=base,
+            fixed_title=None,
+            fixed_body=None,
+            subpath=scope.subpath,
+        )
+    if text is None:
+        warn(f"Claude PR-text generation failed; {scope.prefix}description left unchanged.")
+        return None
+    return (text.title, text.body)

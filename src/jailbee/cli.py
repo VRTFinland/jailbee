@@ -3062,60 +3062,6 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     return pr_info.head_ref, fetch_result.ref
 
 
-def _resolve_pr_description_update(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    *,
-    branch: str,
-    base: str,
-    title: str | None,
-    body: str | None,
-    description: bool,
-    ai_on: bool,
-    offer_regen: bool = True,
-) -> tuple[str | None, str | None] | None:
-    """Decide the (title, body) to apply on a PR update, or None to skip.
-
-    Explicit --title/--body win (either may stay None → left unchanged).
-    Otherwise --description, or an interactive TTY confirmation, triggers a
-    Claude regeneration of both fields. Returns None when nothing should change.
-
-    `offer_regen=False` suppresses only the interactive offer — used on a PR
-    jailbee did not create, where silently rewriting the author's description is
-    never what the user asked for. Explicit --description/--title/--body still
-    apply.
-    """
-    from jailbee import pr_ai
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if title is not None or body is not None:
-        return (title, body)
-
-    want_regen = description
-    if not want_regen and offer_regen and _stdin_is_interactive() and ai_on:
-        want_regen = typer.confirm("Update the PR description with Claude?", default=False)
-    if not want_regen:
-        return None
-    if not ai_on:
-        warn(
-            "Cannot regenerate the description without Claude "
-            "(needs claude.enabled + ai_pr_description, and no --no-ai). Skipping."
-        )
-        return None
-
-    from jailbee.tui import console
-
-    with console.status("Regenerating PR description with Claude…"):
-        text = pr_ai.generate_pr_text(
-            cfg, incus, full, branch=branch, base=base, fixed_title=None, fixed_body=None
-        )
-    if text is None:
-        warn("Claude PR-text generation failed; description left unchanged.")
-        return None
-    return (text.title, text.body)
-
-
 def _pick_push_source(
     cfg: "Config",
     *,
@@ -4484,10 +4430,11 @@ def pr_cmd(
     title_changed = False
     body_changed = False
     if is_update:
-        edit = _resolve_pr_description_update(
+        edit = pr_flow.resolve_pr_description_update(
             cfg,
             incus,
             full,
+            scope,
             branch=publish.fetch.branch,
             base=resolved_base,
             title=title,

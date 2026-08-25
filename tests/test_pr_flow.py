@@ -83,3 +83,87 @@ def test_confirm_branch_name_reprompts_until_valid(mocker):
     mocker.patch("typer.prompt", side_effect=["bad name", "user/ok"])
     mocker.patch("jailbee.git.check_ref_format", side_effect=[False, True])
     assert pr_flow.confirm_pr_branch_name("user/ai", "feat/foo") == "user/ok"
+
+
+def _cfg(tmp_path):
+    from tests.conftest import make_cfg
+
+    return make_cfg(tmp_path)
+
+
+def test_description_update_explicit_fields_win(tmp_path, mocker):
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    result = pr_flow.resolve_pr_description_update(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        branch="feat/foo",
+        base="main",
+        title="Set",
+        body=None,
+        description=False,
+        ai_on=True,
+    )
+    assert result == ("Set", None)
+    gen.assert_not_called()
+
+
+def test_description_update_skips_without_a_request(tmp_path, mocker):
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    result = pr_flow.resolve_pr_description_update(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        description=False,
+        ai_on=True,
+    )
+    assert result is None
+
+
+def test_description_update_passes_the_scope_subpath_to_the_ai(tmp_path, mocker):
+    from jailbee.pr_ai import PrText
+
+    gen = mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="t", body="b", branch="feat/x"),
+    )
+    result = pr_flow.resolve_pr_description_update(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _sub_scope(tmp_path),
+        branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ai_on=True,
+    )
+    assert result == ("t", "b")
+    assert gen.call_args.kwargs["subpath"] == "libs/foo"
+
+
+def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker):
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+    result = pr_flow.resolve_pr_description_update(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        branch="feat/foo",
+        base="main",
+        title=None,
+        body=None,
+        description=False,
+        ai_on=True,
+        offer_regen=False,
+    )
+    assert result is None
+    confirm.assert_not_called()
