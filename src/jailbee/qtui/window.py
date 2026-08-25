@@ -31,7 +31,8 @@ from jailbee.qtui.model import (
 )
 
 if TYPE_CHECKING:
-    from jailbee.config import ColumnConfig
+    from collections.abc import Sequence
+
     from jailbee.dashboard import RepoGroup
 
 # Custom role storing the full container name on a tree item.
@@ -216,14 +217,14 @@ class MainWindow(QMainWindow):
         groups: list[RepoGroup],
         *,
         now: datetime,
-        columns: ColumnConfig | None = None,
+        columns: Sequence[str] | None = None,
     ) -> None:
         """(Re)populate the tree, preserving the selection by container name."""
         self._groups = groups
         prev = self._selected_name()
 
         all_containers = [c for g in groups for c in g.containers]
-        fields = visible_fields(now, all_containers, columns)
+        fields = visible_fields(now, all_containers, enabled=columns)
         headers = column_headers(fields)
         self.tree.setColumnCount(len(headers))
         self.tree.setHeaderLabels(headers)

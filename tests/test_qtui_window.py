@@ -31,14 +31,12 @@ def test_set_groups_populates_tree_with_group_and_containers(qtbot):
 
 
 def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
-    from jailbee.config import ColumnConfig
-
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)
     win.set_groups(
         _groups(),
         now=datetime.now().astimezone(),
-        columns=ColumnConfig(fields=["name", "created"]),
+        columns=["name", "created"],
     )
     headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
     assert headers == ["NAME", "CREATED"]

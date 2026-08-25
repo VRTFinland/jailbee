@@ -1133,50 +1133,6 @@ def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
     assert "ip" not in dashboard_names and "ip" not in ls_names
 
 
-def test_dashboard_hide_still_removes_a_dashboard_only_column():
-    """`hide` stays authoritative over the dashboard-only default.
-
-    `mem` is on by default in the dashboards via `default_dashboard`; a user
-    who hides it must still get it gone, or the new flag would have quietly
-    made a documented config key unenforceable.
-    """
-    from datetime import UTC, datetime
-
-    from jailbee.config import ColumnConfig
-
-    c = ContainerInfo(
-        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
-    )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-
-    names = [
-        f.name for f in dashboard.visible_fields(now, [c], columns=ColumnConfig(hide=["mem", "ip"]))
-    ]
-    assert "mem" not in names and "ip" not in names
-
-
-def test_dashboard_explicit_fields_reach_a_table_only_default():
-    """An explicit `dashboard.fields` list beats every default, in both
-    directions: it surfaces `memory_limit` (off by default everywhere) and
-    drops the core columns it does not name."""
-    from datetime import UTC, datetime
-
-    from jailbee.config import ColumnConfig
-
-    c = ContainerInfo(
-        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
-    )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            now, [c], columns=ColumnConfig(fields=["name", "memory_limit"])
-        )
-    ]
-    assert names == ["name", "memory_limit"]
-
-
 def test_visible_fields_network_cell_folds_loose_ttl():
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     loose = ContainerInfo(
@@ -1272,66 +1228,119 @@ def test_visible_fields_defaults_to_todays_hidden_set():
     assert "name" in names
 
 
-def test_visible_fields_honours_an_explicit_field_list():
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_enabled_set_can_drop_a_dashboard_only_column():
+    """An enabled set is authoritative in both directions: it can drop `mem`,
+    which is on by default in the dashboards."""
+    from datetime import UTC, datetime
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "state"])]
+    assert names == ["name", "state"]
+
+
+def test_visible_fields_enabled_set_can_add_an_off_by_default_column():
+    """...and it can add one that is off by default everywhere, which a `hide`
+    list never could."""
+    from datetime import UTC, datetime
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "memory_limit"])]
+    assert names == ["name", "memory_limit"]
+
+
+def test_visible_fields_renders_in_canonical_order_not_stored_order():
+    """Stored order is not significant: the dashboards iterate the field-spec
+    list and filter by membership. Column reordering is a separate feature,
+    and this keeps a stored list from half-implementing it."""
+    from datetime import UTC, datetime
 
     c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    fields = dashboard.visible_fields(
-        datetime.now().astimezone(), [c], ColumnConfig(fields=["name", "created"])
-    )
-
-    # `created` is in the default hidden set; naming it explicitly brings it back.
-    assert [f.name for f in fields] == ["name", "created"]
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["state", "name"])]
+    assert names == ["name", "state"]
 
 
-def test_visible_fields_honours_show_if_for_an_explicit_field_list():
-    """An explicitly named column renders even when its `show_if` is false —
-    matching table_format.apply_column_config()'s treatment of an explicit
-    `fields` list (see that function's docstring). Naming a column is an
-    explicit request."""
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_still_applies_show_if_to_an_enabled_column():
+    """The deliberate difference from `ls --fields`, where naming a column
+    clears its `show_if`. Here enabling PR means "show it when a container
+    tracks one", not "show an empty PR column forever" — the settings UI says
+    so on the row itself. Without this, four dynamic columns (`job`, `ttl`,
+    `pr`, `mode`) would render permanently empty for anyone who ticked them.
+    """
+    from datetime import UTC, datetime
 
     no_pr = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip=None, memory_limit=None
     )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            datetime.now().astimezone(), [no_pr], ColumnConfig(fields=["name", "pr"])
-        )
-    ]
+    names = [f.name for f in dashboard.visible_fields(now, [no_pr], ["name", "pr"])]
+    assert names == ["name"]
 
+    with_pr = ContainerInfo(
+        name="p-bar", state="Running", network="strict", ip=None, memory_limit=None, pr_number=7
+    )
+    names = [f.name for f in dashboard.visible_fields(now, [with_pr], ["name", "pr"])]
     assert names == ["name", "pr"]
 
 
-def test_visible_fields_honours_a_custom_hide_list():
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_unknown_enabled_name_is_ignored():
+    """A name that is no longer a real column (a removed field, a hand-edited
+    row) is skipped rather than raising — same principle as the tolerant
+    decode in db/view_prefs."""
+    from datetime import UTC, datetime
 
     c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            datetime.now().astimezone(), [c], ColumnConfig(hide=["state"])
-        )
-    ]
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "gone", "state"])]
+    assert names == ["name", "state"]
 
+
+def test_default_columns_matches_the_built_in_dashboard_set():
+    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+
+    names = dashboard.default_columns()
+    assert "name" in names
+    assert "mem" in names  # the dashboard-only default
+    assert "ip" not in names  # Task 1
+    assert not set(names) & set(DASHBOARD_DEFAULT_HIDE)
+
+
+def test_enabled_from_column_config_reproduces_a_legacy_hide_block():
+    """The seed path: a `dashboard:` block resolves to the exact set it used
+    to render, so nobody's columns change on upgrade."""
+    from jailbee.config import ColumnConfig
+
+    names = dashboard.enabled_from_column_config(ColumnConfig(hide=["mem", "state"]))
+    assert "mem" not in names
     assert "state" not in names
-    # `hide` replaces the default set rather than adding to it, so a column
-    # the built-in default hid is back unless the user hid it too.
+    assert "name" in names
+    # `hide` replaced the built-in list rather than extending it, so a column
+    # the default hid is back — the legacy semantics, preserved by the seed.
     assert "created" in names
+
+
+def test_enabled_from_column_config_reproduces_a_legacy_fields_block():
+    from jailbee.config import ColumnConfig
+
+    names = dashboard.enabled_from_column_config(ColumnConfig(fields=["name", "created"]))
+    assert names == ("name", "created")
 
 
 def test_visible_fields_still_folds_the_loose_ttl_into_network():
     """The network-cell swap must survive an explicit field list."""
     from datetime import timedelta
 
-    from jailbee.config import ColumnConfig
     from jailbee.lifecycle import ContainerInfo
 
     now = datetime.now().astimezone()
@@ -1344,7 +1353,7 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
         loose_until=now + timedelta(hours=2),
     )
 
-    fields = dashboard.visible_fields(now, [loose], ColumnConfig(fields=["name", "network"]))
+    fields = dashboard.visible_fields(now, [loose], ["name", "network"])
     network = next(f for f in fields if f.name == "network")
 
     assert network.cell(loose) == "loose (2h)"
@@ -1543,9 +1552,7 @@ def test_render_empty_groups_shows_placeholder():
     assert "no-git" in out
 
 
-def test_render_forwards_columns_to_visible_fields(tmp_path):
-    from jailbee.config import ColumnConfig
-
+def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
@@ -1558,7 +1565,7 @@ def test_render_forwards_columns_to_visible_fields(tmp_path):
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
-            columns=ColumnConfig(fields=["name", "created"]),
+            enabled=["name", "created"],
         )
     )
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)

@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
-from jailbee.config import ColumnConfig
+from jailbee import dashboard
 from jailbee.dashboard import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.qtui.cards import CardView, _Card
@@ -426,7 +426,8 @@ def test_set_groups_forwards_columns_to_hide_a_field(qtbot):
     view.set_card_style("grid")
     now = datetime.now().astimezone()
 
-    view.set_groups(_groups(), now=now, columns=ColumnConfig(hide=["network"]))
+    without_network = [n for n in dashboard.default_columns() if n != "network"]
+    view.set_groups(_groups(), now=now, columns=without_network)
     hidden_texts = " | ".join(_label_texts(_card(view, "p-foo")))
     assert "NETWORK" not in hidden_texts
 
@@ -442,7 +443,8 @@ def test_set_card_style_rerender_keeps_the_active_columns(qtbot):
     view = CardView()
     qtbot.addWidget(view)
     now = datetime.now().astimezone()
-    view.set_groups(_groups(), now=now, columns=ColumnConfig(hide=["network"]))
+    without_network = [n for n in dashboard.default_columns() if n != "network"]
+    view.set_groups(_groups(), now=now, columns=without_network)
 
     view.set_card_style("grid")
 

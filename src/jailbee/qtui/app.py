@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
-from jailbee.dashboard import collect_config_paths, resolve_dashboard_columns
+from jailbee.dashboard import (
+    collect_config_paths,
+    enabled_from_column_config,
+    resolve_dashboard_columns,
+)
 from jailbee.qtui.actions import (
     TerminalNotFoundError,
     build_action,
@@ -40,7 +44,8 @@ from jailbee.qtui.window import MainWindow
 from jailbee.tui import error
 
 if TYPE_CHECKING:
-    from jailbee.config import ColumnConfig
+    from collections.abc import Sequence
+
     from jailbee.dashboard import RepoGroup
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
@@ -91,7 +96,7 @@ class AppController(QObject):
         interval: float,
         engine: object | None = None,
         paused: bool = False,
-        columns: ColumnConfig | None = None,
+        columns: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         self._window = window
@@ -435,7 +440,9 @@ def run(
 
     # Resolved once for the whole run — a live-refreshing dashboard must not
     # re-merge config on every refresh tick.
-    columns = resolve_dashboard_columns(cwd_config)
+    columns: tuple[str, ...] | None = enabled_from_column_config(
+        resolve_dashboard_columns(cwd_config)
+    )
 
     from jailbee.db import get_engine
     from jailbee.db.gui_state import load_gui_state

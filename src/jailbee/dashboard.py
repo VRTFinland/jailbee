@@ -21,7 +21,7 @@ import threading
 import time
 import tty
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -51,7 +51,7 @@ from jailbee.lifecycle import (
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
@@ -453,31 +453,72 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     return [*prefix, ("Destroy", "destroy")]
 
 
+def default_columns() -> tuple[str, ...]:
+    """The built-in dashboard column set, in canonical field-spec order.
+
+    What a front-end renders before anyone has touched its settings, and the
+    reset target. `DASHBOARD_DEFAULT_HIDE` names the columns the dashboards
+    drop from the `ls` set: REPO is redundant under per-repo grouping, the
+    wide GIT STATUS combo and the JSON-only full_name add noise, and TTL is
+    folded into the NETWORK cell.
+    """
+    specs = ls_field_specs(now=datetime.now(UTC), all_repos=False)
+    return tuple(
+        f.name
+        for f in specs
+        if table_format.shows_by_default_in_dashboard(f) and f.name not in DASHBOARD_DEFAULT_HIDE
+    )
+
+
+def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
+    """Resolve a legacy ``dashboard:`` block into an enabled-name tuple.
+
+    The one remaining dashboard use of ``table_format.apply_column_config``,
+    confined to seeding a front-end's `view_prefs` row from the deprecated
+    config block (see ``seed_columns``). Going through the old resolver is
+    what guarantees the seeded set is *exactly* what that block used to
+    render, including its two quirks: an explicit ``fields`` list wins
+    outright, and ``hide`` replaces the built-in list rather than extending
+    it.
+    """
+    resolved = table_format.apply_column_config(
+        ls_field_specs(now=datetime.now(UTC), all_repos=False),
+        fields=columns.fields,
+        hide=columns.hide,
+    )
+    return tuple(f.name for f in resolved if table_format.shows_by_default_in_dashboard(f))
+
+
 def visible_fields(
     now: datetime,
     all_containers: list[ContainerInfo],
-    columns: ColumnConfig | None = None,
+    enabled: Sequence[str] | None = None,
 ) -> list[FieldSpecCI]:
     """The dashboard's visible columns, honouring each field's ``show_if``.
 
-    ``columns`` is the repo's effective ``dashboard:`` block. ``None`` means
-    the built-in default — today's hidden set — so callers that have no
-    config in hand still render what they always did.
+    ``enabled`` is the front-end's enabled-name set; ``None`` means
+    :func:`default_columns`. Membership decides inclusion — not
+    ``default_table``, which is why a column off by default everywhere can
+    be turned on here — and the field-spec list's own order decides
+    rendering order, so a stored list's order is not significant.
 
-    An explicit ``columns.fields`` list already has ``show_if`` cleared by
-    :func:`table_format.apply_column_config` — naming a column is a request
-    for that exact column, so it renders even when no container would
-    otherwise justify it. That's the same rule ``jailbee ls``'s configured
-    ``fields:`` list gets (see ``cli.py``'s ``ls`` command), applied once in
-    the resolver rather than copied here: this function's ``if f.show_if is
-    None or ...`` below is a no-op for those fields, and still prunes the
-    built-in default set (with or without ``hide``) exactly as before.
+    ``show_if`` applies to every column, enabled or not. This is the
+    deliberate difference from ``jailbee ls --fields``, where naming a column
+    clears its ``show_if`` (see ``table_format.apply_column_config``): there,
+    a name is a one-shot request; here it is a standing preference, and the
+    four dynamic columns (``job``, ``ttl``, ``pr``, ``mode``) would otherwise
+    render permanently empty for anyone who enabled them. The settings UI
+    marks those rows so the pruning does not read as a bug.
+
+    Unknown names are skipped rather than rejected — a stored set can outlive
+    a renamed column, and view state must not break the view.
 
     The ``network`` field is swapped for a dashboard-specific one whose cell
     folds the loose TTL inline (e.g. ``"loose (12m)"``); that is why the
-    standalone TTL column is hidden by default.
+    standalone TTL column is not in the default set.
 
-    Shared by the TUI ``render`` and the Qt model so both show the same set.
+    Shared by the TUI ``render`` and both Qt views, so all three show the
+    same columns for the same enabled set.
     """
 
     def _network_cell(c: ContainerInfo) -> str:
@@ -487,18 +528,11 @@ def visible_fields(
             return f"{c.network} (—)"
         return f"{c.network} ({format_duration_short(c.loose_until - now)})"
 
-    if columns is None:
-        columns = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
-    candidates = table_format.apply_column_config(
-        ls_field_specs(now=now, all_repos=False),
-        fields=columns.fields,
-        hide=columns.hide,
-    )
+    wanted = frozenset(default_columns() if enabled is None else enabled)
     fields = [
         f
-        for f in candidates
-        if table_format.shows_by_default_in_dashboard(f)
-        and (f.show_if is None or f.show_if(all_containers))
+        for f in ls_field_specs(now=now, all_repos=False)
+        if f.name in wanted and (f.show_if is None or f.show_if(all_containers))
     ]
     return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
 
@@ -716,7 +750,7 @@ def render(
     interval: float,
     git_enabled: bool,
     refreshing: bool = False,
-    columns: ColumnConfig | None = None,
+    enabled: Sequence[str] | None = None,
     overlay: Overlay | None = None,
     notice: str | None = None,
 ) -> RenderableType:
@@ -735,9 +769,7 @@ def render(
     subtitle silently clipping it.
     """
     all_containers = [c for g in groups for c in g.containers]
-    # `mem` (used / limit) is a default-table field and `memory_limit` is not,
-    # so the plain default-table filter already yields the MEM column.
-    fields = visible_fields(now, all_containers, columns)
+    fields = visible_fields(now, all_containers, enabled)
 
     table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
     for f in fields:
@@ -1060,7 +1092,9 @@ def run(
 
     # Resolved once for the whole run — a live-refreshing dashboard must not
     # re-merge config on every frame.
-    columns = resolve_dashboard_columns(cwd_config)
+    enabled: tuple[str, ...] | None = enabled_from_column_config(
+        resolve_dashboard_columns(cwd_config)
+    )
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)
@@ -1209,7 +1243,7 @@ def run(
                         interval=interval,
                         git_enabled=git_enabled,
                         refreshing=refreshing,
-                        columns=columns,
+                        enabled=enabled,
                         overlay=overlay,
                         notice=notice,
                     ),
