@@ -776,3 +776,84 @@ def test_run_init_skips_ssh_seed_when_ssh_disabled(make_cfg, tmp_path, mocker):
     run_init(cfg, incus)
 
     spy.assert_not_called()
+
+
+def test_relocate_claude_json_moves_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+    assert not (shared / "claude.json").exists()
+
+
+def test_relocate_claude_json_is_a_noop_without_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert not (shared / "claude" / ".claude.json").exists()
+
+
+def test_relocate_claude_json_never_overwrites_the_destination(tmp_path):
+    """Both files present: the destination is live state, the source is a
+    leftover. Never overwrite, and never delete the user's copy either."""
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"current": true}'
+    assert (shared / "claude.json").read_text() == '{"old": true}'
+
+
+def test_relocate_claude_json_creates_a_missing_claude_dir(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+
+
+def test_seed_claude_json_writes_an_empty_object(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+
+
+def test_seed_claude_json_does_not_touch_an_existing_file(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'

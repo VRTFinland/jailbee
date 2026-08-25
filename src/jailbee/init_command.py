@@ -115,6 +115,44 @@ def _ensure_user_shared_dirs(cfg: Config) -> None:
         (cfg.shared_dir / cache.host_subpath).mkdir(parents=True, exist_ok=True)
 
 
+def _relocate_claude_json(cfg: Config) -> None:
+    """Move a legacy `<shared_dir>/claude.json` into `claude/.claude.json`.
+
+    One-time upgrade step for repos initialised before Claude Code's global
+    config moved inside the `claude` directory mount (the golden image now
+    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+    `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`).
+
+    Idempotent and never destructive: with the destination already present the
+    source is a leftover from before the move, so it is left exactly as it is
+    rather than overwriting live state or deleting the user's copy.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    source = cfg.shared_dir / "claude.json"
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    if not source.is_file() or target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+
+
+def _seed_claude_json(cfg: Config) -> None:
+    """Write `<shared_dir>/claude/.claude.json` as `{}` when absent.
+
+    Incus no longer requires this file to exist (there is no file-level disk
+    device to give a source path to), but the seed is kept deliberately: an
+    *empty* file fails Claude Code's parse with `Unexpected EOF`, and a valid
+    `{}` is the known-good pre-first-run state this repo has always shipped.
+    Claude Code rewrites it on first run.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}\n")
+
+
 def _ensure_integration_shared_dirs(cfg: Config) -> None:
     """Create the shared subdirs/files each enabled agent bind-mounts, plus
     JetBrains' subdirs.
