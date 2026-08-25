@@ -108,7 +108,7 @@ def test_explicit_path_is_passed_to_selection(mocker, tmp_path):
     from jailbee.submodule_pr import SubPublishResult
 
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a"), _candidate("lib/b")])
-    mocker.patch(
+    publish = mocker.patch(
         "jailbee.submodule_pr.publish_submodule_branch",
         return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
     )
@@ -118,6 +118,7 @@ def test_explicit_path_is_passed_to_selection(mocker, tmp_path):
     result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/b"])
 
     assert result.exit_code == 0, result.output
+    assert publish.call_args.kwargs["subpath"] == "lib/b"
 
 
 def test_ambiguous_target_exits_2_and_lists_the_candidates(mocker, tmp_path):
@@ -160,6 +161,7 @@ def test_dirty_submodule_warns(mocker, tmp_path):
 
     result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
 
+    assert result.exit_code == 0, result.output
     assert "uncommitted" in result.output.lower()
 
 
@@ -273,6 +275,22 @@ def test_open_without_a_recorded_pr_exits_1(mocker, tmp_path):
     detect.assert_not_called()
 
 
+def test_open_with_several_recorded_paths_exits_2(mocker, tmp_path):
+    """Same "disambiguate with PATH" condition as the normal path: exit 2,
+    not 1, so a script checking $? gets one meaning regardless of --open."""
+    from jailbee.pr_flow import PrRecord
+
+    _setup(mocker, tmp_path, state_record=PrRecord(None, None, False, False))
+    mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=["lib/a", "lib/b"])
+    detect = mocker.patch("jailbee.submodule_pr.detect_candidates")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--open"])
+
+    assert result.exit_code == 2
+    assert "PATH" in result.output
+    detect.assert_not_called()
+
+
 def test_open_uses_the_recorded_pr(mocker, tmp_path):
     from jailbee.pr_flow import PrRecord
 
@@ -290,3 +308,60 @@ def test_open_uses_the_recorded_pr(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     browser.assert_called_once_with(tmp_path / "lib/a", 12)
     publish.assert_not_called()
+
+
+def test_update_flag_on_detached_submodule_without_branch_warns(mocker, tmp_path):
+    """A previously-published submodule that is now detached, with no
+    --branch given, has no source branch to regenerate a description from or
+    a state to toggle. --ready must warn, not silently no-op."""
+    from jailbee.pr_flow import PrRecord
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(
+        mocker,
+        tmp_path,
+        candidates=[_candidate(branch=None)],
+        state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="user/x", forced=False),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
+    apply_updates = mocker.patch("jailbee.pr_flow.apply_pr_updates")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--ready"])
+
+    assert result.exit_code == 0, result.output
+    apply_updates.assert_not_called()
+    assert "--ready" in result.output
+    assert "detached" in result.output.lower() or "--branch" in result.output
+
+
+def test_update_on_detached_submodule_without_branch_and_no_flags_does_not_crash(mocker, tmp_path):
+    """Same detached-and-unresolved-branch state as above, but with no
+    --description/--title/--body/--ready flag: nothing was silently ignored,
+    so no warning — and it must not crash `render_pr_outcome`'s
+    `update is not None` assertion either."""
+    from jailbee.pr_flow import PrRecord
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(
+        mocker,
+        tmp_path,
+        candidates=[_candidate(branch=None)],
+        state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="user/x", forced=False),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
+    apply_updates = mocker.patch("jailbee.pr_flow.apply_pr_updates")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    apply_updates.assert_not_called()
+    assert "--ready" not in result.output
+    assert "--description" not in result.output

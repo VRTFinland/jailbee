@@ -4490,14 +4490,18 @@ def submodule_pr_cmd(
         target_path = path
         if target_path is None:
             recorded = submodule_pr.recorded_paths(incus, full)
+            if not recorded:
+                error(f"Container '{short}' has no submodule PR recorded.")
+                raise typer.Exit(1)
             if len(recorded) != 1:
+                # Same condition as AmbiguousSubmoduleTargetError on the normal
+                # path ("disambiguate with PATH") — same exit code, so a script
+                # checking $? sees one meaning regardless of --open.
                 error(
                     f"Container '{short}' has submodule PRs recorded for "
                     f"{len(recorded)} paths; name one with PATH."
-                    if recorded
-                    else f"Container '{short}' has no submodule PR recorded."
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(2)
             target_path = recorded[0]
         record = submodule_pr.SubmodulePrState(incus, full, target_path).read()
         if record.number is None:
@@ -4652,6 +4656,7 @@ def submodule_pr_cmd(
             body=resolved_body,
             draft=ready is not True,
             label="jailbee submodule pr",
+            record_context=f"failed to record the PR label for submodule '{subpath}' on '{short}'",
         )
     except pr_mod.PrError as exc:
         error(str(exc))
@@ -4675,6 +4680,21 @@ def submodule_pr_cmd(
             ai_on=ai_on,
             offer_regen=not is_foreign,
         )
+    elif did_update:
+        # The submodule is detached and no --branch resolved a source: there
+        # is no branch to regenerate a description from or a state to toggle
+        # against. `render_pr_outcome` requires an `update` on the update
+        # path regardless, so a no-op one stands in here; warn only when the
+        # user actually asked for something that needed the missing branch —
+        # a bare re-run with no such flag has nothing to silently ignore.
+        if description or title is not None or body is not None or ready is not None:
+            warn(
+                f"{scope.prefix}--description/--title/--body/--ready/--draft "
+                f"could not be applied to PR #{created.number}: the submodule "
+                f"is detached and no source branch was resolved. Pass --branch "
+                f"to select one."
+            )
+        update = pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
     pr_flow.render_pr_outcome(
         scope,
         url=created.url,
