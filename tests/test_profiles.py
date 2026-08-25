@@ -172,6 +172,39 @@ def test_base_profile_container_env_overrides_gie_defaults():
     assert parsed["config"]["environment.DISPLAY"] == ":1"
 
 
+def test_base_profile_sets_claude_config_dir_when_enabled(make_cfg, tmp_path):
+    """`CLAUDE_CONFIG_DIR` must reach every `incus exec`, login shell or not
+    — belt-and-suspenders for the `/etc/profile.d` export, which only
+    login shells source (e.g. a JetBrains IDE's integrated terminal)."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert parsed["config"]["environment.CLAUDE_CONFIG_DIR"] == "/home/dev/.claude"
+
+
+def test_base_profile_omits_claude_config_dir_when_disabled(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, claude={"enabled": False})
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert "environment.CLAUDE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_container_env_overrides_claude_config_dir(make_cfg, tmp_path):
+    """A user's `container.env` override must win over the built-in
+    CLAUDE_CONFIG_DIR default — same pattern as SSH_AUTH_SOCK/DISPLAY."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    cfg = cfg.model_copy(
+        update={
+            "container": cfg.container.model_copy(
+                update={"env": {"CLAUDE_CONFIG_DIR": "/custom/path"}}
+            )
+        }
+    )
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert parsed["config"]["environment.CLAUDE_CONFIG_DIR"] == "/custom/path"
+
+
 def test_binds_profile_includes_host_mounts():
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
