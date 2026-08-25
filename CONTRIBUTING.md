@@ -138,6 +138,13 @@ builds, publishes to PyPI, and creates a GitHub Release in one interactive
 step. See [`docs/releasing.md`](docs/releasing.md) for prerequisites (PyPI
 token, `gh` auth), the TestPyPI dry run, and the full flow.
 
+While reviewing the drafted `CHANGELOG.md` (the CHANGELOG step in
+`docs/releasing.md`), also check `UPGRADE_NOTES` in `src/jailbee/upgrade.py`:
+does anything in this release change what `jb base build` produces or what
+`jb apply` writes? If so, there must be an entry at this release's version,
+with a one-line reason a user can act on. Verify the version number matches
+the version actually being published.
+
 ## Reporting bugs and proposing features
 
 Please use the issue templates (`.github/ISSUE_TEMPLATE/`) — they ask for
