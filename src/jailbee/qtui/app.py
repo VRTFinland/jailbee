@@ -182,7 +182,14 @@ class AppController(QObject):
 
     @Slot()
     def on_collapsed_changed(self) -> None:
-        """A card group was expanded/collapsed — persist the new set."""
+        """A card group was expanded/collapsed.
+
+        The folded set itself is not persisted here any more — it moved to
+        ``view_prefs`` and is not yet wired up on this side (a later task
+        does that). This still calls ``_persist()`` to save the rest of the
+        GUI-state row (layout, header, card style, refresh cadence), so a
+        fold is not wasted as a persistence trigger, only as data.
+        """
         self._persist()
 
     def persist_on_close(self) -> None:

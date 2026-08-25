@@ -391,8 +391,14 @@ def test_migrate_to_v4_is_idempotent() -> None:
     from jailbee.db import _migrate_to_v4
 
     engine = create_engine("sqlite:///:memory:")
-    SQLModel.metadata.create_all(engine)  # card_style/collapsed_repos already present
+    # card_style already present via create_all. collapsed_repos is not —
+    # GuiState no longer declares it, so create_all builds the current
+    # model's shape without it — put it back by hand so this test still
+    # exercises the "already present" guard for both columns, the same way
+    # the v5 tests restore the pre-v5 physical shape.
+    SQLModel.metadata.create_all(engine)
     with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE gui_state ADD COLUMN collapsed_repos VARCHAR")
         _migrate_to_v4(conn)  # must not raise on an already-migrated table
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(gui_state)")}
     assert {"card_style", "collapsed_repos"} <= cols
