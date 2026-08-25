@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=a69e50c2" />
+    <link rel="stylesheet" href="assets/style.css?v=64a7c149" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -150,6 +150,69 @@
             >Read the docs</a
           >
         </div>
+      </div>
+    </section>
+
+    <!-- Directly under the hero, and that placement is the whole point: the
+         first question a visitor has after "what is this" is "what does it
+         look like when it works", and no paragraph answers it as well as 106
+         seconds of a real terminal. #problem and #parallel below now
+         elaborate on something the reader has already seen.
+
+         ONE clip, and no tabs. The four-clip tab wiring is in git history
+         (a68553e) and comes back with the second recording, not before:
+         tests/test_website.py asserts exactly that, so a second video fails
+         the suite until its tabs are restored. -->
+    <section id="demos">
+      <div class="wrap">
+        <h2>See it work.</h2>
+        <figure class="demo" id="demo-feature-flow">
+          <!-- Click-to-play, not a hero loop: `controls` and `preload="none"`,
+               no `loop` and no `autoplay`. At 4.7 MB, autoplaying this on
+               scroll would spend a visitor's bandwidth on a clip that says
+               nothing in its first five seconds. `muted` and `playsinline`
+               stay so a reader who taps play on iOS gets it inline rather
+               than as a fullscreen takeover. -->
+          <div class="demo__frame">
+            <video
+              class="demo__media"
+              muted
+              playsinline
+              controls
+              preload="none"
+              poster="assets/media/a.poster.png"
+            >
+              <source src="assets/media/a.webm" type="video/webm" />
+              <source src="assets/media/a.mp4" type="video/mp4" />
+            </video>
+            <!-- The poster is a terminal screenshot, and a screenshot does not
+                 look playable: the native controls are a thin bar at the
+                 bottom edge that a reader has to notice first. This is the
+                 affordance. It ships `hidden` and the script at the end of the
+                 body reveals it, so with JavaScript off the interface is the
+                 native controls — exactly what it was before. -->
+            <button class="demo__play" type="button" hidden aria-label="Play the demo">
+              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                <circle cx="50" cy="50" r="47" />
+                <path d="M40 30 L74 50 L40 70 Z" />
+              </svg>
+            </button>
+          </div>
+          <figcaption>
+            <code>jb new &rarr; jb tmux &rarr; jb git pull &rarr; jb destroy</code>
+            <p>
+              <strong>One feature, start to finish.</strong> A branch gets a container of its
+              own — dependencies synced, database seeded, dev server already listening. An
+              agent works in it while the human checks the service from outside, and comes
+              back to find the commit made. Then the commit moves to the host and the
+              container goes away, each asking first.
+            </p>
+            <p class="demo__note">
+              Every command and every line of output is real. The two stretches marked
+              &times;6 are sped up; nothing else is edited.
+            </p>
+          </figcaption>
+        </figure>
       </div>
     </section>
 
@@ -692,6 +755,52 @@
                 button.textContent = original;
                 button.removeAttribute("data-state");
               }, 1500);
+            });
+          });
+        });
+      })();
+
+      // Play affordance for the demo clip. The button is `hidden` in the
+      // markup and revealed here, so a reader without JavaScript gets the
+      // native controls and nothing broken — which is what the page shipped
+      // before this existed. Hidden again while playing so it never covers
+      // the picture, and back on pause so a second click is as easy as the
+      // first.
+      //
+      // NOT revealed on touch devices. Mobile Chrome (and iOS Safari) already
+      // draw their own large centred play button over an unplayed video, so
+      // this one lands on top of theirs — two stacked buttons, reported from a
+      // real phone. Desktop Chrome and Firefox draw only the thin control bar
+      // at the bottom edge, which is the whole reason this exists.
+      //
+      // The test is `(pointer: coarse)` rather than `(pointer: fine)` on
+      // purpose: it must hide only where a native overlay is known to appear.
+      // A device that reports no pointer at all — headless Chrome does, which
+      // is what renders the screenshots this page is checked with — should get
+      // the button, not lose it to a query it never answers.
+      (function () {
+        var touch =
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(pointer: coarse)").matches;
+        if (touch) {
+          return;
+        }
+        document.querySelectorAll(".demo__frame").forEach(function (frame) {
+          var video = frame.querySelector("video");
+          var button = frame.querySelector(".demo__play");
+          if (!video || !button) {
+            return;
+          }
+          button.hidden = false;
+          button.addEventListener("click", function () {
+            video.play();
+          });
+          video.addEventListener("play", function () {
+            button.hidden = true;
+          });
+          ["pause", "ended"].forEach(function (event) {
+            video.addEventListener(event, function () {
+              button.hidden = false;
             });
           });
         });

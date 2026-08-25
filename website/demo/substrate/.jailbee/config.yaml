@@ -1,0 +1,71 @@
+# jailbee configuration for the workflow-video substrate.
+#
+# Kept minimal on purpose: golden.stacks are all off and no install.d/
+# snippets are added, which is what keeps `jailbee base build` near the
+# measured 3m18s / 871MiB rather than the dogfood image's 10-15 minutes.
+container_user:
+  uid: -1
+  gid: -1
+
+# The agent commits its own work on camera in video A, and `git commit` with
+# no identity fails with "Please tell me who you are" — after which
+# `jailbee git pull` would have nothing to bring back. Same read-only
+# gitconfig mount jailbee's own config uses.
+host_mounts:
+  - host: ~/.gitconfig
+    container: /home/dev/.gitconfig
+    readonly: true
+
+# Replaces the built-in default (which is just ssh). uv's cache is worth
+# sharing: without it every new container re-fetches fastapi and uvicorn
+# from PyPI during on_create, which is dead air in a recording.
+shared_caches:
+  - name: ssh
+    host_subpath: ssh
+    container_path: ~/.ssh
+  - name: uv
+    host_subpath: caches/uv
+    container_path: ~/.cache/uv
+
+# Strict is jailbee's own default and the honest one to show. claude.enabled
+# auto-adds api.anthropic.com and friends, and the sync-deps step below
+# overrides to loose for the one moment it needs PyPI.
+egress_allow: []
+
+defaults:
+  memory: 2GiB
+  cpu: 2
+  network: strict
+  storage_pool: default
+
+golden:
+  ubuntu_version: "26.04"
+
+autostart:
+  step_timeout: 600
+  on_create:
+    - name: sync-deps
+      run: UV_LINK_MODE=copy ~/.local/bin/uv sync
+      network: loose
+    # .venv/bin directly rather than `uv run`: sync-deps has just built the
+    # venv, and uv would re-check the lock. Nothing after sync-deps then asks
+    # the network for anything, which is what makes strict mode safe here.
+    - name: seed-db
+      run: .venv/bin/python app/seed.py
+  on_start:
+    # background: true is not optional here. Autostart waits for each step to
+    # exit and reports its duration, so a --reload server that never exits
+    # blocks the whole of `jailbee new` until step_timeout fires. Found by an
+    # 8-minute hang. `background` detaches via setsid instead.
+    - name: server
+      run: .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+      background: true
+
+# This is what video A's `jb tmux` beat depends on: autostart appends a
+# `claude` window to the tmux session and jailbee tmux lands in it.
+claude:
+  enabled: true
+  autostart: true
+
+new:
+  clone_from: local

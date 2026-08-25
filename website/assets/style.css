@@ -661,10 +661,135 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
+   Demo — #demos, one click-to-play clip.
+
+   The 1.0 page had four fifteen-second reconstructions behind tabs, all
+   autoplaying on scroll, and the note that survived that round still
+   applies: a 1200px terminal is unreadable at 512px if you put two beside
+   each other, and several moving at once tells the eye nothing. What
+   replaced them is one real recording, minutes long, that starts when the
+   reader asks — so no autoplay rule, no IntersectionObserver, no script at
+   all. The tab CSS is in git history (a68553e) and comes back with the
+   second clip.
+   ----------------------------------------------------------------------- */
+.demo {
+  margin: 2rem 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* The positioning context for the play affordance. */
+.demo__frame {
+  position: relative;
+  display: block;
+}
+
+/* Centred, and deliberately large: this is the only thing telling a reader
+   the terminal screenshot is a video. Sized in rem so it scales with the
+   reader's own text size rather than being pinned to the poster's pixels.
+   It sits well above the native control bar at the bottom edge. */
+.demo__play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 5.5rem;
+  height: 5.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* No transition: the reduced-motion rule below would have to exempt it,
+     and an instant state change is the honest behaviour for a button. */
+}
+
+.demo__play svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.demo__play circle {
+  fill: rgb(11 12 14 / 62%);
+  stroke: var(--amber);
+  stroke-width: 3;
+}
+
+.demo__play path {
+  fill: var(--amber);
+}
+
+.demo__play:hover circle,
+.demo__play:focus-visible circle {
+  fill: rgb(11 12 14 / 82%);
+}
+
+.demo__play:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 4px;
+  border-radius: 50%;
+}
+
+.demo__media {
+  /* The tape's own frame: Width 1200 (demo/workflows/common.tape) by
+     Height 900 (demo/workflows/a.tape). The poster is cut from the same
+     render, so this must keep matching the tape — any other ratio
+     letterboxes or crops a clip that was already the right shape. */
+  aspect-ratio: 1200 / 900;
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Direct child only: the caption's prose mentions `×6`, and a descendant
+   selector would turn that into its own block. */
+.demo figcaption > code {
+  display: block;
+  color: var(--amber);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  overflow-wrap: break-word;
+}
+
+.demo figcaption {
+  padding: 1rem 1.25rem;
+}
+
+.demo figcaption p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: none;
+}
+
+.demo figcaption p + p {
+  margin-top: 0.75rem;
+}
+
+/* The provenance line, not the story: same size, dimmer, so it reads as a
+   footnote to the clip rather than as part of the description. */
+.demo__note {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* Inline code inside the caption's prose, as opposed to the command line
+   above it, which the `> code` rule turns into its own block. */
+.demo figcaption p code {
+  color: var(--text);
+  font-size: 0.85em;
+}
+
+/* -----------------------------------------------------------------------
    Reduced motion — covers every transition/animation on the page. There
    happen to be none declared elsewhere yet, but a future hover/focus
-   transition must not have to remember this rule exists. (It also covered
-   the demo clips' playback before that section was pulled.)
+   transition must not have to remember this rule exists. It does not
+   need to cover #demos: that clip is click-to-play, so nothing moves
+   until the reader asks it to.
    ----------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   * {
