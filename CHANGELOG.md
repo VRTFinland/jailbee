@@ -42,6 +42,11 @@
   rendering) is shared with `jailbee pr` via a new internal `pr_flow` module
   — `jailbee pr`'s own behaviour is unchanged. See
   [Submodule pull requests](docs/git-bridge.md#submodules).
+- TUI dashboard: fold repo groups with `Space` (or `Enter` on a group
+  header), and a settings overlay on **F2** / `S` for columns and folding.
+  Repo headers are now cursor stops.
+- GUI dashboard: **View ▸ Columns**. The two front-ends keep independent
+  settings.
 
 ### Changed
 
@@ -97,6 +102,16 @@
   proxying to the now-unresolvable mirror host, so `docker pull` inside the
   container fails. Set `docker_registry_mirror.enabled: true` (or declare the
   stack and rebuild the golden image).
+- The dashboards no longer show **IP** by default, matching `jailbee ls`.
+  MEM remains the one deliberate difference between the two default column
+  sets. Enable IP in the dashboard settings (F2 / View ▸ Columns) or ask for
+  it with `ls --fields ip`.
+- **`dashboard:` in `global.yaml` and `.jailbee/config.yaml` is deprecated.**
+  Each dashboard front-end now remembers its own columns, editable in the UI.
+  Your global block was imported once on first run; the key is still accepted
+  but ignored, and can be deleted. **A repo-level `dashboard:` block is
+  dropped, not imported** — the setting is personal and cross-repo, so only
+  the global file was read. `jailbee config validate` reports both.
 
 ### Fixed
 

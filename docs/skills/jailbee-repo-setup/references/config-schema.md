@@ -366,17 +366,13 @@ destroy:
 
 ## `ls` / `dashboard`
 
-Which columns `jailbee ls` and the dashboards (`jailbee dashboard`, `jailbee gui`) show
-by default.
+Which columns `jailbee ls` shows by default. The dashboards (`jailbee
+dashboard`, `jailbee gui`) don't read this block — see below.
 
 ```yaml
 ls:
   fields: null      # explicit ordered list, or null for the built-in default
   hide: []          # subtractive; applies only when `fields` is null
-
-dashboard:
-  fields: null
-  hide: [repo, full_name, git_status, created, ttl]   # dashboard's built-in default
 ```
 
 `fields`, when set, wins outright and may name a column that's off by
@@ -404,21 +400,37 @@ built-in field set regardless of this block, so a personal display
 preference can't silently narrow a script's expected JSON shape. An
 explicit `--fields` flag on the CLI beats this block in every format.
 
-Both blocks live in either layer, merged field-by-field like
-`loose_auto_revert` — *not* through the general deep-merge pipeline, which
-appends lists and would concatenate the two `fields` lists. A repo `fields`
-replaces the global one; `fields: null` in the repo restores the built-in
-default set. `hide` replaces rather than extends at either layer, so
-`dashboard: {hide: [ip]}` brings REPO / FULL NAME / GIT STATUS / CREATED /
-TTL back — copy the default list above and append if you meant "one more".
+`ls:` lives in either layer, merged field-by-field like `loose_auto_revert`
+— *not* through the general deep-merge pipeline, which appends lists and
+would concatenate the two `fields` lists. A repo `fields` replaces the
+global one; `fields: null` in the repo restores the built-in default set.
 Column choice is a personal preference, so the normal home is
 `~/.config/jailbee/global.yaml`; setting the block in a repo's
-`.jailbee/config.yaml` overrides it for everyone working there — deliberate and
-rare. The dashboards render one shared table across every repo, so they
-resolve `dashboard:` against the repo you launched from, falling back to
-the global file when there is none. The Qt dashboard's Compact card style
-renders a hardcoded field selection and ignores `fields` — use another card
-style to see a configured column such as `local_diff`.
+`.jailbee/config.yaml` overrides it for everyone working there — deliberate
+and rare.
+
+### The dashboards remember their own columns
+
+`jailbee dashboard` and `jailbee gui` do **not** read a `dashboard:` block.
+Each remembers its own columns and its own folded repo groups in
+`state.sqlite`'s `view_prefs` table, one row per front-end — a wide Qt
+table and a narrow TUI is a supported setup. Change it in the TUI with
+`F2` (or `S`): `↑`/`↓` move, `Space` toggle, `Tab` switch between Fields and
+Repos, `Esc` close — changes apply and persist immediately. In the GUI, use
+View ▸ Columns. Enabling a column still means "show it when it has
+something to say": the four dynamic columns (`job`, `ttl`, `pr`, `mode`)
+appear only when they apply, unlike `ls --fields`, where naming a column
+forces it on.
+
+**`dashboard:` in config is deprecated** — still accepted so an existing
+config keeps loading, but ignored. It was imported once into each
+front-end's row on the first run after upgrading; only
+`~/.config/jailbee/global.yaml` was read — a repo-level `dashboard:` block
+is reported and dropped, not seeded, since the setting is personal and
+applies in every repo. `jailbee config validate` reports both. The Qt
+dashboard's Compact card style renders a hardcoded field selection
+regardless — use another card style to see any other enabled column, such
+as `local_diff`.
 
 ## `pull`
 

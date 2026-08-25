@@ -203,11 +203,14 @@ below to inspect or clear one. **TTL** appears only while a container is in
 loose mode. Stopped/mount-mode containers show `—` in the four git columns.
 
 The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
-columns. **IP** and **MEM** are *not* in it — they are on by default in the
-dashboards instead, where the view refreshes and a live number earns its
-width; reach them from `ls` with `--fields ip,mem`. **MODE** is dynamic like
-JOB, TTL and PR: it appears only once a mount-mode container exists, since
-on a clone-only host every row would read `clone`.
+columns. **IP** and **MEM** are *not* in it — reach either from `ls` with
+`--fields ip,mem`. The dashboards' own default column set differs in
+exactly one of those two: they add **MEM**, since the view refreshes and a
+live number earns its width there; **IP** is off by default in both —
+enable it in the dashboard settings (see below) if you want it there
+instead. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
+mount-mode container exists, since on a clone-only host every row would
+read `clone`.
 
 Two more git-status columns exist, **off by default**: **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
@@ -246,8 +249,10 @@ ignores `fields` entirely.
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos, skips headers),
-`Enter` action menu, `r` force refresh, `h`/`?` keybinding help,
-`q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
+`Enter` action menu (or fold/unfold the repo group when the cursor is on its
+header), `Space` fold/unfold the repo group under the cursor, `F2`/`S`
+settings overlay (columns + folding), `r` force refresh, `h`/`?` keybinding
+help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
 menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
 the dashboard).
@@ -284,6 +289,16 @@ for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
 the first writes to the host's own working tree, and the second's command
 varies with `--follow`.
 
+`F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
+move, `Space` toggles the row under the cursor, `Tab` switches between the
+Fields and Repos tabs, `Esc` closes. Changes apply and persist immediately
+— there is no OK/Cancel. This is where the TUI's own column set and folded
+repo groups live now (in `state.sqlite`'s `view_prefs` table); the `dashboard:`
+config block is deprecated (still accepted, but ignored — see
+[Configuration](../../../config.md#ls--dashboard--remembered-columns)). The
+Qt dashboard (`jailbee gui`) keeps an independent set of its own, via
+View ▸ Columns.
+
 Output is not lost when an action prints something. `git diff` opens in
 `$PAGER` (`less -R`, then `more`), with colour forced past the pipe; `pr`,
 `git push`, `git pull` and `job log` run in the foreground and then wait for
@@ -319,13 +334,18 @@ a repo with a pinned `push.default_action` sees no dialog there at all.
 The Qt GUI has a **View** menu to switch between a wide **Table** layout and
 a width-adaptive **Cards** layout (cards re-wrap to fill the window). Within
 Cards, the same menu picks a card style — **Compact** (default; hides clean
-git rows) or **Grid**. Each repo's card group has a header that can be
-clicked to collapse/expand it. It persists, between sessions, in the SQLite
-state DB: the chosen layout, card style, collapsed repo groups, the table's
-column widths/order, and the refresh cadence / paused state — but never the
-window size or position. `-i`/`--interval` precedence at startup: explicit
-flag > persisted value > 3s default. `--git-interval` is not persisted.
-Fresh installs default to the Cards layout.
+git rows) or **Grid**; Compact renders a hardcoded field selection and
+ignores whichever columns are enabled — switch to Grid or Table to see one
+that Compact doesn't show. **View ▸ Columns** toggles which columns are
+enabled, independently of the TUI's own set (see `jailbee dashboard` above)
+— at least one must stay checked. Each repo's card group has a header that
+can be clicked to collapse/expand it. It persists, between sessions, in the
+SQLite state DB: the chosen layout, card style, collapsed repo groups, the
+enabled columns, the table's column widths/order, and the refresh cadence /
+paused state — but never the window size or position. `-i`/`--interval`
+precedence at startup: explicit flag > persisted value > 3s default.
+`--git-interval` is not persisted. Fresh installs default to the Cards
+layout.
 
 ### `jailbee job`
 
