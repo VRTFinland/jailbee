@@ -13,6 +13,12 @@
 #     full — we (re)create it here;
 #   - `claude update` advances the shared store and is gated on the flag.
 #
+# This runs at `jailbee new` only, so it cannot fix the *other* direction:
+# Claude's updater prunes old releases from the shared store, so an update in
+# one container can delete the version an already-running container is pinned
+# to. That repair belongs to /etc/profile.d/jailbee-claude.sh (written by
+# provision/install.sh), which relinks a dangling launcher at every login.
+#
 # A flock on a lock file inside the shared dir serializes parallel
 # `jailbee new` invocations (full install / update both write the store).
 set -euo pipefail

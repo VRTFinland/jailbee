@@ -1639,6 +1639,17 @@ claude:
 YAML
 jailbee new feat/claude-c     # links to existing shared version, no `claude update`
 
+# The shared store is pruned by Claude's own updater, so a version another
+# container is pinned to can disappear under it. /etc/profile.d/jailbee-claude.sh
+# heals that at login — simulate it by pinning to a version that doesn't exist:
+jailbee shell feat-claude-a
+ln -sfn ~/.local/share/claude/versions/0.0.0 ~/.local/bin/claude
+exit
+jailbee shell feat-claude-a    # a fresh login shell repairs the launcher
+readlink ~/.local/bin/claude   # newest version in the store again, not 0.0.0
+claude --version
+exit
+
 jailbee destroy --all --force
 # Remove the claude.auto_update block from .jailbee/config.yaml afterwards.
 ```

@@ -93,6 +93,44 @@ export PATH="$HOME/.local/bin:$PATH"
 EOF
 chmod 0644 /etc/profile.d/local-bin.sh
 
+# Heal a dangling ~/.local/bin/claude at login.
+#
+# The two halves of the Claude install disagree about lifetime:
+# ~/.local/share/claude/versions is a bind mount SHARED by every container of
+# a repo (agent_presets.claude_preset's claude-install cache), while
+# ~/.local/bin/claude is a per-container symlink pinned to one exact version
+# by ensure-claude.sh — which runs at `jailbee new` and never again. Claude's
+# own updater prunes old releases from the shared store, so a `claude update`
+# in ANY container of the repo can delete the version THIS container points
+# at, and the launcher stays dangling for the rest of the container's life
+# (`-bash: /home/dev/.local/bin/claude: No such file or directory`).
+#
+# Repointing it at login covers every path that runs `claude` in a container:
+# each goes through a `bash -lc` login shell (jailbee shell, tmux windows,
+# autostart steps, `jailbee pr`'s claude invocation, the agent install check).
+#
+# Two properties this snippet must keep:
+#   - Only acts when the launcher is missing or dangling. A healthy pin is
+#     left alone, so `claude.auto_update: false` keeps its chosen version.
+#   - Prints nothing, ever. pr_ai.ask_claude_for_pr_text parses the stdout of
+#     a `bash -lc` login shell as JSON; a chatty snippet would corrupt it.
+# The reverse-sorted loop skips a newest-named entry that isn't a usable
+# binary (an interrupted download) instead of linking the stub.
+cat > /etc/profile.d/jailbee-claude.sh <<'EOF'
+if [ ! -x "$HOME/.local/bin/claude" ]; then
+    _jb_claude_store="$HOME/.local/share/claude/versions"
+    for _jb_claude_v in $(ls -1 "$_jb_claude_store" 2>/dev/null | sort -V -r); do
+        if [ -x "$_jb_claude_store/$_jb_claude_v" ]; then
+            mkdir -p "$HOME/.local/bin"
+            ln -sfn "$_jb_claude_store/$_jb_claude_v" "$HOME/.local/bin/claude"
+            break
+        fi
+    done
+    unset _jb_claude_store _jb_claude_v
+fi
+EOF
+chmod 0644 /etc/profile.d/jailbee-claude.sh
+
 # Passwordless sudo for the dev user.
 echo "${CONTAINER_USER} ALL=(ALL) NOPASSWD:ALL" \
     > "/etc/sudoers.d/90-${CONTAINER_USER}"
