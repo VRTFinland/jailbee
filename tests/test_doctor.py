@@ -1305,6 +1305,34 @@ def test_doctor_upgrade_check_survives_a_broken_state_db(make_cfg, tmp_path, moc
     assert "could not be read" in got.detail
 
 
+def test_doctor_upgrade_detail_preserves_the_structured_block(make_cfg, tmp_path, mocker) -> None:
+    """`advice_lines` returns a header line, then indented `    - reason`
+    bullets, then a `    Run ...` call-to-action — one such group per owed
+    action. Flattening that into a single "; "-joined, per-line-stripped
+    run-on destroys the indentation that distinguishes a bullet from a
+    header, so the detail must keep the newlines and the raw indentation
+    instead."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    lines = [
+        "jailbee 1.4.0 changed what `jb base build` produces:",
+        "    - install.sh installs fd",
+        "    - install.sh installs ripgrep",
+        "    Run `jb base build` to pick this up.",
+    ]
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=lines)
+
+    got = _check_upgrade_advice(cfg)
+
+    rendered = got.detail.split("\n")
+    assert rendered[0] == lines[0]
+    # The bullet's leading four-space "- " indentation must survive intact,
+    # not be stripped and glued onto the header with "; ".
+    assert rendered[1] == "    - install.sh installs fd"
+    assert rendered[2] == "    - install.sh installs ripgrep"
+
+
 def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()

@@ -98,7 +98,7 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
 
     if not lines:
         return CheckResult("upgrade actions", True, "nothing pending")
-    return CheckResult("upgrade actions", False, "; ".join(line.strip() for line in lines))
+    return CheckResult("upgrade actions", False, "\n".join(lines))
 
 
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
