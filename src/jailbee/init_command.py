@@ -106,9 +106,9 @@ def _ensure_user_shared_dirs(cfg: Config) -> None:
 
     Only the user's `shared_caches` list is iterated (not
     `effective_shared_caches()`): the agent/jetbrains auto-adds are handled
-    separately, and claude.json is a *file*-level disk that must not be
-    created as a directory. File-type binds the user wants must be
-    pre-created by hand — see `_ensure_integration_shared_dirs`.
+    separately, and a user-declared `type: file` mount is a *file*-level disk
+    that must not be created as a directory. File-type binds the user wants
+    must be pre-created by hand — see `_ensure_integration_shared_dirs`.
     """
     assert cfg.shared_dir is not None  # set by load_config
     for cache in cfg.shared_caches:
@@ -170,11 +170,15 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
     Directory-type mounts (`spec.dir_subpaths`) are `mkdir`'d; file-type
     mounts (`spec.seed_files`) are seeded with their configured content only
     if they don't already exist — required because Incus rejects the
-    container start if a file-level disk device's source is missing, and for
-    `claude.json` specifically an empty/zero-byte file fails to parse
+    container start if a file-level disk device's source is missing. Claude
+    Code's global config, `.claude.json`, is no longer one of these: it lives
+    inside the `claude` directory mount (the golden image exports
+    `CLAUDE_CONFIG_DIR=$HOME/.claude`), seeded by `_seed_claude_json` and
+    migrated from its old file-mount location by `_relocate_claude_json`. An
+    empty/zero-byte `.claude.json` still fails Claude Code's parse
     (`Unexpected EOF`), which under `ensure-claude.sh`'s `pipefail` aborts the
     binary install before the shared store is populated, hard-failing the
-    first `jailbee new` for the repo.
+    first `jailbee new` for the repo — hence the seed.
     """
     from jailbee.agents import enabled_agent_specs
 
@@ -187,6 +191,12 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
             if not target.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(seed)
+    if cfg.claude.enabled:
+        # Order matters: relocate first, seed second. Reversed, the seed
+        # creates `{}` at the destination, the relocation then no-ops on an
+        # existing target, and a real pre-move `.claude.json` is orphaned.
+        _relocate_claude_json(cfg)
+        _seed_claude_json(cfg)
     if cfg.jetbrains.enabled:
         (cfg.shared_dir / "jetbrains-config").mkdir(parents=True, exist_ok=True)
         (cfg.shared_dir / "jetbrains-data").mkdir(parents=True, exist_ok=True)

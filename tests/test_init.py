@@ -222,6 +222,7 @@ def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
 
     run_init(cfg, incus)
 
+    assert not (tmp_path / "shared" / "claude" / ".claude.json").exists()
     assert not (tmp_path / "shared" / "claude.json").exists()
 
 
@@ -620,11 +621,10 @@ def test_run_init_forwards_mirror_endpoint_to_allowlist_acl(make_cfg, tmp_path, 
 
 
 def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
-    """The claude.json bind-mount source must exist or Incus rejects the
-    container start. `gie init` seeds valid empty JSON (`{}`) when
-    claude.enabled — a zero-byte file is invalid JSON and makes the first
-    `claude` invocation (run by the Claude Code installer) abort the install
-    with a parse error, hard-failing `gie new`."""
+    """The `claude/.claude.json` seed must exist or Claude Code's first
+    invocation (run by the Claude Code installer) aborts with a parse error
+    on a zero-byte/missing file, hard-failing `gie new`. `gie init` seeds
+    valid empty JSON (`{}`) when claude.enabled."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(
@@ -640,19 +640,20 @@ def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    json_path = tmp_path / "shared" / "claude.json"
+    json_path = tmp_path / "shared" / "claude" / ".claude.json"
     assert json_path.is_file()
     assert json_path.read_text() == "{}\n"
 
 
 def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
-    """Pre-existing <shared_dir>/claude.json (e.g. previously written by a
-    container) must be left untouched by re-init."""
+    """Pre-existing <shared_dir>/claude/.claude.json (e.g. previously written
+    by a container) must be left untouched by re-init."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     shared = tmp_path / "shared"
     shared.mkdir()
-    (shared / "claude.json").write_text('{"existing": true}')
+    (shared / "claude").mkdir()
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
     cfg = make_cfg(
         repo,
         shared_dir=shared,
@@ -666,7 +667,7 @@ def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    assert (shared / "claude.json").read_text() == '{"existing": true}'
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
 
 
 def test_agent_dir_and_file_mounts_are_created(tmp_path):
@@ -685,14 +686,15 @@ def test_agent_dir_and_file_mounts_are_created(tmp_path):
     assert (shared / "aider.conf.yml").read_text() == ""
 
 
-def test_claude_json_still_seeded_with_empty_object(tmp_path):
+def test_claude_json_seeded_inside_the_claude_dir(tmp_path):
     from jailbee.init_command import _ensure_integration_shared_dirs
 
     shared = tmp_path / "shared"
     shared.mkdir()
     cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
     _ensure_integration_shared_dirs(cfg)
-    assert (shared / "claude.json").read_text() == "{}\n"
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+    assert not (shared / "claude.json").exists()
 
 
 def test_run_init_chmods_ssh_to_0700_when_ssh_enabled(make_cfg, tmp_path, mocker):
@@ -857,3 +859,19 @@ def test_seed_claude_json_does_not_touch_an_existing_file(tmp_path):
     _seed_claude_json(cfg)
 
     assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
+
+
+def test_legacy_claude_json_survives_seeding(tmp_path):
+    """Relocation must run before the seed. If the seed wins, `{}` lands at
+    the destination, the relocation no-ops on a now-existing target, and the
+    user's real Claude state is orphaned at the old path."""
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"onboarded": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _ensure_integration_shared_dirs(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"onboarded": true}'

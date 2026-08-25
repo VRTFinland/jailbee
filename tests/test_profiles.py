@@ -508,7 +508,9 @@ def test_binds_profile_includes_claude_when_enabled(make_cfg, tmp_path):
     parsed = yaml.safe_load(yaml_text)
     devices = parsed["devices"]
     assert "shared-claude" in devices
-    assert "shared-claude-json" in devices
+    # `.claude.json` is no longer its own file-level bind; it lives inside the
+    # `claude` directory mount (CLAUDE_CONFIG_DIR).
+    assert "shared-claude-json" not in devices
 
 
 def test_binds_profile_custom_cache(make_cfg, tmp_path):

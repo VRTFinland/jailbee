@@ -1644,14 +1644,16 @@ class ClaudeAgentConfig(AgentConfig):
 
     `enabled`, `autostart`, `command` and `auto_update` are inherited: their
     semantics are identical to any other agent's. `enabled` gates the shared
-    `<shared_dir>/claude` + `<shared_dir>/claude.json` cache mounts (see
-    `Config.effective_shared_caches`), the `CLAUDE_API_HOSTS` strict-mode
-    egress auto-add, the `<shared_dir>/claude` subdir creation on
-    `jailbee init`, and the claude-subdir presence check in `jailbee doctor`.
-    When enabled, jailbee creates an empty `<shared_dir>/claude` directory and
-    an empty `<shared_dir>/claude.json` file as bind-mount sources — Claude
-    Code inside the first container runs its onboarding flow from a clean
-    state. No host `~/.claude` / `~/.claude.json` is read.
+    `<shared_dir>/claude` cache mount (see `Config.effective_shared_caches`),
+    the `CLAUDE_API_HOSTS` strict-mode egress auto-add, the
+    `<shared_dir>/claude` subdir creation on `jailbee init`, and the
+    claude-subdir presence check in `jailbee doctor`. When enabled, jailbee
+    creates an empty `<shared_dir>/claude` directory as a bind-mount source
+    and seeds `<shared_dir>/claude/.claude.json` with `{}` — the golden image
+    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude Code reads its
+    global config from inside that directory mount, and Claude Code inside
+    the first container runs its onboarding flow from a clean state. No host
+    `~/.claude` / `~/.claude.json` is read.
 
     - `plugins_enabled`: when true (default), `effective_egress_allow`
       also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
@@ -1978,7 +1980,7 @@ class Config(BaseModel):
         node — see `Stacks.shared_caches`) are folded in first, ahead of
         the integration auto-adds. Then each enabled agent's mounts are
         folded in (see `agents.enabled_agent_specs`) — for `claude` this is
-        `claude` + `claude-json` + `claude-install` — followed by
+        `claude` + `claude-install` — followed by
         `jetbrains-config` + `jetbrains-data` when `jetbrains.enabled`.
         """
         from jailbee.agents import enabled_agent_specs
@@ -2272,10 +2274,12 @@ def _default_shared_dir(container_prefix: str) -> Path:
 def device_name(subpath: str) -> str:
     """Incus disk-device name for a shared subpath.
 
-    `.` → `-` is not cosmetic: it must yield exactly `claude`, `claude-json`
-    and `claude-install` for Claude's three subpaths, because those are live
-    device names in every existing container's binds profile. A different rule
-    renames disk devices under running containers.
+    `.` → `-` is not cosmetic: it must yield exactly `claude` and
+    `claude-install` for Claude's two subpaths, because those are live
+    device names in every existing container's binds profile. The same rule
+    still matters for any user-declared `type: file` mount whose subpath
+    contains a dot. A different rule renames disk devices under running
+    containers.
     """
     return subpath.replace(".", "-")
 
