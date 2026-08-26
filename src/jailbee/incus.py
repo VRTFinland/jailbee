@@ -477,8 +477,52 @@ class Incus:
             args.append(f"{k}={v}")
         self._run_retrying_on_etag(args)
 
-    def config_device_remove(self, name: str, device_name: str) -> None:
-        self._run_retrying_on_etag(["config", "device", "remove", name, device_name])
+    def config_device_override(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Copy a profile-inherited device onto the instance, with overrides.
+
+        Fails when the instance already has a local device of this name —
+        use `config_device_set` for that case.
+        """
+        args = ["config", "device", "override", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_set(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Update keys on an instance-local device."""
+        args = ["config", "device", "set", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_remove(
+        self,
+        name: str,
+        device_name: str,
+        *,
+        missing_ok: bool = False,
+    ) -> None:
+        """Remove an instance-local device.
+
+        ``missing_ok=True`` swallows the failure when there is no such local
+        device, mirroring `config_unset`. Callers that re-materialise derived
+        state want removal to be idempotent.
+        """
+        args = ["config", "device", "remove", name, device_name]
+        if missing_ok:
+            self._run(args, check=False)
+            return
+        self._run_retrying_on_etag(args)
 
     # ---- Snapshots ----------------------------------------------------------
 

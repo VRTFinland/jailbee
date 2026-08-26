@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jailbee import egress_scope
+from jailbee.egress import EgressEntry
 
 
 def test_repo_extras_starts_empty(db_session):
@@ -206,3 +207,112 @@ def test_render_config_block_emits_no_key_when_there_is_nothing_to_promote():
     block = egress_scope.render_config_block(["github.com"], [], prefix="myrepo")
     assert yaml.safe_load(block) is None
     assert block.lstrip().startswith("#")
+
+
+def _incus_with(mocker, *, extras, local_eth0=None):
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = json.dumps(extras) if extras else None
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Running",
+            "profiles": ["myrepo-base", "myrepo-net-strict"],
+            "config": {},
+            "devices": {"eth0": local_eth0} if local_eth0 else {},
+        }
+    ]
+    return incus
+
+
+def test_apply_container_acl_writes_acl_and_overrides_the_nic(
+    db_session, make_cfg, tmp_path, mocker
+):
+    mocker.patch(
+        "jailbee.egress_scope.resolve_entries",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"])
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+
+    incus.network_acl_set_yaml.assert_called_once()
+    acl_written = incus.network_acl_set_yaml.call_args[0][0]
+    assert acl_written == "myrepo-feat-extra"
+    incus.config_device_override.assert_called_once_with(
+        "myrepo-feat",
+        "eth0",
+        {
+            "type": "nic",
+            "network": "incusbr0",
+            "security.acls": "myrepo-allowlist,myrepo-feat-extra",
+        },
+    )
+
+
+def test_apply_container_acl_in_loose_mode_tears_the_override_down(
+    db_session, make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"], local_eth0={"type": "nic"})
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="loose")
+
+    incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
+    incus.config_device_override.assert_not_called()
+
+
+def test_apply_container_acl_with_no_extras_removes_acl_and_override(
+    db_session, make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=[], local_eth0={"type": "nic"})
+    incus.network_acl_exists.return_value = True
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+
+    incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
+    incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
+
+
+def test_apply_container_acl_updates_an_existing_override_in_place(
+    db_session, make_cfg, tmp_path, mocker
+):
+    """Re-materialising must not detach the NIC of a running container."""
+    mocker.patch(
+        "jailbee.egress_scope.resolve_entries",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(
+        mocker,
+        extras=["nexus.corp:443"],
+        local_eth0={"type": "nic", "network": "incusbr0", "security.acls": "stale"},
+    )
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+
+    incus.config_device_override.assert_not_called()
+    incus.config_device_set.assert_called_once_with(
+        "myrepo-feat",
+        "eth0",
+        {
+            "type": "nic",
+            "network": "incusbr0",
+            "security.acls": "myrepo-allowlist,myrepo-feat-extra",
+        },
+    )
+
+
+def test_drop_container_acl_deletes_only_an_existing_acl(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = False
+
+    egress_scope.drop_container_acl(cfg, incus, "myrepo-feat")
+
+    incus.network_acl_delete.assert_not_called()

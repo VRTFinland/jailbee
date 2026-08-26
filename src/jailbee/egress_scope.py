@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.config import Config
+    from jailbee.egress import EgressEntry
     from jailbee.incus import Incus
 
 EGRESS_EXTRA_KEY = "user.jailbee.egress_extra"
@@ -273,3 +274,115 @@ def render_config_block(
     )
     body = yaml.safe_dump({"egress_allow": list(merged)}, sort_keys=False)
     return header + body
+
+
+# ---- materialisation onto the container NIC ------------------------------
+
+
+def resolve_entries(entries: list[str]) -> list[EgressEntry]:
+    """Resolve raw entries to `EgressEntry`. Factored out for test seams.
+
+    Public (no leading underscore): a later task calls this from `cli.py`
+    for a fail-fast check before touching the container, so it is part of
+    this module's contract, not a private helper.
+    """
+    from jailbee.egress import build_egress_entries
+
+    return build_egress_entries(entries)
+
+
+def _local_eth0(incus: Incus, name: str) -> dict[str, str] | None:
+    """The container's own ``eth0`` device, or None when it inherits one.
+
+    Reads `devices` (instance-local) from `incus list --format json`, NOT
+    `expanded_devices` (profile-merged) — the whole question here is whether
+    a local override already shadows the profile.
+    """
+    for raw in incus.list_containers():
+        if raw["name"] == name:
+            devices = raw.get("devices") or {}
+            device = devices.get("eth0")
+            return dict(device) if device else None
+    return None
+
+
+def _desired_eth0(cfg: Config, acl_names: list[str]) -> dict[str, str]:
+    """The strict profile's ``eth0``, with the ACL list replaced.
+
+    Derived from `profiles.net_profile_yaml`, a pure function of `cfg`, so
+    the local copy cannot drift from what the profile would have given the
+    container.
+    """
+    import yaml
+
+    from jailbee.profiles import net_profile_yaml
+
+    profile = yaml.safe_load(net_profile_yaml(cfg, "strict"))
+    device: dict[str, str] = dict(profile["devices"]["eth0"])
+    device["security.acls"] = ",".join(acl_names)
+    return device
+
+
+def apply_container_acl(
+    cfg: Config,
+    session: Session,
+    incus: Incus,
+    name: str,
+    *,
+    mode: str,
+) -> None:
+    """Materialise (or tear down) one container's extra egress ACL.
+
+    Idempotent and derived: the label is the source of truth, and this
+    rebuilds the ACL and the ``eth0`` override from it every time.
+
+    ``mode="loose"`` tears the override down. It must: `incus config device
+    override` copies the profile's device onto the container, and a local
+    ``eth0`` shadows whatever profile is assigned afterwards — leaving it in
+    place would pin a "loose" container to `incusbr0` with the strict ACL
+    still enforced, while `jailbee ls` reported loose.
+    """
+    from jailbee.network import acl_name, extra_acl_yaml
+
+    # `session` is accepted for signature symmetry with the refresh path and
+    # so callers that already hold one do not open a second. This path
+    # deliberately resolves fresh rather than reading the pool: it runs when
+    # the user has just typed a host, and the pool has no rows for it yet.
+    # `refresh_pool`'s phase B takes over from the next cycle on.
+    del session
+
+    extras = container_extras(incus, name)
+    extra_name = extra_acl_name(name)
+
+    if mode != "strict" or not extras:
+        incus.config_device_remove(name, "eth0", missing_ok=True)
+        drop_container_acl(cfg, incus, name)
+        return
+
+    entries = resolve_entries(extras)
+    if not incus.network_acl_exists(extra_name):
+        incus.network_acl_create(extra_name)
+    incus.network_acl_set_yaml(extra_name, extra_acl_yaml(extra_name, entries))
+
+    desired = _desired_eth0(cfg, [acl_name(cfg), extra_name])
+    existing = _local_eth0(incus, name)
+    if existing == desired:
+        return
+    if existing is None:
+        incus.config_device_override(name, "eth0", desired)
+    else:
+        # In-place update: removing and re-adding would detach the NIC of a
+        # running container for the duration.
+        incus.config_device_set(name, "eth0", desired)
+
+
+def drop_container_acl(cfg: Config, incus: Incus, name: str) -> None:
+    """Delete one container's extra ACL if it exists.
+
+    Call only after the referencing NIC is gone — Incus refuses to delete an
+    ACL still applied to an instance.
+    """
+    del cfg  # signature parity with apply_container_acl
+    extra_name = extra_acl_name(name)
+    if incus.network_acl_exists(extra_name):
+        incus.network_acl_delete(extra_name)

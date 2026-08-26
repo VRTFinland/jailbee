@@ -758,3 +758,25 @@ def test_missing_binary_error_names_the_configured_binary(mocker):
         Incus(binary="/opt/incus/bin/incus").list_containers()
 
     assert "/opt/incus/bin/incus" in str(excinfo.value)
+
+
+def test_config_device_override_passes_key_values(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_override("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "override", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_remove_missing_ok_swallows_failure(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    # Must not raise.
+    Incus().config_device_remove("ct", "eth0", missing_ok=True)
