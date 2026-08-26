@@ -64,6 +64,25 @@ def _host_render_nodes() -> list[Path]:
     return sorted(Path("/dev/dri").glob("renderD*"))
 
 
+def claude_config_dir_env(cfg: Config) -> tuple[str, str]:
+    """The `(key, value)` `<prefix>-base` carries so Claude Code reads its
+    global config from the shared `~/.claude` mount.
+
+    Single source of truth for the two writers of that key: this module's
+    full profile render (`jailbee apply`) and `init_command`'s one-key repair
+    on the `jailbee new` path. They must agree on both halves or the repair
+    writes a value the next `apply` silently changes.
+
+    `container.env` wins, mirroring the render order below — the repo may
+    point Claude Code somewhere else on purpose.
+    """
+    default = f"/home/{CONTAINER_USERNAME}/.claude"
+    return (
+        "environment.CLAUDE_CONFIG_DIR",
+        cfg.container.env.get("CLAUDE_CONFIG_DIR", default),
+    )
+
+
 def base_profile_yaml(cfg: Config) -> str:
     """Generate <repo>-base profile YAML.
 
@@ -141,7 +160,8 @@ def base_profile_yaml(cfg: Config) -> str:
         # jailbee didn't spawn itself (a JetBrains IDE's integrated
         # terminal, a Claude Code IDE extension). Also reaches existing
         # containers via `jailbee apply` with no image rebuild required.
-        profile_config["environment.CLAUDE_CONFIG_DIR"] = f"/home/{CONTAINER_USERNAME}/.claude"
+        key, value = claude_config_dir_env(cfg)
+        profile_config[key] = value
 
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point

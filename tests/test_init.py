@@ -885,6 +885,75 @@ def test_relocate_claude_json_is_a_noop_without_a_legacy_file(tmp_path):
     assert not (shared / "claude" / ".claude.json").exists()
 
 
+def test_ensure_claude_config_dir_sets_the_key_when_absent(tmp_path):
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/home/dev/.claude",
+    )
+
+
+def test_ensure_claude_config_dir_respects_a_container_env_override(tmp_path):
+    """`base_profile_yaml` lets `container.env` override the default, so the
+    repair must write the same value — otherwise the two writers disagree and
+    the next `jailbee apply` silently changes it back."""
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        container={"env": {"CLAUDE_CONFIG_DIR": "/opt/claude-config"}},
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/opt/claude-config",
+    )
+
+
+def test_ensure_claude_config_dir_leaves_an_existing_value_alone(tmp_path):
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/somewhere/else"
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_config_dir_skips_a_repo_without_a_base_profile(tmp_path):
+    """Nothing to repair before `jailbee init` — and `profile show` on
+    a missing profile is an error, not an empty answer."""
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = False
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
 def test_relocate_claude_json_never_overwrites_the_destination(tmp_path):
     """Both files present: the destination is live state, the source is a
     leftover. Never overwrite, and never delete the user's copy either."""

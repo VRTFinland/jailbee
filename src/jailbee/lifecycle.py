@@ -895,9 +895,14 @@ def new_container(
     # container is created from an already-correct profile, and the write
     # lands before anything in this run can fail half-way.
     if cfg.claude.enabled:
-        from jailbee.init_command import migrate_claude_json
+        from jailbee.init_command import ensure_claude_config_dir, migrate_claude_json
 
         migrate_claude_json(cfg, incus)
+        # The other half of that migration: retiring the device without
+        # `CLAUDE_CONFIG_DIR` in place leaves Claude Code reading a
+        # container-local `$HOME/.claude.json`, i.e. onboarding from scratch
+        # in every container until the user happens to run `jailbee apply`.
+        ensure_claude_config_dir(cfg, incus)
 
     _phase("creating")
     incus.init(opts.from_base, name)

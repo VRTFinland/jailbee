@@ -2440,6 +2440,42 @@ jailbee start upgrade-probe
 # expect: starts, not `Missing source path ... for disk "shared-claude-json"`
 ```
 
+### 1c. `jailbee new` with neither `base build` nor `apply` run
+
+The half that is easy to miss: retiring the device removes the only thing
+that made `.claude.json` shared, so `jailbee new` must also put
+`CLAUDE_CONFIG_DIR` on `<prefix>-base` — otherwise Claude Code resolves the
+container-local `$HOME/.claude.json` and onboards from scratch in every
+container, and in the repo's existing ones too (the profile rewrite drops the
+device from their expanded config as well).
+
+Same starting point as Step 1b, but skip **both** upgrade actions — this is
+the state a user is in immediately after upgrading the tool:
+
+```bash
+incus profile show <prefix>-base | grep -c CLAUDE_CONFIG_DIR
+# expect: 0 — the pre-upgrade base profile
+
+jailbee new upgrade-probe2       # no `jailbee base build`, no `jailbee apply`
+
+incus profile show <prefix>-base | grep CLAUDE_CONFIG_DIR
+# expect: environment.CLAUDE_CONFIG_DIR: /home/dev/.claude
+
+jailbee shell upgrade-probe2
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — the image predates the /etc/profile.d export,
+# so this can only be the base profile `jailbee new` just repaired
+ls -la ~/.claude/.claude.json
+# expect: the relocated file, mounted from <shared_dir>/claude
+claude
+# expect: resumes the existing login — no onboarding, no /login prompt
+exit
+```
+
+An already-migrated repo (the device retired by an earlier `jailbee new`,
+before this repair existed) is healed by the same run: `jailbee new`, or
+`jailbee apply`, whichever comes first.
+
 ### 2. Fresh repo
 
 ```bash

@@ -159,6 +159,23 @@
 
 ### Fixed
 
+- **Claude Code no longer re-onboards in every new container after the
+  `.claude.json` relocation.** The relocation has two halves: `jailbee new`
+  retires the `shared-claude-json` device (the whole repo's, since it rewrites
+  `<prefix>-binds`), while the replacement — `CLAUDE_CONFIG_DIR`, pointing
+  Claude Code at the shared `~/.claude` mount — was written only by
+  `jailbee apply` and `jailbee base build`. Upgrading jailbee and carrying on
+  with `jailbee new` therefore left neither in place: Claude Code resolved the
+  container-local `$HOME/.claude.json`, found nothing, and asked for a login
+  in every container, each time. The upgrade advice is a non-blocking hint, so
+  nothing stopped it. `jailbee new` now sets `environment.CLAUDE_CONFIG_DIR` on
+  `<prefix>-base` when nothing declares it yet — one key, not a profile
+  rewrite, and never over an existing value, so a `container.env` override and
+  `jailbee apply`'s own rendering both stay authoritative. Incus injects
+  `environment.*` into every `incus exec` whatever the image holds, so this
+  repairs the repo's existing containers too, with no rebuild. `jailbee apply`
+  (and `jailbee base build`, for shells jailbee does not spawn) remain the
+  documented upgrade actions.
 - **`jailbee pr` no longer looks like it hangs on the container fetch.** The
   fetch summary and the dirty-tree warning are now printed *before* the push
   to the upstream remote, followed by an explicit

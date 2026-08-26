@@ -11,6 +11,8 @@ import subprocess
 import time
 from typing import Any
 
+import yaml
+
 
 class IncusError(Exception):
     """Raised when an `incus` CLI invocation fails."""
@@ -431,6 +433,22 @@ class Incus:
             raise _missing_binary_error(self.binary) from e
         if result.returncode != 0:
             raise IncusError(f"`incus profile edit {name}` failed: {result.stderr.strip()}")
+
+    def profile_config_get(self, name: str, key: str) -> str | None:
+        """Return one `config` key of a profile, or None when it is unset.
+
+        Read out of `profile show` rather than `incus profile get`: the
+        latter prints an empty line and exits 0 both for an unset key and
+        for a key set to the empty string, and the caller here has to tell
+        those apart (an explicitly set value is never overwritten).
+        """
+        parsed = yaml.safe_load(self.profile_show(name)) or {}
+        value = (parsed.get("config") or {}).get(key)
+        return None if value is None else str(value)
+
+    def profile_config_set(self, name: str, key: str, value: str) -> None:
+        """Set a single `config` key on a profile, leaving the rest as-is."""
+        self._run(["profile", "set", name, key, value])
 
     def profile_assign(self, container: str, profiles: list[str]) -> None:
         self._run_retrying_on_etag(["profile", "assign", container, ",".join(profiles)])

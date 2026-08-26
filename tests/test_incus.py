@@ -195,6 +195,48 @@ def test_profile_show_invokes_incus_profile_show(incus, mocker):
     assert args == ["incus", "profile", "show", "foo"]
 
 
+def test_profile_config_get_returns_the_key(incus, mocker):
+    _mock_run(
+        mocker,
+        stdout="name: foo\nconfig:\n  environment.CLAUDE_CONFIG_DIR: /home/dev/.claude\n",
+    )
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") == "/home/dev/.claude"
+
+
+def test_profile_config_get_returns_none_for_an_unset_key(incus, mocker):
+    _mock_run(mocker, stdout='name: foo\nconfig:\n  security.nesting: "true"\n')
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") is None
+
+
+def test_profile_config_get_returns_none_without_a_config_block(incus, mocker):
+    """A profile with no `config:` at all — Incus renders it as `config: {}`,
+    but an empty mapping round-trips to None through yaml, so the `or {}`
+    fallbacks must hold."""
+    _mock_run(mocker, stdout="name: foo\nconfig: {}\ndevices: {}\n")
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") is None
+
+
+def test_profile_config_get_distinguishes_an_empty_value_from_unset(incus, mocker):
+    """`incus profile get` cannot tell these apart; this wrapper must, because
+    callers treat "set to something" as authoritative."""
+    _mock_run(mocker, stdout='name: foo\nconfig:\n  environment.CLAUDE_CONFIG_DIR: ""\n')
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") == ""
+
+
+def test_profile_config_set_invokes_incus_profile_set(incus, mocker):
+    run = _mock_run(mocker)
+    incus.profile_config_set("foo", "environment.CLAUDE_CONFIG_DIR", "/home/dev/.claude")
+    args = run.call_args[0][0]
+    assert args == [
+        "incus",
+        "profile",
+        "set",
+        "foo",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/home/dev/.claude",
+    ]
+
+
 def test_launch_without_config(incus, mocker):
     run = _mock_run(mocker)
     incus.launch("images:ubuntu/26.04", "feat-foo")
