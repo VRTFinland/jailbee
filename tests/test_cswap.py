@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -356,6 +357,19 @@ def test_available_is_true_when_the_binary_is_on_path(tmp_path, mocker):
     mocker.patch("jailbee.cswap.shutil.which", return_value="/usr/bin/cswap")
 
     assert _cswap(tmp_path).available() is True
+
+
+def test_conftest_hides_cswap_but_not_other_binaries(tmp_path):
+    """Pin `_neutralize_cswap_autodetect` (tests/conftest.py).
+
+    Nothing in this test mocks cswap — the suite-wide autouse fixture must
+    make `available()` False by itself, on any machine, real install or not.
+    It must also be a scalpel, not a hammer: `shutil.which` still has to
+    answer truthfully for a binary that is not cswap, or every other
+    binary-detection test in the suite would be lying about the host too.
+    """
+    assert _cswap(tmp_path).available() is False
+    assert shutil.which("sh") is not None
 
 
 # --- version -------------------------------------------------------------
