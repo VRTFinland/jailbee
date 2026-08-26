@@ -37,9 +37,12 @@ def test_create_snapshot_uses_default_tag_when_none(monkeypatch):
     assert tag == "snap-2026-05-05-120000Z"
 
 
-def test_restore_snapshot_calls_incus():
+def test_restore_snapshot_calls_incus(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
     incus = MagicMock()
-    restore_snapshot(incus, "feat-x", "before-migration")
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
+    restore_snapshot(cfg, incus, "feat-x", "before-migration")
     incus.snapshot_restore.assert_called_once_with("feat-x", "before-migration")
 
 
@@ -54,3 +57,16 @@ def test_list_snapshots_returns_incus_payload():
     incus.snapshot_list.return_value = [{"name": "snap1", "created_at": "..."}]
     out = list_snapshots(incus, "feat-x")
     assert out == [{"name": "snap1", "created_at": "..."}]
+
+
+def test_restore_snapshot_rematerialises_the_egress_acl(make_cfg, tmp_path, mocker):
+    from jailbee.snapshots import restore_snapshot
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    apply_acl = mocker.patch("jailbee.egress_scope.apply_container_acl")
+
+    restore_snapshot(cfg, incus, "myrepo-feat", "before-upgrade")
+
+    incus.snapshot_restore.assert_called_once_with("myrepo-feat", "before-upgrade")
+    assert apply_acl.call_args.args[3] == "myrepo-feat"

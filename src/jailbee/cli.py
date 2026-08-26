@@ -5946,7 +5946,7 @@ def snap_restore_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    restore_snapshot(incus, name, tag)
+    restore_snapshot(cfg, incus, name, tag)
     success(f"Snapshot '{tag}' restored on {short_name(cfg, name)}")
 
 
