@@ -137,6 +137,64 @@ def test_list_accounts_passes_an_explicit_json_flag(tmp_path, mocker):
     assert run.call_args.args[0] == ["cswap", "list", "--json"]
 
 
+# --- list: malformed rows -----------------------------------------------
+
+
+def test_a_row_missing_number_is_a_cswap_error(tmp_path, mocker):
+    payload = {"accounts": [{"email": "work@gisgro.com", "organizationUuid": "org-abc"}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "number" in str(exc.value)
+
+
+def test_a_row_missing_email_is_a_cswap_error(tmp_path, mocker):
+    """A row silently defaulted to email="" would read back as a
+    legitimate-looking account with an empty pool identity."""
+    payload = {"accounts": [{"number": 1, "organizationUuid": "org-abc"}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "email" in str(exc.value)
+
+
+def test_a_row_with_no_organization_and_no_alias_still_parses(tmp_path, mocker):
+    """Guard against over-correction: an empty organizationUuid is a
+    legitimate personal account, not a malformed row."""
+    payload = {
+        "accounts": [
+            {
+                "number": 1,
+                "email": "me@example.com",
+                "organizationUuid": "",
+                "active": False,
+                "usageStatus": "ok",
+            }
+        ]
+    }
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    (account,) = _cswap(tmp_path).list_accounts()
+
+    assert account.identity == ("me@example.com", "")
+    assert account.alias == ""
+    assert account.label == "me@example.com"
+
+
+def test_a_row_with_a_non_integer_number_is_a_cswap_error(tmp_path, mocker):
+    payload = {"accounts": [{"number": "one", "email": "me@example.com"}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "number" in str(exc.value)
+
+
 # --- status ------------------------------------------------------------
 
 
@@ -298,6 +356,54 @@ def test_available_is_true_when_the_binary_is_on_path(tmp_path, mocker):
     mocker.patch("jailbee.cswap.shutil.which", return_value="/usr/bin/cswap")
 
     assert _cswap(tmp_path).available() is True
+
+
+# --- version -------------------------------------------------------------
+
+
+def test_version_returns_stripped_stdout(tmp_path, mocker):
+    home = tmp_path / "shared" / "claude"
+    run = mocker.patch(
+        "jailbee.cswap.subprocess.run", return_value=_completed("cswap 0.26.0b1\n")
+    )
+
+    version = Cswap(config_home=home).version()
+
+    assert run.call_args.args[0] == ["cswap", "--version"]
+    assert version == "cswap 0.26.0b1"
+    env = run.call_args.kwargs["env"]
+    assert env["CLAUDE_CONFIG_DIR"] == str(home)
+
+
+def test_version_failure_preserves_detail(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.cswap.subprocess.run",
+        return_value=_completed("", stderr="Error: corrupt install", code=1),
+    )
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).version()
+
+    assert "corrupt install" in str(exc.value)
+
+
+def test_version_missing_binary_is_a_cswap_missing_error(tmp_path, mocker):
+    mocker.patch("jailbee.cswap.subprocess.run", side_effect=FileNotFoundError())
+
+    with pytest.raises(CswapMissingError) as exc:
+        _cswap(tmp_path).version()
+
+    assert "claude-swap" in str(exc.value)
+
+
+def test_version_timeout_is_a_cswap_timeout_error(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.cswap.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["cswap", "--version"], timeout=30),
+    )
+
+    with pytest.raises(CswapTimeoutError):
+        _cswap(tmp_path).version()
 
 
 # --- interactive passthrough -------------------------------------------

@@ -302,6 +302,27 @@ class Cswap:
 
     @staticmethod
     def _account(row: dict[str, Any]) -> Account:
+        """Build one :class:`Account` from a `cswap list --json` row.
+
+        ``number`` and ``email`` are mandatory: the pool ledger keys on
+        ``(email, organizationUuid)``, so a row silently defaulted to
+        ``email=""`` would read back as a legitimate-looking account with an
+        empty identity — a garbage ledger row waiting to be written. Every
+        other field defaults leniently: ``organizationUuid`` genuinely is
+        ``""`` for a personal (non-organization) account, so that stays
+        optional.
+        """
+        for required in ("number", "email"):
+            if required not in row:
+                raise CswapError(
+                    f"`cswap list --json` row is missing `{required}` "
+                    f"(number={row.get('number')!r}, email={row.get('email')!r})"
+                )
+
+        number = row["number"]
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise CswapError(f"`cswap list --json` row has a non-integer `number`: {number!r}")
+
         usage = row.get("usage")
         usage = usage if isinstance(usage, dict) else {}
 
@@ -313,8 +334,8 @@ class Cswap:
             return float(value) if isinstance(value, (int, float)) else None
 
         return Account(
-            number=int(row.get("number", 0)),
-            email=str(row.get("email", "")),
+            number=number,
+            email=str(row["email"]),
             org_uuid=str(row.get("organizationUuid", "") or ""),
             org_name=str(row.get("organizationName", "") or ""),
             alias=str(row.get("alias", "") or ""),
