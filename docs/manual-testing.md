@@ -1793,9 +1793,13 @@ feature, so run all of them before relying on it.
    copying) the sample repo into a differently named directory, e.g.
    `SampleApp2`, or by keeping one clone and setting a distinct
    `container_prefix:` in its `.jailbee/config.yaml`; either way, make sure
-   `agents.claude.enabled` is also set there. `cd` into that second repo
-   **before** running anything below — this whole step targets the second
-   repo, no branch container is involved.
+   `agents.claude.enabled` is also set there, and run `jailbee apply` in
+   `SampleApp2` first (`jailbee new` there works too, if a container is
+   useful) — the shared `<shared_dir>/claude` directory `cswap` targets is
+   created by `apply`/`new`/`init`, never by loading the config file alone,
+   so a repo that has never applied has nothing there yet. `cd` into that
+   second repo **before** running anything below — this whole step targets
+   the second repo, no branch container is involved.
 
    ```bash
    cd ../SampleApp2                # a different repo/container_prefix, not a branch of SampleApp
@@ -1812,6 +1816,17 @@ feature, so run all of them before relying on it.
    a repo, or the second repo silently takes the account instead of being
    refused, the composite-primary-key enforcement in `claude_accounts.py`
    isn't doing its job.
+
+   One line above is still a claim, not an observation: jailbee itself does
+   no pre-check or creation of `<shared_dir>/claude` before handing control
+   to `cswap` (`claude_accounts.use()` goes straight to `cswap.status()`/
+   `cswap.switch()`), so whether `cswap` tolerates a missing or empty
+   config home — in case the `jailbee apply` prerequisite above was skipped
+   — is third-party behaviour this recipe cannot verify from a container;
+   `cswap` has not been run anywhere in this piece of work. If the retry
+   fails with a `cswap` error rather than switching, check for a missing
+   `<shared_dir>/claude` first, and correct this line with what you
+   actually observe.
 
 3. **The primary lock suffices when the legacy lock is a different file.**
 
