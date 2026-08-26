@@ -4981,27 +4981,35 @@ def egress_rm_cmd(
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Remove an override. Config-sourced entries must be edited in config.yaml."""
+    """Remove an override.
+
+    An entry that exists ONLY in config.yaml must be edited there instead —
+    overrides can only widen the allowlist, never narrow config. But an
+    entry that has ALSO been stored as an override (typically one promoted
+    with `jailbee net egress export` and then pasted, or simply re-added
+    on purpose) removes normally: it's the override row that goes away, not
+    the config line, so additive-only still holds. Checking "is this also
+    stored as an override" needs the repo/container override list, so that
+    check runs before the config-sourced refusal, not instead of it.
+    """
     from sqlmodel import Session
 
     from jailbee import egress_scope
     from jailbee.db import get_engine
 
     cfg = _load_or_exit(config)
-
-    if entry in cfg.effective_egress_allow():
-        error(
-            f"'{entry}' comes from your config, not from an override — "
-            f"overrides can only widen the allowlist.\n"
-            f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
-        )
-        raise typer.Exit(1)
-
     incus, container = _egress_target(name, repo, cfg)
     with Session(get_engine()) as session:
         if repo:
             if not egress_scope.remove_repo_extra(session, cfg.container_prefix, entry):
-                error(f"'{entry}' is not a repo override.")
+                if entry in cfg.effective_egress_allow():
+                    error(
+                        f"'{entry}' comes from your config, not from a repo "
+                        f"override — overrides can only widen the allowlist.\n"
+                        f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                    )
+                else:
+                    error(f"'{entry}' is not a repo override.")
                 raise typer.Exit(1)
             success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
             return
@@ -5009,7 +5017,14 @@ def egress_rm_cmd(
         assert container is not None
         extras = egress_scope.container_extras(incus, container)
         if entry not in extras:
-            error(f"'{entry}' is not an override on '{container}'.")
+            if entry in cfg.effective_egress_allow():
+                error(
+                    f"'{entry}' comes from your config, not from an override "
+                    f"on '{container}' — overrides can only widen the allowlist.\n"
+                    f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                )
+            else:
+                error(f"'{entry}' is not an override on '{container}'.")
             raise typer.Exit(1)
         egress_scope.set_container_extras(
             incus, container, [e for e in extras if e != entry]
@@ -5037,7 +5052,12 @@ def egress_ls_cmd(
     ] = "table",
     config: ConfigOption = None,
 ) -> None:
-    """Show every egress entry that applies, and where it came from."""
+    """Show every egress entry that applies, and where it came from.
+
+    With no container name, only repo-scope entries (config + repo-scope
+    overrides) are shown — a read command must not prompt for a container.
+    Pass a container name (branch or full) to also see its own overrides.
+    """
     from sqlmodel import Session
 
     from jailbee import egress_scope
@@ -5046,8 +5066,16 @@ def egress_ls_cmd(
 
     cfg = _load_or_exit(config)
     incus = Incus()
+    container: str | None = None
+    if name is not None:
+        # Resolve through the same resolver add/rm use, so a branch or short
+        # name works identically across all four commands — passing the raw
+        # argument straight to container_extras() would silently look up the
+        # wrong (or no) container and show an empty picture with no error.
+        incus, container = _resolve_existing(cfg, name)
+
     with Session(get_engine()) as session:
-        rows = egress_scope.classify_sources(cfg, session, incus, container=name)
+        rows = egress_scope.classify_sources(cfg, session, incus, container=container)
 
     from jailbee.tui import console
 
@@ -5084,6 +5112,18 @@ def egress_ls_cmd(
         title=f"Egress entries for {cfg.container_prefix}" if fmt == "table" else None,
         empty_message="No egress entries.",
     )
+    if container is None:
+        from jailbee.tui import hint
+
+        # stderr, not stdout: `--format json`'s output is piped/parsed, and
+        # this notice must never land inside it.
+        hint(
+            [
+                "Container-scope overrides are not shown here — pass a "
+                "container name, e.g. `jailbee net egress ls <container>`, "
+                "to see them too."
+            ]
+        )
 
 
 @egress_app.command("export")
@@ -5094,7 +5134,12 @@ def egress_export_cmd(
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """Print overrides as a replacement for the config's `egress_allow:` key."""
+    """Print overrides as a replacement for the config's `egress_allow:` key.
+
+    With no container name, only repo-scope overrides are promoted — a read
+    command must not prompt for a container. Pass a container name to also
+    promote its own overrides.
+    """
     from sqlmodel import Session
 
     from jailbee import egress_scope
@@ -5108,10 +5153,15 @@ def egress_export_cmd(
         raise typer.Exit(1)
 
     incus = Incus()
+    container: str | None = None
+    if name is not None:
+        # Same resolver add/rm use — see egress_ls_cmd's comment.
+        incus, container = _resolve_existing(cfg, name)
+
     with Session(get_engine()) as session:
         overrides = list(egress_scope.repo_extras(session, cfg.container_prefix))
-        if name is not None:
-            overrides += egress_scope.container_extras(incus, name)
+        if container is not None:
+            overrides += egress_scope.container_extras(incus, container)
 
     typer.echo(
         egress_scope.render_config_block(
@@ -5121,6 +5171,18 @@ def egress_export_cmd(
         ),
         nl=False,
     )
+    if container is None:
+        from jailbee.tui import hint
+
+        # stderr, not stdout: stdout here is the literal replacement block —
+        # pasted straight into config.yaml — and must stay pure YAML.
+        hint(
+            [
+                "Container-scope overrides are not included — pass a "
+                "container name, e.g. `jailbee net egress export "
+                "<container>`, to include them too."
+            ]
+        )
 
 
 @dataclass(frozen=True)
