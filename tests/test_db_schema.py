@@ -98,7 +98,7 @@ def test_get_engine_creates_db_and_schema(
     with Session(engine) as s:
         meta = s.get(SchemaMeta, 1)
     assert meta is not None
-    assert meta.version == 5
+    assert meta.version == 6
 
 
 def test_schema_mismatch_drops_and_recreates(
@@ -137,7 +137,7 @@ def test_schema_mismatch_drops_and_recreates(
         meta = s.get(SchemaMeta, 1)
     assert rows == []
     assert meta is not None
-    assert meta.version == 5
+    assert meta.version == 6
 
 
 def test_state_dir_respects_xdg(
@@ -211,7 +211,7 @@ def test_background_op_kind_defaults_to_create() -> None:
 
 def test_v1_db_migrates_to_current_preserving_data() -> None:
     """An existing v1 DB (background_op without op_kind) is migrated in
-    place straight to the current schema version (5): op_kind is added,
+    place straight to the current schema version (6): op_kind is added,
     existing rows keep their data, and unrelated tables (registered_repo)
     survive."""
     from sqlalchemy import text
@@ -259,10 +259,10 @@ def test_v1_db_migrates_to_current_preserving_data() -> None:
     assert "op_kind" in cols
     assert kind == "create"  # back-filled default
     # v1 -> current: _ensure_schema always migrates to CURRENT_SCHEMA_VERSION,
-    # not just the next version, so this lands on 5 (v2's op_kind step, v3's
-    # no-op gui_state guard, v4's card_style/collapsed_repos columns, and
-    # v5's view_prefs copy step), not 2.
-    assert meta is not None and meta.version == 5
+    # not just the next version, so this lands on 6 (v2's op_kind step, v3's
+    # no-op gui_state guard, v4's card_style/collapsed_repos columns, v5's
+    # no-op repo_upgrade_state guard, and v6's view_prefs copy step), not 2.
+    assert meta is not None and meta.version == 6
     assert repo is not None  # unrelated data preserved (non-destructive)
 
 
@@ -297,8 +297,8 @@ def test_gui_state_single_row_defaults() -> None:
 def test_v2_db_migrates_to_current_adding_gui_state() -> None:
     """An existing v2 DB gains a usable gui_state table, preserving
     unrelated data. _ensure_schema always migrates straight to
-    CURRENT_SCHEMA_VERSION (5), not just the next version, so this lands
-    on 5 rather than 3."""
+    CURRENT_SCHEMA_VERSION (6), not just the next version, so this lands
+    on 6 rather than 3."""
     from datetime import UTC, datetime
 
     from jailbee.db import _ensure_schema
@@ -320,7 +320,7 @@ def test_v2_db_migrates_to_current_adding_gui_state() -> None:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         state = s.get(GuiState, 1)
-    assert meta is not None and meta.version == 5
+    assert meta is not None and meta.version == 6
     assert repo is not None  # unrelated data preserved
     assert state is not None and state.layout == "table"
 
@@ -341,8 +341,8 @@ def test_migrate_to_v3_is_idempotent() -> None:
 
 def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     """An existing v3 DB (gui_state without card_style/collapsed_repos) is
-    migrated in place to v4: both columns are added, a pre-existing row is
-    back-filled with the default card_style, and unrelated tables
+    migrated in place straight to v6: v4 adds both columns, a pre-existing row
+    is back-filled with the default card_style, and unrelated tables
     (registered_repo) survive. Re-running the bootstrap is a no-op."""
     from jailbee.db import _ensure_schema
     from jailbee.db.models import GuiState, RegisteredRepo, SchemaMeta
@@ -377,14 +377,14 @@ def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     assert {"card_style", "collapsed_repos"} <= cols
     assert state is not None
     assert state.card_style == "compact"  # back-filled default
-    assert meta is not None and meta.version == 5
+    assert meta is not None and meta.version == 6
     assert repo is not None  # unrelated data preserved (non-destructive)
 
     # Idempotency: re-running the bootstrap must not error or change state.
     _ensure_schema(engine)
     with Session(engine) as s:
         meta2 = s.get(SchemaMeta, 1)
-    assert meta2 is not None and meta2.version == 5
+    assert meta2 is not None and meta2.version == 6
 
 
 def test_migrate_to_v4_is_idempotent() -> None:
@@ -395,7 +395,7 @@ def test_migrate_to_v4_is_idempotent() -> None:
     # GuiState no longer declares it, so create_all builds the current
     # model's shape without it — put it back by hand so this test still
     # exercises the "already present" guard for both columns, the same way
-    # the v5 tests restore the pre-v5 physical shape.
+    # the v6 tests restore the pre-v6 physical shape.
     SQLModel.metadata.create_all(engine)
     with engine.begin() as conn:
         conn.exec_driver_sql("ALTER TABLE gui_state ADD COLUMN collapsed_repos VARCHAR")
@@ -404,7 +404,84 @@ def test_migrate_to_v4_is_idempotent() -> None:
     assert {"card_style", "collapsed_repos"} <= cols
 
 
-def test_v4_db_migrates_to_v5_moving_collapsed_repos_to_view_prefs() -> None:
+def test_repo_upgrade_state_primary_key_is_container_prefix() -> None:
+    from jailbee.db.models import RepoUpgradeState
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime(2026, 8, 25, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(
+            RepoUpgradeState(
+                container_prefix="sampleapp",
+                base_build_version="1.0.0",
+                base_build_observed=False,
+                apply_version="1.0.0",
+                apply_observed=True,
+                updated_at=now,
+            )
+        )
+        s.commit()
+        got = s.get(RepoUpgradeState, "sampleapp")
+    assert got is not None
+    assert got.base_build_observed is False
+    assert got.apply_observed is True
+    assert got.updated_at == now
+
+
+def test_v4_db_migrates_to_current_adding_repo_upgrade_state() -> None:
+    """An existing v4 DB gains the new table and lands on the current version
+    without losing unrelated data. `create_all` makes the table;
+    `_migrate_to_v5` only lets the version bump — the same shape as v3's
+    gui_state step."""
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import RegisteredRepo, RepoUpgradeState, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 8, 25, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=4))
+        s.add(RegisteredRepo(container_prefix="sampleapp", repo_root="/r", registered_at=now))
+        s.commit()
+    # Simulate the v4 shape: the table did not exist yet.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE repo_upgrade_state")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        repo = s.get(RegisteredRepo, "sampleapp")
+        assert meta is not None and meta.version == 6
+        assert repo is not None, "unrelated data preserved (non-destructive)"
+        s.add(
+            RepoUpgradeState(
+                container_prefix="sampleapp",
+                base_build_version="1.0.0",
+                base_build_observed=True,
+                apply_version="1.0.0",
+                apply_observed=True,
+                updated_at=now,
+            )
+        )
+        s.commit()
+
+
+def test_migrate_to_v5_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v5
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)  # table already present
+    with engine.begin() as conn:
+        _migrate_to_v5(conn)  # must not raise on an already-migrated DB
+        sql = "SELECT name FROM sqlite_master WHERE type='table'"
+        names = {row[0] for row in conn.exec_driver_sql(sql)}
+    assert "repo_upgrade_state" in names
+
+
+def test_v4_db_migrates_to_current_moving_collapsed_repos_to_view_prefs() -> None:
     """An existing v4 DB gains the view_prefs table, and the Qt card view's
     folded set moves from gui_state.collapsed_repos to view_prefs('qt').
     The physical gui_state column is deliberately left in place: SQLite
@@ -441,18 +518,18 @@ def test_v4_db_migrates_to_v5_moving_collapsed_repos_to_view_prefs() -> None:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         qt = s.get(ViewPrefs, "qt")
-    assert meta is not None and meta.version == 5
+    assert meta is not None and meta.version == 6
     assert repo is not None  # unrelated data preserved (non-destructive)
     assert qt is not None
     assert qt.folded_repos == '["gisgro","other"]'
     assert qt.columns is None  # columns are seeded by the front-end, not here
 
 
-def test_migrate_to_v5_does_not_clobber_an_existing_qt_row() -> None:
+def test_migrate_to_v6_does_not_clobber_an_existing_qt_row() -> None:
     """_ensure_schema re-runs the whole chain if the process dies before the
     version bump, so the copy must insert only when no qt row exists —
     otherwise a crash would revert folds the user has since changed."""
-    from jailbee.db import _migrate_to_v5
+    from jailbee.db import _migrate_to_v6
     from jailbee.db.models import ViewPrefs
 
     engine = create_engine("sqlite:///:memory:")
@@ -467,8 +544,8 @@ def test_migrate_to_v5_does_not_clobber_an_existing_qt_row() -> None:
             "(id, layout, refresh_paused, card_style, collapsed_repos) "
             "VALUES (1, 'cards', 0, 'compact', '[\"stale\"]')"
         )
-        _migrate_to_v5(conn)
-        _migrate_to_v5(conn)  # idempotent
+        _migrate_to_v6(conn)
+        _migrate_to_v6(conn)  # idempotent
 
     with Session(engine) as s:
         qt = s.get(ViewPrefs, "qt")

@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db.models import SchemaMeta
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def state_dir() -> Path:
@@ -76,7 +76,15 @@ def _migrate_to_v4(conn: Connection) -> None:
 
 
 def _migrate_to_v5(conn: Connection) -> None:
-    """v4 -> v5: move the Qt card view's folded set from
+    """v4 -> v5: add the repo_upgrade_state table. ``create_all`` (run before
+    the migration loop in ``_ensure_schema``) already creates the new table,
+    so this step is an idempotent no-op guard whose job is to let the version
+    bump to 5 — the same shape as ``_migrate_to_v3``."""
+    return None
+
+
+def _migrate_to_v6(conn: Connection) -> None:
+    """v5 -> v6: move the Qt card view's folded set from
     ``gui_state.collapsed_repos`` into ``view_prefs('qt').folded_repos``.
 
     ``create_all`` (run before the migration loop in ``_ensure_schema``)
@@ -105,6 +113,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }
 
 

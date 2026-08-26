@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
+hint_console = Console(stderr=True)
 
 
 def format_elapsed(seconds: float) -> str:
@@ -131,6 +132,24 @@ def warn_plain(msg: str) -> None:
     highlighting off so Rich doesn't recolour paths or numbers inside it.
     """
     console.print(Text.assemble(("⚠ ", "yellow"), msg), highlight=False)
+
+
+def hint(lines: Sequence[str]) -> None:
+    """Print an advisory block on stderr, marking only its first line.
+
+    stderr rather than stdout because hints share a terminal with output that
+    is parsed by scripts — `jailbee ls`'s table, `--format json`. `err_console`
+    is unsuitable: it is styled `bold red`, which is for failures.
+
+    Bodies are emitted as `Text`, never as Rich markup, so a reason
+    containing square brackets survives verbatim — the same reason
+    `warn_plain` exists alongside `warn`.
+    """
+    if not lines:
+        return
+    hint_console.print(Text.assemble(("⚠ ", "yellow"), lines[0]), highlight=False)
+    for line in lines[1:]:
+        hint_console.print(Text(line), highlight=False)
 
 
 def error(msg: str) -> None:

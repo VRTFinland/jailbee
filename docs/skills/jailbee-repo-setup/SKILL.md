@@ -396,7 +396,7 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
   non-IP `host_address`/`container_address`, or a `direction`/`to_host`/
   `bind` key (only the to-container direction is configurable)
 
-`jailbee doctor` is host-level — failures there mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows.
+`jailbee doctor` is mostly host-level — failures there usually mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows. The one exception is the `upgrade actions` check, which is per-repo and not a host problem: on a repo that has never been built it simply says a `jailbee base build` is owed, which is already the next step anyway.
 
 ## What this skill does NOT do
 

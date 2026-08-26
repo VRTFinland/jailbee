@@ -107,6 +107,27 @@ rather than constructing dicts from scratch.
 ### No `# type: ignore` without comment
 mypy strict is on. If you must suppress, add a comment explaining why.
 
+### Changing the golden image or profiles requires an `UPGRADE_NOTES` entry
+
+`src/jailbee/upgrade.py` holds `UPGRADE_NOTES` — the hand-maintained list of
+which releases need `jb base build` or `jb apply` re-run. Users who upgrade
+between released versions are advised from it on `jb ls` / `jb new` /
+`jb shell` (a non-blocking hint on stderr) and in `jb doctor`.
+
+Add an entry whenever a change alters:
+
+- what `jb base build` produces — `provision/install.sh`,
+  `provision/install.d.available/`, the provisioning env assembled in
+  `golden.build_golden_image`, or the default stacks (`Stacks` in `config.py`)
+- what `jb apply` writes — profile rendering in `profiles.py`, the ACL in
+  `egress.py`, `/etc/hosts` pinning, the dockerd proxy config
+
+Use the **upcoming** release's version number. An entry above the running
+version is invisible until that version ships, so adding it early is safe —
+but if the release number changes before publication, the entry is wrong and
+must be corrected. A forgotten entry is silent: nothing fails, the advice
+simply never arrives.
+
 ## Test isolation
 
 - All tests are **fully mocked** — none spin up a real Incus daemon, real

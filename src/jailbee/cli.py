@@ -52,6 +52,50 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
+    """Record that `action` just ran successfully in this repo.
+
+    Bookkeeping for `jailbee.upgrade`'s advice, and a courtesy like the advice
+    itself: a state-DB problem must not turn a successful `base build` into a
+    failed command, hence the broad except.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.upgrade import record
+
+    try:
+        with Session(get_engine()) as session:
+            record(session, cfg.container_prefix, action, __version__, now=_now())
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
+
+
+def _advise_upgrade(cfg: "Config") -> None:
+    """Print any pending `base build` / `apply` advice for this repo.
+
+    Non-blocking and never interactive: it must work with no TTY, and in
+    background `jailbee new` it prints from the foreground parent rather than
+    into the detached job's log where nobody reads it.
+
+    Wrapped broadly on purpose — a locked state DB, a schema surprise, an
+    unreadable row: none of it may take down the command the user actually
+    ran. Advice is a courtesy.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.tui import hint
+    from jailbee.upgrade import advice_lines
+
+    try:
+        with Session(get_engine()) as session:
+            lines = advice_lines(session, cfg.container_prefix, __version__, now=_now())
+        hint(lines)
+    except Exception:  # advice is a courtesy; must never fail the command
+        return
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -252,6 +296,15 @@ def init(config: ConfigOption = None) -> None:
         error(str(e))
         raise typer.Exit(1) from e
 
+    # `run_init` writes exactly what `apply` writes — profiles, ACL, shared
+    # dirs — so it satisfies an `apply` upgrade note just as `apply` does.
+    # Recorded here, at the point that work is known to have succeeded, and
+    # not at the end of the command: the steps below (systemd units, repo
+    # registration) are not part of what the note is about, and a freshly
+    # inited repo must not be told to `jailbee apply` for changes `jailbee
+    # init` just made.
+    _record_upgrade_action(cfg, "apply")
+
     # Install the singleton refresh timer + register this repo so it
     # gets refreshed on the next 60s tick (and stays up to date going
     # forward).
@@ -342,6 +395,9 @@ def apply(
     for name, err in result.port_failures:
         error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
 
+    if result.fully_successful:
+        _record_upgrade_action(cfg, "apply")
+
     if not result.fully_successful:
         raise typer.Exit(1)
 
@@ -396,6 +452,7 @@ def list_cmd(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
     show_submodules = submodules and repo_has_submodules(cfg)
 
     containers = list_containers(
@@ -621,6 +678,7 @@ def new_cmd(
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
 
     # --tmux/--shell are shorthands for `--attach <mode>` that additionally
     # force foreground creation. All four attach flags are mutually
@@ -1331,6 +1389,7 @@ def shell(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")
     raise typer.Exit(_attach_shell(cfg, incus, name, user))
 
@@ -5488,6 +5547,8 @@ def base_build_cmd(config: ConfigOption = None) -> None:
         error(str(e))
         raise typer.Exit(1) from e
 
+    _record_upgrade_action(cfg, "base_build")
+
 
 @base_app.command("prune")
 def base_prune_cmd(
@@ -6607,6 +6668,7 @@ def exec_cmd(
 @app.command()
 def doctor(config: ConfigOption = None) -> None:
     """Run diagnostic checks."""
+    from rich.markup import escape
     from rich.table import Table
 
     from jailbee.doctor import run_checks
@@ -6621,8 +6683,14 @@ def doctor(config: ConfigOption = None) -> None:
     table.add_column("STATUS")
     table.add_column("DETAIL")
     for r in results:
+        # The STATUS cell is markup, so the whole row is rendered with markup
+        # enabled — and details are arbitrary text: exception strings
+        # (SQLAlchemy appends `[SQL: ...] [parameters: (...)]`), absolute
+        # paths in brackets, the upgrade block's own wording. Unescaped, a
+        # bracketed run is silently swallowed as a style tag, or raises
+        # MarkupError and takes `doctor` down with it. Escape every detail.
         status = "[green]✓ OK[/green]" if r.ok else "[red]✗ FAIL[/red]"
-        table.add_row(r.name, status, r.detail)
+        table.add_row(escape(r.name), status, escape(r.detail))
     console.print(table)
 
     if any(not r.ok for r in results):

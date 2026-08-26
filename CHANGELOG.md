@@ -4,6 +4,25 @@
 
 ### Added
 
+- **jailbee now tells you when a release needs `jb base build` or `jb apply`
+  re-run.** Some releases change what the golden image contains
+  (`provision/install.sh`, `install.d.available/` snippets, provisioning env)
+  or what `jb apply` writes (profiles, ACL); neither is re-run automatically,
+  so a user who upgrades the tool could keep a stale image or stale profiles
+  indefinitely with nothing to say so. Each release now declares its
+  requirements in `UPGRADE_NOTES`, jailbee records per repo the version at
+  which `jb base build` and `jb apply` last ran, and the difference is
+  reported as a non-blocking hint on stderr from `jb ls`, `jb new` and
+  `jb shell`, plus an `upgrade actions` check in `jb doctor`. The hint names
+  the reason, not just the command, and repeats until the action actually
+  runs — a partly failed `jb apply` (a restart or port-forward failure) does
+  not count as having run. Repos are backfilled silently on first sight, so
+  no backlog is invented for history jailbee never observed; only the
+  release that introduces the tracking can advise about itself. An install
+  whose version jailbee cannot read at all (it reports `0.0.0+unknown`, which
+  means the package metadata is missing) is silently excluded — there is
+  nothing to compare. Editable installs are not excluded: they report the
+  version in `pyproject.toml` and take part like any other.
 - **Generic agent support: `agents:` config key.** Claude Code's integration
   — shared credentials/settings mount, strict-mode egress, install/update at
   `jailbee new` time, autostart launch, `jailbee doctor` check — is now a

@@ -96,7 +96,13 @@ happens. Step by step:
 2. **CHANGELOG** — if the `## Unreleased` section is empty (or you pass
    `REGEN=1`), entries are drafted from `git log` since the last tag using the
    `claude` CLI. The `CHANGELOG.md` then opens in `$EDITOR` for you to review
-   and edit. Save and exit when it reads the way you want.
+   and edit. While you're in there: check whether anything in this release
+   changed what `jb base build` produces or what `jb apply` writes; if so,
+   `UPGRADE_NOTES` in `src/jailbee/upgrade.py` needs an entry at **this**
+   release's version, with a one-line reason a user can act on. The entry is
+   invisible until that version ships and silently wrong if the version
+   number changes afterward, so confirm it matches `VERSION` above. Save and
+   exit when it reads the way you want.
 3. **Confirmation** — you are asked `Proceed with release v1.0.1? [y/N]`.
    Answering anything but `y`/`Y` aborts with no changes pushed or published.
 4. **Publish** — only after confirmation: bump the version (`uv version`),
