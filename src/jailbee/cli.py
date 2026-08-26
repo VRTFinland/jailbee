@@ -163,7 +163,18 @@ def config_show(
     cfg = _load_or_exit(config)
     info(f"# Effective config (merged from global + {path})")
     data = cfg.model_dump(mode="json")
-    data["egress_allow"] = cfg.effective_egress_allow()
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.egress_scope import effective_repo_entries
+
+    # The `effective` layer promises the list that is actually enforced, so
+    # host-local repo overrides belong here. `--layer repo|global` print raw
+    # files and stay untouched. Container-scope extras are not part of a repo
+    # config layer — `jailbee net egress ls` is the view that shows those.
+    with Session(get_engine()) as session:
+        data["egress_allow"] = effective_repo_entries(cfg, session)
     data["shared_caches"] = [c.model_dump(mode="json") for c in cfg.effective_shared_caches()]
     data["host_mounts"] = [m.model_dump(mode="json") for m in cfg.effective_host_mounts()]
     # Dump each agent through its own (possibly subclassed) model rather than
@@ -5535,6 +5546,7 @@ def net_status_cmd() -> None:
     # Auto-revert: list each loose-mode container, with or without TTL.
     _print_loose_status()
     _print_port_forward_status()
+    _print_egress_override_status()
 
 
 def _print_loose_status() -> None:
@@ -5627,6 +5639,53 @@ def _print_port_forward_status() -> None:
                 f"{fwd.proto} container {fwd.container.display}  "
                 f"host {fwd.host.display}  ({fwd.source})"
             )
+
+
+def _list_containers_for_status(cfg: "Config", incus: "IncusType") -> list[str]:
+    """Container names of this repo. Factored out so tests can patch one symbol."""
+    from jailbee.lifecycle import list_containers
+
+    return [c.name for c in list_containers(cfg, incus)]
+
+
+def _print_egress_override_status() -> None:
+    """Render the egress-override section of `jailbee net status`.
+
+    Best-effort — silently skips when no repo config is reachable from cwd or
+    Incus is unavailable, matching the sibling sections.
+
+    This section is the feature's audit surface: an override widens a
+    security boundary without passing code review, so it must be visible
+    somewhere the user already looks.
+    """
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+
+    try:
+        cfg = load_config(find_repo_config())
+        from jailbee.incus import Incus
+
+        incus = Incus()
+        names = _list_containers_for_status(cfg, incus)
+    except Exception:
+        return
+
+    with Session(get_engine()) as session:
+        repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
+        per_container = {name: egress_scope.container_extras(incus, name) for name in names}
+
+    per_container = {k: v for k, v in per_container.items() if v}
+    if not repo_rows and not per_container:
+        return
+
+    typer.echo("")
+    typer.echo("Egress overrides (host-local, not in git):")
+    for entry in repo_rows:
+        typer.echo(f"  repo {cfg.container_prefix}: {entry}")
+    for name, entries in sorted(per_container.items()):
+        typer.echo(f"  {name}: {', '.join(entries)}")
 
 
 @net_app.command("unregister")

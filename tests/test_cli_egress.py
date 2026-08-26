@@ -415,3 +415,46 @@ def test_alias_is_hidden_from_root_help_but_named_in_the_group_help():
     group = runner.invoke(app, ["net", "egress", "--help"]).output
     assert "Allow a container" not in root
     assert "jailbee egress" in group
+
+
+# --- visibility in `config show` and `net status` ------------------------
+
+
+def test_config_show_effective_includes_repo_overrides(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+
+    result = runner.invoke(app, ["config", "show"])
+
+    assert "nexus.corp:443" in result.output
+
+
+def test_config_show_repo_layer_is_untouched_by_overrides(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+
+    result = runner.invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert "nexus.corp:443" not in result.output
+
+
+def test_net_status_lists_containers_carrying_overrides(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_override_status
+
+    cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
+    # `_print_egress_override_status` loads its config via `load_config(
+    # find_repo_config())` directly (matching its sibling `_print_loose_status`'s
+    # best-effort-silent shape), not via `_load_or_exit` — so patching that,
+    # as `_repo()` does for the other commands in this file, does not reach
+    # it. Patch the two symbols it actually calls.
+    mocker.patch("jailbee.cli.load_config", return_value=cfg)
+    mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
+    mocker.patch(
+        "jailbee.cli._list_containers_for_status",
+        return_value=["myrepo-feat"],
+    )
+
+    _print_egress_override_status()
+
+    assert "myrepo-feat" in capsys.readouterr().out
