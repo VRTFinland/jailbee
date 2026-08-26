@@ -375,19 +375,41 @@ def test_current_account_is_none_when_no_pooled_account_is_live():
 class FakeCswap:
     """A `Cswap` stand-in. Never runs a subprocess."""
 
-    def __init__(self, *, live, switch_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        live,
+        switch_error: Exception | None = None,
+        landed=None,
+        status_error: Exception | None = None,
+    ) -> None:
         self._live = live
         self._switch_error = switch_error
+        self._landed = landed
+        self._status_error = status_error
         self.switch_calls: list[str] = []
+        self.status_calls = 0
 
     def status(self):
+        self.status_calls += 1
+        if self._status_error is not None:
+            raise self._status_error
         return self._live
 
-    def switch(self, target: str) -> str:
+    def switch(self, target: str):
+        from jailbee.cswap import SwitchResult
+
         self.switch_calls.append(target)
         if self._switch_error is not None:
             raise self._switch_error
-        return f"Switched to Account-{target}"
+        if self._landed is not None:
+            return self._landed
+        # By default cswap lands on the account it was asked for: the slot is
+        # looked up against the same listing the caller resolved from.
+        account = next(a for a in ACCOUNTS if str(a.number) == target)
+        return SwitchResult(
+            message=f"Switched to Account-{target}", email=account.email, number=account.number
+        )
 
 
 def _live(email: str | None, *, managed: bool, number=None, org_uuid=""):
@@ -583,6 +605,398 @@ def test_a_stale_claiming_row_of_this_repo_can_be_reclaimed(db_session):
     assert row is not None and row.state == ca.HELD
 
 
+# --- use: the held-elsewhere message ----------------------------------
+
+
+def test_the_held_elsewhere_refusal_says_when_the_holding_is_still_claiming(db_session):
+    """A `claiming` row means either a switch is running right now or one
+    crashed — the two need different answers, so the message must not present
+    it as a settled holding."""
+    _hold(db_session, PERSONAL, "otherrepo", state=ca.CLAIMING)
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="otherrepo", repo_root="/home/x/src/otherrepo", registered_at=NOW
+        )
+    )
+    db_session.commit()
+    cswap = FakeCswap(live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"))
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    message = str(exc.value)
+    assert "still `claiming`" in message
+    assert "crashed" in message
+    assert cswap.switch_calls == []
+
+
+def test_the_held_elsewhere_refusal_offers_a_switch_before_a_release(db_session):
+    """`release` is bookkeeping only: the credential stays behind and that repo
+    keeps rotating it, so a switch — which checks the rotated credential back
+    in — is the clean handover and has to be named first."""
+    _hold(db_session, PERSONAL, "otherrepo")
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="otherrepo", repo_root="/home/x/src/otherrepo", registered_at=NOW
+        )
+    )
+    db_session.commit()
+    cswap = FakeCswap(live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"))
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    message = str(exc.value)
+    assert "jailbee claude use <other>" in message
+    assert message.index("jailbee claude use <other>") < message.index("jailbee claude release"), (
+        "the switch is the recommended handover, so it comes first"
+    )
+    assert "cd /home/x/src/otherrepo && jailbee claude release" in message, (
+        "the release is still directly runnable"
+    )
+
+
+# --- use: a failed or mis-landed switch --------------------------------
+
+
+def test_a_failed_switch_restores_a_previously_valid_holding_of_this_repo(db_session):
+    """This repo already held the target as `held`; only the live login had
+    drifted (an out-of-band `/login`). Deleting the row on failure would mark
+    the account free while this repo may still be live on it."""
+    from jailbee.cswap import CswapError
+
+    earlier = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+    db_session.add(
+        ClaudeAccountHolding(
+            email=PERSONAL.email,
+            org_uuid=PERSONAL.org_uuid,
+            container_prefix="gisgro",
+            slot="9",
+            state=ca.HELD,
+            since=earlier,
+        )
+    )
+    db_session.commit()
+    cswap = FakeCswap(
+        live=_live("stray@example.com", managed=False),
+        switch_error=CswapError("credential store is locked"),
+    )
+
+    with pytest.raises(CswapError):
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW, force=True)
+
+    db_session.expire_all()
+    row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
+    assert row is not None, "a holding that was valid before the command survives it"
+    assert row.state == ca.HELD
+    assert row.container_prefix == "gisgro"
+    assert (row.slot, row.since) == ("9", earlier), "restored, not merely left as `held`"
+
+
+def test_a_failed_switch_deletes_a_stale_claiming_row_it_had_reclaimed(db_session):
+    """The other half: a `claiming` row is a crash artifact with no standing,
+    so a failed retry must leave the account free, not stuck."""
+    from jailbee.cswap import CswapError
+
+    _hold(db_session, PERSONAL, "gisgro", state=ca.CLAIMING)
+    cswap = FakeCswap(
+        live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"),
+        switch_error=CswapError("nope"),
+    )
+
+    with pytest.raises(CswapError):
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    db_session.expire_all()
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_a_switch_that_lands_on_another_account_fails_and_records_nothing(db_session):
+    """`cswap switch 2` targets whatever is in slot 2 *now*; a `cswap move`
+    between the listing and the switch would hand this repo a different
+    account while the ledger claimed the one it asked for."""
+    from jailbee.cswap import CswapError, SwitchResult
+
+    cswap = FakeCswap(
+        live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"),
+        landed=SwitchResult(message="Switched to Account-2", email=CI.email, number=2),
+    )
+
+    with pytest.raises(CswapError) as exc:
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    message = str(exc.value)
+    assert CI.email in message, "the message names what actually landed"
+    assert "ledger was NOT updated" in message
+    db_session.expire_all()
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None, (
+        "no holding is written for an account cswap did not land on"
+    )
+
+
+def test_a_switch_reply_with_no_identity_is_taken_at_its_word(db_session):
+    """cswap need not report a `to` block. An unverifiable reply is not a
+    failure — refusing here would break the switch for a payload shape that is
+    merely less informative."""
+    from jailbee.cswap import SwitchResult
+
+    cswap = FakeCswap(
+        live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"),
+        landed=SwitchResult(message="Switched", email=None, number=None),
+    )
+
+    ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
+    assert row is not None and row.state == ca.HELD
+
+
+# --- use: a concurrent claim ------------------------------------------
+
+
+def _integrity_error():
+    """What the loser of two simultaneous INSERTs on the composite key gets."""
+    from sqlalchemy.exc import IntegrityError
+
+    return IntegrityError(
+        "INSERT INTO claude_account_holding ...", {}, Exception("UNIQUE constraint failed")
+    )
+
+
+def test_a_concurrent_claim_is_a_refusal_not_a_traceback(db_session, mocker):
+    """Two processes pass the holders() check and both INSERT; the primary key
+    stops the double-hold — the loser must be told, not shown a stack trace."""
+    cswap = FakeCswap(live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"))
+    mocker.patch.object(db_session, "commit", side_effect=_integrity_error())
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    assert "claimed by another repo first" in str(exc.value)
+    assert cswap.switch_calls == [], "the loser of the race switches nothing"
+
+
+def test_a_concurrent_claim_names_the_winner_when_the_ledger_shows_it(db_session, mocker):
+    """The row was absent on the first read and present after the conflict —
+    exactly the concurrent case. Re-reading lets the refusal name the winner."""
+    cswap = FakeCswap(live=_live("work@gisgro.com", managed=True, number=1, org_uuid="org-abc"))
+    winner = ca.Holder(
+        container_prefix="otherrepo", repo_root="/home/x/src/otherrepo", state=ca.HELD
+    )
+    mocker.patch.object(ca, "holders", side_effect=[{}, {PERSONAL.identity: winner}])
+    mocker.patch.object(db_session, "commit", side_effect=_integrity_error())
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.use(db_session, cswap, ACCOUNTS, prefix="gisgro", ref="2", now=NOW)
+
+    assert "otherrepo" in str(exc.value)
+    assert cswap.switch_calls == []
+
+
+# --- use: the --force confirmation comes after the refusals -----------
+
+
+def test_the_force_prompt_is_not_reached_when_the_account_is_held_elsewhere(db_session):
+    """Being asked to accept a risk on a command that then declines is worse
+    than either outcome, so every ledger refusal precedes the prompt."""
+    _hold(db_session, PERSONAL, "otherrepo")
+    asked: list[str] = []
+
+    def confirm(live) -> bool:
+        asked.append(live.email or "")
+        return True
+
+    cswap = FakeCswap(live=_live("stray@example.com", managed=False))
+
+    with pytest.raises(ca.PoolError):
+        ca.use(
+            db_session,
+            cswap,
+            ACCOUNTS,
+            prefix="gisgro",
+            ref="2",
+            now=NOW,
+            force=True,
+            confirm=confirm,
+        )
+
+    assert asked == []
+    assert cswap.status_calls == 0, "and the live login is not even probed"
+    assert cswap.switch_calls == []
+
+
+def test_the_force_prompt_is_not_reached_when_the_account_is_not_allowed(db_session):
+    ca.set_allowed(db_session, "gisgro", {WORK.identity})
+    asked: list[str] = []
+    cswap = FakeCswap(live=_live("stray@example.com", managed=False))
+
+    with pytest.raises(ca.PoolError):
+        ca.use(
+            db_session,
+            cswap,
+            ACCOUNTS,
+            prefix="gisgro",
+            ref="2",
+            now=NOW,
+            force=True,
+            confirm=lambda live: bool(asked.append(live.email or "")) or True,
+        )
+
+    assert asked == []
+
+
+def test_declining_the_force_prompt_cancels_and_switches_nothing(db_session):
+    cswap = FakeCswap(live=_live("stray@example.com", managed=False))
+
+    with pytest.raises(ca.PoolCancelledError) as exc:
+        ca.use(
+            db_session,
+            cswap,
+            ACCOUNTS,
+            prefix="gisgro",
+            ref="2",
+            now=NOW,
+            force=True,
+            confirm=lambda live: False,
+        )
+
+    assert isinstance(exc.value, ca.PoolError), "a cancellation is still a PoolError"
+    assert cswap.switch_calls == []
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_a_forced_use_probes_the_live_login_exactly_once(db_session):
+    """The prompt used to run in `cli.py` off its own `cswap.status()`, so a
+    `--force` switch paid for two probes."""
+    cswap = FakeCswap(live=_live("stray@example.com", managed=False))
+
+    ca.use(
+        db_session,
+        cswap,
+        ACCOUNTS,
+        prefix="gisgro",
+        ref="2",
+        now=NOW,
+        force=True,
+        confirm=lambda live: True,
+    )
+
+    assert cswap.status_calls == 1
+    assert cswap.switch_calls == ["2"]
+
+
+# --- capture: `jailbee claude add` ------------------------------------
+
+
+def test_ensure_capture_allowed_passes_when_nobody_holds_the_identity(db_session):
+    ca.ensure_capture_allowed(db_session, PERSONAL.identity, prefix="gisgro")
+
+
+def test_ensure_capture_allowed_passes_when_this_repo_already_holds_it(db_session):
+    """Re-capturing an account this repo holds only refreshes its own copy."""
+    _hold(db_session, PERSONAL, "gisgro")
+
+    ca.ensure_capture_allowed(db_session, PERSONAL.identity, prefix="gisgro")
+
+
+def test_ensure_capture_allowed_refuses_when_another_repo_holds_the_identity(db_session):
+    """Re-capturing overwrites the stored blob with THIS repo's lineage, so the
+    holding repo's row would point at a credential it never got."""
+    _hold(db_session, PERSONAL, "otherrepo")
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.ensure_capture_allowed(db_session, PERSONAL.identity, prefix="gisgro")
+
+    message = str(exc.value)
+    assert "otherrepo" in message
+    assert PERSONAL.email in message
+    assert "overwrite" in message
+    assert f"jailbee claude release {PERSONAL.email}" in message, (
+        "no listing was read, so the ref has to be the email, not a slot number"
+    )
+
+
+def test_claim_captured_records_a_held_row_for_this_repo(db_session):
+    """Without this row the invariant is unenforced until this repo's first
+    `use`: holders() is empty, every refusal passes, and the next repo to `use`
+    the account lands a second live copy of one stored grant."""
+    cswap = FakeCswap(live=_live(PERSONAL.email, managed=True, number=2, org_uuid=""))
+
+    record = ca.claim_captured(
+        db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=None, now=NOW
+    )
+
+    assert record.slot == "2", "the slot is read back from cswap, not guessed"
+    assert record.taken_from is None
+    row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
+    assert row is not None
+    assert (row.container_prefix, row.state, row.slot, row.since) == ("gisgro", ca.HELD, "2", NOW)
+
+
+def test_claim_captured_falls_back_to_the_explicit_slot_when_cswap_cannot_be_read(db_session):
+    """The capture already happened: a failed slot read-back must not cost the
+    ledger row, which is the part that matters."""
+    from jailbee.cswap import CswapError
+
+    cswap = FakeCswap(live=None, status_error=CswapError("keychain locked"))
+
+    record = ca.claim_captured(
+        db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=7, now=NOW
+    )
+
+    assert record.slot == "7"
+    row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
+    assert row is not None and row.state == ca.HELD
+
+
+def test_claim_captured_takes_over_a_row_that_named_another_repo(db_session):
+    """The TOCTOU window between `ensure_capture_allowed` and here. The stored
+    blob is now this repo's lineage, so recording this repo is the truth —
+    leaving the row elsewhere would hand that repo a grant this one is live
+    on."""
+    _hold(db_session, PERSONAL, "otherrepo")
+    cswap = FakeCswap(live=_live(PERSONAL.email, managed=True, number=2, org_uuid=""))
+
+    record = ca.claim_captured(
+        db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=None, now=NOW
+    )
+
+    row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
+    assert row is not None and row.container_prefix == "gisgro"
+    assert record.taken_from == "otherrepo", "the displaced repo is reported, not swallowed"
+
+
+def test_claim_captured_keys_the_row_on_the_identity_cswap_reports_after_the_capture(db_session):
+    """Before the capture, `cswap status` may report an unmatched login with no
+    `organizationUuid`, so the caller's identity can be ("email", "") even for
+    an organization account. Writing the row under that guess would key it on
+    an account that does not exist and `holders()` would never match the real
+    one — the same hole this function exists to close."""
+    guessed = (WORK.email, "")
+    cswap = FakeCswap(live=_live(WORK.email, managed=True, number=1, org_uuid="org-abc"))
+
+    record = ca.claim_captured(db_session, cswap, guessed, prefix="gisgro", slot=None, now=NOW)
+
+    assert record.identity == WORK.identity
+    assert db_session.get(ClaudeAccountHolding, guessed) is None, "not under the guess"
+    row = db_session.get(ClaudeAccountHolding, WORK.identity)
+    assert row is not None and row.container_prefix == "gisgro"
+
+
+def test_claim_captured_keeps_the_callers_identity_when_the_email_disagrees(db_session):
+    """A different email means cswap is talking about something else; the row
+    still has to exist for the login that was actually captured."""
+    cswap = FakeCswap(live=_live(CI.email, managed=True, number=3, org_uuid=""))
+
+    record = ca.claim_captured(
+        db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=5, now=NOW
+    )
+
+    assert record.identity == PERSONAL.identity
+    assert record.slot == "5", "and the slot read-back is not trusted either"
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is not None
+
+
 # --- release ----------------------------------------------------------
 
 
@@ -592,15 +1006,31 @@ def test_release_repo_frees_this_repos_holding(db_session):
 
     freed = ca.release_repo(db_session, "gisgro")
 
-    assert freed is not None and freed.email == WORK.email
+    assert [r.email for r in freed] == [WORK.email]
     assert db_session.get(ClaudeAccountHolding, WORK.identity) is None
     assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is not None, (
         "another repo's holding is untouched"
     )
 
 
-def test_release_repo_returns_none_when_this_repo_holds_nothing(db_session):
-    assert ca.release_repo(db_session, "gisgro") is None
+def test_release_repo_returns_nothing_when_this_repo_holds_nothing(db_session):
+    assert ca.release_repo(db_session, "gisgro") == []
+
+
+def test_release_repo_frees_every_row_left_by_a_crash_mid_claim(db_session):
+    """A crash between phase 1 and phase 2 of `use` leaves this repo holding
+    two rows: its old `held` one and the new `claiming` one. `.first()` would
+    have deleted an arbitrary one and reported success, stranding the other."""
+    _hold(db_session, WORK, "gisgro", state=ca.HELD)
+    _hold(db_session, PERSONAL, "gisgro", state=ca.CLAIMING)
+    _hold(db_session, CI, "otherrepo")
+
+    freed = ca.release_repo(db_session, "gisgro")
+
+    assert {r.email for r in freed} == {WORK.email, PERSONAL.email}, "both are reported"
+    assert db_session.get(ClaudeAccountHolding, WORK.identity) is None
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None
+    assert db_session.get(ClaudeAccountHolding, CI.identity) is not None
 
 
 def test_release_repo_also_clears_a_stale_claiming_row(db_session):

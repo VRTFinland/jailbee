@@ -12,6 +12,16 @@ from jailbee.cswap import Account
 
 runner = CliRunner()
 
+
+def _flat(output: str) -> str:
+    """Output with every run of whitespace collapsed to one space.
+
+    Rich hard-wraps to the terminal width, so a phrase an assertion looks for
+    can be split across two lines at any point.
+    """
+    return " ".join(output.split())
+
+
 WORK = Account(
     number=1,
     email="work@gisgro.com",
@@ -38,14 +48,19 @@ PERSONAL = Account(
 )
 
 
-def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None):
+def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None, config_home=True):
     """Wire a repo config and a fake Cswap. Returns (cfg, fake_cswap).
 
     `agents={"claude": {"enabled": True}}` is required: with no override the
     default config has `cfg.claude.enabled is False`, and `_claude_ctx`'s
     enabled-guard would exit 1 before ever reaching cswap.
+
+    `<shared_dir>/claude` is created because `_claude_ctx` pre-flights it —
+    `cswap` is handed it as `CLAUDE_CONFIG_DIR`, and it is created by
+    `jailbee init`/`apply`/`new`, never by loading a config. Pass
+    `config_home=False` to test that pre-flight.
     """
-    from jailbee.cswap import LiveAccount
+    from jailbee.cswap import LiveAccount, SwitchResult
     from tests.conftest import make_config
 
     repo_root = tmp_path / "gisgro"
@@ -56,6 +71,8 @@ def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None):
     cfg = make_config(
         repo_root, shared_dir=tmp_path / "shared", agents={"claude": {"enabled": True}}
     )
+    if config_home:
+        (tmp_path / "shared" / "claude").mkdir(parents=True)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_config_path", return_value=cfg_dir / "config.yaml")
 
@@ -65,7 +82,9 @@ def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None):
     fake.status.return_value = live or LiveAccount(
         email="work@gisgro.com", managed=True, number=1, org_uuid="org-abc"
     )
-    fake.switch.return_value = "Switched to Account-2 (me@example.com)"
+    fake.switch.return_value = SwitchResult(
+        message="Switched to Account-2 (me@example.com)", email=PERSONAL.email, number=2
+    )
     mocker.patch("jailbee.cswap.Cswap", return_value=fake)
     return cfg, fake
 
@@ -91,6 +110,34 @@ def test_use_without_cswap_prints_the_install_hint_and_exits(tmp_path, mocker):
     assert result.exit_code == 1
     assert "claude-swap" in result.output
     fake.switch.assert_not_called()
+
+
+def test_a_repo_with_the_claude_agent_disabled_is_refused(tmp_path, mocker):
+    """There is no shared Claude directory to switch, so the group is unusable
+    — and the refusal has to come before anything talks to cswap."""
+    from tests.conftest import with_agent
+
+    cfg, fake = _repo(tmp_path, mocker)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=with_agent(cfg, "claude", enabled=False))
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert result.exit_code == 1
+    assert "disabled" in result.output
+    fake.available.assert_not_called()
+    fake.list_accounts.assert_not_called()
+
+
+def test_a_missing_shared_claude_dir_points_at_jailbee_apply(tmp_path, mocker):
+    """`<shared_dir>/claude` is what cswap is handed as CLAUDE_CONFIG_DIR, and
+    it is created by init/apply/new — never by loading a config file."""
+    _, fake = _repo(tmp_path, mocker, config_home=False)
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert result.exit_code == 1
+    assert "Run `jailbee apply` in this repo first" in _flat(result.output)
+    fake.list_accounts.assert_not_called()
 
 
 def test_a_bare_claude_shows_the_verbs(tmp_path, mocker):
@@ -183,6 +230,77 @@ def test_ls_says_which_account_this_repo_is_on(tmp_path, mocker):
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "250"})
 
     assert "gisgro is on account 1 (work)" in result.output
+
+
+def test_ls_flags_an_account_that_is_live_here_but_unclaimed(tmp_path, mocker):
+    """cswap says this config home is live on account 1, the ledger says nobody
+    holds it — the invariant is unenforced for that account right now, and the
+    HOLDER column alone reads as "free". Any path that leaves a live account
+    unclaimed lands here, including a bare `cswap switch` run by hand."""
+    _repo(tmp_path, mocker)
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "250"})
+
+    assert result.exit_code == 0
+    assert "live here, unclaimed" in result.output
+
+
+def test_ls_flags_an_account_that_is_live_here_while_another_repo_holds_it(tmp_path, mocker):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="otherrepo",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "250"})
+
+    assert result.exit_code == 0
+    assert "live here, but held by otherrepo" in result.output
+
+
+def test_ls_says_nothing_extra_when_the_ledger_and_cswap_agree(tmp_path, mocker):
+    """Guard against a note that fires on the healthy case."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="gisgro",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "250"})
+
+    assert result.exit_code == 0
+    assert "unclaimed" not in result.output
+    assert "NOTE" not in result.output, "the column is not even shown"
 
 
 # --- use --------------------------------------------------------------
@@ -282,6 +400,61 @@ def test_a_cancelled_picker_switches_nothing(tmp_path, mocker):
     fake.switch.assert_not_called()
 
 
+def test_use_force_does_not_prompt_when_the_account_is_held_elsewhere(tmp_path, mocker):
+    """The refusal comes first: the user is not asked to accept a risk on a
+    command that then declines — and only one `cswap.status()` is ever run."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.cswap import LiveAccount
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(
+        tmp_path,
+        mocker,
+        live=LiveAccount(email="stray@example.com", managed=False, number=None, org_uuid=""),
+    )
+    confirm = mocker.patch("jailbee.tui.default_confirm", return_value=True)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=PERSONAL.email,
+                org_uuid=PERSONAL.org_uuid,
+                container_prefix="otherrepo",
+                slot="2",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "use", "2", "--force"])
+
+    assert result.exit_code == 1
+    confirm.assert_not_called()
+    assert "otherrepo" in result.output
+    fake.switch.assert_not_called()
+    assert fake.status.call_count == 0
+
+
+def test_use_force_probes_the_live_login_only_once(tmp_path, mocker):
+    from jailbee.cswap import LiveAccount
+
+    _, fake = _repo(
+        tmp_path,
+        mocker,
+        live=LiveAccount(email="stray@example.com", managed=False, number=None, org_uuid=""),
+    )
+    mocker.patch("jailbee.tui.default_confirm", return_value=True)
+
+    result = runner.invoke(app, ["claude", "use", "2", "--force"])
+
+    assert result.exit_code == 0
+    assert fake.status.call_count == 1, "the prompt used to pay for a second probe"
+
+
 # --- add --------------------------------------------------------------
 
 
@@ -343,6 +516,129 @@ def test_add_refuses_when_there_is_no_live_login_to_capture(tmp_path, mocker):
     assert result.exit_code == 1
     assert "not logged in" in result.output.lower()
     fake.add.assert_not_called()
+
+
+def test_add_records_this_repo_as_the_holder(tmp_path, mocker):
+    """The pool now holds a copy of THIS repo's live credential. Without the
+    row, `holders()` is empty for that account, every refusal in every other
+    repo passes, and the next `use` elsewhere puts one stored grant live in two
+    places — the mainline multi-repo workflow, not an unusual sequence."""
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(tmp_path, mocker)
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 0
+    fake.add.assert_called_once_with(alias="work", slot=None)
+    with Session(get_engine()) as s:
+        row = s.get(ClaudeAccountHolding, WORK.identity)
+        assert row is not None, "the capture is recorded in the ledger"
+        assert row.container_prefix == "gisgro"
+        assert row.state == "held"
+        assert row.slot == "1", "read back from cswap after the capture"
+    assert "gisgro" in result.output
+
+
+def test_add_refuses_an_identity_another_repo_holds_and_captures_nothing(tmp_path, mocker):
+    """Re-capturing would overwrite the stored blob with this repo's lineage,
+    desynchronising the holding repo's row from what it would get back. The
+    refusal has to land BEFORE cswap runs: a capture cannot be undone."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="otherrepo",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 1
+    fake.add.assert_not_called()
+    assert "otherrepo" in result.output
+    with Session(get_engine()) as s:
+        row = s.get(ClaudeAccountHolding, WORK.identity)
+        assert row is not None and row.container_prefix == "otherrepo", (
+            "the other repo's holding is left exactly as it was"
+        )
+
+
+def test_add_refusal_comes_before_the_alias_prompt(tmp_path, mocker):
+    _repo(tmp_path, mocker)
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="otherrepo",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    prompt = mocker.patch("jailbee.cli.typer.prompt", return_value="work")
+
+    result = runner.invoke(app, ["claude", "add"])
+
+    assert result.exit_code == 1
+    prompt.assert_not_called()
+
+
+def test_add_re_captured_by_the_repo_that_already_holds_it_is_fine(tmp_path, mocker):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="gisgro",
+                slot="9",
+                state="held",
+                since=datetime(2026, 8, 20, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 0
+    fake.add.assert_called_once()
+    with Session(get_engine()) as s:
+        row = s.get(ClaudeAccountHolding, WORK.identity)
+        assert row is not None and row.slot == "1", "the stale slot is refreshed"
 
 
 # --- allow ------------------------------------------------------------
@@ -537,6 +833,125 @@ def test_release_with_a_ref_frees_another_repos_holding(tmp_path, mocker):
     assert "goneaway" in result.output
     with Session(get_engine()) as s:
         assert s.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_release_warns_that_this_repo_is_still_logged_in(tmp_path, mocker):
+    """`release` is pure bookkeeping: the credential file stays behind and this
+    repo's Claude keeps rotating it. Another repo taking it now can log this
+    one out, so the caveat and the clean handover have to be stated."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="gisgro",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "release"])
+
+    assert result.exit_code == 0
+    flat = _flat(result.output)
+    assert "this repo stays logged in as that account" in flat
+    assert "jailbee claude use <other>" in flat
+
+
+def test_release_frees_every_row_a_crash_left_behind(tmp_path, mocker):
+    """A crash mid-claim leaves this repo with two rows; releasing one of them
+    arbitrarily and reporting success would strand the other."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _repo(tmp_path, mocker)
+    now = datetime(2026, 8, 26, tzinfo=UTC)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="gisgro",
+                slot="1",
+                state="held",
+                since=now,
+            )
+        )
+        s.add(
+            ClaudeAccountHolding(
+                email=PERSONAL.email,
+                org_uuid=PERSONAL.org_uuid,
+                container_prefix="gisgro",
+                slot="2",
+                state="claiming",
+                since=now,
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "release"])
+
+    assert result.exit_code == 0
+    assert WORK.email in result.output and PERSONAL.email in result.output, "both are reported"
+    with Session(get_engine()) as s:
+        assert s.get(ClaudeAccountHolding, WORK.identity) is None
+        assert s.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_release_without_a_ref_works_with_cswap_uninstalled(tmp_path, mocker):
+    """The no-ref form touches nothing but jailbee's own database. Gating it on
+    `cswap` left a user who tried the feature, got a crash artifact and then
+    uninstalled `cswap` with a red `doctor` forever and no CLI way out."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _repo(tmp_path, mocker, available=False, config_home=False)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=PERSONAL.email,
+                org_uuid=PERSONAL.org_uuid,
+                container_prefix="gisgro",
+                slot="2",
+                state="claiming",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "release"])
+
+    assert result.exit_code == 0
+    with Session(get_engine()) as s:
+        assert s.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_release_with_a_ref_still_needs_cswap(tmp_path, mocker):
+    """The `<ref>` form has to resolve the reference against a live listing."""
+    _repo(tmp_path, mocker, available=False)
+
+    result = runner.invoke(app, ["claude", "release", "2"])
+
+    assert result.exit_code == 1
+    assert "claude-swap" in result.output
 
 
 # --- rm ---------------------------------------------------------------

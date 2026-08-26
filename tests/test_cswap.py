@@ -260,10 +260,12 @@ def test_switch_always_passes_an_explicit_target(tmp_path, mocker):
     }
     run = mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
 
-    message = _cswap(tmp_path).switch("2")
+    result = _cswap(tmp_path).switch("2")
 
     assert run.call_args.args[0] == ["cswap", "switch", "2", "--json"]
-    assert message == "Switched to Account-2 (me@example.com)"
+    assert result.message == "Switched to Account-2 (me@example.com)"
+    assert result.email == "me@example.com", "the landed identity, for the caller to verify"
+    assert result.number == 2
 
 
 def test_switch_surfaces_cswap_warnings_in_the_message(tmp_path, mocker):
@@ -279,9 +281,9 @@ def test_switch_surfaces_cswap_warnings_in_the_message(tmp_path, mocker):
     }
     mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
 
-    message = _cswap(tmp_path).switch("2")
+    result = _cswap(tmp_path).switch("2")
 
-    assert "live session-mode" in message
+    assert "live session-mode" in result.message
 
 
 # --- failure modes -----------------------------------------------------

@@ -154,6 +154,26 @@ class LiveAccount:
         return (self.email, self.org_uuid)
 
 
+@dataclass(frozen=True)
+class SwitchResult:
+    """What ``cswap switch --json`` reports about the account it landed on.
+
+    ``message`` is cswap's own line, with any warnings appended. ``email`` and
+    ``number`` come from the payload's ``to`` block and are None when cswap
+    did not report one.
+
+    The landed identity is returned rather than discarded because the ledger's
+    central claim — "this repo now holds *that* account" — is otherwise written
+    from the identity jailbee resolved *before* the switch. A slot renumbered
+    between the listing and the switch (`cswap move`) would make that claim
+    silently false, so the policy layer verifies it instead of assuming it.
+    """
+
+    message: str
+    email: str | None
+    number: int | None
+
+
 def config_home(cfg: Config) -> Path:
     """The Claude config home for this repo: ``<shared_dir>/claude``.
 
@@ -311,17 +331,24 @@ class Cswap:
         other field defaults leniently: ``organizationUuid`` genuinely is
         ``""`` for a personal (non-organization) account, so that stays
         optional.
-        """
-        for required in ("number", "email"):
-            if required not in row:
-                raise CswapError(
-                    f"`cswap list --json` row is missing `{required}` "
-                    f"(number={row.get('number')!r}, email={row.get('email')!r})"
-                )
 
-        number = row["number"]
+        The guard is "present *and* usable", not merely "present": a
+        ``"email": null`` would pass a key check and then stringify to the
+        literal ``"None"``, which is the same garbage identity by another
+        route.
+        """
+        number = row.get("number")
         if not isinstance(number, int) or isinstance(number, bool):
-            raise CswapError(f"`cswap list --json` row has a non-integer `number`: {number!r}")
+            raise CswapError(
+                f"`cswap list --json` row has no usable `number`: {number!r} "
+                f"(email={row.get('email')!r})"
+            )
+
+        email = row.get("email")
+        if not isinstance(email, str) or not email.strip():
+            raise CswapError(
+                f"`cswap list --json` row has no usable `email`: {email!r} (number={number!r})"
+            )
 
         usage = row.get("usage")
         usage = usage if isinstance(usage, dict) else {}
@@ -335,7 +362,7 @@ class Cswap:
 
         return Account(
             number=number,
-            email=str(row["email"]),
+            email=email,
             org_uuid=str(row.get("organizationUuid", "") or ""),
             org_name=str(row.get("organizationName", "") or ""),
             alias=str(row.get("alias", "") or ""),
@@ -361,7 +388,7 @@ class Cswap:
             org_uuid=str(active.get("organizationUuid", "") or ""),
         )
 
-    def switch(self, target: str) -> str:
+    def switch(self, target: str) -> SwitchResult:
         """Switch this config home to ``target`` (a slot, alias or email).
 
         Always called with an explicit target. A bare ``cswap switch``
@@ -370,14 +397,24 @@ class Cswap:
 
         Returns cswap's own message, with any warnings appended — the
         live-session warning in particular is the user's only notice that
-        the same grant is now in two places.
+        the same grant is now in two places — plus the identity cswap says it
+        landed on, so the caller can check it against the account it asked
+        for instead of trusting the request.
         """
         payload = self._run_json(["switch", target])
         message = str(payload.get("message", "")) or f"Switched to {target}"
         warnings = payload.get("warnings")
         if isinstance(warnings, list) and warnings:
             message = "\n".join([message, *(str(w) for w in warnings)])
-        return message
+        landed = payload.get("to")
+        landed = landed if isinstance(landed, dict) else {}
+        email = landed.get("email")
+        number = landed.get("number")
+        return SwitchResult(
+            message=message,
+            email=email.strip() if isinstance(email, str) and email.strip() else None,
+            number=number if isinstance(number, int) and not isinstance(number, bool) else None,
+        )
 
     def add(self, *, alias: str | None, slot: int | None) -> None:
         """Capture this config home's current login into the pool.
