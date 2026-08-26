@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from jailbee.config import load_config
-from jailbee.egress import EgressEntry
+from jailbee.egress import EgressEntry, build_egress_entries
 from jailbee.network import acl_name, allowlist_acl_yaml, entries_from_acl_yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -70,7 +70,8 @@ def test_acl_name_uses_container_prefix(make_cfg, tmp_path):
 def test_allowlist_acl_yaml_has_per_repo_name(make_cfg, tmp_path, mock_resolve):
     repo = tmp_path / "myrepo"
     repo.mkdir()
-    yaml_text = allowlist_acl_yaml(make_cfg(repo))
+    cfg = make_cfg(repo)
+    yaml_text = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     assert "name: myrepo-allowlist" in yaml_text
 
 
@@ -83,7 +84,7 @@ def test_acl_has_no_explicit_reject_egress(mock_resolve):
     per-NIC default action, rendered at the tail of the generated chain.
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     rejects = [r for r in parsed["egress"] if r["action"] == "reject"]
     assert rejects == [], f"unexpected explicit reject in egress: {rejects}"
 
@@ -91,14 +92,14 @@ def test_acl_has_no_explicit_reject_egress(mock_resolve):
 def test_acl_has_no_explicit_reject_ingress(mock_resolve):
     """Same as above for the ingress side."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     rejects = [r for r in parsed["ingress"] if r["action"] == "reject"]
     assert rejects == [], f"unexpected explicit reject in ingress: {rejects}"
 
 
 def test_acl_rules_all_have_state_enabled(mock_resolve):
     cfg = load_config(FIXTURES / "full_config.yaml")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     for rule in parsed["egress"]:
         assert rule.get("state") == "enabled", f"missing state: {rule}"
@@ -108,7 +109,7 @@ def test_acl_rules_all_have_state_enabled(mock_resolve):
 
 def test_acl_includes_dns_allow(mock_resolve):
     cfg = load_config(FIXTURES / "full_config.yaml")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     rules = parsed["egress"]
     dns = [r for r in rules if r.get("destination_port") == "53"]
@@ -118,7 +119,7 @@ def test_acl_includes_dns_allow(mock_resolve):
 def test_acl_resolves_hostnames_to_ips(mock_resolve):
     """Hostnames in egress_allow are resolved; the ACL contains IPs, not names."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     destinations = [r.get("destination", "") for r in parsed["egress"]]
     assert "140.82.121.4" in destinations
@@ -130,7 +131,7 @@ def test_acl_resolves_hostnames_to_ips(mock_resolve):
 
 def test_acl_rule_description_preserves_original_entry(mock_resolve):
     cfg = load_config(FIXTURES / "full_config.yaml")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     descs = [r.get("description", "") for r in parsed["egress"]]
     assert any("github.com" in d for d in descs)
@@ -150,7 +151,7 @@ def test_acl_port_specific_rule_has_tcp_protocol(make_cfg, tmp_path, mocker):
     # auto-added JetBrains hosts can poison the "exactly one match"
     # assertion below by resolving to the same mock IP.
     cfg.egress_allow.append("example.com:22")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     matching = [r for r in parsed["egress"] if r.get("destination") == "1.2.3.4"]
     assert len(matching) == 1
@@ -169,7 +170,7 @@ def test_acl_bare_host_has_no_port_field(make_cfg, tmp_path, mocker):
     cfg = make_cfg(repo)
     # make_cfg() leaves jetbrains.enabled=False — see sibling test above.
     cfg.egress_allow.append("example.com")
-    out = allowlist_acl_yaml(cfg)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     matching = [r for r in parsed["egress"] if r.get("destination") == "5.6.7.8"]
     assert len(matching) == 1
@@ -180,7 +181,7 @@ def test_acl_bare_host_has_no_port_field(make_cfg, tmp_path, mocker):
 def test_acl_egress_all_allow(mock_resolve):
     """Every egress rule is `allow` — default-deny is implicit via NIC."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     actions = [r["action"] for r in parsed["egress"]]
     assert actions and all(a == "allow" for a in actions), actions
 
@@ -188,7 +189,7 @@ def test_acl_egress_all_allow(mock_resolve):
 def test_acl_egress_allows_dhcpv4(mock_resolve):
     """Default-deny ACL must allow DHCPv4 client→server."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     dhcp = [
         r
         for r in parsed["egress"]
@@ -201,7 +202,7 @@ def test_acl_egress_allows_dhcpv4(mock_resolve):
 def test_acl_egress_allows_dhcpv6(mock_resolve):
     """Default-deny ACL must allow DHCPv6 client→server."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     dhcp = [
         r
         for r in parsed["egress"]
@@ -214,7 +215,7 @@ def test_acl_egress_allows_dhcpv6(mock_resolve):
 def test_acl_ingress_allows_dhcpv4(mock_resolve):
     """Default-deny ingress must allow DHCPv4 server→client reply."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     dhcp = [
         r
         for r in parsed["ingress"]
@@ -227,7 +228,7 @@ def test_acl_ingress_allows_dhcpv4(mock_resolve):
 def test_acl_ingress_allows_dhcpv6(mock_resolve):
     """Default-deny ingress must allow DHCPv6 server→client reply."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     dhcp = [
         r
         for r in parsed["ingress"]
@@ -240,7 +241,7 @@ def test_acl_ingress_allows_dhcpv6(mock_resolve):
 def test_acl_ingress_all_allow(mock_resolve):
     """Every ingress rule is `allow` — default-deny is implicit via NIC."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg))
+    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
     actions = [r["action"] for r in parsed["ingress"]]
     assert actions and all(a == "allow" for a in actions), actions
 
@@ -379,7 +380,7 @@ def test_entries_from_acl_yaml_roundtrip(mock_resolve):
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg.egress_allow.append("github.com:22")  # add a port entry too
-    acl_text = allowlist_acl_yaml(cfg)
+    acl_text = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     entries = entries_from_acl_yaml(acl_text)
     descs = [e.description for e in entries]
     assert "github.com" in descs
@@ -401,7 +402,12 @@ def test_entries_from_acl_yaml_empty_input():
 def test_acl_includes_mirror_rule_when_mirror_endpoint_supplied(make_cfg, tmp_path, mock_resolve):
     repo = tmp_path / "myrepo"
     repo.mkdir()
-    out = allowlist_acl_yaml(make_cfg(repo), mirror_endpoint=("10.234.216.1", 15000))
+    cfg = make_cfg(repo)
+    out = allowlist_acl_yaml(
+        cfg,
+        build_egress_entries(cfg.effective_egress_allow()),
+        mirror_endpoint=("10.234.216.1", 15000),
+    )
     parsed = yaml.safe_load(out)
     mirror = [r for r in parsed["egress"] if r.get("destination") == "10.234.216.1"]
     assert len(mirror) == 1
@@ -419,7 +425,8 @@ def test_acl_includes_mirror_rule_when_mirror_endpoint_supplied(make_cfg, tmp_pa
 def test_acl_omits_mirror_rule_when_mirror_endpoint_is_none(make_cfg, tmp_path, mock_resolve):
     repo = tmp_path / "myrepo"
     repo.mkdir()
-    out = allowlist_acl_yaml(make_cfg(repo))
+    cfg = make_cfg(repo)
+    out = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
     parsed = yaml.safe_load(out)
     mirror = [r for r in parsed["egress"] if r.get("destination") == "10.234.216.1"]
     assert mirror == []
@@ -432,7 +439,66 @@ def test_entries_from_acl_yaml_ignores_mirror_rule(make_cfg, tmp_path, mock_reso
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
-    out = allowlist_acl_yaml(cfg, mirror_endpoint=("10.234.216.1", 15000))
+    out = allowlist_acl_yaml(cfg, [], mirror_endpoint=("10.234.216.1", 15000))
     entries = entries_from_acl_yaml(out)
     destinations = [d for e in entries for d in e.destinations]
     assert "10.234.216.1" not in destinations
+
+
+def test_extra_acl_yaml_has_allow_rules_only(make_cfg, tmp_path):
+    import yaml
+
+    from jailbee.egress import EgressEntry
+    from jailbee.network import extra_acl_yaml
+
+    parsed = yaml.safe_load(
+        extra_acl_yaml(
+            "myrepo-feat-extra",
+            [EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")],
+        )
+    )
+
+    assert parsed["name"] == "myrepo-feat-extra"
+    descriptions = [r["description"] for r in parsed["egress"]]
+    # DHCP/DNS/mirror rules belong to the repo ACL applied to the same NIC.
+    assert descriptions == ["allowlisted: nexus.corp:443"]
+    assert parsed["egress"][0]["action"] == "allow"
+    assert parsed["egress"][0]["destination"] == "10.0.5.7"
+    assert parsed["egress"][0]["destination_port"] == "443"
+    assert parsed["ingress"] == []
+
+
+def test_extra_acl_yaml_bare_host_has_no_port_field():
+    import yaml
+
+    from jailbee.egress import EgressEntry
+    from jailbee.network import extra_acl_yaml
+
+    parsed = yaml.safe_load(
+        extra_acl_yaml(
+            "myrepo-feat-extra",
+            [EgressEntry(destinations=["10.0.5.7"], port=None, description="nexus.corp")],
+        )
+    )
+    assert "destination_port" not in parsed["egress"][0]
+    assert "protocol" not in parsed["egress"][0]
+
+
+def test_extra_acl_yaml_round_trips_through_entries_from_acl_yaml():
+    from jailbee.egress import EgressEntry
+    from jailbee.network import entries_from_acl_yaml, extra_acl_yaml
+
+    entries = [
+        EgressEntry(destinations=["10.0.5.7", "10.0.5.8"], port=443, description="nexus.corp:443")
+    ]
+    assert entries_from_acl_yaml(extra_acl_yaml("x-extra", entries)) == entries
+
+
+def test_allowlist_acl_yaml_requires_entries(make_cfg, tmp_path):
+    import pytest
+
+    from jailbee.network import allowlist_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    with pytest.raises(TypeError):
+        allowlist_acl_yaml(cfg)  # type: ignore[call-arg]
