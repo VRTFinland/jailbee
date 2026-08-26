@@ -4841,6 +4841,288 @@ net_app = typer.Typer(
 app.add_typer(net_app)
 
 
+egress_app = typer.Typer(
+    name="egress",
+    help=(
+        "Allow a container — or this host's copy of the repo — to reach a "
+        "host in strict mode.\n\n"
+        "Also available as the shorter `jailbee egress ...`.\n\n"
+        "Overrides are additive: they can widen the allowlist, never narrow "
+        "it. Repo-scope overrides are host-local and are NOT committed — use "
+        "`jailbee net egress export` to promote one into `.jailbee/config.yaml`."
+    ),
+    no_args_is_help=True,
+)
+net_app.add_typer(egress_app)
+# Same group at the root as a short alias. Hidden so `jailbee --help` stays
+# readable; named explicitly in the group's own help above, because an alias
+# nobody is told about is dead code.
+app.add_typer(egress_app, name="egress", hidden=True)
+
+
+def _egress_target(
+    name: str | None,
+    repo: bool,
+    cfg: "Config",
+) -> tuple["IncusType", str | None]:
+    """Resolve the (incus, container) an egress command acts on.
+
+    `--repo` short-circuits container resolution: a repo-scope change needs
+    no container, and prompting for one would be a lie about what it touches.
+    """
+    from jailbee.incus import Incus
+
+    if repo:
+        return Incus(), None
+    return _resolve_existing(cfg, name)
+
+
+def _repin_hosts_quietly(cfg: "Config", incus: "IncusType", name: str) -> None:
+    """Best-effort /etc/hosts re-pin after an override change.
+
+    A stopped container has no /etc/hosts to write; an exec failure must not
+    make the override itself look like it failed, because it did not.
+    """
+    from jailbee.hosts import apply_hosts
+    from jailbee.incus import IncusError
+
+    try:
+        apply_hosts(cfg, incus, name, mirror_endpoint=_mirror_endpoint_or_none(cfg, incus))
+    except IncusError as e:
+        warn(f"Override stored, but /etc/hosts was not re-pinned on '{name}': {e}")
+
+
+def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """The mode to materialise a container's extra ACL under.
+
+    `apply_container_acl` owns a container-local `eth0` device, and a
+    container-local device SHADOWS the assigned network profile. Hardcoding
+    `mode="strict"` here would silently pin a currently-loose container back
+    to `incusbr0` with the strict allowlist enforced, while `jailbee ls`
+    still reported it loose. Same fallback `snapshots.restore_snapshot` uses.
+    """
+    from jailbee.lifecycle import current_network_mode
+
+    return current_network_mode(cfg, incus, name) or "strict"
+
+
+@egress_app.command("add")
+def egress_add_cmd(
+    entry: str,
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    repo: Annotated[
+        bool,
+        typer.Option("--repo", help="Apply to every container of this repo on this host."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Allow one host. Scoped to one container unless --repo is given."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.egress import NetworkResolveError, parse_egress_entry
+
+    cfg = _load_or_exit(config)
+    try:
+        parse_egress_entry(entry)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if entry in cfg.effective_egress_allow():
+        info(f"'{entry}' is already allowed by your config — nothing to do.")
+        return
+
+    # Resolve before storing: an unresolvable host is the user's typo, and
+    # they can fix it now.
+    try:
+        egress_scope.resolve_entries([entry])
+    except NetworkResolveError as e:
+        error(f"{e}\nNothing was stored.")
+        raise typer.Exit(1) from e
+
+    incus, container = _egress_target(name, repo, cfg)
+    with Session(get_engine()) as session:
+        if repo:
+            if not egress_scope.add_repo_extra(
+                session, cfg.container_prefix, entry, now=_now()
+            ):
+                info(f"'{entry}' is already a repo override — nothing to do.")
+                return
+            success(f"Added repo override '{entry}'. Run `jailbee apply` to push it.")
+            return
+
+        assert container is not None
+        extras = egress_scope.container_extras(incus, container)
+        if entry in extras:
+            info(f"'{entry}' is already an override on '{container}' — nothing to do.")
+            return
+        egress_scope.set_container_extras(incus, container, [*extras, entry])
+        mode = _egress_container_mode(cfg, incus, container)
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    _repin_hosts_quietly(cfg, incus, container)
+    success(f"'{container}' may now reach {entry}.")
+
+
+@egress_app.command("rm")
+def egress_rm_cmd(
+    entry: str,
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    repo: Annotated[
+        bool,
+        typer.Option("--repo", help="Remove a repo-scope override."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Remove an override. Config-sourced entries must be edited in config.yaml."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+
+    cfg = _load_or_exit(config)
+
+    if entry in cfg.effective_egress_allow():
+        error(
+            f"'{entry}' comes from your config, not from an override — "
+            f"overrides can only widen the allowlist.\n"
+            f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+        )
+        raise typer.Exit(1)
+
+    incus, container = _egress_target(name, repo, cfg)
+    with Session(get_engine()) as session:
+        if repo:
+            if not egress_scope.remove_repo_extra(session, cfg.container_prefix, entry):
+                error(f"'{entry}' is not a repo override.")
+                raise typer.Exit(1)
+            success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
+            return
+
+        assert container is not None
+        extras = egress_scope.container_extras(incus, container)
+        if entry not in extras:
+            error(f"'{entry}' is not an override on '{container}'.")
+            raise typer.Exit(1)
+        egress_scope.set_container_extras(
+            incus, container, [e for e in extras if e != entry]
+        )
+        mode = _egress_container_mode(cfg, incus, container)
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    _repin_hosts_quietly(cfg, incus, container)
+    success(f"'{container}' can no longer reach {entry}.")
+
+
+@egress_app.command("ls")
+def egress_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    config: ConfigOption = None,
+) -> None:
+    """Show every egress entry that applies, and where it came from."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    with Session(get_engine()) as session:
+        rows = egress_scope.classify_sources(cfg, session, incus, container=name)
+
+    from jailbee.tui import console
+
+    type Row = egress_scope.EntryRow
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="entry",
+            header="ENTRY",
+            cell=lambda r: r.entry,
+            json=lambda r: r.entry,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda r: r.source,
+            json=lambda r: r.source,
+        ),
+        table_format.FieldSpec(
+            name="note",
+            header="NOTE",
+            cell=lambda r: "redundant — already in config.yaml" if r.redundant else "",
+            json=lambda r: "redundant" if r.redundant else "",
+            # Only worth a column when at least one row has something to say.
+            show_if=lambda rs: any(r.redundant for r in rs),
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=None,
+        console=console,
+        title=f"Egress entries for {cfg.container_prefix}" if fmt == "table" else None,
+        empty_message="No egress entries.",
+    )
+
+
+@egress_app.command("export")
+def egress_export_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Print overrides as a replacement for the config's `egress_allow:` key."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    config_path = _resolve_config_path(config)
+    if not config_path.is_file():
+        error(f"No repo config at {config_path} — there is no key to replace.")
+        raise typer.Exit(1)
+
+    incus = Incus()
+    with Session(get_engine()) as session:
+        overrides = list(egress_scope.repo_extras(session, cfg.container_prefix))
+        if name is not None:
+            overrides += egress_scope.container_extras(incus, name)
+
+    typer.echo(
+        egress_scope.render_config_block(
+            egress_scope.repo_file_egress_allow(config_path),
+            overrides,
+            prefix=cfg.container_prefix,
+        ),
+        nl=False,
+    )
+
+
 @dataclass(frozen=True)
 class _LooseTtl:
     """An explicitly chosen loose TTL.
