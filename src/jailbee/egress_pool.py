@@ -24,6 +24,7 @@ from jailbee.paths import repo_config_path
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.egress import EgressEntry
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
@@ -207,21 +208,28 @@ def refresh_pool(
     """One refresh cycle for one repo.
 
     Order:
-      1. Parse egress_allow, collect hostname targets.
+      1. Parse effective_repo_entries (config + host-local repo overrides),
+         collect hostname targets.
       2. resolve_with_status → (resolved, failed)
       3. merge resolved IPs (bumps last_seen)
       4. evict_expired (only for resolved hostnames; honours TTL + cap)
       5. record RefreshState (status, timestamp, error msg) and commit
       6. compute mirror_endpoint, write ACL, update /etc/hosts
+      7. phase B: refresh each container's own extra ACL, then prune
+         pool rows for containers that no longer exist
 
     Errors writing ACL or /etc/hosts do not roll back the DB transaction —
-    state already reflects what we resolved.
+    state already reflects what we resolved. Phase B runs after the repo-scope
+    work is committed and is independently guarded: a failure there must not
+    undo or overshadow what was already written above it.
     """
     from jailbee.egress import parse_egress_entry
+    from jailbee.egress_scope import effective_repo_entries
 
     prefix = cfg.container_prefix
 
-    specs = [parse_egress_entry(raw) for raw in cfg.effective_egress_allow()]
+    raw_entries = list(effective_repo_entries(cfg, session))
+    specs = [parse_egress_entry(raw) for raw in raw_entries]
     hostnames = sorted({s.target for s in specs if not s.is_literal})
 
     resolved, failed = resolve_with_status(hostnames)
@@ -285,6 +293,15 @@ def refresh_pool(
         incus,
         mirror_endpoint=mirror_endpoint,
     )
+
+    try:
+        _refresh_container_extras(
+            cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host
+        )
+        _prune_container_pools(cfg, incus, session)
+    except Exception as e:  # noqa: BLE001 - a container-scope failure must not
+        # invalidate the repo-scope work already committed above.
+        log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
 
     return RefreshResult(
         container_prefix=prefix,
@@ -352,34 +369,12 @@ def _write_acl(
     """Build EgressEntry list from current pool + literal egress entries,
     render the ACL YAML, and push via the nft-quirk-aware helper.
     """
-    from jailbee.egress import EgressEntry, parse_egress_entry
+    from jailbee.egress_scope import effective_repo_entries
     from jailbee.network import acl_name, allowlist_acl_yaml
 
     prefix = cfg.container_prefix
-    raw_entries = list(cfg.effective_egress_allow())
-    specs = [parse_egress_entry(raw) for raw in raw_entries]
-
-    pool_by_host: dict[str, list[str]] = {}
-    for row in session.exec(select(PoolIP).where(PoolIP.container_prefix == prefix)).all():
-        pool_by_host.setdefault(row.hostname, []).append(row.ip)
-
-    entries: list[EgressEntry] = []
-    for raw, spec in zip(raw_entries, specs, strict=True):
-        if spec.is_literal:
-            destinations = [spec.target]
-        else:
-            destinations = sorted(pool_by_host.get(spec.target, []))
-            if not destinations:
-                # No pool entries for this hostname yet — skip; the next
-                # refresh that resolves it will include it.
-                continue
-        entries.append(
-            EgressEntry(
-                destinations=destinations,
-                port=spec.port,
-                description=raw,
-            )
-        )
+    raw_entries = list(effective_repo_entries(cfg, session))
+    entries = _entries_from_pool(session, prefix, raw_entries)
 
     yaml_text = allowlist_acl_yaml(cfg, entries, mirror_endpoint=mirror_endpoint)
     _apply_acl_with_nft_quirk(incus, acl_name(cfg), yaml_text)
@@ -407,6 +402,119 @@ def _apply_acl_with_nft_quirk(incus: Incus, name: str, yaml_text: str) -> None:
         raise
 
 
+CONTAINER_POOL_PREFIX = "ct:"
+"""Pool-key namespace for per-container extras.
+
+Disjoint from real ``container_prefix`` values, which are bare repo prefixes,
+so one pool table serves both scopes with no chance of collision.
+"""
+
+
+def container_pool_key(name: str) -> str:
+    return f"{CONTAINER_POOL_PREFIX}{name}"
+
+
+def _entries_from_pool(session: Session, key: str, raw_entries: list[str]) -> list[EgressEntry]:
+    """Build `EgressEntry` list for `raw_entries` from pool key `key`.
+
+    Shared by the repo scope (`_write_acl`, `_update_strict_container_hosts`)
+    and the container scope (`_refresh_container_extras`) so both agree on
+    one literal-vs-hostname rule.
+    """
+    from jailbee.egress import EgressEntry, parse_egress_entry
+
+    pool_by_host: dict[str, list[str]] = {}
+    for row in session.exec(select(PoolIP).where(PoolIP.container_prefix == key)).all():
+        pool_by_host.setdefault(row.hostname, []).append(row.ip)
+
+    entries: list[EgressEntry] = []
+    for raw in raw_entries:
+        spec = parse_egress_entry(raw)
+        if spec.is_literal:
+            destinations = [spec.target]
+        else:
+            destinations = sorted(pool_by_host.get(spec.target, []))
+            if not destinations:
+                # No pool entries for this hostname yet — skip; the next
+                # refresh that resolves it will include it.
+                continue
+        entries.append(EgressEntry(destinations=destinations, port=spec.port, description=raw))
+    return entries
+
+
+def _refresh_container_extras(
+    cfg: Config,
+    incus: Incus,
+    session: Session,
+    *,
+    now: datetime,
+    ttl: timedelta,
+    max_per_host: int,
+) -> None:
+    """Resolve and push each container's own extra ACL.
+
+    Extras go through the same pool as the repo allowlist so a GSLB-rotating
+    host does not desync between what jailbee resolved and what the container
+    resolves — the reason the pool exists at all.
+
+    A failure for one container is logged and skipped: it must not cost the
+    other containers, nor the repo ACL that was already written.
+    """
+    from jailbee import egress_scope
+    from jailbee.egress import parse_egress_entry
+    from jailbee.network import extra_acl_yaml
+
+    for container in _list_containers(cfg, incus):
+        try:
+            extras = egress_scope.container_extras(incus, container.name)
+            if not extras:
+                continue
+            key = container_pool_key(container.name)
+            specs = [parse_egress_entry(raw) for raw in extras]
+            hostnames = sorted({s.target for s in specs if not s.is_literal})
+            resolved, failed = resolve_with_status(hostnames)
+            if failed:
+                log.warning(
+                    "refresh_pool: %s extras — unresolved: %s",
+                    container.name,
+                    "; ".join(f"{n}: {e}" for n, e in failed.items()),
+                )
+            merge_resolved_ips(session, key, resolved, now=now)
+            evict_expired(
+                session, key, set(resolved), now=now, ttl=ttl, max_per_host=max_per_host
+            )
+            session.commit()
+
+            entries = _entries_from_pool(session, key, extras)
+            if not entries:
+                # Nothing resolved yet: leave the existing ACL alone rather
+                # than pushing an empty one, mirroring the repo path.
+                continue
+            acl = egress_scope.extra_acl_name(container.name)
+            if not incus.network_acl_exists(acl):
+                incus.network_acl_create(acl)
+            _apply_acl_with_nft_quirk(incus, acl, extra_acl_yaml(acl, entries))
+        except Exception as e:
+            log.warning("refresh_pool: container extras failed for %s: %s", container.name, e)
+
+
+def _prune_container_pools(cfg: Config, incus: Incus, session: Session) -> list[str]:
+    """Drop `ct:` pool rows whose container no longer exists."""
+    live = {container_pool_key(c["name"]) for c in incus.list_containers()}
+    rows = session.exec(
+        select(PoolIP).where(PoolIP.container_prefix.startswith(CONTAINER_POOL_PREFIX))
+    ).all()
+    dropped: list[str] = []
+    for row in rows:
+        if row.container_prefix in live:
+            continue
+        if row.container_prefix not in dropped:
+            dropped.append(row.container_prefix)
+        session.delete(row)
+    session.commit()
+    return sorted(dropped)
+
+
 def _update_strict_container_hosts(
     cfg: Config,
     session: Session,
@@ -419,33 +527,13 @@ def _update_strict_container_hosts(
     Per-container ``IncusError`` is caught and logged; failure on one
     container does not abort the cycle.
     """
-    from jailbee.egress import EgressEntry, parse_egress_entry
+    from jailbee.egress_scope import effective_repo_entries
     from jailbee.hosts import apply_hosts
     from jailbee.incus import IncusError
 
     prefix = cfg.container_prefix
-    raw_entries = list(cfg.effective_egress_allow())
-    specs = [parse_egress_entry(raw) for raw in raw_entries]
-
-    pool_by_host: dict[str, list[str]] = {}
-    for row in session.exec(select(PoolIP).where(PoolIP.container_prefix == prefix)).all():
-        pool_by_host.setdefault(row.hostname, []).append(row.ip)
-
-    entries: list[EgressEntry] = []
-    for raw, spec in zip(raw_entries, specs, strict=True):
-        if spec.is_literal:
-            destinations = [spec.target]
-        else:
-            destinations = sorted(pool_by_host.get(spec.target, []))
-            if not destinations:
-                continue
-        entries.append(
-            EgressEntry(
-                destinations=destinations,
-                port=spec.port,
-                description=raw,
-            )
-        )
+    raw_entries = list(effective_repo_entries(cfg, session))
+    entries = _entries_from_pool(session, prefix, raw_entries)
 
     for container in _list_containers(cfg, incus):
         if container.state != "Running" or container.network != "strict":

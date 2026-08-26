@@ -704,3 +704,126 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
     # Neither repo's config is missing, so the loop body commits nothing —
     # this call count is the trailing commit and nothing else.
     assert commit.call_count == 1
+
+
+# ---- Task 8: repo overrides in the ACL, container extras, and pruning ----
+
+
+def test_refresh_pool_includes_repo_overrides_in_the_acl(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from jailbee import egress_scope
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "nexus.corp", now=frozen_now)
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"], "nexus.corp": ["10.0.5.7"]}, {}),
+    )
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    acl_yaml = incus.network_acl_set_yaml.call_args_list[0][0][1]
+    assert "nexus.corp" in acl_yaml
+
+
+def test_container_pool_key_is_disjoint_from_repo_prefixes() -> None:
+    from jailbee.egress_pool import container_pool_key
+
+    assert container_pool_key("myrepo-feat") == "ct:myrepo-feat"
+
+
+def test_refresh_pool_writes_a_container_extra_acl(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        side_effect=[
+            ({"github.com": ["1.1.1.1"]}, {}),
+            ({"nexus.corp": ["10.0.5.7"]}, {}),
+        ],
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["nexus.corp"])
+    incus = mocker.MagicMock()
+
+    # A real ContainerInfo, not a Mock: `Mock(name=...)` sets the mock's repr
+    # rather than the attribute, which silently gives every container the name
+    # "mock.name" and makes this test pass for the wrong reason.
+    from jailbee.lifecycle import ContainerInfo
+
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+            )
+        ],
+    )
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    written = [c[0][0] for c in incus.network_acl_set_yaml.call_args_list]
+    assert "myrepo-feat-extra" in written
+
+
+def test_prune_container_pools_drops_rows_for_a_vanished_container(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from sqlmodel import select
+
+    from jailbee.db.models import PoolIP
+    from jailbee.egress_pool import _prune_container_pools, merge_resolved_ips
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    merge_resolved_ips(db_session, "ct:myrepo-gone", {"nexus.corp": ["10.0.5.7"]}, now=frozen_now)
+    merge_resolved_ips(db_session, "ct:myrepo-live", {"nexus.corp": ["10.0.5.8"]}, now=frozen_now)
+    db_session.commit()
+
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-live", "status": "Running", "profiles": [], "config": {}, "devices": {}}
+    ]
+
+    dropped = _prune_container_pools(cfg, incus, db_session)
+
+    assert dropped == ["ct:myrepo-gone"]
+    keys = {row.container_prefix for row in db_session.exec(select(PoolIP)).all()}
+    assert keys == {"ct:myrepo-live"}
+
+
+def test_a_failing_container_refresh_does_not_abort_the_repo_cycle(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch(
+        "jailbee.egress_pool._refresh_container_extras",
+        side_effect=RuntimeError("boom"),
+    )
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+
+    result = refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"

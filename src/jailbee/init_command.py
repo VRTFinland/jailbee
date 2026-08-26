@@ -318,6 +318,12 @@ def apply_allowlist_acl(
     registry mirror rule.
     """
     if entries is None:
+        # Deliberately NOT egress_scope.effective_repo_entries: run_init has no
+        # DB session to read host-local repo overrides from, so the very first
+        # ACL jailbee writes can lag one added before `jailbee init` ran. The
+        # window closes on the first refresh — `refresh_pool` (which both
+        # `jb new` and `jb apply` run before a container can observe the ACL)
+        # is wired to `effective_repo_entries` and rewrites this same ACL.
         entries = build_egress_entries(cfg.effective_egress_allow())
     _apply_acl_strict(
         incus,
