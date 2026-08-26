@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -554,6 +555,61 @@ def _parse_key_users_for_uid(path: Path, uid: int) -> tuple[int | None, int | No
     return None, None
 
 
+def _unit_exec_start_path(unit: str) -> str | None:
+    """The binary `unit`'s ExecStart runs, or None when there is no unit.
+
+    systemd renders the property as
+    ``{ path=/x/jailbee ; argv[]=/x/jailbee net refresh ; ... }``; the first
+    ``path=`` is the executable. Absent or unparseable means "no unit to
+    check" — an uninstalled unit, or a systemd too old for `show --value`.
+    """
+    proc = subprocess.run(
+        ["systemctl", "--user", "show", unit, "--property=ExecStart", "--value"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"path=([^ ;]+)", proc.stdout)
+    return match[1] if match else None
+
+
+def _net_refresh_binary_check() -> CheckResult | None:
+    """Compare the refresh unit's ExecStart against the `jailbee` on PATH.
+
+    `init_command.install_systemd_units` resolves `which("jailbee")` once, at
+    install time, bakes it into the unit, and rewrites the unit only when its
+    rendered content changes. A path that later stops being the current
+    install therefore sticks: the timer goes on running *that* binary every
+    minute, unprompted. Old code executing on a schedule is how the state
+    database was silently reset before the schema check was made
+    non-destructive, and the same firing carries `loose_revert`, so a stale
+    unit also means TTL auto-revert quietly stops honouring `jailbee net
+    loose --for`.
+
+    Returns None — no check row — when there is nothing to compare: no unit
+    (the timer check above already reports that, and doctor should not argue
+    one cause twice) or no `jailbee` on PATH (a `uv run` dev invocation with
+    no global install is not a broken unit).
+    """
+    unit_bin = _unit_exec_start_path("jailbee-net-refresh.service")
+    path_bin = shutil.which("jailbee")
+    if unit_bin is None or path_bin is None:
+        return None
+    if Path(unit_bin).resolve() == Path(path_bin).resolve():
+        return CheckResult(name="net refresh binary", ok=True, detail=unit_bin)
+    return CheckResult(
+        name="net refresh binary",
+        ok=False,
+        detail=(
+            f"timer runs {unit_bin} but PATH has {path_bin} — the timer has been "
+            "running a different install (old code on a schedule, and its TTL "
+            "auto-revert with it); run `jailbee init` to rewrite the unit"
+        ),
+    )
+
+
 def _check_egress_pool(cfg: Config) -> list[CheckResult]:
     """Doctor checks for the egress pool refresh subsystem.
 
@@ -584,6 +640,9 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
             ),
         )
     )
+    binary_check = _net_refresh_binary_check()
+    if binary_check is not None:
+        results.append(binary_check)
 
     with Session(get_engine()) as session:
         state = session.get(RefreshState, cfg.container_prefix)

@@ -159,6 +159,18 @@
 
 ### Fixed
 
+- **`jb doctor` reports when the refresh timer runs a different jailbee.**
+  `install_systemd_units` bakes `which("jailbee")` into
+  `jailbee-net-refresh.service` at install time and rewrites the unit only
+  when its rendered content changes, so a path that stops being the current
+  install sticks — and that unit fires every minute, unprompted, carrying the
+  `loose` TTL auto-revert with it. A stale one therefore means old code on a
+  schedule (which is how the state database used to get reset) and a TTL that
+  quietly stops honouring `jb net loose --for`. The new `net refresh binary`
+  check compares the unit's `ExecStart` with the `jailbee` on PATH and points
+  at `jb init` when they differ. It reports nothing when there is nothing to
+  compare — no unit (the timer check already says so) or no `jailbee` on PATH
+  (a `uv run` dev invocation is not a broken unit).
 - **The state database is opened once per process, not once per call.**
   `get_engine` built a fresh engine — new connection pool, full
   `_ensure_schema` including `create_all` — on every call, and the dashboards
