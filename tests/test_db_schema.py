@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from jailbee.db import CURRENT_SCHEMA_VERSION
+
 
 def test_pool_ip_composite_primary_key() -> None:
     from jailbee.db.models import PoolIP
@@ -98,7 +100,7 @@ def test_get_engine_creates_db_and_schema(
     with Session(engine) as s:
         meta = s.get(SchemaMeta, 1)
     assert meta is not None
-    assert meta.version == 6
+    assert meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_schema_mismatch_drops_and_recreates(
@@ -137,7 +139,7 @@ def test_schema_mismatch_drops_and_recreates(
         meta = s.get(SchemaMeta, 1)
     assert rows == []
     assert meta is not None
-    assert meta.version == 6
+    assert meta.version == CURRENT_SCHEMA_VERSION
 
 
 def _register(engine, prefix: str = "alpha") -> None:
@@ -357,7 +359,7 @@ def test_background_op_kind_defaults_to_create() -> None:
 
 def test_v1_db_migrates_to_current_preserving_data() -> None:
     """An existing v1 DB (background_op without op_kind) is migrated in
-    place straight to the current schema version (6): op_kind is added,
+    place straight to the current schema version: op_kind is added,
     existing rows keep their data, and unrelated tables (registered_repo)
     survive."""
     from sqlalchemy import text
@@ -408,7 +410,7 @@ def test_v1_db_migrates_to_current_preserving_data() -> None:
     # not just the next version, so this lands on 6 (v2's op_kind step, v3's
     # no-op gui_state guard, v4's card_style/collapsed_repos columns, v5's
     # no-op repo_upgrade_state guard, and v6's view_prefs copy step), not 2.
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
     assert repo is not None  # unrelated data preserved (non-destructive)
 
 
@@ -443,7 +445,7 @@ def test_gui_state_single_row_defaults() -> None:
 def test_v2_db_migrates_to_current_adding_gui_state() -> None:
     """An existing v2 DB gains a usable gui_state table, preserving
     unrelated data. _ensure_schema always migrates straight to
-    CURRENT_SCHEMA_VERSION (6), not just the next version, so this lands
+    CURRENT_SCHEMA_VERSION, not just the next version, so this lands
     on 6 rather than 3."""
     from datetime import UTC, datetime
 
@@ -466,7 +468,7 @@ def test_v2_db_migrates_to_current_adding_gui_state() -> None:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         state = s.get(GuiState, 1)
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
     assert repo is not None  # unrelated data preserved
     assert state is not None and state.layout == "table"
 
@@ -487,7 +489,7 @@ def test_migrate_to_v3_is_idempotent() -> None:
 
 def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     """An existing v3 DB (gui_state without card_style/collapsed_repos) is
-    migrated in place straight to v6: v4 adds both columns, a pre-existing row
+    migrated in place straight to the current version: v4 adds both columns, a pre-existing row
     is back-filled with the default card_style, and unrelated tables
     (registered_repo) survive. Re-running the bootstrap is a no-op."""
     from jailbee.db import _ensure_schema
@@ -523,14 +525,14 @@ def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     assert {"card_style", "collapsed_repos"} <= cols
     assert state is not None
     assert state.card_style == "compact"  # back-filled default
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
     assert repo is not None  # unrelated data preserved (non-destructive)
 
     # Idempotency: re-running the bootstrap must not error or change state.
     _ensure_schema(engine)
     with Session(engine) as s:
         meta2 = s.get(SchemaMeta, 1)
-    assert meta2 is not None and meta2.version == 6
+    assert meta2 is not None and meta2.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v4_is_idempotent() -> None:
@@ -600,7 +602,7 @@ def test_v4_db_migrates_to_current_adding_repo_upgrade_state() -> None:
     with Session(engine) as s:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "sampleapp")
-        assert meta is not None and meta.version == 6
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
         assert repo is not None, "unrelated data preserved (non-destructive)"
         s.add(
             RepoUpgradeState(
@@ -664,7 +666,7 @@ def test_v4_db_migrates_to_current_moving_collapsed_repos_to_view_prefs() -> Non
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         qt = s.get(ViewPrefs, "qt")
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
     assert repo is not None  # unrelated data preserved (non-destructive)
     assert qt is not None
     assert qt.folded_repos == '["gisgro","other"]'
@@ -713,3 +715,79 @@ def test_view_prefs_rows_are_independent_per_frontend() -> None:
         qt = s.get(ViewPrefs, "qt")
     assert tui is not None and tui.columns == '["name","state"]'
     assert qt is not None and qt.columns == '["name","ip"]'
+
+
+def test_host_setup_state_is_a_singleton_with_empty_timestamps() -> None:
+    """A fresh row owes both the hint and the setup run — neither has happened."""
+    from jailbee.db.models import HostSetupState
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        s.add(HostSetupState(id=1))
+        s.commit()
+        row = s.get(HostSetupState, 1)
+
+    assert row is not None
+    assert row.setup_at is None
+    assert row.setup_version is None
+    assert row.hint_shown_at is None
+
+
+def test_host_setup_state_keeps_utc_timestamps() -> None:
+    from jailbee.db.models import HostSetupState
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime(2026, 8, 26, 9, 30, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(HostSetupState(id=1, setup_at=now, setup_version="1.2.0", hint_shown_at=now))
+        s.commit()
+        row = s.get(HostSetupState, 1)
+
+    assert row is not None
+    assert row.setup_at == now
+    assert row.hint_shown_at == now
+
+
+def test_v6_db_migrates_to_current_adding_host_setup_state() -> None:
+    """An existing v6 DB gains the new table and lands on the current version
+    without losing unrelated data. `create_all` makes the table;
+    `_migrate_to_v7` only lets the version bump — the same shape as v5."""
+    from jailbee.db import CURRENT_SCHEMA_VERSION, _ensure_schema
+    from jailbee.db.models import HostSetupState, RegisteredRepo, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 8, 26, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=6))
+        s.add(RegisteredRepo(container_prefix="sampleapp", repo_root="/r", registered_at=now))
+        s.commit()
+    # Simulate the v6 shape: the table did not exist yet.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE host_setup_state")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        repo = s.get(RegisteredRepo, "sampleapp")
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+        assert repo is not None, "unrelated data preserved (non-destructive)"
+        s.add(HostSetupState(id=1, setup_version="1.2.0", setup_at=now))
+        s.commit()
+
+
+def test_migrate_to_v7_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v7
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)  # table already present
+    with engine.begin() as conn:
+        _migrate_to_v7(conn)  # must not raise on an already-migrated DB
+        sql = "SELECT name FROM sqlite_master WHERE type='table'"
+        names = {row[0] for row in conn.exec_driver_sql(sql)}
+    assert "host_setup_state" in names
