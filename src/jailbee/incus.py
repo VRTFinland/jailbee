@@ -582,10 +582,14 @@ class Incus:
         if result.returncode != 0:
             raise IncusError(f"`incus network acl edit {name}` failed: {result.stderr.strip()}")
 
-    def network_acl_exists(self, name: str) -> bool:
+    def network_acl_list(self) -> list[str]:
+        """Names of every network ACL known to the daemon."""
         result = self._run(["network", "acl", "list", "--format", "json"])
         acls = json.loads(result.stdout) if result.stdout else []
-        return any(a["name"] == name for a in acls)
+        return [a["name"] for a in acls]
+
+    def network_acl_exists(self, name: str) -> bool:
+        return name in self.network_acl_list()
 
     def network_acl_show(self, name: str) -> str:
         """Return the ACL's current state as YAML (raw stdout)."""

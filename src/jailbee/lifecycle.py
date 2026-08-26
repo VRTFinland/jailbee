@@ -1547,9 +1547,17 @@ def destroy_container(
     # After the instance is gone, never before: Incus refuses to delete an
     # ACL still referenced by an instance NIC. The label died with the
     # container; this is the ACL it left behind.
+    #
+    # Best-effort: the container is already gone at this point, so an ACL
+    # deletion failure must not turn a successful destroy into a reported
+    # failure. `apply._sweep_orphan_extra_acls` is the safety net that
+    # reclaims it later.
     from jailbee import egress_scope
 
-    egress_scope.drop_container_acl(cfg, incus, name)
+    try:
+        egress_scope.drop_container_acl(cfg, incus, name)
+    except IncusError as e:
+        warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
 
     # Drop any background job tracking row so `jailbee ls` stops showing it.
     # Best-effort: a DB hiccup must not turn a successful destroy into a

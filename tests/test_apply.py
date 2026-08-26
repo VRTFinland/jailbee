@@ -50,10 +50,27 @@ def _no_egress_refresh(mocker: MockerFixture) -> Any:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_container_acl_apply(mocker: MockerFixture) -> Any:
+    """Default: per-container ACL re-materialisation is a no-op.
+
+    `run_apply`'s per-container loop now calls
+    `egress_scope.apply_container_acl`, which reads the container's
+    `user.jailbee.egress_extra` label via `incus.config_get` — a call most
+    `run_apply` tests here don't configure. Behaviour of
+    `apply_container_acl` itself is covered by `tests/test_egress_scope.py`;
+    the sweep it feeds is covered separately below (`_sweep_orphan_extra_acls`
+    tests), which call it directly rather than through `run_apply`.
+    """
+    return mocker.patch("jailbee.egress_scope.apply_container_acl")
+
+
 def test_profile_differs_returns_false_for_equivalent_yaml() -> None:
     from jailbee.apply import _profile_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.profile_show.return_value = (
         "name: foo\nconfig:\n  k: v\ndevices:\n  d1: {type: disk, source: /a, path: /b}\n"
     )
@@ -70,6 +87,8 @@ def test_profile_differs_returns_true_for_added_device() -> None:
     from jailbee.apply import _profile_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.profile_show.return_value = "name: foo\nconfig: {}\ndevices: {}\n"
     new_yaml = "name: foo\nconfig: {}\ndevices:\n  new: {type: disk, source: /a, path: /b}\n"
     assert _profile_differs(incus, "foo", new_yaml) is True
@@ -79,6 +98,8 @@ def test_acl_differs_returns_false_for_equivalent_yaml() -> None:
     from jailbee.apply import _acl_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_acl_show.return_value = (
         "name: a\negress:\n  - action: allow\n    destination: 1.2.3.4/32\n"
     )
@@ -90,6 +111,8 @@ def test_acl_differs_returns_true_for_changed_destination() -> None:
     from jailbee.apply import _acl_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_acl_show.return_value = (
         "name: a\negress:\n  - action: allow\n    destination: 1.2.3.4/32\n"
     )
@@ -113,6 +136,8 @@ def test_run_apply_noop_when_nothing_changed(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()  # mirror disabled by default
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -158,6 +183,8 @@ def test_run_apply_syncs_gie_skills_when_claude_enabled(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
@@ -176,6 +203,8 @@ def test_run_apply_pushes_changed_profile(make_cfg, tmp_path: Path, mocker: Mock
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -218,6 +247,8 @@ def test_run_apply_creates_user_shared_cache_dirs(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
@@ -240,6 +271,8 @@ def test_run_apply_reports_acl_changed_when_pool_grew(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -272,6 +305,8 @@ def test_run_apply_does_not_push_acl_directly(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -292,6 +327,8 @@ def test_run_apply_repins_hosts_on_running_strict_only(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -347,6 +384,8 @@ def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -392,6 +431,8 @@ def test_run_apply_passes_none_mirror_endpoint_to_apply_hosts_when_mirror_disabl
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -428,6 +469,8 @@ def test_run_apply_reapplies_docker_proxy_when_mirror_enabled(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -483,6 +526,8 @@ def test_run_apply_skips_docker_proxy_when_mirror_disabled(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()  # autouse fixture forces mirror disabled
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -520,6 +565,8 @@ def test_run_apply_no_prompt_when_no_profile_changed(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -557,6 +604,8 @@ def test_run_apply_prompts_when_profile_changed_and_running(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -596,6 +645,8 @@ def test_run_apply_user_declines_restart(make_cfg, tmp_path: Path, mocker: Mocke
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -635,6 +686,8 @@ def test_run_apply_assume_yes_skips_prompt(make_cfg, tmp_path: Path, mocker: Moc
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -677,6 +730,8 @@ def test_run_apply_no_restart_flag_skips_prompt_and_restart(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -725,6 +780,8 @@ def test_run_apply_partial_restart_failure(make_cfg, tmp_path: Path, mocker: Moc
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -791,6 +848,8 @@ def test_run_apply_all_restarts_succeed_is_fully_successful(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -833,6 +892,8 @@ def test_run_apply_dns_failure_aborts_before_incus_calls(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
     _no_egress_refresh.return_value = RefreshResult(
         container_prefix=cfg.container_prefix,
@@ -865,6 +926,8 @@ def test_run_apply_continues_when_the_mirror_endpoint_cannot_be_resolved(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     # Let the real `_mirror_endpoint_or_warn` run instead of the autouse
@@ -915,6 +978,8 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
     )
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -951,6 +1016,8 @@ def test_restart_one_runs_autostart_on_start(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
     mocker.patch("jailbee.lifecycle.restart_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
@@ -976,6 +1043,8 @@ def test_restart_one_pins_hosts_in_strict_mode(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
     mocker.patch("jailbee.lifecycle.restart_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
@@ -1001,6 +1070,8 @@ def test_restart_one_does_not_launch_gui_apps(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
     mocker.patch("jailbee.lifecycle.restart_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
@@ -1032,6 +1103,8 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
     cfg = make_cfg(tmp_path, shared_dir=shared, claude={"enabled": True})
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -1070,6 +1143,8 @@ def test_run_apply_does_not_create_claude_shared_dir_when_disabled(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1103,6 +1178,8 @@ def test_run_apply_creates_jetbrains_shared_dirs_when_enabled(
     cfg = make_cfg(tmp_path, shared_dir=shared, jetbrains={"enabled": True})
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -1138,6 +1215,8 @@ def test_run_apply_does_not_create_jetbrains_idea_when_share_idea_off(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1162,6 +1241,8 @@ def test_run_apply_does_not_create_jetbrains_dirs_when_disabled(
     cfg = make_cfg(tmp_path, shared_dir=shared, jetbrains={"enabled": False})
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -1192,6 +1273,8 @@ def test_run_apply_skips_extra_registries_when_mirror_disabled(
     )
     gcfg = GlobalConfig()  # autouse fixture forces mirror disabled
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1220,6 +1303,8 @@ def test_run_apply_migrates_offline_container_to_strict(
     names = profile_names(cfg)
     stale = f"{cfg.container_prefix}-net-offline"
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = [
         {
             "name": f"{cfg.container_prefix}-feat-x",
@@ -1254,6 +1339,8 @@ def test_run_apply_deletes_offline_profile_with_no_containers_on_it(
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = True
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1276,6 +1363,8 @@ def test_run_apply_skips_offline_profile_delete_when_absent(
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = False
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1296,6 +1385,8 @@ def test_run_apply_warns_but_continues_when_offline_profile_delete_fails(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = True
@@ -1323,6 +1414,8 @@ def test_run_apply_reconciles_port_forwards_on_every_container(
     cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1384,6 +1477,8 @@ def test_run_apply_reconciles_even_with_no_host_ports(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
@@ -1429,6 +1524,8 @@ def test_run_apply_reports_and_continues_on_a_port_forward_failure(
     cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1494,6 +1591,8 @@ def test_run_apply_reconciles_ports_from_one_prefetched_call(
     cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1568,3 +1667,36 @@ def test_apply_warns_and_continues_when_the_mirror_is_down(
 
     assert apply_mod._mirror_endpoint_or_warn(cfg, mocker.MagicMock(), gcfg) is None
     warn.assert_called_once()
+
+
+def test_sweep_orphan_extra_acls_deletes_acls_with_no_container(make_cfg, tmp_path, mocker):
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-live", "status": "Running", "profiles": [], "config": {}, "devices": {}}
+    ]
+    incus.network_acl_list.return_value = [
+        "myrepo-allowlist",
+        "myrepo-live-extra",
+        "myrepo-gone-extra",
+        "other-repo-x-extra",
+    ]
+
+    deleted = _sweep_orphan_extra_acls(cfg, incus)
+
+    assert deleted == ["myrepo-gone-extra"]
+    incus.network_acl_delete.assert_called_once_with("myrepo-gone-extra")
+
+
+def test_sweep_leaves_another_repos_extra_acls_alone(make_cfg, tmp_path, mocker):
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = ["other-repo-x-extra"]
+
+    assert _sweep_orphan_extra_acls(cfg, incus) == []
+    incus.network_acl_delete.assert_not_called()

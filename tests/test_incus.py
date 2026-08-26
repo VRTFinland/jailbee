@@ -814,3 +814,17 @@ def test_config_device_remove_missing_ok_swallows_persistent_etag_failure(incus,
     incus.config_device_remove("ct", "eth0", missing_ok=True)
 
     assert run.call_count == incus._ETAG_RETRIES
+
+
+def test_network_acl_list_returns_names(mocker):
+    import json as _json
+
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(
+        returncode=0,
+        stdout=_json.dumps([{"name": "a-allowlist"}, {"name": "b-extra"}]),
+        stderr="",
+    )
+    assert Incus().network_acl_list() == ["a-allowlist", "b-extra"]

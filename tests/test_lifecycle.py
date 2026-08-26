@@ -6626,3 +6626,29 @@ def test_destroy_container_deletes_the_extra_acl_after_the_instance(make_cfg, tm
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
     assert calls == ["delete", "drop_acl"]
+
+
+def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mocker):
+    """The container is already gone by the time the ACL is dropped, so a
+    failure there must not turn a successful destroy into a raised error —
+    `apply._sweep_orphan_extra_acls` is the safety net that reclaims it."""
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    mocker.patch(
+        "jailbee.egress_scope.drop_container_acl",
+        side_effect=IncusError("network acl delete failed"),
+    )
+    warn = mocker.patch("jailbee.lifecycle.warn")
+
+    # Must not raise.
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    incus.delete.assert_called_once()
+    warn.assert_called_once()
