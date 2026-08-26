@@ -641,6 +641,42 @@ def test_add_re_captured_by_the_repo_that_already_holds_it_is_fine(tmp_path, moc
         assert row is not None and row.slot == "1", "the stale slot is refreshed"
 
 
+def test_add_that_loses_the_ledger_race_reports_it_instead_of_crashing(tmp_path, mocker):
+    """The capture succeeded and then another repo won the INSERT. The CLI must
+    turn that into exit 1 with the explanation — never a raw SQLAlchemy
+    traceback after a side effect that already happened.
+
+    The refusal is raised from `claim_captured` (its three branches are tested
+    directly in test_claude_accounts.py); a genuine INSERT race needs two
+    processes, and the same-process version lands on the takeover path instead.
+    What is tested here is the CLI's own new code: that the refusal is caught,
+    reported, and not followed by a contradictory success line.
+    """
+    from jailbee import claude_accounts
+
+    _, fake = _repo(tmp_path, mocker)
+    mocker.patch.object(
+        claude_accounts,
+        "claim_captured",
+        side_effect=claude_accounts.PoolError(
+            "work@gisgro.com is held by repo `otherrepo`.\n"
+            "The capture itself succeeded — the account is in the pool."
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a refusal, not an unhandled exception"
+    )
+    flat = _flat(result.output)
+    assert "otherrepo" in flat
+    assert "capture itself succeeded" in flat
+    assert "holds it" not in flat, "no success line contradicting the refusal"
+    fake.add.assert_called_once()
+
+
 # --- allow ------------------------------------------------------------
 
 

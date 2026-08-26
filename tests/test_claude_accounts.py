@@ -997,6 +997,70 @@ def test_claim_captured_keeps_the_callers_identity_when_the_email_disagrees(db_s
     assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is not None
 
 
+def test_claim_captured_losing_the_insert_race_refuses_without_a_traceback(db_session, mocker):
+    """Two repos capture the SAME identity at once: both pre-checks pass, both
+    `cswap add` runs land, and the loser's INSERT hits the composite primary
+    key. It must not be a raw IntegrityError — and the message must not imply
+    the capture failed, because it did not."""
+    cswap = FakeCswap(live=_live(PERSONAL.email, managed=True, number=2, org_uuid=""))
+    winner = ca.Holder(
+        container_prefix="otherrepo", repo_root="/home/x/src/otherrepo", state=ca.HELD
+    )
+    mocker.patch.object(ca, "holders", return_value={PERSONAL.identity: winner})
+    mocker.patch.object(db_session, "commit", side_effect=_integrity_error())
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.claim_captured(db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=None, now=NOW)
+
+    message = str(exc.value)
+    assert "otherrepo" in message, "the winner is named"
+    assert "capture itself succeeded" in message, "the capture did happen; say so"
+    assert "jailbee claude add" in message, "and how to record the holding after"
+
+
+def test_claim_captured_losing_to_its_own_repo_is_not_a_failure(db_session, mocker):
+    """A concurrent `add` from this same repo produces exactly the end state
+    this call wanted, so refusing would be a lie about an achieved outcome."""
+    # A distinct slot on the stored row, so "read back off the winning row" is
+    # actually discriminating: the status probe would have said "2".
+    db_session.add(
+        ClaudeAccountHolding(
+            email=PERSONAL.email,
+            org_uuid=PERSONAL.org_uuid,
+            container_prefix="gisgro",
+            slot="9",
+            state=ca.HELD,
+            since=NOW,
+        )
+    )
+    db_session.commit()
+    cswap = FakeCswap(live=_live(PERSONAL.email, managed=True, number=2, org_uuid=""))
+    mine = ca.Holder(container_prefix="gisgro", repo_root=None, state=ca.HELD)
+    mocker.patch.object(ca, "holders", return_value={PERSONAL.identity: mine})
+    mocker.patch.object(db_session, "commit", side_effect=_integrity_error())
+
+    record = ca.claim_captured(
+        db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=None, now=NOW
+    )
+
+    assert record.identity == PERSONAL.identity
+    assert record.taken_from is None
+    assert record.slot == "9", "read back off the winning row, not from the probe"
+
+
+def test_claim_captured_race_that_resolves_itself_says_to_re_run(db_session, mocker):
+    """The conflicting row is gone again by the time the ledger is re-read, so
+    nothing holds the account and a plain re-run records it."""
+    cswap = FakeCswap(live=_live(PERSONAL.email, managed=True, number=2, org_uuid=""))
+    mocker.patch.object(ca, "holders", return_value={})
+    mocker.patch.object(db_session, "commit", side_effect=_integrity_error())
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.claim_captured(db_session, cswap, PERSONAL.identity, prefix="gisgro", slot=None, now=NOW)
+
+    assert "Nothing holds the account now" in str(exc.value)
+
+
 # --- release ----------------------------------------------------------
 
 

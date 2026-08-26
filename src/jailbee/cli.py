@@ -7597,16 +7597,21 @@ def claude_add_cmd(
 
     # The pool now holds a copy of THIS repo's live credential, so the ledger
     # has to say so. Skipping this left the invariant unenforced in every repo
-    # until its first `use`.
-    with Session(get_engine()) as session:
-        record = claude_accounts.claim_captured(
-            session,
-            cswap,
-            identity,
-            prefix=cfg.container_prefix,
-            slot=slot,
-            now=_now(),
-        )
+    # until its first `use`. A refusal here means the capture landed but the
+    # holding did not — its message says so, and is the whole report.
+    try:
+        with Session(get_engine()) as session:
+            record = claude_accounts.claim_captured(
+                session,
+                cswap,
+                identity,
+                prefix=cfg.container_prefix,
+                slot=slot,
+                now=_now(),
+            )
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
     where = f" in slot {record.slot}" if record.slot else ""
     success(f"Captured {live.email} as '{alias}'{where}; `{cfg.container_prefix}` holds it.")
     if record.taken_from is not None:

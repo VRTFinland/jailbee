@@ -601,6 +601,12 @@ def claim_captured(
     Returns a :class:`CaptureRecord` rather than the row: the row is expired by
     the commit, so a caller reading it after the session closes would get a
     ``DetachedInstanceError``.
+
+    Raises :class:`PoolError` when two repos capture the same identity at once
+    and this one loses the INSERT. That is a refusal even though the capture
+    succeeded, because the *holding* is the half that enforces the invariant
+    and exiting 0 without it would report an unenforced state as success — the
+    C1 failure mode, reached by a different road.
     """
     landed: LiveAccount | None
     try:
@@ -641,7 +647,52 @@ def claim_captured(
         row.state = HELD
         row.since = now
     session.add(row)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as e:
+        # The same race `use()` handles at phase 1, with one difference that
+        # changes the whole message: here the capture has *already happened*.
+        # `cswap add` wrote the store before this INSERT ran, so nothing may
+        # imply that nothing was done — the account is pooled; it is only the
+        # holding that could not be recorded.
+        session.rollback()
+        winner = holders(session).get(recorded)
+        if winner is not None and winner.container_prefix == prefix:
+            # A concurrent `add` from this same repo won. The end state is
+            # exactly the one this call wanted, so it is not a failure. Read
+            # the slot back off the winning row rather than reporting ours.
+            landed_row = session.get(ClaudeAccountHolding, recorded)
+            return CaptureRecord(
+                slot=slot_text if landed_row is None else landed_row.slot,
+                identity=recorded,
+                taken_from=None,
+            )
+        if winner is None:
+            # The conflicting row is already gone again. Nothing holds the
+            # account, so simply re-running `add` records it.
+            raise PoolError(
+                f"{recorded[0]} was captured into the pool, but recording the "
+                f"holding for `{prefix}` raced another repo and lost.\n"
+                f"Nothing holds the account now — re-run `jailbee claude add` "
+                f"to record it."
+            ) from e
+        raise PoolError(
+            _held_elsewhere_message(
+                winner,
+                subject=recorded[0],
+                release_ref=recorded[0],
+                lead=(
+                    f"The capture itself succeeded — the account is in the pool "
+                    f"— but `{winner.container_prefix}` claimed the holding "
+                    f"first, so `{prefix}` is not recorded as its holder. The "
+                    f"stored copy may now be this repo's credential lineage, so "
+                    f"that repo switching to this account can log this repo out."
+                ),
+            )
+            + f"\nThen re-run `jailbee claude add` in `{prefix}` to record the "
+            f"holding — or leave it with `{winner.container_prefix}` and switch "
+            f"this repo to another account."
+        ) from e
     return CaptureRecord(slot=slot_text, identity=recorded, taken_from=taken_from)
 
 
