@@ -241,6 +241,20 @@
   the database aside first — `state.sqlite.bak-v<version>`, via SQLite's own
   backup API so WAL contents come along — and logs where it went. Re-register
   a repo the old behaviour dropped by running `jb apply` in it.
+- **A background `jb new` no longer dies with its job row.** Every phase
+  update, failure record and cleanup of a detached `new`/`destroy` worker went
+  straight to the state database with nothing catching a write failure. So the
+  reset above cost more than bookkeeping: an older jailbee dropping
+  `background_op` under a live worker ended the whole operation with
+  `sqlalchemy.exc.OperationalError: no such table: background_op` in the job
+  log — before the container was even created — and the fix for the reset
+  cannot help here, because the process doing the dropping is the *old* build
+  still running. Job rows are bookkeeping for `jb ls` / `jb job`, not part of
+  the container, so each write is now guarded: a failure warns on stderr, into
+  the job log where the traceback used to be, and the create or destroy
+  carries on. The same guard covers the foreground's own insert (which runs
+  after the worker is already spawned) and the engine lookup itself, so an
+  unwritable state dir costs tracking instead of the container.
 - **Claude Code no longer re-onboards in every new container after the
   `.claude.json` relocation.** The relocation has two halves: `jailbee new`
   retires the `shared-claude-json` device (the whole repo's, since it rewrites

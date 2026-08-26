@@ -7133,6 +7133,186 @@ def test_new_worker_failure_marks_op_failed(make_cfg, tmp_path, monkeypatch, moc
     assert "clone exploded" in (ops[name].error_msg or "")
 
 
+def _drop_job_table() -> None:
+    """Delete the `background_op` table under a live process, the way a
+    concurrently running older jailbee used to (`drop_all` + `create_all` on
+    meeting a newer database). The engine is already bootstrapped and cached
+    by then, so nothing recreates the table for the rest of the process."""
+    from jailbee.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.exec_driver_sql("DROP TABLE background_op")
+
+
+def test_new_worker_survives_a_reset_job_table(make_cfg, tmp_path, monkeypatch, mocker):
+    """A vanished job table costs the phase updates, not the container."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    name = f"{cfg.container_prefix}-feat-foo"
+
+    def _create(_cfg, _incus, _opts, *, on_phase=None, confirm_fn=None):
+        assert on_phase is not None
+        on_phase("creating")
+        on_phase("cloning")
+        return name
+
+    nc_mock = mocker.patch("jailbee.lifecycle.new_container", side_effect=_create)
+    fin_mock = mocker.patch("jailbee.cli._finalize_new")
+
+    import json
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.lifecycle import NewContainerOptions
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=name,
+            container_prefix=cfg.container_prefix,
+            branch="feat/foo",
+            pid=1,
+            log_path="/l",
+            now=datetime.now(UTC),
+        )
+    _drop_job_table()
+
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=True,
+    )
+    job = background.op_to_job(opts, container_name=name, log_path="/l")
+    job_file = tmp_path / "job.json"
+    job_file.write_text(json.dumps(job))
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job_file)])
+
+    # The container was created and finalised; only the bookkeeping was lost,
+    # and it says so once per failed write instead of raising.
+    assert result.exit_code == 0, result.output
+    nc_mock.assert_called_once()
+    fin_mock.assert_called_once()
+    combined = result.output + (result.stderr or "")
+    assert "could not record phase 'creating'" in combined
+    assert "no such table" in combined
+
+
+def test_new_worker_reports_its_own_failure_when_the_job_table_is_gone(
+    make_cfg, tmp_path, monkeypatch, mocker
+):
+    """A real failure still exits 1 — not replaced by a bookkeeping traceback."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    mocker.patch(
+        "jailbee.lifecycle.new_container",
+        side_effect=RuntimeError("clone exploded"),
+    )
+
+    import json
+
+    from jailbee import background
+    from jailbee.lifecycle import NewContainerOptions
+
+    name = f"{cfg.container_prefix}-feat-foo"
+    _drop_job_table()
+
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=True,
+    )
+    job = background.op_to_job(opts, container_name=name, log_path="/l")
+    job_file = tmp_path / "job.json"
+    job_file.write_text(json.dumps(job))
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job_file)])
+
+    assert result.exit_code == 1
+    # typer.Exit, i.e. the worker's own controlled exit — not the OperationalError
+    # `fail_job` would otherwise have raised out of the except block.
+    assert isinstance(result.exception, SystemExit)
+    combined = result.output + (result.stderr or "")
+    assert "clone exploded" in combined
+    assert "could not mark the job failed" in combined
+
+
+def test_new_background_survives_a_missing_job_table(make_cfg, tmp_path, monkeypatch, mocker):
+    """The foreground has already spawned the worker: a failed insert warns."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    (repo / ".git").mkdir(parents=True)
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=mocker.MagicMock(docker_registry_mirror=mocker.MagicMock(enabled=False)),
+    )
+    mocker.patch("jailbee.git.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.egress_pool.register_repo")
+    refresh = mocker.MagicMock()
+    refresh.status = "ok"
+    mocker.patch("jailbee.egress_pool.refresh_pool", return_value=refresh)
+    _stub_preflight(mocker, cfg)
+
+    popen_mock = mocker.patch("jailbee.cli.subprocess.Popen")
+    fake_proc = mocker.MagicMock()
+    fake_proc.pid = 9999
+    popen_mock.return_value = fake_proc
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    # The foreground's own egress refresh is stubbed, so the engine is first
+    # created (and bootstrapped) by the job insert — drop the table after a
+    # deliberate warm-up so the cached engine cannot recreate it.
+    from jailbee.db import get_engine
+
+    get_engine()
+    _drop_job_table()
+
+    result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
+
+    assert result.exit_code == 0, result.output
+    popen_mock.assert_called_once()
+    combined = result.output + (result.stderr or "")
+    assert "could not record the new job row" in combined
+    assert "is being created in the background" in combined
+
+
 _PREFLIGHT_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 

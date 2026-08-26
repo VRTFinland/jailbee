@@ -19,7 +19,16 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
-from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, success_plain, warn
+from jailbee.tui import (
+    confirm_destroy_risk,
+    error,
+    error_plain,
+    info,
+    success,
+    success_plain,
+    warn,
+    warn_plain,
+)
 
 app = typer.Typer(
     name="jailbee",
@@ -136,6 +145,60 @@ def _record_setup_run() -> None:
             record_setup(session, __version__, now=_now())
     except Exception:  # bookkeeping only; must never fail a successful command
         return
+
+
+def _job_engine() -> "Engine | None":
+    """The state-DB engine used for background-job tracking, or None.
+
+    Same contract as the advice helpers above, one step earlier: a job row is
+    bookkeeping for `jailbee ls` / `jailbee job`, not part of the container, so
+    an unwritable state dir or a database that refuses to open must cost the
+    user the tracking — not the create/destroy the worker exists to run.
+    """
+    from jailbee.db import get_engine
+
+    try:
+        return get_engine()
+    except Exception as e:  # bookkeeping only; never abort the operation
+        # `warn_plain`: a DBAPI error body carries `[SQL: ...]` /
+        # `[parameters: ...]`, which Rich markup would silently eat.
+        warn_plain(f"Job tracking unavailable ({e}) — the operation itself continues")
+        return None
+
+
+def _track_job(
+    engine: "Engine | None",
+    work: "Callable[[Session], None]",
+    what: str,
+) -> None:
+    """Run one job-row write, warning instead of raising when the DB says no.
+
+    Every phase update, failure record and cleanup of a detached worker goes
+    through here, because the write is bookkeeping and the operation around it
+    is not: a locked database, a read-only state dir or a vanished table must
+    not abort a container create halfway.
+
+    Not hypothetical. A *concurrently running older* jailbee is enough: older
+    `db._ensure_schema` versions dropped and recreated every table they knew
+    about whenever they met a database newer than their own
+    `CURRENT_SCHEMA_VERSION`, and re-checked on every connection. A long-lived
+    process from such a build (a dashboard left open across an upgrade) reset
+    the schema under a live worker, whose next phase update then died on
+    `no such table: background_op` and, unguarded, took the whole
+    `jailbee new` with it. That reset is gone — a newer database is now used
+    as-is — but the worker must survive one regardless, because the process
+    doing it is the *old* build, which no fix here can reach.
+    """
+    if engine is None:
+        return
+
+    from sqlmodel import Session
+
+    try:
+        with Session(engine) as session:
+            work(session)
+    except Exception as e:  # bookkeeping only; never abort the operation
+        warn_plain(f"Job tracking: could not {what} ({e})")  # see `_job_engine`
 
 
 def _version_callback(value: bool) -> None:
@@ -1181,16 +1244,23 @@ def new_cmd(
             cwd=str(cfg.repo_root),
         )
 
-        with Session(get_engine()) as session:
-            bg.start_job(
-                session,
+        # Guarded like the worker's own writes, and for the same reason with
+        # one twist: the worker is already running by now, so a failed insert
+        # must cost the user only `jailbee ls`'s JOB column — never the
+        # container that is being built behind it.
+        _track_job(
+            _job_engine(),
+            lambda s: bg.start_job(
+                s,
                 container_name=container_name,
                 container_prefix=cfg.container_prefix,
                 branch=None if opts.mount else opts.container_branch,
                 pid=proc.pid,
                 log_path=str(log_path),
                 now=_dt.now().astimezone(),
-            )
+            ),
+            "record the new job row",
+        )
 
         success(
             f"🌱 '{short_name(cfg, container_name)}' is being created in the background "
@@ -1318,10 +1388,7 @@ def _new_worker(
     import json
     import traceback
 
-    from sqlmodel import Session
-
     from jailbee import background
-    from jailbee.db import get_engine
     from jailbee.incus import Incus
     from jailbee.lifecycle import new_container
 
@@ -1331,11 +1398,14 @@ def _new_worker(
     data = json.loads(job.read_text())
     opts, container_name, _log_path = background.job_to_opts(data)
 
-    engine = get_engine()
+    engine = _job_engine()
 
     def _on_phase(phase: str) -> None:
-        with Session(engine) as s:
-            background.set_phase(s, container_name, phase, now=_now())
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, container_name, phase, now=_now()),
+            f"record phase '{phase}'",
+        )
 
     try:
         created = new_container(
@@ -1354,12 +1424,22 @@ def _new_worker(
         _finalize_new(cfg, incus, created, launch_gui=opts.autostart)
     except Exception as e:
         traceback.print_exc()
-        with Session(engine) as s:
-            background.fail_job(s, container_name, str(e), now=_now())
+        # `msg`, not `str(e)` inside the lambda: `e` is unbound once the
+        # except block ends, and a closure over it would be a trap for the
+        # next reader even though the call happens inside the block.
+        msg = str(e)
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, container_name, msg, now=_now()),
+            "mark the job failed",
+        )
         raise typer.Exit(1) from e
 
-    with Session(engine) as s:
-        background.delete_job(s, container_name)
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, container_name),
+        "clear the finished job row",
+    )
 
 
 @app.command("_destroy-worker", hidden=True)
@@ -1374,31 +1454,38 @@ def _destroy_worker(
     """
     import traceback
 
-    from sqlmodel import Session
-
     from jailbee import background
-    from jailbee.db import get_engine
     from jailbee.incus import Incus
     from jailbee.lifecycle import destroy_container
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    engine = get_engine()
+    engine = _job_engine()
 
     def _on_phase(phase: str) -> None:
-        with Session(engine) as s:
-            background.set_phase(s, name, phase, now=_now())
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, name, phase, now=_now()),
+            f"record phase '{phase}'",
+        )
 
     try:
         destroy_container(cfg, incus, name, force=force, on_phase=_on_phase)
     except Exception as e:
         traceback.print_exc()
-        with Session(engine) as s:
-            background.fail_job(s, name, str(e), now=_now())
+        msg = str(e)  # see `_new_worker`: `e` is unbound after the block
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, msg, now=_now()),
+            "mark the job failed",
+        )
         raise typer.Exit(1) from e
 
-    with Session(engine) as s:
-        background.delete_job(s, name)
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, name),
+        "clear the finished job row",
+    )
 
 
 def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev") -> int:
@@ -1680,6 +1767,9 @@ def _run_dashboard(
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from sqlalchemy.engine import Engine
+    from sqlmodel import Session
 
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
@@ -2049,10 +2139,8 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
     """
     from datetime import datetime as _dt
 
-    from sqlmodel import Session
-
     from jailbee import background as bg
-    from jailbee.db import get_engine, state_dir
+    from jailbee.db import state_dir
     from jailbee.db.models import JOB_DESTROY
     from jailbee.lifecycle import short_name
 
@@ -2085,9 +2173,12 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
         cwd=str(cfg.repo_root),
     )
 
-    with Session(get_engine()) as session:
-        bg.start_job(
-            session,
+    # Guarded like the `new --background` insert above: the worker is already
+    # tearing the container down, so a failed row costs tracking, not the job.
+    _track_job(
+        _job_engine(),
+        lambda s: bg.start_job(
+            s,
             container_name=full_name,
             container_prefix=cfg.container_prefix,
             branch=None,
@@ -2095,7 +2186,9 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
             log_path=str(log_path),
             now=_dt.now().astimezone(),
             op_kind=JOB_DESTROY,
-        )
+        ),
+        "record the new job row",
+    )
 
     success(
         f"🗑️  '{short_name(cfg, full_name)}' is being destroyed in the background "

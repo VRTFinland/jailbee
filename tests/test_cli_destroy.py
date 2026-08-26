@@ -589,6 +589,57 @@ def test_destroy_worker_failure_marks_op_failed(tmp_path, monkeypatch, mocker):
     assert "delete exploded" in (ops[name].error_msg or "")
 
 
+def test_destroy_worker_survives_a_reset_job_table(tmp_path, monkeypatch, mocker):
+    """The create worker's guard, on the destroy side: bookkeeping only."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_DESTROY
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    object.__setattr__(cfg, "container_prefix", "myrepo")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+
+    name = "myrepo-feat-a"
+
+    def _destroy(_cfg, _incus, _name, *, force=False, on_phase=None):
+        assert on_phase is not None
+        on_phase("stopping")
+        on_phase("deleting")
+
+    dc = mocker.patch("jailbee.lifecycle.destroy_container", side_effect=_destroy)
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=name,
+            container_prefix="myrepo",
+            branch=None,
+            pid=1,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_DESTROY,
+        )
+    # A concurrently running older jailbee resetting the schema mid-destroy.
+    with get_engine().begin() as conn:
+        conn.exec_driver_sql("DROP TABLE background_op")
+
+    result = CliRunner().invoke(app, ["_destroy-worker", "--name", name, "--force"])
+
+    assert result.exit_code == 0, result.output
+    dc.assert_called_once()
+    combined = result.output + (result.stderr or "")
+    assert "could not record phase 'stopping'" in combined
+    assert "could not clear the finished job row" in combined
+
+
 def test_destroy_background_spawns_worker_and_returns(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     _incus, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
