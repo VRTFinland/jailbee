@@ -110,6 +110,54 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
     return CheckResult("upgrade actions", False, "\n".join(lines))
 
 
+def _check_claude_pool(cfg: Config) -> list[CheckResult]:
+    """Report the Claude account pool: is `cswap` there, and is the ledger clean?
+
+    A missing `cswap` is reported as **information**, not a failure: the
+    account pool is an optional feature and every other jailbee path works
+    without it. What *is* a failure is a leftover `claiming` row — a
+    `jailbee claude use` that died between reserving an account and the
+    switch returning. Nothing else notices it, and until it is cleared no
+    repo can take that account.
+    """
+    from jailbee import claude_accounts
+    from jailbee.cswap import Cswap, CswapError, config_home
+
+    results: list[CheckResult] = []
+    cswap = Cswap(config_home=config_home(cfg))
+    if not cswap.available():
+        return [
+            CheckResult(
+                "claude account pool",
+                True,
+                "`cswap` not installed — optional; `jailbee claude *` is "
+                "unavailable, everything else is unaffected",
+            )
+        ]
+    try:
+        results.append(CheckResult("claude account pool", True, cswap.version()))
+    except CswapError as e:
+        results.append(CheckResult("claude account pool", False, str(e)))
+
+    try:
+        with Session(get_engine()) as session:
+            stale = claude_accounts.stale_claims(session)
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        results.append(CheckResult("claude pool ledger", True, f"state could not be read ({e})"))
+        return results
+    for row in stale:
+        results.append(
+            CheckResult(
+                "claude pool ledger",
+                False,
+                f"account {row.slot} ({row.email}) is stuck mid-claim by "
+                f"`{row.container_prefix}` — a `jailbee claude use` died. "
+                f"Clear it:  jailbee claude release {row.slot}",
+            )
+        )
+    return results
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -160,6 +208,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
+    results.extend(_check_claude_pool(cfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
