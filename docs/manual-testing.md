@@ -1747,6 +1747,103 @@ jailbee destroy --all --force
 # Remove the claude.auto_update block from .jailbee/config.yaml afterwards.
 ```
 
+## Claude account pool (`jailbee claude`) smoke test
+
+Needs a real Incus daemon, a real Claude Code, **two** Anthropic accounts,
+and `uv tool install claude-swap`. Four of the claims below rest on reading
+`cswap`'s (and Claude Code's) own source rather than on observation, and
+none of the four can be checked from inside a container — they gate the
+feature, so run all of them before relying on it.
+
+1. **A swapped credential is picked up without a restart.**
+
+   ```bash
+   jailbee new feat/claude-swap-a
+   jailbee shell feat-claude-swap-a
+   # inside: /login as account 1, then send a message
+   exit
+   jailbee claude add --alias one
+   jailbee shell feat-claude-swap-a
+   # inside: /login as account 2, then send a message
+   exit
+   jailbee claude add --alias two
+
+   jailbee claude use one
+   # expect: success, no browser, "picks the new credential up on its next message"
+   jailbee shell feat-claude-swap-a
+   # inside, in the SAME still-running claude session as account 2:
+   #   send another message, then run /status
+   # expect: it works, and /status reports account 1
+   exit
+   ```
+
+   If it instead fails, hangs, or `/status` still reports account 2, the
+   "no restart needed" claim in the skill and `jailbee claude use`'s own
+   success message are both wrong and need walking back.
+
+2. **The holding refusal is real across repos.**
+
+   ```bash
+   jailbee new feat/claude-swap-b
+   cd <path to feat/claude-swap-b's repo, or wherever registered>
+   jailbee claude use one
+   # expect: exit 1, "Account N (one) is held by repo `<...-feat-claude-swap-a>`."
+   #         and a runnable "Release it there:  cd <repo_root> && jailbee claude release"
+   # copy-paste that exact line, then retry:
+   jailbee claude use one
+   # expect: success this time
+   ```
+
+   If the printed `cd …` command doesn't actually work from a fresh shell,
+   or the second repo silently takes the account instead of refusing, the
+   composite-primary-key enforcement in `claude_accounts.py` isn't doing
+   its job.
+
+3. **The primary lock suffices when the legacy lock is a different file.**
+
+   Claude Code takes a lock inside `CLAUDE_CONFIG_DIR` (shared with the
+   container over the mount) *and* a legacy lock next to it — a sibling
+   path, so `/home/dev/.claude.lock` in the container and
+   `<shared_dir>/claude.lock` on the host are **different files**. Run
+   `jailbee claude use` on the host while Claude is mid-response in the
+   container:
+
+   ```bash
+   jailbee shell feat-claude-swap-a
+   # inside: start a long-running agentic prompt, don't wait for it to finish
+   # from another terminal, while it's still running:
+   jailbee claude use two
+   ```
+
+   Expected: no corrupted credential file, no logged-out container — either
+   the switch waits, or Claude adopts the rotated token on its next call.
+   Record what actually happens; a torn write or a silent logout is a real
+   finding, not a false alarm.
+
+4. **Mid-response behaviour, repeated.** Same as (3), a few more times, with
+   a longer agentic task each time. This is the only one of the four that
+   could change the design: if a mid-response switch reliably breaks the
+   session, `jailbee claude use` needs a "container is busy" guard before
+   this feature ships more broadly.
+
+Also verify the unhappy paths:
+
+```bash
+# with cswap NOT on PATH (uninstall it, or PATH= it away for this shell):
+jailbee claude ls
+# expect: the install hint ("uv tool install claude-swap"), exit 1,
+#         nothing else about jailbee affected
+
+jailbee doctor
+# expect: one informational "claude account pool" line
+#         ("cswap not installed — optional; ..."), not a failure —
+#         doctor's own exit code shouldn't flip on this line alone
+```
+
+```bash
+jailbee destroy feat-claude-swap-a feat-claude-swap-b --force
+```
+
 ## GUI dashboard (`jailbee gui`)
 
 Requires a real Incus daemon, at least one JailBee container, and PySide6

@@ -28,6 +28,7 @@ Common conventions:
 - [PR publishing (`pr`)](#pr-publishing)
 - [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
+- [Claude accounts (`claude ls|use|add|allow|release|rm`)](#claude-accounts)
 - [GUI (`ide`, `chrome`, `chrome-pool`)](#gui)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
@@ -697,6 +698,33 @@ container's ACL or `/etc/hosts` themselves. `jailbee apply`, or the next
 change. Container-scope add/rm are the opposite: they materialise
 immediately (against the container's current network mode, per the table
 above), with no separate apply step needed.
+
+## Claude accounts
+
+`jailbee claude` switches this repo's Claude Code login between accounts
+stored in a host-global pool, without a browser login. Needs the optional
+`cswap` (claude-swap) binary (`uv tool install claude-swap`); every verb
+below exits 1 with an install hint if it isn't on `PATH`, and exits 1 if
+`agents.claude`/`claude.enabled` is off for this repo (no shared Claude
+directory to switch). One stored account is held by at most one repo at a
+time — that's what stops two repos from independently refreshing the same
+grant and silently logging one of them out.
+
+| Command | Behaviour |
+|---|---|
+| `jailbee claude ls [--format\|-o table\|json]` | List pooled accounts: slot, alias, email, 5h/7d quota %, holder, and a NOTE column (shown only when some row has something to say — disabled, re-login needed, not allowed for this repo, …). Table mode also prints a stderr hint naming which account (if any) this repo currently holds, and, when this repo's allowlist is narrowed, which accounts are allowed. |
+| `jailbee claude use [REF] [--force]` | Switch this repo's login to `REF` (slot number, alias, or email); omit for an interactive picker (exits 2 off a TTY). Refuses (exit 1): `REF` not on this repo's allowlist; the account held by another repo (message names the repo and prints the exact `cd … && jailbee claude release` to run there); or — unless `--force` — a live login that was never captured with `jailbee claude add` (`cswap` stashes it before switching, but recovering a stash is a manual job, so the message points at `jailbee claude add --alias <name>` first). `--force` prompts for confirmation on a TTY before switching over an uncaptured login. Already holding the target account is a no-op that still refreshes the displayed slot number. No browser login, no container restart — Claude Code picks up the new credential on its next message. |
+| `jailbee claude add [--alias NAME] [--slot N]` | Capture this repo's current live login into the pool. Exits 1 if there is no live login, or if `cswap add` itself fails or is cancelled at its own interactive `[y/N]` slot-collision prompt. Omitting `--alias` prompts for one (default: the email's local part) or exits 2 off a TTY. `--slot` stores into a specific slot instead of the next free one. Re-running for a login already in the pool just refreshes its stored credential. |
+| `jailbee claude allow [REFS...]` | Replace (not append to) this repo's allowlist with `REFS` — slot numbers, aliases, or emails. No `REFS` opens a checkbox picker pre-checked with the current list (exits 2 off a TTY); unchecking everything clears the restriction. An empty list, either way, means every pooled account is allowed. Refuses (exit 1) if any `REF` fails to resolve, leaving the existing allowlist untouched — a list with one typo in it is not applied half-way. |
+| `jailbee claude release [REF]` | Give up a holding. No `REF`: releases this repo's own holding (a no-op, exit 0, if it holds none). With `REF`: releases that account's holding wherever it is — the escape hatch for a repo whose checkout is gone, or for a stuck `claiming` row a crashed `use` left behind (`jailbee doctor` reports these under "claude pool ledger"). Exits 1 only if `REF` doesn't resolve. |
+| `jailbee claude rm REF` | Remove an account from the pool entirely via `cswap remove` (its own interactive `[y/N]` confirmation). Warns, but still proceeds, if another repo currently holds it. Omit `REF` for a picker (exits 2 off a TTY) — unlike the other pickers, this one also lists accounts held elsewhere, since removal isn't blocked by a holding. Exits 1 if `REF` doesn't resolve, or if `cswap remove` fails or is cancelled. |
+
+`REF` resolution (`use`, `allow`, `release`, `rm`) tries an exact slot
+number, then alias, then email, and refuses ambiguity instead of guessing:
+a digit that is *also* another account's alias, an alias shared by two
+accounts, or an email shared by two accounts (one address can be both a
+personal login and an organization member) all fail with exit 1 and a
+message naming the slot number as the unambiguous fallback.
 
 ## GUI
 

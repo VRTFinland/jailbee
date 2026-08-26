@@ -324,6 +324,45 @@ Three facts that matter when explaining this:
 Also available as the short root alias `jailbee egress add|rm|ls|export`.
 Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 
+## Switching Claude account — `jailbee claude`
+
+Host-side commands — there is no `jb` binary inside a JailBee container, so
+tell the user to run these on the host. Requires the optional `cswap`
+(claude-swap) host binary; without it, `jailbee claude *` prints an install
+hint and exits, and nothing else about JailBee is affected.
+
+```bash
+jailbee claude ls                 # accounts, 5h/7d quota, which repo holds each
+jailbee claude use 2              # switch THIS repo to slot 2 — no browser login
+jailbee claude use personal       # ... by alias, or by email
+jailbee claude add --alias work   # capture the current login into the pool
+jailbee claude allow work ci      # restrict this repo to a subset (replaces the list)
+jailbee claude release            # give up this repo's holding
+jailbee claude rm personal        # remove an account from the pool entirely
+```
+
+**When you hit a rate limit, this is the fix worth suggesting**: ask the user
+to run `jailbee claude ls` on the host to see which account still has quota,
+then `jailbee claude use <n>`. The switch is a credential-file replacement —
+Claude Code picks it up on its next message, no container restart needed.
+
+Two refusals worth explaining if the user hits them:
+
+- **"held by repo X"** — one stored account may be live in one place at a
+  time. The refusal names the repo and prints the exact fix to run there:
+  `cd <that repo> && jailbee claude release`.
+- **"current login is not in the pool"** — this container's login was never
+  captured with `jailbee claude add` (just a plain `/login`). `cswap`
+  stashes the credential before switching, but recovering from a stash is a
+  manual job, not something `jailbee claude` automates — the supported path
+  is capturing it first: `jailbee claude add --alias <name>`. `--force`
+  switches anyway if the user accepts that.
+
+Never suggest `/logout` to change accounts. Current Claude Code may revoke
+the refresh token of the account being left, which kills any stored copy of
+that same grant. Switching is always a credential-file replacement in
+place, which is what these commands do.
+
 ## Port forwarding — `jailbee port`
 
 A forward is an Incus proxy device wired directly into (or out of) the
