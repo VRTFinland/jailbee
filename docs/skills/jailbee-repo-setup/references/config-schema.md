@@ -559,7 +559,11 @@ widens egress but never installs the binary, so the autostart window fails
 with exit 127 until the container is recreated. `<agent>` and
 `install-<agent>` are also effectively reserved autostart tmux window
 names: a step of either name has its window killed when the agent runs,
-and nothing checks for the collision.
+and nothing checks for the collision. The `install-<agent>` step is bounded
+by `autostart.step_timeout` (default 600s) and its window survives the run,
+so a failed or stuck install is read with `jailbee tmux`. Installs also run
+under `jailbee new --no-autostart` — they are infrastructure, not user
+autostart steps — while the agent's own launch window is skipped there.
 
 ```yaml
 agents:

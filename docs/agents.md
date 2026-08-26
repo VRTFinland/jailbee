@@ -28,7 +28,10 @@ For every agent with `enabled: true`, `jailbee`:
   whether the binary is already present; if not, `install` runs; if it is,
   `update` runs only when `auto_update` is true (`agents.ensure_agents`,
   called once from `lifecycle.new_container` — not from `jailbee apply` or
-  `jailbee start`).
+  `jailbee start`). The step is named `install-<agent>` and is bounded by
+  `autostart.step_timeout` (default 600s), so a stuck installer costs that
+  much rather than hanging `jailbee new`; its output stays in the tmux window
+  afterwards, so `jailbee tmux <container>` is where you read what happened.
 - **Launches it** in a background tmux window when `autostart: true`
   (`autostart.agent_autostart_steps`).
 - **Checks its shared dirs** as part of `jailbee doctor`'s `shared_dir tree`
@@ -42,6 +45,14 @@ run in a `bash -c` child of it (`agents._ensure_one`). Either way,
 sources `/etc/profile.d` with `export`, and the `bash -c` child inherits
 that exported PATH — which is also why `agents.<name>.env` reaches all
 three.
+
+Installs are infrastructure rather than user autostart steps, so they run
+under `jailbee new --no-autostart` as well — `ensure_agents` starts the
+container's autostart tmux session itself when nothing else has yet. That is
+why `jailbee tmux` on a `--no-autostart` container finds a session with an
+`install-<agent>` window in it rather than nothing. The agent's own launch
+window is a different matter: that one is an autostart step, and
+`--no-autostart` skips it.
 
 > **Install happens only at `jailbee new`.** Enabling an agent for a
 > container that already exists and then running `jailbee apply` attaches the
