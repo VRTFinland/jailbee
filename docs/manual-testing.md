@@ -1812,10 +1812,16 @@ feature, so run all of them before relying on it.
    cd -                             # back to SampleApp
    ```
 
-   If it instead refuses using a branch name where the message should name
-   a repo, or the second repo silently takes the account instead of being
-   refused, the composite-primary-key enforcement in `claude_accounts.py`
-   isn't doing its job.
+   If it instead refuses but names a branch where the message should name a
+   repo, look at `_held_elsewhere_message()`'s formatting or the
+   `container_prefix` value the ledger actually stored — not the primary
+   key. If the second repo silently takes the account instead of being
+   refused, the bug is in the holder lookup inside `claude_accounts.use()`
+   itself — `holders(session)` or the `holder.container_prefix != prefix`
+   comparison that follows it. The composite primary key on
+   `ClaudeAccountHolding` (`src/jailbee/db/models.py`) is adjacent but not
+   the mechanism at fault either way: it only stops two repos from holding
+   the same identity's row at once, it isn't what raises this refusal.
 
    One line above is still a claim, not an observation: jailbee itself does
    no pre-check or creation of `<shared_dir>/claude` before handing control
