@@ -69,4 +69,4 @@ def test_restore_snapshot_rematerialises_the_egress_acl(make_cfg, tmp_path, mock
     restore_snapshot(cfg, incus, "myrepo-feat", "before-upgrade")
 
     incus.snapshot_restore.assert_called_once_with("myrepo-feat", "before-upgrade")
-    assert apply_acl.call_args.args[3] == "myrepo-feat"
+    assert apply_acl.call_args.args[2] == "myrepo-feat"

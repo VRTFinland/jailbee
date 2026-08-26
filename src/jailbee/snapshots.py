@@ -33,16 +33,12 @@ def restore_snapshot(cfg: Config, incus: Incus, container: str, tag: str) -> Non
     ACL it drives does not, so a restore can leave the two disagreeing. The
     label is the source of truth; this makes Incus match it again.
     """
-    from sqlmodel import Session
-
     from jailbee import egress_scope
-    from jailbee.db import get_engine
     from jailbee.lifecycle import current_network_mode
 
     incus.snapshot_restore(container, tag)
     mode = current_network_mode(cfg, incus, container) or "strict"
-    with Session(get_engine()) as session:
-        egress_scope.apply_container_acl(cfg, session, incus, container, mode=mode)
+    egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
 
 
 def delete_snapshot(incus: Incus, container: str, tag: str) -> None:

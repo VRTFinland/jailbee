@@ -328,7 +328,6 @@ def _desired_eth0(cfg: Config, acl_names: list[str]) -> dict[str, str]:
 
 def apply_container_acl(
     cfg: Config,
-    session: Session,
     incus: Incus,
     name: str,
     *,
@@ -346,13 +345,6 @@ def apply_container_acl(
     still enforced, while `jailbee ls` reported loose.
     """
     from jailbee.network import acl_name, extra_acl_yaml
-
-    # `session` is accepted for signature symmetry with the refresh path and
-    # so callers that already hold one do not open a second. This path
-    # deliberately resolves fresh rather than reading the pool: it runs when
-    # the user has just typed a host, and the pool has no rows for it yet.
-    # `refresh_pool`'s phase B takes over from the next cycle on.
-    del session
 
     extras = container_extras(incus, name)
     extra_name = extra_acl_name(name)

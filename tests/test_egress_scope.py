@@ -225,7 +225,7 @@ def _incus_with(mocker, *, extras, local_eth0=None):
 
 
 def test_apply_container_acl_writes_acl_and_overrides_the_nic(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     import yaml
 
@@ -241,7 +241,7 @@ def test_apply_container_acl_writes_acl_and_overrides_the_nic(
     incus = _incus_with(mocker, extras=["nexus.corp:443"])
     incus.network_acl_exists.return_value = True
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.network_acl_set_yaml.assert_called_once()
     acl_written, body_written = incus.network_acl_set_yaml.call_args[0]
@@ -269,7 +269,7 @@ def test_apply_container_acl_writes_acl_and_overrides_the_nic(
 
 
 def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     """`network_acl_set_yaml` is `incus network acl edit`, which requires the
     ACL to already exist — the first materialisation on a real host must
@@ -284,13 +284,13 @@ def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(
     incus = _incus_with(mocker, extras=["nexus.corp:443"])
     incus.network_acl_exists.return_value = False
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.network_acl_create.assert_called_once_with("myrepo-feat-extra")
 
 
 def test_apply_container_acl_does_not_recreate_an_existing_acl(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     mocker.patch(
         "jailbee.egress_scope.resolve_entries",
@@ -302,19 +302,19 @@ def test_apply_container_acl_does_not_recreate_an_existing_acl(
     incus = _incus_with(mocker, extras=["nexus.corp:443"])
     incus.network_acl_exists.return_value = True
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.network_acl_create.assert_not_called()
 
 
 def test_apply_container_acl_in_loose_mode_tears_the_override_down(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=["nexus.corp:443"], local_eth0={"type": "nic"})
     incus.network_acl_exists.return_value = True
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="loose")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="loose")
 
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
     incus.config_device_override.assert_not_called()
@@ -328,13 +328,13 @@ def test_apply_container_acl_in_loose_mode_tears_the_override_down(
 
 
 def test_apply_container_acl_with_no_extras_removes_acl_and_override(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=[], local_eth0={"type": "nic"})
     incus.network_acl_exists.return_value = True
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
     incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
@@ -343,7 +343,7 @@ def test_apply_container_acl_with_no_extras_removes_acl_and_override(
 
 
 def test_apply_container_acl_updates_an_existing_override_in_place(
-    db_session, make_cfg, tmp_path, mocker
+    make_cfg, tmp_path, mocker
 ):
     """Re-materialising must not detach the NIC of a running container."""
     mocker.patch(
@@ -359,7 +359,7 @@ def test_apply_container_acl_updates_an_existing_override_in_place(
         local_eth0={"type": "nic", "network": "incusbr0", "security.acls": "stale"},
     )
 
-    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.config_device_override.assert_not_called()
     incus.config_device_set.assert_called_once_with(

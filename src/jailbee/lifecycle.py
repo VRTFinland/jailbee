@@ -1641,13 +1641,9 @@ def switch_network(
     # override, and a local device shadows whichever net profile was just
     # assigned — leaving a strict override in place would pin a "loose"
     # container to incusbr0 with the allowlist still enforced.
-    from sqlmodel import Session
-
     from jailbee import egress_scope
-    from jailbee.db import get_engine
 
-    with Session(get_engine()) as session:
-        egress_scope.apply_container_acl(cfg, session, incus, name, mode=mode)
+    egress_scope.apply_container_acl(cfg, incus, name, mode=mode)
 
     # Keep /etc/hosts in sync with the new profile. Strict mode pins
     # allowlisted hostnames so the container sees the same IPs the ACL

@@ -371,6 +371,72 @@ def test_run_apply_repins_hosts_on_running_strict_only(
     assert apply_hosts.call_args[0][2] == "a"
 
 
+def test_run_apply_re_materialises_container_acl_for_running_containers(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, _no_container_acl_apply: MagicMock
+) -> None:
+    """`run_apply` must call `egress_scope.apply_container_acl(cfg, incus,
+    ci.name, mode=ci.network or "strict")` for every *running* container,
+    including the `mode` fallback when `ci.network` is None, and must not
+    call it for a stopped container.
+
+    The autouse `_no_container_acl_apply` fixture no-ops the call for the
+    ~40 other `run_apply` tests in this module (their `incus` mocks don't
+    configure `config_get`, so the real implementation would crash on
+    `json.loads(MagicMock())`); this test asserts on that same mock instead
+    of bypassing it, so it exercises the real call site in `run_apply`.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="a",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name="b",
+                state="Running",
+                network=None,
+                ip="10.0.0.2",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name="c",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert _no_container_acl_apply.call_args_list == [
+        mocker.call(cfg, incus, "a", mode="strict"),
+        mocker.call(cfg, incus, "b", mode="strict"),  # None falls back to "strict"
+    ]
+
+
 def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
@@ -1697,6 +1763,23 @@ def test_sweep_leaves_another_repos_extra_acls_alone(make_cfg, tmp_path, mocker)
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = ["other-repo-x-extra"]
+
+    assert _sweep_orphan_extra_acls(cfg, incus) == []
+    incus.network_acl_delete.assert_not_called()
+
+
+def test_sweep_leaves_a_hand_made_degenerate_acl_alone(make_cfg, tmp_path, mocker):
+    """`<prefix>-extra` — prefix and suffix with nothing in between — is not
+    a name any real jailbee container can produce (`extra_acl_name` always
+    has a container name component before the `-extra` suffix). A hand-made
+    ACL happening to be named exactly that must survive the sweep: it is an
+    Incus object jailbee cannot recreate if wrongly deleted."""
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = ["myrepo-extra"]
 
     assert _sweep_orphan_extra_acls(cfg, incus) == []
     incus.network_acl_delete.assert_not_called()
