@@ -579,6 +579,77 @@ def pick_containers_multi(
     return [str(v) for v in result]
 
 
+def _claude_choice_title(row: Any) -> str:
+    """One picker line: slot, label, and the two quota figures."""
+    account = row.account
+    quota = []
+    if account.five_hour_pct is not None:
+        quota.append(f"5h {account.five_hour_pct:.0f}%")
+    if account.seven_day_pct is not None:
+        quota.append(f"7d {account.seven_day_pct:.0f}%")
+    tail = f"  {'  '.join(quota)}" if quota else ""
+    mine = "  (this repo)" if row.mine else ""
+    return f"{account.number}  {account.label}{tail}{mine}"
+
+
+def pick_claude_account(rows: Sequence[Any]) -> str | None:
+    """Arrow-key picker over pooled Claude accounts.
+
+    Blocked rows render greyed with their reason instead of failing after the
+    fact — `questionary.Choice(disabled=...)` is exactly this affordance.
+
+    Returns the chosen slot number as a string, or None if the user cancels.
+    Caller is responsible for the TTY check — this function unconditionally
+    renders the picker.
+    """
+    import questionary
+
+    choices = [
+        questionary.Choice(
+            title=_claude_choice_title(row),
+            value=str(row.account.number),
+            disabled=row.blocked_reason,
+        )
+        for row in rows
+    ]
+    result = questionary.select("Switch this repo to:", choices=choices).ask()
+    if result is None:
+        return None
+    return str(result)
+
+
+def pick_claude_accounts_multi(
+    rows: Sequence[Any], *, checked: set[str]
+) -> list[str] | None:
+    """Checkbox picker over pooled Claude accounts, pre-checked from `checked`.
+
+    ``default_to_pointed=False`` is load-bearing: this picker's empty result
+    means "no restriction — allow every account", and the default fallback
+    would turn an intentional clear-everything into a one-account allowlist.
+
+    Returns the chosen slot numbers (possibly empty), or None on cancel.
+    Caller is responsible for the TTY check.
+    """
+    import questionary
+
+    choices = [
+        questionary.Choice(
+            title=_claude_choice_title(row),
+            value=str(row.account.number),
+            checked=str(row.account.number) in checked,
+        )
+        for row in rows
+    ]
+    result = checkbox(
+        "Accounts this repo may use (none checked = all):",
+        choices=choices,
+        default_to_pointed=False,
+    )
+    if result is None:
+        return None
+    return [str(v) for v in result]
+
+
 _PLAN_HEADINGS = {
     "push": "Push  host ──▶ container",
     "pull": "Pull  container ──▶ host",
