@@ -214,14 +214,19 @@ def refresh_pool(
       3. merge resolved IPs (bumps last_seen)
       4. evict_expired (only for resolved hostnames; honours TTL + cap)
       5. record RefreshState (status, timestamp, error msg) and commit
-      6. compute mirror_endpoint, write ACL, update /etc/hosts
-      7. phase B: refresh each container's own extra ACL, then prune
-         pool rows for containers that no longer exist
+      6. IF anything resolved: compute mirror_endpoint, write ACL, update
+         /etc/hosts
+      7. phase B (unconditional — see below): refresh each container's own
+         extra ACL, then prune pool rows for containers that no longer exist
 
     Errors writing ACL or /etc/hosts do not roll back the DB transaction —
-    state already reflects what we resolved. Phase B runs after the repo-scope
-    work is committed and is independently guarded: a failure there must not
-    undo or overshadow what was already written above it.
+    state already reflects what we resolved. Phase B always runs, even when
+    step 6 is skipped because the repo's own resolve was empty (a
+    literals-only ``egress_allow`` has no hostnames to resolve at all, which
+    is not the same thing as a DNS failure) — otherwise a repo with no
+    hostname entries would never refresh its containers' extras or prune
+    their pool rows. Phase B is independently guarded: a failure there must
+    not undo or overshadow what was already written above it.
     """
     from jailbee.egress import parse_egress_entry
     from jailbee.egress_scope import effective_repo_entries
@@ -260,45 +265,41 @@ def refresh_pool(
     _record_state(session, prefix, now, status, error_msg)
     session.commit()  # state durable BEFORE side effects
 
-    if not resolved:
-        # Don't push an ACL/hosts derived from an empty resolve — what's
-        # already in Incus stays; the next successful cycle will refresh it.
-        return RefreshResult(
-            container_prefix=prefix,
-            status=status,
-            added=added,
-            removed=removed,
-            error=error_msg,
+    if resolved:
+        # Only when something resolved: don't push an ACL/hosts derived from
+        # an empty resolve — what's already in Incus stays; the next
+        # successful cycle will refresh it. A literals-only allowlist (no
+        # hostnames at all) and a total DNS failure both leave `resolved`
+        # empty, so both skip this block — but phase B below still runs for
+        # both, since it has no dependency on the repo's own resolve.
+        mirror_endpoint = _compute_mirror_endpoint(cfg, incus, gcfg)
+
+        try:
+            _write_acl(cfg, session, incus, mirror_endpoint=mirror_endpoint)
+        except Exception as e:
+            log.warning("refresh_pool: ACL write failed for %s: %s", prefix, e)
+            _record_state(session, prefix, now, "acl_error", str(e))
+            session.commit()
+            return RefreshResult(
+                container_prefix=prefix,
+                status="acl_error",
+                added=added,
+                removed=removed,
+                error=str(e),
+            )
+
+        _update_strict_container_hosts(
+            cfg,
+            session,
+            incus,
+            mirror_endpoint=mirror_endpoint,
         )
-
-    mirror_endpoint = _compute_mirror_endpoint(cfg, incus, gcfg)
-
-    try:
-        _write_acl(cfg, session, incus, mirror_endpoint=mirror_endpoint)
-    except Exception as e:
-        log.warning("refresh_pool: ACL write failed for %s: %s", prefix, e)
-        _record_state(session, prefix, now, "acl_error", str(e))
-        session.commit()
-        return RefreshResult(
-            container_prefix=prefix,
-            status="acl_error",
-            added=added,
-            removed=removed,
-            error=str(e),
-        )
-
-    _update_strict_container_hosts(
-        cfg,
-        session,
-        incus,
-        mirror_endpoint=mirror_endpoint,
-    )
 
     try:
         _refresh_container_extras(
             cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host
         )
-        _prune_container_pools(cfg, incus, session)
+        _prune_container_pools(incus, session)
     except Exception as e:  # noqa: BLE001 - a container-scope failure must not
         # invalidate the repo-scope work already committed above.
         log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
@@ -498,7 +499,7 @@ def _refresh_container_extras(
             log.warning("refresh_pool: container extras failed for %s: %s", container.name, e)
 
 
-def _prune_container_pools(cfg: Config, incus: Incus, session: Session) -> list[str]:
+def _prune_container_pools(incus: Incus, session: Session) -> list[str]:
     """Drop `ct:` pool rows whose container no longer exists."""
     live = {container_pool_key(c["name"]) for c in incus.list_containers()}
     rows = session.exec(
