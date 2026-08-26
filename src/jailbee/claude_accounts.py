@@ -391,3 +391,81 @@ def _held_elsewhere_message(target: Account, holder: Holder) -> str:
             f"Release it from here:  jailbee claude release {target.number}"
         )
     return "\n".join(lines)
+
+
+# ---- release and remove --------------------------------------------------
+
+
+def release_repo(session: Session, prefix: str) -> ClaudeAccountHolding | None:
+    """Free this repo's holding. Returns the freed row, or None if there was
+    none.
+
+    Clears a ``claiming`` row as readily as a ``held`` one: from the user's
+    side both mean "this repo is holding an account it should not be".
+    """
+    row = session.exec(
+        select(ClaudeAccountHolding).where(
+            ClaudeAccountHolding.container_prefix == prefix
+        )
+    ).first()
+    if row is None:
+        return None
+    session.delete(row)
+    session.commit()
+    return row
+
+
+def release_identity(
+    session: Session, identity: Identity
+) -> ClaudeAccountHolding | None:
+    """Free one account's holding wherever it is held.
+
+    The escape hatch: a repo whose checkout is gone can no longer run
+    `jailbee claude release` from its own directory, and a `claiming` row
+    left by a crash has no owner to clear it.
+    """
+    row = session.get(ClaudeAccountHolding, identity)
+    if row is None:
+        return None
+    session.delete(row)
+    session.commit()
+    return row
+
+
+def remove(session: Session, cswap: Cswap, account: Account) -> None:
+    """Remove an account from the pool and drop its ledger rows.
+
+    cswap first: if it refuses (or the user cancels its prompt) the account is
+    still in the pool, and a pool entry with no holding row would be a lie the
+    ledger tells about who may use it. Deleting the rows only after the
+    subprocess succeeds keeps the two in step.
+    """
+    cswap.remove(str(account.number))
+    row = session.get(ClaudeAccountHolding, account.identity)
+    if row is not None:
+        session.delete(row)
+    for allow in session.exec(
+        select(ClaudeAccountAllow).where(
+            ClaudeAccountAllow.email == account.email,
+            ClaudeAccountAllow.org_uuid == account.org_uuid,
+        )
+    ).all():
+        session.delete(allow)
+    session.commit()
+
+
+def stale_claims(session: Session) -> list[ClaudeAccountHolding]:
+    """Every ``claiming`` row. Each one is a crash artifact.
+
+    Not time-based: a claim only exists for the duration of one `cswap
+    switch`, and there is no reliable clock to compare against across
+    machines that suspend. `jailbee doctor` reports these; `jailbee claude
+    release <ref>` clears one.
+    """
+    return list(
+        session.exec(
+            select(ClaudeAccountHolding).where(
+                ClaudeAccountHolding.state == CLAIMING
+            )
+        ).all()
+    )

@@ -581,3 +581,99 @@ def test_a_stale_claiming_row_of_this_repo_can_be_reclaimed(db_session):
 
     row = db_session.get(ClaudeAccountHolding, PERSONAL.identity)
     assert row is not None and row.state == ca.HELD
+
+
+# --- release ----------------------------------------------------------
+
+
+def test_release_repo_frees_this_repos_holding(db_session):
+    _hold(db_session, WORK, "gisgro")
+    _hold(db_session, PERSONAL, "otherrepo")
+
+    freed = ca.release_repo(db_session, "gisgro")
+
+    assert freed is not None and freed.email == WORK.email
+    assert db_session.get(ClaudeAccountHolding, WORK.identity) is None
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is not None, (
+        "another repo's holding is untouched"
+    )
+
+
+def test_release_repo_returns_none_when_this_repo_holds_nothing(db_session):
+    assert ca.release_repo(db_session, "gisgro") is None
+
+
+def test_release_repo_also_clears_a_stale_claiming_row(db_session):
+    _hold(db_session, WORK, "gisgro", state=ca.CLAIMING)
+
+    assert ca.release_repo(db_session, "gisgro") is not None
+    assert db_session.get(ClaudeAccountHolding, WORK.identity) is None
+
+
+def test_release_identity_frees_a_holding_wherever_it_is(db_session):
+    """The escape hatch for a repo whose checkout is gone."""
+    _hold(db_session, PERSONAL, "goneaway")
+
+    freed = ca.release_identity(db_session, PERSONAL.identity)
+
+    assert freed is not None and freed.container_prefix == "goneaway"
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_release_identity_returns_none_when_nobody_holds_it(db_session):
+    assert ca.release_identity(db_session, PERSONAL.identity) is None
+
+
+# --- remove -----------------------------------------------------------
+
+
+def test_remove_drops_the_pool_entry_and_every_ledger_row(db_session):
+    _hold(db_session, PERSONAL, "gisgro")
+    ca.set_allowed(db_session, "gisgro", {PERSONAL.identity, WORK.identity})
+    calls: list[str] = []
+
+    class Remover:
+        def remove(self, ref: str) -> None:
+            calls.append(ref)
+
+    ca.remove(db_session, Remover(), PERSONAL)
+
+    assert calls == ["2"], "cswap is told the slot, jailbee keeps the identity"
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is None
+    assert ca.allowed_identities(db_session, "gisgro") == {WORK.identity}
+
+
+def test_remove_keeps_the_ledger_when_cswap_refuses(db_session):
+    from jailbee.cswap import CswapError
+
+    _hold(db_session, PERSONAL, "gisgro")
+
+    class Refuser:
+        def remove(self, ref: str) -> None:
+            raise CswapError("cancelled")
+
+    with pytest.raises(CswapError):
+        ca.remove(db_session, Refuser(), PERSONAL)
+
+    db_session.expire_all()
+    assert db_session.get(ClaudeAccountHolding, PERSONAL.identity) is not None, (
+        "an account still in the pool must still have its holding"
+    )
+
+
+# --- stale claims -----------------------------------------------------
+
+
+def test_stale_claims_lists_only_claiming_rows(db_session):
+    _hold(db_session, WORK, "gisgro", state=ca.HELD)
+    _hold(db_session, PERSONAL, "otherrepo", state=ca.CLAIMING)
+
+    stale = ca.stale_claims(db_session)
+
+    assert [r.email for r in stale] == [PERSONAL.email]
+
+
+def test_stale_claims_is_empty_when_the_ledger_is_clean(db_session):
+    _hold(db_session, WORK, "gisgro")
+
+    assert ca.stale_claims(db_session) == []
