@@ -1075,6 +1075,19 @@ def new_container(
     if not opts.mount:
         _attach_under_repo_shared_caches(cfg, incus, name)
 
+    # Relocate a legacy `<shared_dir>/claude.json` into the `claude`
+    # directory mount before the agent step below installs/runs Claude Code.
+    # `jailbee base build` is global and `jailbee apply` is per-repo, so a
+    # repo that hasn't been re-`apply`ed yet would otherwise never run this
+    # migration: `<shared_dir>/claude/.claude.json` wouldn't exist, Claude
+    # Code would onboard from scratch and write a fresh one there, and a
+    # later `jailbee apply` no-ops once that destination exists — orphaning
+    # the real, pre-move file for good.
+    if cfg.claude.enabled:
+        from jailbee.init_command import _relocate_claude_json
+
+        _relocate_claude_json(cfg)
+
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
     # claude-install, provides its persistent store) and after the network

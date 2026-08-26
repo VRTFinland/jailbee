@@ -2521,7 +2521,7 @@ def test_push_default_source_default_is_base():
 
 
 def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mocker):
-    """claude.enabled auto-adds claude, claude-json AND claude-install."""
+    """claude.enabled auto-adds claude AND claude-install."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="claude:\n  enabled: true\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -2529,6 +2529,7 @@ def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mock
     assert "claude-install" in by_name
     assert by_name["claude-install"].host_subpath == "claude-install"
     assert by_name["claude-install"].container_path == "~/.local/share/claude"
+    assert "claude-json" not in by_name
 
 
 def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocker):

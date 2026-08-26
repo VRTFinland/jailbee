@@ -134,6 +134,14 @@ def base_profile_yaml(cfg: Config) -> str:
     }
     if cfg.gpg.enabled:
         profile_config["environment.SSH_AUTH_SOCK"] = f"{runtime}/gnupg/S.gpg-agent.ssh"
+    if cfg.claude.enabled:
+        # Belt-and-suspenders for `/etc/profile.d/jailbee-env.sh`: Incus
+        # injects `environment.*` into every `incus exec`, login shell or
+        # not, so this also covers `claude` launched from a non-login shell
+        # jailbee didn't spawn itself (a JetBrains IDE's integrated
+        # terminal, a Claude Code IDE extension). Also reaches existing
+        # containers via `jailbee apply` with no image rebuild required.
+        profile_config["environment.CLAUDE_CONFIG_DIR"] = f"/home/{CONTAINER_USERNAME}/.claude"
 
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point

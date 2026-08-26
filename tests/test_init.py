@@ -210,10 +210,14 @@ def test_run_init_creates_user_shared_cache_dirs(tmp_path):
 
 
 def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
-    """The claude.json seed file is only written when claude.enabled."""
+    """The claude.json seed file is only written when claude.enabled — and
+    with it disabled, a pre-existing legacy `claude.json` must also be left
+    untouched (i.e. the relocation half is gated too, not just the seed)."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     cfg = with_agent(cfg, "claude", enabled=False)
+    (tmp_path / "shared").mkdir(parents=True)
+    (tmp_path / "shared" / "claude.json").write_text('{"legacy": true}')
     incus = MagicMock()
     incus.profile_exists.return_value = False
     incus.network_acl_exists.return_value = False
@@ -222,7 +226,8 @@ def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
 
     run_init(cfg, incus)
 
-    assert not (tmp_path / "shared" / "claude.json").exists()
+    assert not (tmp_path / "shared" / "claude" / ".claude.json").exists()
+    assert (tmp_path / "shared" / "claude.json").read_text() == '{"legacy": true}'
 
 
 def test_init_creates_profiles(tmp_path):
@@ -620,11 +625,10 @@ def test_run_init_forwards_mirror_endpoint_to_allowlist_acl(make_cfg, tmp_path, 
 
 
 def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
-    """The claude.json bind-mount source must exist or Incus rejects the
-    container start. `gie init` seeds valid empty JSON (`{}`) when
-    claude.enabled — a zero-byte file is invalid JSON and makes the first
-    `claude` invocation (run by the Claude Code installer) abort the install
-    with a parse error, hard-failing `gie new`."""
+    """The `claude/.claude.json` seed must exist or Claude Code's first
+    invocation (run by the Claude Code installer) aborts with a parse error
+    on a zero-byte/missing file, hard-failing `gie new`. `gie init` seeds
+    valid empty JSON (`{}`) when claude.enabled."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(
@@ -640,19 +644,20 @@ def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    json_path = tmp_path / "shared" / "claude.json"
+    json_path = tmp_path / "shared" / "claude" / ".claude.json"
     assert json_path.is_file()
     assert json_path.read_text() == "{}\n"
 
 
 def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
-    """Pre-existing <shared_dir>/claude.json (e.g. previously written by a
-    container) must be left untouched by re-init."""
+    """Pre-existing <shared_dir>/claude/.claude.json (e.g. previously written
+    by a container) must be left untouched by re-init."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     shared = tmp_path / "shared"
     shared.mkdir()
-    (shared / "claude.json").write_text('{"existing": true}')
+    (shared / "claude").mkdir()
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
     cfg = make_cfg(
         repo,
         shared_dir=shared,
@@ -666,7 +671,7 @@ def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    assert (shared / "claude.json").read_text() == '{"existing": true}'
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
 
 
 def test_agent_dir_and_file_mounts_are_created(tmp_path):
@@ -685,14 +690,15 @@ def test_agent_dir_and_file_mounts_are_created(tmp_path):
     assert (shared / "aider.conf.yml").read_text() == ""
 
 
-def test_claude_json_still_seeded_with_empty_object(tmp_path):
+def test_claude_json_seeded_inside_the_claude_dir(tmp_path):
     from jailbee.init_command import _ensure_integration_shared_dirs
 
     shared = tmp_path / "shared"
     shared.mkdir()
     cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
     _ensure_integration_shared_dirs(cfg)
-    assert (shared / "claude.json").read_text() == "{}\n"
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+    assert not (shared / "claude.json").exists()
 
 
 def test_run_init_chmods_ssh_to_0700_when_ssh_enabled(make_cfg, tmp_path, mocker):
@@ -776,3 +782,178 @@ def test_run_init_skips_ssh_seed_when_ssh_disabled(make_cfg, tmp_path, mocker):
     run_init(cfg, incus)
 
     spy.assert_not_called()
+
+
+def test_relocate_claude_json_moves_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+    assert not (shared / "claude.json").exists()
+
+
+def test_relocate_claude_json_announces_the_move(mocker, tmp_path):
+    """The migration touches the user's Claude identity — it must say so,
+    not move it silently (mirrors the SSH seed's `success(...)` announcement)."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_warns_when_orphaning_the_legacy_file(mocker, tmp_path):
+    """The skip-because-destination-exists branch is finding 2's orphaning
+    case (a later `apply` can never migrate the legacy file again) and must
+    warn, naming both paths, rather than silently leaving the user unaware."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_skips_a_symlink_source(mocker, tmp_path):
+    """A symlink source must not be renamed: `rename()` moves the link, not
+    its target, leaving a dangling symlink at the destination inside the
+    container."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    real = tmp_path / "real-claude.json"
+    real.write_text('{"real": true}')
+    source = shared / "claude.json"
+    source.symlink_to(real)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert source.is_symlink()
+    assert not (shared / "claude" / ".claude.json").exists()
+    out = recording.export_text()
+    assert str(source) in out
+
+
+def test_relocate_claude_json_is_a_noop_without_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert not (shared / "claude" / ".claude.json").exists()
+
+
+def test_relocate_claude_json_never_overwrites_the_destination(tmp_path):
+    """Both files present: the destination is live state, the source is a
+    leftover. Never overwrite, and never delete the user's copy either."""
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"current": true}'
+    assert (shared / "claude.json").read_text() == '{"old": true}'
+
+
+def test_relocate_claude_json_creates_a_missing_claude_dir(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+
+
+def test_seed_claude_json_writes_an_empty_object(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+
+
+def test_seed_claude_json_does_not_touch_an_existing_file(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
+
+
+def test_legacy_claude_json_survives_seeding(tmp_path):
+    """Relocation must run before the seed. If the seed wins, `{}` lands at
+    the destination, the relocation no-ops on a now-existing target, and the
+    user's real Claude state is orphaned at the old path."""
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"onboarded": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _ensure_integration_shared_dirs(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"onboarded": true}'
+    # Pins move-not-copy: a copy-instead-of-move implementation would still
+    # pass the assertion above but leave the legacy file behind.
+    assert not (shared / "claude.json").exists()

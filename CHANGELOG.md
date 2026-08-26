@@ -81,6 +81,23 @@
   submodules from a detached HEAD or to keep a deliberate mismatch. A
   container's branch is its identity, so `jailbee submodule checkout <name> -b`
   is unchanged: pure submodule placement, no branch switch.
+- **BREAKING: Claude Code's `~/.claude.json` moved inside the shared `~/.claude`
+  mount.** The golden image now exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so
+  Claude Code reads and writes `~/.claude/.claude.json` instead of
+  `~/.claude.json`, and the separate file-level bind mount
+  (`<shared_dir>/claude.json`, Incus device `claude-json`) is gone. A
+  file-level bind cannot survive an atomic rewrite: temp-file + rename
+  replaces the inode and the container keeps the old, unlinked one — so any
+  host-side write to that file was invisible inside the container.
+  **To upgrade:** run `jailbee base build` (for the new environment variable)
+  and `jailbee apply` in each repo (to move the existing file and drop the
+  device), then re-create containers from the new image. `jailbee apply` moves
+  `<shared_dir>/claude.json` to `<shared_dir>/claude/.claude.json`
+  automatically; it never overwrites an existing destination.
+  `CLAUDE_CONFIG_DIR` is also set as a base-profile environment variable, so
+  between `jailbee apply` and re-creating a container, existing containers
+  already get it on every `incus exec` — no window where `claude` writes to
+  the wrong path, even before the image is rebuilt or the container re-created.
 - **The Claude install/update step now runs bounded, with its output kept.**
   It used to run through an unbounded `incus.exec` call; it now runs through
   the same autostart step pipeline every other agent's install/update uses,

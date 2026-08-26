@@ -1020,7 +1020,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
 ) -> None:
     """Enabling claude after the initial `gie init` means the next
     `gie apply` must create `<shared_dir>/claude`, `<shared_dir>/claude-install`
-    and touch `<shared_dir>/claude.json` so the binds profile's file/dir
+    and seed `<shared_dir>/claude/.claude.json` so the binds profile's dir
     mounts have valid sources. Otherwise Incus refuses to start (or to
     accept the profile edit/assign for) the container with a "Missing
     source path ... for disk shared-claude-install" error.
@@ -1041,7 +1041,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
 
     assert not (shared / "claude").exists()
     assert not (shared / "claude-install").exists()
-    assert not (shared / "claude.json").exists()
+    assert not (shared / "claude" / ".claude.json").exists()
 
     run_apply(cfg, incus, gcfg, assume_yes=True, confirm_fn=lambda _m: False)
 
@@ -1049,7 +1049,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
     # The shared version store (`~/.local/share/claude` inside the container)
     # — the disk device whose missing source path broke `gie apply`/assign.
     assert (shared / "claude-install").is_dir()
-    assert (shared / "claude.json").is_file()
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
     # The rest of the shared-dir tree should also be present.
     assert (shared / "caches" / "pnpm-store").is_dir()
 
@@ -1080,7 +1080,7 @@ def test_run_apply_does_not_create_claude_shared_dir_when_disabled(
 
     assert not (shared / "claude").exists()
     assert not (shared / "claude-install").exists()
-    assert not (shared / "claude.json").exists()
+    assert not (shared / "claude" / ".claude.json").exists()
     # The rest of the shared-dir tree IS still created.
     assert (shared / "caches" / "pnpm-store").is_dir()
     assert (shared / "ssh").is_dir()

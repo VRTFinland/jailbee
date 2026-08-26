@@ -34,13 +34,16 @@ def _jailbee_env_snippet() -> str:
     return script[start:end] + "\n"
 
 
-def _run_snippet(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_snippet(
+    env: dict[str, str],
+    var: str = "SSH_AUTH_SOCK",
+) -> subprocess.CompletedProcess[str]:
     """Source the snippet in a fresh bash and print the resulting value.
 
-    ``env`` fully replaces the environment, so the host's own
-    SSH_AUTH_SOCK can't leak into the assertion.
+    ``env`` fully replaces the environment, so the host's own values can't
+    leak into the assertion.
     """
-    probe = f'{_jailbee_env_snippet()}\nprintf "%s" "${{SSH_AUTH_SOCK-{UNSET_MARKER}}}"\n'
+    probe = f'{_jailbee_env_snippet()}\nprintf "%s" "${{{var}-{UNSET_MARKER}}}"\n'
     return subprocess.run(
         ["bash", "-c", probe],
         env={"PATH": "/usr/bin:/bin", **env},
@@ -147,3 +150,26 @@ def test_snippet_leaves_no_helper_variables_behind():
     )
 
     assert result.stdout.strip() == "0", result.stdout
+
+
+def test_snippet_points_claude_config_dir_at_the_shared_mount(tmp_path):
+    """Claude Code reads its global config from
+    `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Setting the variable to the
+    value the default already resolves to moves only that file — into
+    `~/.claude`, which is the shared directory mount."""
+    result = _run_snippet({"HOME": str(tmp_path)}, var="CLAUDE_CONFIG_DIR")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{tmp_path}/.claude"
+
+
+def test_snippet_does_not_overwrite_an_existing_claude_config_dir(tmp_path):
+    """`container.env` may point a container at a different profile; the
+    login-shell fallback must not clobber it, same rule as SSH_AUTH_SOCK."""
+    result = _run_snippet(
+        {"HOME": str(tmp_path), "CLAUDE_CONFIG_DIR": "/custom/profile"},
+        var="CLAUDE_CONFIG_DIR",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "/custom/profile"

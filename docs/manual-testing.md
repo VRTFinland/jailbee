@@ -2152,15 +2152,30 @@ Kept here because they are what the mocked tests are written against.
 
 ### What is not verified yet
 
-Running JailBee itself inside a container (`jailbee init`, `jailbee new`) is a
-separate question and remains open. The `jailbee port` recipe below needs none
-of it — proxy devices are per-instance and want no profile, bridge or ACL — but
-anything that reconciles the *whole repo* does: against a daemon that was never
-`jailbee init`ed, `jailbee doctor` fails every profile/ACL/network/shared-dir
-check with "run `jailbee init`" (the checks above it — `incus binary`,
-`container_user`, `upstream remote` — pass, so a red `doctor` here says nothing
-about the install), and `jailbee apply` exits at `jailbee-registry-mirror
-container not found` long before its port-forward loop. Verified 2026-08-19.
+Running JailBee itself inside a container was open until 2026-08-25, when the
+[`.claude.json` relocation
+findings](#findings-nested-rig-2026-08-25) answered half of it:
+**`jailbee init` does work at nesting depth two.** It creates the shared-dir
+tree, runs the shared-state migrations, and writes both the `<prefix>-base` and
+`<prefix>-binds` profiles into the nested daemon — then stops at
+`incus network get incusbr0` failing, because nothing created a bridge. A
+subsequent `jailbee apply` fails at the missing `<prefix>-net-strict` profile.
+Create the bridge first (`incus network create incusbr0`) and `jailbee init`
+goes all the way: ACL, `jailbee-loose`, and both net profiles. `jailbee base
+build` publishes a golden image at this depth too, and `jailbee new` produces a
+working container — given the two prerequisites in [Prerequisites for a nested
+`jailbee new`](#prerequisites-for-a-nested-jailbee-new). What still does not
+work here is `jailbee apply`, which regenerates `<prefix>-base` with the
+`dri-*` render-node devices that nesting rejects.
+
+The `jailbee port` recipe below needs none of it — proxy devices are
+per-instance and want no profile, bridge or ACL — but anything that reconciles
+the *whole repo* does: against a daemon that was never `jailbee init`ed,
+`jailbee doctor` fails every profile/ACL/network/shared-dir check with "run
+`jailbee init`" (the checks above it — `incus binary`, `container_user`,
+`upstream remote` — pass, so a red `doctor` here says nothing about the
+install), and `jailbee apply` exits at `jailbee-registry-mirror container not
+found` long before its port-forward loop. Verified 2026-08-19.
 
 What is known about the rest:
 
@@ -2338,3 +2353,283 @@ incus delete <prefix>-probe --force
 incus profile delete <prefix>-base
 sudo systemctl stop incus.service
 ```
+
+## `.claude.json` relocation smoke test
+
+Claude Code's global config moved from a file-level bind mount
+(`<shared_dir>/claude.json` → `~/.claude.json`) to living inside the existing
+`claude` directory mount (`<shared_dir>/claude/.claude.json` → `~/.claude`),
+via `CLAUDE_CONFIG_DIR=$HOME/.claude` exported from the golden image. Unit
+tests cover the relocate/seed helpers
+(`init_command._relocate_claude_json` / `_seed_claude_json`) and the
+`install.sh` env export in isolation — they mock the filesystem and never run
+a real Claude Code. Only a real login proves the *actual CLI* writes to the
+new path. This is the gate; there is no other verification of that claim.
+
+Requires `claude.enabled: true`, a real Incus daemon, and network access for
+`jailbee base build` + Claude Code's own login flow. Run the six checks in
+order and write down each command's real output next to it — a plausible
+sounding "should work" is not evidence, and several of these steps look
+identical whether they passed or silently no-opped.
+
+> **Mostly verified already — see [Findings](#findings-nested-rig-2026-08-25)
+> at the end of this section.** On 2026-08-25 the whole pipeline (`init` →
+> `base build` → `new`) was run at nesting depth two from inside a JailBee
+> container, and Steps 1, 2, 4, 5 and the mechanism half of Step 6 all passed,
+> alongside a direct probe of the real `claude` binary. What no rig can supply
+> is a genuine Claude Code login, so "the CLI resumes rather than re-onboards"
+> is still an inference from verified parts rather than an observation. Run the
+> steps below on the host anyway if you want that last link.
+
+### 1. Upgrade path on a repo that already has state
+
+Start from a container built **before** this change, with a non-trivial
+`<shared_dir>/claude.json` (i.e. Claude Code has been logged in at least
+once). If convenient, leave a `claude` session running inside that old
+container in a `jailbee tmux <name>` pane — reused by Step 5 below.
+
+```bash
+ls -la <shared_dir>/claude.json
+# expect: a regular file, not a symlink; clearly bigger than the 3-byte
+# "{}\n" seed (a real config, from an actual login)
+sha256sum <shared_dir>/claude.json
+
+jailbee base build      # rebuilds the golden image with the CLAUDE_CONFIG_DIR export
+jailbee apply            # runs _relocate_claude_json then _seed_claude_json, updates <prefix>-binds
+
+ls -la <shared_dir>/claude.json
+# expect: "No such file or directory" — relocated, not copied
+ls -la <shared_dir>/claude/.claude.json
+sha256sum <shared_dir>/claude/.claude.json
+# expect: identical hash to the sha256sum taken above, before `jailbee apply`
+
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 0 — the file-level device is gone from the profile
+```
+
+### 2. Fresh repo
+
+```bash
+# in a repo whose <shared_dir> does not exist yet
+jailbee init
+cat <shared_dir>/claude/.claude.json
+# expect: {}
+ls <shared_dir>/claude.json
+# expect: "No such file or directory" — never created
+```
+
+### 3. The variable actually relocates the file
+
+In a container built from the image produced by Step 1's `jailbee base
+build`:
+
+```bash
+jailbee new feat/claudereloc --no-clone --no-autostart
+jailbee shell feat-claudereloc
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — from BOTH the base profile's
+# `environment.CLAUDE_CONFIG_DIR` (every `incus exec`, this container's own
+# path too) and `/etc/profile.d/jailbee-env.sh` (this is a login shell).
+# Step 6 below isolates the profile source alone, on a container whose image
+# predates the `/etc/profile.d` export.
+claude
+# complete onboarding (fresh shared state) or resume (if state was carried
+# over), then exit the session
+exit
+
+ls -la <shared_dir>/claude/.claude.json
+# expect: mtime just updated by the run above
+ls <shared_dir>/claude.json 2>&1
+# expect: "No such file or directory" — Claude Code never wrote back to the
+# old path
+```
+
+### 4. State survives across containers of the repo
+
+```bash
+jailbee new feat/claudereloc2 --no-clone --no-autostart
+jailbee shell feat-claudereloc2
+claude
+# expect: no onboarding prompt
+/mcp
+# expect: the same MCP servers configured from the Step 3 container, if any
+exit
+```
+
+### 5. Live device removal
+
+Uses the old container from Step 1 (`<prefix>-<old-name>` below), with its
+`claude` session still running from before `jailbee apply` ran in that step.
+Note this only proves the *already-running* session survives — it holds its
+config in memory, so it looks fine whether or not a fresh start would work.
+Step 6 below is the check that actually distinguishes a pass from a failure.
+
+```bash
+incus config show <prefix>-<old-name> --expanded | grep -A2 claude-json
+# expect: no output — the device is gone from the running container's
+# expanded config, not just from the profile source
+```
+
+In the pane where `claude` has been running since before Step 1's `jailbee
+apply`, type something and confirm it still replies — expect it to still be
+responsive, with no crash, no restart and no session drop.
+
+### 6. Fresh `claude` in the old-image container, right after `jailbee apply`
+
+Same old container as Step 5 (`<prefix>-<old-name>`) — its *image* was never
+rebuilt, so it does not have the `/etc/profile.d/jailbee-env.sh` export. This
+is the positive check finding 1's fix makes possible: `jailbee apply` already
+put `CLAUDE_CONFIG_DIR` on the `<prefix>-base` profile, and Incus injects
+`environment.*` into every `incus exec` regardless of image contents or shell
+type — no rebuild, no re-create needed.
+
+```bash
+jailbee shell <old-name>
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — this container's image predates the
+# /etc/profile.d export, so this value can only be coming from the
+# <prefix>-base profile Step 1's `jailbee apply` just rewrote
+claude
+# expect: resumes the session relocated in Step 1 — no onboarding prompt.
+# This is the check that would have failed before finding 1's fix: the old
+# image's `claude` would have resolved $HOME/.claude.json (unmounted,
+# container-local) and re-onboarded from scratch.
+exit
+```
+
+Teardown:
+
+```bash
+jailbee destroy feat-claudereloc --force
+jailbee destroy feat-claudereloc2 --force
+```
+
+### Findings (nested rig, 2026-08-25)
+
+Run from inside a JailBee container against the nested Incus daemon
+(`sudo systemctl start incus.service`, see [Nested Incus probe
+rig](#nested-incus-probe-rig-verifying-device-behaviour-from-inside-a-container)),
+plus one probe of the real `claude` binary that needs no daemon at all.
+
+**The `CLAUDE_CONFIG_DIR` claim holds — Claude Code 2.1.245, real binary.**
+Two runs of `claude -p "hi"` under `env -i` with an isolated `HOME`, so
+neither could touch this container's own state:
+
+| | Files created |
+|---|---|
+| no `CLAUDE_CONFIG_DIR` | `$HOME/.claude.json` and `$HOME/.claude/` |
+| `CLAUDE_CONFIG_DIR=$HOME/.claude` | `$HOME/.claude/.claude.json`, and **no** `$HOME/.claude.json` |
+
+Both runs exited at `Not logged in · Please run /login`, which is far enough:
+the config file is written before the auth check. This is the claim the whole
+change rests on, and it was previously supported only by reading claude-swap's
+`paths.py`.
+
+**The base-profile env var reaches non-login shells.** A profile carrying only
+`environment.CLAUDE_CONFIG_DIR: /home/dev/.claude`, added to a plain
+`images:alpine/edge` instance:
+
+```
+incus exec probe1 -- env | grep -i claude
+# observed: CLAUDE_CONFIG_DIR=/home/dev/.claude
+incus exec probe1 -- sh -c 'echo "[$CLAUDE_CONFIG_DIR]"'
+# observed: [/home/dev/.claude]        <- the `gui.py` bash -c case
+incus config set probe1 environment.CLAUDE_CONFIG_DIR=/custom/override
+incus exec probe1 -- env | grep -i claude
+# observed: CLAUDE_CONFIG_DIR=/custom/override   <- instance config wins
+```
+
+No shell profile is sourced by `incus exec`, so this is the direct evidence
+that the export in `/etc/profile.d/jailbee-env.sh` is a fallback, not the
+mechanism — an IDE launched under `bash -c` gets the variable anyway.
+
+**Steps 1 and 2 pass end to end, against a real daemon.** `jailbee init` does
+work at nesting depth two (this was listed as an open question under the
+nested-rig section until now), far enough to write both profiles:
+
+- A repo seeded with a legacy `<shared_dir>/claude.json` → `jailbee init`
+  printed `✓ Moved …/claude.json → …/claude/.claude.json`, the destination's
+  content was byte-identical to the source's, and the old path was gone.
+- The stored `<prefix>-binds` profile contained exactly `shared-claude`,
+  `shared-claude-install` and `shared-ssh` — **no `shared-claude-json`**.
+- The stored `<prefix>-base` profile contained
+  `environment.CLAUDE_CONFIG_DIR: /home/dev/.claude`.
+- A fresh repo with no legacy file → `<shared_dir>/claude/.claude.json` seeded
+  as `{}`, and no `claude.json` at the old path.
+
+**The never-overwrite branch behaves and says so.** Re-creating a legacy
+`claude.json` alongside an existing destination and re-running produced a
+warning naming both paths and telling the user to merge by hand, and left
+both files untouched. This is the branch that would silently orphan a user's
+login if it ever moved a file over live state.
+
+`jailbee init` stops after the profiles with `incus network get incusbr0`
+failing — the nested daemon has no bridge — and `jailbee apply` then fails at
+the missing `<prefix>-net-strict` profile. Neither touches the claude paths,
+which run earlier; a nested rig simply cannot complete a repo's network setup.
+
+**The whole pipeline runs at nesting depth two.** With `incus network create
+incusbr0` done first, `jailbee init` completes — ACL, `jailbee-loose`, both net
+profiles — and `jailbee base build` publishes a golden image (~870 MiB, a full
+apt provision two levels deep). `jailbee new` then works, after two rig-only
+prerequisites; see [Prerequisites for a nested `jailbee
+new`](#prerequisites-for-a-nested-jailbee-new) below.
+
+**Steps 4 and 6 pass in real containers built from a real golden image.** In a
+`jailbee new` container:
+
+```
+incus exec <c> -- env | grep CLAUDE_CONFIG          # non-login: base profile
+# observed: CLAUDE_CONFIG_DIR=/home/dev/.claude
+incus exec <c> -- su - dev -c 'echo $CLAUDE_CONFIG_DIR'   # login: profile.d
+# observed: /home/dev/.claude
+incus exec <c> -- cat /home/dev/.claude/.claude.json
+# observed: the migrated content, byte-identical
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: No such file or directory
+```
+
+Both routes to the variable work independently — which is the point of having
+two. Cross-container (Step 4): a second `jailbee new` container read the same
+file, and a write from the first was immediately visible in the second.
+
+**Step 5, and one artifact worth knowing about.** Hot-removing the file device
+from the `<prefix>-binds` profile detaches the mount from the *running*
+container and leaves it otherwise healthy, shared dir intact. But it leaves
+behind a stub:
+
+```
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: ---------- 1 root root 0 ... /home/dev/.claude.json
+```
+
+A zero-byte, mode-000, root-owned file, and it persists. It is inert while
+`CLAUDE_CONFIG_DIR` is set — nothing reads `$HOME/.claude.json` any more — but
+it is a concrete reason the CHANGELOG tells users to re-create containers after
+upgrading rather than only running `jailbee apply`.
+
+`jailbee apply` itself cannot finish in the nested rig: it regenerates
+`<prefix>-base` with the `dri-*` devices, which nesting rejects. The device
+removal above was therefore done directly, which is the same operation apply's
+profile rewrite performs.
+
+#### Prerequisites for a nested `jailbee new`
+
+Two host-container settings, both rig-only — neither is a JailBee bug:
+
+1. **`root:<uid>:1` in `/etc/subuid` and `/etc/subgid`.** JailBee's `raw.idmap`
+   identity-maps the host user's UID into the container so bind mounts stay
+   readable. At depth two, root's subuid range does not cover that UID and the
+   container refuses to start with `newuidmap: uid range [N-N+1) -> [N-N+1) not
+   allowed`. Append the line for your own `id -u`, then restart `incus.service`.
+2. **Remove the `dri-*` devices from `<prefix>-base`.** A nested container
+   rejects them with `The "mode" property may not be set when adding a device
+   to a nested container`. `profiles._host_render_nodes()` adds one per host
+   render node unconditionally, so they come back on every `jailbee apply`.
+
+**Still needs the host:** the one thing no rig can supply — a real Claude Code
+login, proving the CLI resumes an existing session at the new path rather than
+re-onboarding. Every mechanism that outcome depends on is verified above; only
+the end-to-end observation is missing. **Do not** copy a login into a rig
+container to fake it: two live copies of one credential rotate each other out,
+which is the failure that removed host-seeding in the first place.

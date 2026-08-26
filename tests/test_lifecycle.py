@@ -1093,6 +1093,38 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     incus.start.assert_called_once_with("repo-feat-x")
 
 
+def test_new_container_relocates_legacy_claude_json(tmp_path, mocker):
+    """`jailbee new` in a repo that hasn't been re-`apply`ed yet must still
+    migrate a legacy `<shared_dir>/claude.json` — otherwise it's orphaned the
+    first time `jailbee apply` runs and finds the destination already seeded.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    legacy = shared / "claude.json"
+    legacy.write_text('{"oauthAccount": "real"}')
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    target = shared / "claude" / ".claude.json"
+    assert target.read_text() == '{"oauthAccount": "real"}'
+    assert not legacy.exists()
+
+
 def test_new_container_adds_dev_to_host_device_groups(tmp_path, mocker):
     """A host_devices entry's group is provisioned: dev is added to it inside
     the container so it can open the (static_node-reset) device node."""
