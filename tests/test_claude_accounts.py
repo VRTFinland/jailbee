@@ -8,7 +8,7 @@ import pytest
 
 from jailbee import claude_accounts as ca
 from jailbee.cswap import Account
-from jailbee.db.models import ClaudeAccountAllow, ClaudeAccountHolding, RegisteredRepo
+from jailbee.db.models import ClaudeAccountHolding, RegisteredRepo
 
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
@@ -110,6 +110,14 @@ def test_an_allowlist_filters_the_rows(db_session):
     assert rows == {1: True, 2: False, 3: False}
 
 
+def test_set_allowed_dedups_a_list_with_a_repeated_identity(db_session):
+    """The primary key is (prefix, email, org_uuid); a caller passing a list
+    with a duplicate must not hit an integrity error."""
+    ca.set_allowed(db_session, "gisgro", [WORK.identity, WORK.identity])
+
+    assert ca.allowed_identities(db_session, "gisgro") == {WORK.identity}
+
+
 # --- holders ----------------------------------------------------------
 
 
@@ -144,7 +152,8 @@ def test_rows_mark_this_repos_own_holding_as_mine(db_session):
     _hold(db_session, WORK, "gisgro")
     _hold(db_session, PERSONAL, "otherrepo")
 
-    by_number = {r.account.number: r for r in ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")}
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    by_number = {r.account.number: r for r in rows}
 
     assert by_number[1].mine is True
     assert by_number[2].mine is False
@@ -154,7 +163,8 @@ def test_rows_mark_this_repos_own_holding_as_mine(db_session):
 def test_blocked_reason_names_the_other_repo(db_session):
     _hold(db_session, PERSONAL, "otherrepo")
 
-    row = next(r for r in ca.account_rows(db_session, ACCOUNTS, prefix="gisgro") if r.account.number == 2)
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    row = next(r for r in rows if r.account.number == 2)
 
     assert row.blocked_reason is not None
     assert "otherrepo" in row.blocked_reason
@@ -163,16 +173,30 @@ def test_blocked_reason_names_the_other_repo(db_session):
 def test_a_not_allowed_account_is_blocked_with_its_own_reason(db_session):
     ca.set_allowed(db_session, "gisgro", {WORK.identity})
 
-    row = next(r for r in ca.account_rows(db_session, ACCOUNTS, prefix="gisgro") if r.account.number == 2)
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    row = next(r for r in rows if r.account.number == 2)
 
     assert row.blocked_reason is not None
     assert "not allowed" in row.blocked_reason
 
 
+def test_blocked_reason_prefers_not_allowed_over_held_by_another(db_session):
+    """Both reasons apply here; "not allowed" wins — it is this repo's own
+    restriction, and the more actionable message."""
+    _hold(db_session, PERSONAL, "otherrepo")
+    ca.set_allowed(db_session, "gisgro", {WORK.identity})
+
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    row = next(r for r in rows if r.account.number == 2)
+
+    assert row.blocked_reason == "not allowed for this repo"
+
+
 def test_this_repos_own_holding_is_never_blocked(db_session):
     _hold(db_session, WORK, "gisgro")
 
-    row = next(r for r in ca.account_rows(db_session, ACCOUNTS, prefix="gisgro") if r.account.number == 1)
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    row = next(r for r in rows if r.account.number == 1)
 
     assert row.blocked_reason is None
 
@@ -180,7 +204,8 @@ def test_this_repos_own_holding_is_never_blocked(db_session):
 def test_a_claiming_row_blocks_and_says_so(db_session):
     _hold(db_session, PERSONAL, "otherrepo", state=ca.CLAIMING)
 
-    row = next(r for r in ca.account_rows(db_session, ACCOUNTS, prefix="gisgro") if r.account.number == 2)
+    rows = ca.account_rows(db_session, ACCOUNTS, prefix="gisgro")
+    row = next(r for r in rows if r.account.number == 2)
 
     assert row.blocked_reason is not None
     assert "claiming" in row.blocked_reason
@@ -199,8 +224,77 @@ def test_resolve_ref_accepts_a_slot_number():
     assert ca.resolve_ref(ACCOUNTS, "2") is PERSONAL
 
 
+def test_resolve_ref_by_digit_still_resolves_the_slot_when_unambiguous():
+    """No other account is aliased "1", so the digit means slot 1 cleanly."""
+    assert ca.resolve_ref(ACCOUNTS, "1") is WORK
+
+
+def test_resolve_ref_refuses_when_a_digit_also_names_another_accounts_alias():
+    """Nothing forbids a numeric alias: "2" could mean slot 2 (PERSONAL) or
+    the account aliased "2" — picking the slot silently would burn the wrong
+    account's quota."""
+    numeric_alias = Account(
+        number=5,
+        email="fifth@example.com",
+        org_uuid="",
+        org_name="",
+        alias="2",
+        active=False,
+        disabled=False,
+        usage_status="ok",
+        five_hour_pct=None,
+        seven_day_pct=None,
+    )
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.resolve_ref([WORK, PERSONAL, numeric_alias], "2")
+
+    assert "2" in str(exc.value) and "5" in str(exc.value), "names both candidates"
+
+
+def test_resolve_ref_by_digit_is_not_ambiguous_with_its_own_alias():
+    """The same account being both slot 1 and aliased "1" has only one
+    answer — no false ambiguity."""
+    self_aliased = Account(
+        number=1,
+        email="work@gisgro.com",
+        org_uuid="org-abc",
+        org_name="Gisgro",
+        alias="1",
+        active=True,
+        disabled=False,
+        usage_status="ok",
+        five_hour_pct=34.0,
+        seven_day_pct=61.0,
+    )
+
+    assert ca.resolve_ref([self_aliased, PERSONAL, CI], "1") is self_aliased
+
+
 def test_resolve_ref_accepts_an_alias():
     assert ca.resolve_ref(ACCOUNTS, "work") is WORK
+
+
+def test_resolve_ref_refuses_an_ambiguous_alias():
+    """Two accounts sharing an alias (case-insensitively) is a collision the
+    same way an ambiguous email is."""
+    dup_alias = Account(
+        number=5,
+        email="other@example.com",
+        org_uuid="",
+        org_name="",
+        alias="Work",
+        active=False,
+        disabled=False,
+        usage_status="ok",
+        five_hour_pct=None,
+        seven_day_pct=None,
+    )
+
+    with pytest.raises(ca.PoolError) as exc:
+        ca.resolve_ref([WORK, dup_alias], "work")
+
+    assert "1" in str(exc.value) and "5" in str(exc.value), "names both slots"
 
 
 def test_resolve_ref_accepts_an_email():
