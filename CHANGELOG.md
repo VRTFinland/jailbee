@@ -98,6 +98,9 @@
   between `jailbee apply` and re-creating a container, existing containers
   already get it on every `incus exec` — no window where `claude` writes to
   the wrong path, even before the image is rebuilt or the container re-created.
+  `jailbee new` performs the same migration in a repo that has not been
+  re-`apply`ed yet, so the pre-move file is never orphaned by a fresh
+  container onboarding into the destination first.
 - **The Claude install/update step now runs bounded, with its output kept.**
   It used to run through an unbounded `incus.exec` call; it now runs through
   the same autostart step pipeline every other agent's install/update uses,

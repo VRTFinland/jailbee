@@ -127,12 +127,15 @@ def _relocate_claude_json(cfg: Config) -> None:
     source is a leftover from before the move, so it is left exactly as it is
     rather than overwriting live state or deleting the user's copy.
 
-    Caller ordering note: `apply.run_apply` calls this before rewriting the
-    binds profile (which is what stops declaring the `claude-json` disk
-    device whose source this moves). If `apply` aborts in between, the binds
-    profile still references the now-moved-away source, and any `incus
-    start`/`profile assign` fails with "Missing source path ..." until the
-    next `apply` re-runs (this function is idempotent, so that self-heals).
+    Caller ordering note: moving the source of a disk device a live binds
+    profile still declares makes every `incus start` / `profile assign` for
+    the repo fail with "Missing source path ...". `apply.run_apply` may call
+    this directly because it rewrites the binds profile on the same run —
+    and if it aborts in between, the next `apply` re-runs this (idempotent)
+    and self-heals. **Every other caller must go through
+    `migrate_claude_json`**, which pairs the move with that profile write;
+    nothing else on those paths ever rewrites the profile, so there the
+    breakage would be permanent.
     """
     assert cfg.shared_dir is not None  # set by load_config
     source = cfg.shared_dir / "claude.json"
@@ -155,6 +158,39 @@ def _relocate_claude_json(cfg: Config) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     source.rename(target)
     success(f"Moved {source} → {target}")
+
+
+def migrate_claude_json(cfg: Config, incus: Incus) -> None:
+    """Retire the `shared-claude-json` disk device, then relocate its source.
+
+    The two halves are inseparable, and only `run_apply` gets them for free:
+    it rewrites `<prefix>-binds` on every run anyway, so it calls
+    `_relocate_claude_json` directly. Every other caller must pair them —
+    a pre-1.2.0 binds profile still declares a disk device whose source is
+    `<shared_dir>/claude.json`, and Incus refuses every `start` and
+    `profile assign` for the repo once a disk device's source path is
+    missing. Moving the file without rewriting the profile therefore breaks
+    the repo until the user happens to run `jailbee apply`, and it does not
+    self-heal: the relocation is a no-op on every later run.
+
+    The profile is rewritten **before** the move, not after. The rendered
+    YAML no longer declares the device, so the write is valid while the file
+    is still in place, and a failure leaves the repo exactly as it was.
+
+    Only `<prefix>-binds` is refreshed, not the whole profile set `apply`
+    writes: the device is what makes the move unsafe, and `jailbee new` has
+    no business re-applying the rest of the config.
+
+    Idempotent: once the legacy path is gone this returns immediately.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    source = cfg.shared_dir / "claude.json"
+    if not source.is_file() and not source.is_symlink():
+        return
+    names = profile_names(cfg)
+    if incus.profile_exists(names.binds):
+        incus.profile_set_yaml(names.binds, binds_profile_yaml(cfg))
+    _relocate_claude_json(cfg)
 
 
 def _seed_claude_json(cfg: Config) -> None:

@@ -1125,6 +1125,78 @@ def test_new_container_relocates_legacy_claude_json(tmp_path, mocker):
     assert not legacy.exists()
 
 
+def test_new_container_retires_the_claude_json_device_before_moving_it(tmp_path, mocker):
+    """Moving the file without rewriting `<prefix>-binds` leaves the profile
+    declaring a disk device whose source is gone, and Incus then refuses every
+    `start` / `profile assign` for the repo. Nothing on the `jailbee new` path
+    rewrites that profile otherwise, and the relocation is a no-op on every
+    later run — so the repo would stay broken until `jailbee apply`.
+
+    The profile write must also come *before* the move: the rendered YAML no
+    longer declares the device, so it is valid while the file is still there,
+    and a failure must leave the repo untouched.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    legacy = shared / "claude.json"
+    legacy.write_text('{"oauthAccount": "real"}')
+
+    moved_when_profile_written: list[bool] = []
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_set_yaml.side_effect = lambda *_a, **_k: moved_when_profile_written.append(
+        not legacy.exists()
+    )
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    written = [c.args[0] for c in incus.profile_set_yaml.call_args_list]
+    assert written == ["repo-binds"], f"expected exactly the binds profile, got {written}"
+    yaml_written = incus.profile_set_yaml.call_args_list[0].args[1]
+    assert "claude-json" not in yaml_written
+    assert moved_when_profile_written == [False], "profile must be written before the move"
+
+
+def test_new_container_leaves_the_binds_profile_alone_with_nothing_to_migrate(tmp_path, mocker):
+    """No legacy file means no stale device, so `jailbee new` must not touch a
+    repo-level profile — rewriting the rest of the config is `apply`'s job."""
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    incus.profile_set_yaml.assert_not_called()
+
+
 def test_new_container_adds_dev_to_host_device_groups(tmp_path, mocker):
     """A host_devices entry's group is provisioned: dev is added to it inside
     the container so it can open the (static_node-reset) device node."""

@@ -883,6 +883,22 @@ def new_container(
         f"→ Creating '{short_name(cfg, name)}' from base image "
         f"'{opts.from_base}' ({branch_note})..."
     )
+    # Migrate a legacy `<shared_dir>/claude.json` before the container exists.
+    # `jailbee base build` is global and `jailbee apply` is per-repo, so a repo
+    # that hasn't been re-`apply`ed yet would otherwise never run this: the
+    # destination wouldn't exist, Claude Code would onboard from scratch and
+    # write a fresh file there, and a later `jailbee apply` no-ops once that
+    # destination exists — orphaning the real, pre-move file for good.
+    #
+    # Here rather than after the clone (where it used to sit) because it
+    # rewrites `<prefix>-binds`: doing that before `incus init` means this
+    # container is created from an already-correct profile, and the write
+    # lands before anything in this run can fail half-way.
+    if cfg.claude.enabled:
+        from jailbee.init_command import migrate_claude_json
+
+        migrate_claude_json(cfg, incus)
+
     _phase("creating")
     incus.init(opts.from_base, name)
     incus.profile_assign(
@@ -1074,19 +1090,6 @@ def new_container(
     # is what the user wants live — don't shadow it with the shared cache.
     if not opts.mount:
         _attach_under_repo_shared_caches(cfg, incus, name)
-
-    # Relocate a legacy `<shared_dir>/claude.json` into the `claude`
-    # directory mount before the agent step below installs/runs Claude Code.
-    # `jailbee base build` is global and `jailbee apply` is per-repo, so a
-    # repo that hasn't been re-`apply`ed yet would otherwise never run this
-    # migration: `<shared_dir>/claude/.claude.json` wouldn't exist, Claude
-    # Code would onboard from scratch and write a fresh one there, and a
-    # later `jailbee apply` no-ops once that destination exists — orphaning
-    # the real, pre-move file for good.
-    if cfg.claude.enabled:
-        from jailbee.init_command import _relocate_claude_json
-
-        _relocate_claude_json(cfg)
 
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
