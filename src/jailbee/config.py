@@ -98,11 +98,12 @@ _DEFAULT_NODE_MAJOR = 24
 # apply the list rule to `fields`/`hide` — which *appends* a non-empty
 # overlay — so a global `fields: [name, state]` plus a repo
 # `fields: [name, ip]` produced `[name, state, name, ip]` and rendered NAME
-# twice. Splitting them out keeps `effective_ls_columns` /
-# `effective_dashboard_columns` the single merge mechanism, and it is what
-# makes a global-only `dashboard:` block reach the dashboards at all
-# (`dashboard.resolve_dashboard_columns` reads `GlobalConfig.dashboard`
-# directly when there is no cwd repo).
+# twice. Splitting them out keeps `Config._effective_columns` the single
+# merge mechanism for this shape. `dashboard` stays in this set even though
+# the `dashboard:` block itself is deprecated (see
+# `Config.validate_runtime`/`global_config.global_config_issues`): the key
+# is still validated on both layers, and a repo-level block would hit the
+# same list-append bug if it were ever let through to `deep_merge`.
 #
 # Note `loose_auto_revert` is *not* in this set even though it has exactly
 # the same "merged field-by-field, not through deep_merge" shape — see
@@ -857,9 +858,10 @@ class ColumnConfig(BaseModel):
 # global layer — where `GlobalConfig.dashboard`'s default already carries
 # `DASHBOARD_DEFAULT_HIDE` (see `global_config._DASHBOARD_DEFAULT`) — a
 # repo's own block defaults to a plain, unset `ColumnConfig`; the
-# dashboard-hide default is applied later, when `effective_dashboard_columns`
-# merges the repo block over the global one. So both repo fields share one
-# default here. Used by `load_config`'s sanitize short-circuit.
+# dashboard-hide default is applied later, when `dashboard.seed_view_state`
+# reads the global block into a front-end's `view_prefs` row. So both repo
+# fields share one default here. Used by `load_config`'s sanitize
+# short-circuit.
 _COLUMN_DEFAULT = ColumnConfig()
 
 
@@ -1644,14 +1646,16 @@ class ClaudeAgentConfig(AgentConfig):
 
     `enabled`, `autostart`, `command` and `auto_update` are inherited: their
     semantics are identical to any other agent's. `enabled` gates the shared
-    `<shared_dir>/claude` + `<shared_dir>/claude.json` cache mounts (see
-    `Config.effective_shared_caches`), the `CLAUDE_API_HOSTS` strict-mode
-    egress auto-add, the `<shared_dir>/claude` subdir creation on
-    `jailbee init`, and the claude-subdir presence check in `jailbee doctor`.
-    When enabled, jailbee creates an empty `<shared_dir>/claude` directory and
-    an empty `<shared_dir>/claude.json` file as bind-mount sources — Claude
-    Code inside the first container runs its onboarding flow from a clean
-    state. No host `~/.claude` / `~/.claude.json` is read.
+    `<shared_dir>/claude` cache mount (see `Config.effective_shared_caches`),
+    the `CLAUDE_API_HOSTS` strict-mode egress auto-add, the
+    `<shared_dir>/claude` subdir creation on `jailbee init`, and the
+    claude-subdir presence check in `jailbee doctor`. When enabled, jailbee
+    creates an empty `<shared_dir>/claude` directory as a bind-mount source
+    and seeds `<shared_dir>/claude/.claude.json` with `{}` — the golden image
+    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude Code reads its
+    global config from inside that directory mount, and Claude Code inside
+    the first container runs its onboarding flow from a clean state. No host
+    `~/.claude` / `~/.claude.json` is read.
 
     - `plugins_enabled`: when true (default), `effective_egress_allow`
       also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
@@ -1978,7 +1982,7 @@ class Config(BaseModel):
         node — see `Stacks.shared_caches`) are folded in first, ahead of
         the integration auto-adds. Then each enabled agent's mounts are
         folded in (see `agents.enabled_agent_specs`) — for `claude` this is
-        `claude` + `claude-json` + `claude-install` — followed by
+        `claude` + `claude-install` — followed by
         `jetbrains-config` + `jetbrains-data` when `jetbrains.enabled`.
         """
         from jailbee.agents import enabled_agent_specs
@@ -2028,10 +2032,6 @@ class Config(BaseModel):
     def effective_ls_columns(self, gcfg: GlobalConfig) -> ColumnConfig:
         """Column preference for ``jailbee ls``: repo block over global block."""
         return self._effective_columns(gcfg.ls, self.ls)
-
-    def effective_dashboard_columns(self, gcfg: GlobalConfig) -> ColumnConfig:
-        """Column preference for the dashboards: repo block over global block."""
-        return self._effective_columns(gcfg.dashboard, self.dashboard)
 
     def effective_host_mounts(self) -> list[HostMount]:
         """User's host_mounts plus auto-additions driven by gpg / ssh /
@@ -2252,6 +2252,15 @@ class Config(BaseModel):
         # are still the raw, unrecovered blocks and a typo is still reported
         # as an error.
         issues.extend(validate_column_blocks([("ls", self.ls), ("dashboard", self.dashboard)]))
+        if "dashboard" in self.model_fields_set:
+            issues.append(
+                "dashboard: deprecated and ignored — the dashboards remember their "
+                "own columns now (press F2 in `jailbee dashboard`, or View ▸ Columns "
+                "in the GUI). A repo-level block is also not seeded at all: only "
+                "~/.config/jailbee/global.yaml is imported, into each dashboard's own "
+                "settings the first time you open that dashboard after upgrading. "
+                "This repo-level block can be deleted."
+            )
         return issues
 
 
@@ -2272,10 +2281,12 @@ def _default_shared_dir(container_prefix: str) -> Path:
 def device_name(subpath: str) -> str:
     """Incus disk-device name for a shared subpath.
 
-    `.` → `-` is not cosmetic: it must yield exactly `claude`, `claude-json`
-    and `claude-install` for Claude's three subpaths, because those are live
-    device names in every existing container's binds profile. A different rule
-    renames disk devices under running containers.
+    `.` → `-` is not cosmetic: it must yield exactly `claude` and
+    `claude-install` for Claude's two subpaths, because those are live
+    device names in every existing container's binds profile. The same rule
+    still matters for any user-declared `type: file` mount whose subpath
+    contains a dot. A different rule renames disk devices under running
+    containers.
     """
     return subpath.replace(".", "-")
 

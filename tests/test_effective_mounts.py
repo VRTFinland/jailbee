@@ -158,9 +158,9 @@ def test_effective_shared_caches_includes_claude_when_enabled(tmp_path):
     assert "claude" in by_name
     assert by_name["claude"].host_subpath == "claude"
     assert by_name["claude"].container_path == "~/.claude"
-    assert "claude-json" in by_name
-    assert by_name["claude-json"].host_subpath == "claude.json"
-    assert by_name["claude-json"].container_path == "~/.claude.json"
+    # `.claude.json` is no longer its own file-level bind; it lives inside the
+    # `claude` directory mount (CLAUDE_CONFIG_DIR).
+    assert "claude-json" not in by_name
 
 
 def test_effective_shared_caches_excludes_claude_when_disabled(tmp_path):

@@ -69,6 +69,46 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
+def _check_upgrade_advice(cfg: Config) -> CheckResult:
+    """Report whether this repo owes a `base build` or an `apply`.
+
+    The hint on `ls` / `new` / `shell` is easy to scroll past; this is the
+    place a user can always come back to. Failure to read the state DB is
+    reported as OK-with-a-caveat rather than a failed check: an unreadable
+    bookkeeping row is not a diagnosis about the user's setup.
+
+    Pending advice, by contrast, *is* a failed check — deliberately, and not
+    up for relitigation: doctor's vocabulary is ok / not-ok, and an owed base
+    build is genuinely something to act on. The consequence is accepted with
+    it: after a release that carries an `UPGRADE_NOTES` entry, `jailbee
+    doctor` exits non-zero for every user of that release until they run the
+    action, including in scripts and CI that treat the exit code as a
+    host-health verdict.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import __version__
+    from jailbee.db import get_engine
+    from jailbee.upgrade import advice_lines
+
+    try:
+        with Session(get_engine()) as session:
+            lines = advice_lines(
+                session,
+                cfg.container_prefix,
+                __version__,
+                now=datetime.now(UTC),
+            )
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        return CheckResult("upgrade actions", True, f"state could not be read ({e})")
+
+    if not lines:
+        return CheckResult("upgrade actions", True, "nothing pending")
+    return CheckResult("upgrade actions", False, "\n".join(lines))
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -114,6 +154,11 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                 "container_user uid/gid", True, f"matches host (uid={real_uid}, gid={real_gid})"
             )
         )
+
+    # 2a. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
+    # no Incus (it is a bookkeeping read against the state DB), so it lives
+    # here rather than behind the `incus_available` gate below.
+    results.append(_check_upgrade_advice(cfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():

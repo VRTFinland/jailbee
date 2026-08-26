@@ -4,6 +4,25 @@
 
 ### Added
 
+- **jailbee now tells you when a release needs `jb base build` or `jb apply`
+  re-run.** Some releases change what the golden image contains
+  (`provision/install.sh`, `install.d.available/` snippets, provisioning env)
+  or what `jb apply` writes (profiles, ACL); neither is re-run automatically,
+  so a user who upgrades the tool could keep a stale image or stale profiles
+  indefinitely with nothing to say so. Each release now declares its
+  requirements in `UPGRADE_NOTES`, jailbee records per repo the version at
+  which `jb base build` and `jb apply` last ran, and the difference is
+  reported as a non-blocking hint on stderr from `jb ls`, `jb new` and
+  `jb shell`, plus an `upgrade actions` check in `jb doctor`. The hint names
+  the reason, not just the command, and repeats until the action actually
+  runs — a partly failed `jb apply` (a restart or port-forward failure) does
+  not count as having run. Repos are backfilled silently on first sight, so
+  no backlog is invented for history jailbee never observed; only the
+  release that introduces the tracking can advise about itself. An install
+  whose version jailbee cannot read at all (it reports `0.0.0+unknown`, which
+  means the package metadata is missing) is silently excluded — there is
+  nothing to compare. Editable installs are not excluded: they report the
+  version in `pyproject.toml` and take part like any other.
 - **Generic agent support: `agents:` config key.** Claude Code's integration
   — shared credentials/settings mount, strict-mode egress, install/update at
   `jailbee new` time, autostart launch, `jailbee doctor` check — is now a
@@ -42,6 +61,11 @@
   rendering) is shared with `jailbee pr` via a new internal `pr_flow` module
   — `jailbee pr`'s own behaviour is unchanged. See
   [Submodule pull requests](docs/git-bridge.md#submodules).
+- TUI dashboard: fold repo groups with `Space` (or `Enter` on a group
+  header), and a settings overlay on **F2** / `S` for columns and folding.
+  Repo headers are now cursor stops.
+- GUI dashboard: **View ▸ Columns**. The two front-ends keep independent
+  settings.
 
 ### Changed
 
@@ -57,6 +81,26 @@
   submodules from a detached HEAD or to keep a deliberate mismatch. A
   container's branch is its identity, so `jailbee submodule checkout <name> -b`
   is unchanged: pure submodule placement, no branch switch.
+- **BREAKING: Claude Code's `~/.claude.json` moved inside the shared `~/.claude`
+  mount.** The golden image now exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so
+  Claude Code reads and writes `~/.claude/.claude.json` instead of
+  `~/.claude.json`, and the separate file-level bind mount
+  (`<shared_dir>/claude.json`, Incus device `claude-json`) is gone. A
+  file-level bind cannot survive an atomic rewrite: temp-file + rename
+  replaces the inode and the container keeps the old, unlinked one — so any
+  host-side write to that file was invisible inside the container.
+  **To upgrade:** run `jailbee base build` (for the new environment variable)
+  and `jailbee apply` in each repo (to move the existing file and drop the
+  device), then re-create containers from the new image. `jailbee apply` moves
+  `<shared_dir>/claude.json` to `<shared_dir>/claude/.claude.json`
+  automatically; it never overwrites an existing destination.
+  `CLAUDE_CONFIG_DIR` is also set as a base-profile environment variable, so
+  between `jailbee apply` and re-creating a container, existing containers
+  already get it on every `incus exec` — no window where `claude` writes to
+  the wrong path, even before the image is rebuilt or the container re-created.
+  `jailbee new` performs the same migration in a repo that has not been
+  re-`apply`ed yet, so the pre-move file is never orphaned by a fresh
+  container onboarding into the destination first.
 - **The Claude install/update step now runs bounded, with its output kept.**
   It used to run through an unbounded `incus.exec` call; it now runs through
   the same autostart step pipeline every other agent's install/update uses,
@@ -97,6 +141,21 @@
   proxying to the now-unresolvable mirror host, so `docker pull` inside the
   container fails. Set `docker_registry_mirror.enabled: true` (or declare the
   stack and rebuild the golden image).
+- The dashboards no longer show **IP** by default, matching `jailbee ls`.
+  MEM remains the one deliberate difference between the two default column
+  sets. Enable IP in the dashboard settings (F2 / View ▸ Columns) or ask for
+  it with `ls --fields ip`.
+- **`dashboard:` in `global.yaml` and `.jailbee/config.yaml` is deprecated.**
+  Each dashboard front-end now remembers its own columns, editable in the UI.
+  Your global block is imported into each front-end's own settings the first
+  time you open that dashboard after upgrading; the key is still accepted but
+  ignored, and can be deleted once both the TUI and the GUI have been opened.
+  **A repo-level `dashboard:` block is dropped, not imported** — the setting
+  is personal and cross-repo, so only the global file is read this way.
+  `jailbee config validate` reports both, and — like the existing
+  `golden.python` deprecation — this now makes `config validate` exit 2 for a
+  config that previously validated clean, so upgrading can turn a green CI or
+  pre-commit hook red until the block is removed.
 
 ### Fixed
 

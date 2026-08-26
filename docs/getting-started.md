@@ -176,11 +176,13 @@ What turning it on gets you:
 
 - **Claude Code installed in every container**, from a version store shared
   across the repo's containers — no per-container download.
-- **One login, all containers.** `<shared_dir>/claude` and
-  `<shared_dir>/claude.json` are mounted as `~/.claude` / `~/.claude.json`,
-  so settings, MCP servers, agents and credentials are shared and survive
-  `jailbee destroy` / `jailbee new` cycles. Your *host* `~/.claude` is never
-  read — Claude runs its onboarding once, inside the first container.
+- **One login, all containers.** `<shared_dir>/claude` is mounted as
+  `~/.claude`, so settings, MCP servers, agents and credentials are shared
+  and survive `jailbee destroy` / `jailbee new` cycles. Claude Code's global
+  config (`.claude.json`) lives **inside** that mount: the golden image
+  exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+  `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Your *host* `~/.claude` is
+  never read — Claude runs its onboarding once, inside the first container.
 - **Strict mode still works.** The Anthropic API and CLI-update hosts are
   added to the egress allowlist automatically; `plugins_enabled` adds the
   GitHub + npm hosts the plugin marketplace and skills reach. You don't

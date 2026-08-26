@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -467,32 +468,69 @@ def test_carry_forward_git_status_empty_prev_is_noop():
     assert new[0].containers[0].git_status is None
 
 
-def test_selectable_names_flattens_in_group_order():
+def test_selectable_rows_interleaves_headers_and_containers():
+    """Repo headers are selectable rows. That is what lets `Space` reach a
+    group whose containers are hidden — and it makes the cursor behave like
+    the tree it is drawing."""
     groups = [
-        dashboard.RepoGroup(
-            "a", "/a", Path("/a/.jailbee/config.yaml"), [_ci("a-1", "a"), _ci("a-2", "a")]
-        ),
-        dashboard.RepoGroup("b", None, None, [_ci("b-1", "b")]),
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a"), _ci("a-2", "a")]),
+        dashboard.RepoGroup("b", "/b", None, [_ci("b-1", "b")]),
     ]
-    assert dashboard.selectable_names(groups) == ["a-1", "a-2", "b-1"]
+    rows = dashboard.selectable_rows(groups)
+    assert rows == [
+        dashboard.Row("repo", "a"),
+        dashboard.Row("container", "a-1"),
+        dashboard.Row("container", "a-2"),
+        dashboard.Row("repo", "b"),
+        dashboard.Row("container", "b-1"),
+    ]
+
+
+def test_selectable_rows_skips_a_folded_groups_containers():
+    """A folded group keeps its header — that is how you unfold it — and
+    contributes none of its containers. Its neighbours are untouched."""
+    groups = [
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")]),
+        dashboard.RepoGroup("b", "/b", None, [_ci("b-1", "b")]),
+    ]
+    assert dashboard.selectable_rows(groups, frozenset({"a"})) == [
+        dashboard.Row("repo", "a"),
+        dashboard.Row("repo", "b"),
+        dashboard.Row("container", "b-1"),
+    ]
+
+
+def test_selectable_rows_omits_an_empty_group():
+    """An empty group draws no header either — `render` already skips it, and
+    a cursor stop on an invisible row would be a dead keypress."""
+    groups = [dashboard.RepoGroup("a", "/a", None, [])]
+    assert dashboard.selectable_rows(groups) == []
 
 
 def test_move_selection_clamps_at_edges():
-    names = ["x", "y", "z"]
-    assert dashboard.move_selection(names, None, 1) == "x"
-    assert dashboard.move_selection(names, "x", -1) == "x"  # clamp at top
-    assert dashboard.move_selection(names, "z", 1) == "z"  # clamp at bottom
-    assert dashboard.move_selection(names, "y", 1) == "z"
-    assert dashboard.move_selection([], "y", 1) is None
+    rows = [dashboard.Row("repo", "x"), dashboard.Row("container", "x-1")]
+    assert dashboard.move_selection(rows, None, 1) == rows[0]
+    assert dashboard.move_selection(rows, rows[0], -1) == rows[0]  # clamp at top
+    assert dashboard.move_selection(rows, rows[1], 1) == rows[1]  # clamp at bottom
+    assert dashboard.move_selection(rows, rows[0], 1) == rows[1]
+    assert dashboard.move_selection([], rows[0], 1) is None
 
 
 def test_reconcile_selection_keeps_or_clamps():
-    assert dashboard.reconcile_selection(["a", "b"], "b", 0) == "b"
-    # 'b' vanished, last_index 1 clamps into the new shorter list
-    assert dashboard.reconcile_selection(["a"], "b", 1) == "a"
-    assert dashboard.reconcile_selection([], "b", 0) is None
-    # nothing selected yet -> first
-    assert dashboard.reconcile_selection(["a", "b"], None, 0) == "a"
+    a, b = dashboard.Row("container", "a"), dashboard.Row("container", "b")
+    assert dashboard.reconcile_selection([a, b], b, 0) == b
+    assert dashboard.reconcile_selection([a], b, 1) == a
+    assert dashboard.reconcile_selection([], b, 0) is None
+    assert dashboard.reconcile_selection([a, b], None, 0) == a
+
+
+def test_container_of_narrows_a_header_row_to_none():
+    """The action path takes a container name. A header row has none, so it
+    falls into the existing 'nothing selected' notice rather than needing new
+    gating at every call site."""
+    assert dashboard.container_of(dashboard.Row("container", "a-1")) == "a-1"
+    assert dashboard.container_of(dashboard.Row("repo", "a")) is None
+    assert dashboard.container_of(None) is None
 
 
 def _session_verbs(actions: list[tuple[str, str]]) -> list[str]:
@@ -1108,13 +1146,14 @@ def test_visible_fields_excludes_hidden_and_respects_default_table():
     assert "network" in names
 
 
-def test_dashboard_keeps_ip_and_mem_that_ls_drops_by_default():
-    """The two views have different defaults, and the dashboard's are wider.
+def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
+    """MEM is the one deliberate difference between the two default sets.
 
-    IP and MEM are off in `jailbee ls` (a one-shot listing pays their width
-    for a stale sample) but on here, where the view refreshes. Guards the
-    coupling that used to make one flag serve both: dropping them from `ls`
-    must not silently strip them from the live dashboards.
+    MEM is a live sample: it earns its width in a view that refreshes and not
+    in a one-shot listing. IP is off in both — `jailbee apply` writes
+    /etc/hosts entries, so the address is rarely how a container is reached,
+    and the dashboards used to pay 15 columns for it. Both stay reachable:
+    IP via the settings UI or `ls --fields ip`, MEM via `ls --fields mem`.
     """
     from datetime import UTC, datetime
 
@@ -1128,52 +1167,8 @@ def test_dashboard_keeps_ip_and_mem_that_ls_drops_by_default():
     dashboard_names = [f.name for f in dashboard.visible_fields(now, [c])]
     ls_names = [f.name for f in ls_field_specs(now=now, all_repos=False) if f.default_table]
 
-    assert "ip" in dashboard_names and "ip" not in ls_names
     assert "mem" in dashboard_names and "mem" not in ls_names
-
-
-def test_dashboard_hide_still_removes_a_dashboard_only_column():
-    """`hide` stays authoritative over the dashboard-only default.
-
-    `mem` is on by default in the dashboards via `default_dashboard`; a user
-    who hides it must still get it gone, or the new flag would have quietly
-    made a documented config key unenforceable.
-    """
-    from datetime import UTC, datetime
-
-    from jailbee.config import ColumnConfig
-
-    c = ContainerInfo(
-        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
-    )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-
-    names = [
-        f.name for f in dashboard.visible_fields(now, [c], columns=ColumnConfig(hide=["mem", "ip"]))
-    ]
-    assert "mem" not in names and "ip" not in names
-
-
-def test_dashboard_explicit_fields_reach_a_table_only_default():
-    """An explicit `dashboard.fields` list beats every default, in both
-    directions: it surfaces `memory_limit` (off by default everywhere) and
-    drops the core columns it does not name."""
-    from datetime import UTC, datetime
-
-    from jailbee.config import ColumnConfig
-
-    c = ContainerInfo(
-        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
-    )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            now, [c], columns=ColumnConfig(fields=["name", "memory_limit"])
-        )
-    ]
-    assert names == ["name", "memory_limit"]
+    assert "ip" not in dashboard_names and "ip" not in ls_names
 
 
 def test_visible_fields_network_cell_folds_loose_ttl():
@@ -1271,66 +1266,119 @@ def test_visible_fields_defaults_to_todays_hidden_set():
     assert "name" in names
 
 
-def test_visible_fields_honours_an_explicit_field_list():
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_enabled_set_can_drop_a_dashboard_only_column():
+    """An enabled set is authoritative in both directions: it can drop `mem`,
+    which is on by default in the dashboards."""
+    from datetime import UTC, datetime
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "state"])]
+    assert names == ["name", "state"]
+
+
+def test_visible_fields_enabled_set_can_add_an_off_by_default_column():
+    """...and it can add one that is off by default everywhere, which a `hide`
+    list never could."""
+    from datetime import UTC, datetime
+
+    c = ContainerInfo(
+        name="p-foo", state="Running", network="strict", ip=None, memory_limit="2GB", repo="p"
+    )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "memory_limit"])]
+    assert names == ["name", "memory_limit"]
+
+
+def test_visible_fields_renders_in_canonical_order_not_stored_order():
+    """Stored order is not significant: the dashboards iterate the field-spec
+    list and filter by membership. Column reordering is a separate feature,
+    and this keeps a stored list from half-implementing it."""
+    from datetime import UTC, datetime
 
     c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    fields = dashboard.visible_fields(
-        datetime.now().astimezone(), [c], ColumnConfig(fields=["name", "created"])
-    )
-
-    # `created` is in the default hidden set; naming it explicitly brings it back.
-    assert [f.name for f in fields] == ["name", "created"]
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["state", "name"])]
+    assert names == ["name", "state"]
 
 
-def test_visible_fields_honours_show_if_for_an_explicit_field_list():
-    """An explicitly named column renders even when its `show_if` is false —
-    matching table_format.apply_column_config()'s treatment of an explicit
-    `fields` list (see that function's docstring). Naming a column is an
-    explicit request."""
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_still_applies_show_if_to_an_enabled_column():
+    """The deliberate difference from `ls --fields`, where naming a column
+    clears its `show_if`. Here enabling PR means "show it when a container
+    tracks one", not "show an empty PR column forever" — the settings UI says
+    so on the row itself. Without this, four dynamic columns (`job`, `ttl`,
+    `pr`, `mode`) would render permanently empty for anyone who ticked them.
+    """
+    from datetime import UTC, datetime
 
     no_pr = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip=None, memory_limit=None
     )
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            datetime.now().astimezone(), [no_pr], ColumnConfig(fields=["name", "pr"])
-        )
-    ]
+    names = [f.name for f in dashboard.visible_fields(now, [no_pr], ["name", "pr"])]
+    assert names == ["name"]
 
+    with_pr = ContainerInfo(
+        name="p-bar", state="Running", network="strict", ip=None, memory_limit=None, pr_number=7
+    )
+    names = [f.name for f in dashboard.visible_fields(now, [with_pr], ["name", "pr"])]
     assert names == ["name", "pr"]
 
 
-def test_visible_fields_honours_a_custom_hide_list():
-    from jailbee.config import ColumnConfig
-    from jailbee.lifecycle import ContainerInfo
+def test_visible_fields_unknown_enabled_name_is_ignored():
+    """A name that is no longer a real column (a removed field, a hand-edited
+    row) is skipped rather than raising — same principle as the tolerant
+    decode in db/view_prefs."""
+    from datetime import UTC, datetime
 
     c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    names = [
-        f.name
-        for f in dashboard.visible_fields(
-            datetime.now().astimezone(), [c], ColumnConfig(hide=["state"])
-        )
-    ]
+    names = [f.name for f in dashboard.visible_fields(now, [c], ["name", "gone", "state"])]
+    assert names == ["name", "state"]
 
+
+def test_default_columns_matches_the_built_in_dashboard_set():
+    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+
+    names = dashboard.default_columns()
+    assert "name" in names
+    assert "mem" in names  # the dashboard-only default
+    assert "ip" not in names  # Task 1
+    assert not set(names) & set(DASHBOARD_DEFAULT_HIDE)
+
+
+def test_enabled_from_column_config_reproduces_a_legacy_hide_block():
+    """The seed path: a `dashboard:` block resolves to the exact set it used
+    to render, so nobody's columns change on upgrade."""
+    from jailbee.config import ColumnConfig
+
+    names = dashboard.enabled_from_column_config(ColumnConfig(hide=["mem", "state"]))
+    assert "mem" not in names
     assert "state" not in names
-    # `hide` replaces the default set rather than adding to it, so a column
-    # the built-in default hid is back unless the user hid it too.
+    assert "name" in names
+    # `hide` replaced the built-in list rather than extending it, so a column
+    # the default hid is back — the legacy semantics, preserved by the seed.
     assert "created" in names
+
+
+def test_enabled_from_column_config_reproduces_a_legacy_fields_block():
+    from jailbee.config import ColumnConfig
+
+    names = dashboard.enabled_from_column_config(ColumnConfig(fields=["name", "created"]))
+    assert names == ("name", "created")
 
 
 def test_visible_fields_still_folds_the_loose_ttl_into_network():
     """The network-cell swap must survive an explicit field list."""
     from datetime import timedelta
 
-    from jailbee.config import ColumnConfig
     from jailbee.lifecycle import ContainerInfo
 
     now = datetime.now().astimezone()
@@ -1343,21 +1391,10 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
         loose_until=now + timedelta(hours=2),
     )
 
-    fields = dashboard.visible_fields(now, [loose], ColumnConfig(fields=["name", "network"]))
+    fields = dashboard.visible_fields(now, [loose], ["name", "network"])
     network = next(f for f in fields if f.name == "network")
 
     assert network.cell(loose) == "loose (2h)"
-
-
-def test_resolve_dashboard_columns_falls_back_to_global_without_a_cwd_repo(mocker):
-    from jailbee.global_config import GlobalConfig
-
-    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
-    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.fields == ["name", "state"]
 
 
 def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
@@ -1376,84 +1413,159 @@ def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_
     assert gcfg.dashboard.fields == ["name"]
 
 
-def test_resolve_dashboard_columns_reads_a_global_only_block_from_disk(tmp_path, monkeypatch):
-    """`gie gui` outside a repo is ordinary, and `global.yaml` is the
-    documented normal home for this setting — so the real load path (no
-    mocked loader) must deliver it. It did not: the `dashboard:` key was
-    stripped by `_split_host_keys` before `GlobalConfig` validation, so
-    `gcfg.dashboard` was always the built-in default."""
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, local_diff]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+def test_seed_view_state_imports_the_global_dashboard_block_once(mocker):
+    """Nobody's columns change on upgrade: the deprecated global block is
+    resolved once into the front-end's row."""
+    from sqlmodel import SQLModel, create_engine
 
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.fields == ["name", "local_diff"]
-
-
-def test_resolve_dashboard_columns_global_hide_replaces_the_default_hide(tmp_path, monkeypatch):
-    """`hide` is a replacement, not an extension: naming only `ip` brings
-    REPO / FULL NAME / GIT STATUS / CREATED / TTL back into the table."""
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
-
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  hide: [ip]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-
-    columns = dashboard.resolve_dashboard_columns(None)
-
-    assert columns.hide == ["ip"]
-    assert not set(DASHBOARD_DEFAULT_HIDE) & set(columns.hide)
-
-
-def test_resolve_dashboard_columns_layers_the_cwd_repos_config_over_global(
-    tmp_path, mocker, make_cfg
-):
+    from jailbee.db.view_prefs import FRONTEND_TUI, load_view_state
     from jailbee.global_config import GlobalConfig
 
-    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
-    cfg = make_cfg(tmp_path, dashboard={"fields": ["name", "ip"]})
-    path = tmp_path / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
-
-    columns = dashboard.resolve_dashboard_columns(path)
-
-    assert columns.fields == ["name", "ip"]
-
-
-def test_resolve_dashboard_columns_falls_back_when_cwd_config_fails_to_load(tmp_path, mocker):
-    from jailbee.global_config import GlobalConfig
-
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
     gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
     mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
-    mocker.patch.object(dashboard, "load_config", side_effect=Exception("boom"))
 
-    columns = dashboard.resolve_dashboard_columns(tmp_path / ".jailbee" / "config.yaml")
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
-    assert columns.fields == ["name", "state"]
+    assert state.columns == ("name", "state")
+    assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "state")
 
 
-def test_resolve_dashboard_columns_with_no_dashboard_block_yields_the_default_hide(
-    tmp_path, mocker, make_cfg
-):
-    """A cwd repo with no `dashboard:` block must still resolve to
-    `DASHBOARD_DEFAULT_HIDE` — the safety net for the whole feature — by
-    falling through to the (real, unoverridden) global default rather than
-    an empty hide list."""
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
+def test_seed_view_state_leaves_an_existing_row_alone(mocker):
+    """Seeding happens once. After that the YAML block is inert — editing it
+    must not reach back into a front-end the user has since configured."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
     from jailbee.global_config import GlobalConfig
 
-    cfg = make_cfg(tmp_path)
-    path = tmp_path / ".jailbee" / "config.yaml"
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name",)))
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name",)
+
+
+def test_seed_view_state_ignores_a_repo_level_block(mocker):
+    """The seeded value is a personal, cross-repo setting, so it must come
+    from the global layer only — never the repo layer, even when one exists
+    and disagrees with it. Seeding from whichever repo the user happened to
+    launch from first would let one repo silently define their view
+    everywhere.
+
+    The global and (mocked) repo layers are given *different* `dashboard:`
+    blocks on purpose: if `seed_view_state` ever started consulting the
+    repo layer, the result would flip to the repo's columns and
+    `load_config` would stop being uncalled. The previous version of this
+    test had no repo config to differ against, so it passed identically
+    against an implementation that *did* consult one — it only pinned
+    "default global config -> default columns", never the "repo is
+    ignored" claim in its own name.
+    """
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    gcfg = GlobalConfig(dashboard=dashboard.ColumnConfig(fields=["name", "state"]))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    repo_cfg = mocker.Mock(dashboard=dashboard.ColumnConfig(fields=["ip", "mem"]))
+    load_config = mocker.patch.object(dashboard, "load_config", return_value=repo_cfg)
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name", "state")  # the global block's answer, not the repo's
+    load_config.assert_not_called()  # the repo layer is never even read
+
+
+def test_seed_view_state_seeds_the_two_frontends_independently(mocker):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_QT, FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "state"]})
+    mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name",)))
+
+    assert dashboard.seed_view_state(engine, FRONTEND_TUI).columns == ("name",)
+    assert dashboard.seed_view_state(engine, FRONTEND_QT).columns == ("name", "state")
+
+
+def test_seed_view_state_filters_a_stale_column_name(mocker):
+    """A column that has since been renamed or removed must not survive into
+    the returned state — an all-phantom set would otherwise be able to reach
+    the front-ends' last-column guards without those guards ever firing
+    (the stored length is nonzero, but nothing real is left after both the
+    TUI's and the Qt window's own filtering skip the unknown name)."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "old_removed_col")))
     mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
 
-    columns = dashboard.resolve_dashboard_columns(path)
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
-    assert sorted(columns.hide) == sorted(DASHBOARD_DEFAULT_HIDE)
+    assert state.columns == ("name",)
+
+
+def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(mocker):
+    """The empty-after-filtering case: if nothing in the stored set is a real
+    column any more, the built-in default set is used instead of an empty
+    tuple — the same "never zero columns" invariant the menu guard enforces
+    at the other end."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("old_removed_col",)))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == dashboard.default_columns()
+
+
+def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
+    """`seed_view_state` itself never writes: filtering happens only on the
+    value it returns, not on the stored row, which still has the phantom
+    name right after this call.
+
+    That is narrower than "the name survives the session" — it does not,
+    in general. Both front-ends hold the filtered value as their long-lived
+    `enabled` / `_enabled_columns`, and the next save triggered by *any*
+    action (e.g. folding a repo group) writes that filtered value back,
+    dropping the phantom from storage for good. This test only pins down
+    that this one function is not that save."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "old_removed_col")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "old_removed_col")
 
 
 def _render_text(renderable: RenderableType) -> str:
@@ -1510,7 +1622,7 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
     out = _render_text(
         dashboard.render(
             groups,
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=now,
             last_refresh_age=1.0,
             interval=3.0,
@@ -1542,9 +1654,7 @@ def test_render_empty_groups_shows_placeholder():
     assert "no-git" in out
 
 
-def test_render_forwards_columns_to_visible_fields(tmp_path):
-    from jailbee.config import ColumnConfig
-
+def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
@@ -1557,7 +1667,7 @@ def test_render_forwards_columns_to_visible_fields(tmp_path):
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
-            columns=ColumnConfig(fields=["name", "created"]),
+            enabled=["name", "created"],
         )
     )
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
@@ -1610,7 +1720,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     out = _render_text(
         dashboard.render(
             [g],
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
@@ -1636,7 +1746,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     kwargs = {
-        "selected": "alpha-one",
+        "selected": dashboard.Row("container", "alpha-one"),
         "now": datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
         "last_refresh_age": 1.0,
         "interval": 3.0,
@@ -1856,7 +1966,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
     out = _render_text(
         dashboard.render(
             [g],
-            selected="alpha-one",
+            selected=dashboard.Row("container", "alpha-one"),
             now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
@@ -2142,3 +2252,345 @@ def test_actions_for_container_no_clear_without_a_job():
     verbs = [verb for _, verb in dashboard.actions_for_container(groups, "p-foo")]
 
     assert "job clear" not in verbs
+
+
+def test_fold_target_works_from_a_header_and_from_a_container():
+    """Space is forgiving: it folds the current row's group whether the cursor
+    is on the header or on any container inside it."""
+    groups = [dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")])]
+    assert dashboard.fold_target(groups, dashboard.Row("repo", "a")) == "a"
+    assert dashboard.fold_target(groups, dashboard.Row("container", "a-1")) == "a"
+    assert dashboard.fold_target(groups, dashboard.Row("container", "gone")) is None
+    assert dashboard.fold_target(groups, None) is None
+
+
+def test_toggle_folded_is_a_pure_set_flip():
+    assert dashboard.toggle_folded(frozenset(), "a") == frozenset({"a"})
+    assert dashboard.toggle_folded(frozenset({"a", "b"}), "a") == frozenset({"b"})
+
+
+def test_render_marks_a_folded_group_and_hides_its_rows(tmp_path):
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]),
+        dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-two", "beta")]),
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            folded=frozenset({"alpha"}),
+        )
+    )
+    # NAME cells show display_name (repo prefix stripped, see ContainerInfo);
+    # "beta-two" -> "two" is the neighbour's untouched row, distinct from
+    # "alpha-one" -> "one" so the two containers cannot be confused for
+    # each other in the assertion below.
+    assert "one" not in out  # folded away
+    assert "two" in out  # its neighbour is untouched
+    assert "▸" in out and "▾" in out  # collapsed and expanded markers both drawn
+    assert "1 folded" in out  # the title says what is hidden
+
+
+def test_render_marks_a_selected_repo_header(tmp_path):
+    """A header the cursor sits on must look selected.
+
+    Headers became cursor stops one commit earlier, where `render` did not
+    consult `selected` for them at all — so the stop was state-correct and
+    invisible, and pressing Down onto a header made the highlight vanish
+    with nothing replacing it. The gutter arrow is what marks the cursor row
+    for containers; a selected header carries it too, so both kinds of stop
+    read as one cursor.
+    """
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    kwargs = dict(now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True)
+
+    unselected = _render_text(dashboard.render([g], selected=None, **kwargs))
+    on_header = _render_text(
+        dashboard.render([g], selected=dashboard.Row("repo", "alpha"), **kwargs)
+    )
+
+    assert unselected != on_header  # the header renders differently as the cursor row
+    # The group is unfolded, so its fold marker is `▾`; `▸` can only be the
+    # selection gutter. That makes this assertion discriminating rather than
+    # matching whichever glyph happens to be present.
+    #
+    # The exclusion clause must name what the container row actually
+    # contains: `display_name` strips the `<repo>-` prefix, so the row reads
+    # "one", never "alpha-one" — filtering on the full name was inert (it
+    # excluded nothing, since that string never appears in either line) and
+    # would have let the container's own row satisfy this `next()` by
+    # accident if it had ever picked up a `▸` of its own.
+    header_line = next(ln for ln in on_header.splitlines() if "alpha" in ln and "one" not in ln)
+    assert "▸" in header_line
+
+
+def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path):
+    """`render` used to give the group-header row's first cell a 2-char
+    gutter unconditionally, but a container row's first cell only got one
+    when `f.name == "name"`. With `name` disabled via the settings overlay
+    and some other field first, the header ends up indented two columns to
+    the right of its own container rows — this is now reachable since
+    disabling `name` from the settings UI is a real, supported action.
+    Fails against the old `f.name == "name"` gating, which never puts a
+    gutter on the container row here (its first field is `state`, not
+    `name`) while the header row still gets one unconditionally."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state", "network"),  # `name` disabled; `state` is first
+        )
+    )
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    header_line = next(ln for ln in lines if "alpha" in ln)
+    data_line = next(ln for ln in lines if "Running" in ln)
+    # Both lines start with the Panel's own border+padding ("│ "), identical
+    # on every row, so strip exactly that one border character before
+    # measuring each row's own indentation — comparing the raw lines
+    # (border included) would always read indent 0 for both, since neither
+    # starts with a literal space.
+    header_indent = len(header_line[1:]) - len(header_line[1:].lstrip(" "))
+    data_indent = len(data_line[1:]) - len(data_line[1:].lstrip(" "))
+    assert header_indent == data_indent
+
+
+def test_render_counts_every_container_even_when_folded(tmp_path):
+    """The title is a census, not a row count: a folded repo's containers are
+    still there and still running."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    groups = [
+        dashboard.RepoGroup(
+            "alpha",
+            "/a",
+            tmp_path / "a.yaml",
+            [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
+        )
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            folded=frozenset({"alpha"}),
+        )
+    )
+    assert "2 containers" in out
+
+
+def test_show_if_is_computed_from_visible_containers_only(tmp_path):
+    """A folded group must not keep alive a column that has nothing to say on
+    screen. The PR container is folded away, so the PR column goes with it."""
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    with_pr = _ci("alpha-one", "alpha")
+    with_pr.pr_number = 7
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [with_pr]),
+        dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-one", "beta")]),
+    ]
+    kwargs = dict(selected=None, now=now, last_refresh_age=1.0, interval=3.0, git_enabled=True)
+    unfolded = _render_text(dashboard.render(groups, **kwargs))
+    folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
+
+    assert "PR" in unfolded
+    assert "PR" not in folded
+
+
+def test_fold_key_is_bound_to_space_and_documented():
+    """A key that is not in KEY_BINDINGS is invisible in the help overlay and
+    the hint line, which is how the two used to drift."""
+    assert dashboard.parse_key(b" ") == "fold"
+    binding = dashboard.binding_for_token("fold")
+    assert binding is not None
+    assert binding.hint and binding.label
+
+
+def test_settings_key_is_bound_to_f2_and_shift_s():
+    """Both F2 encodings, because terminals disagree, plus a letter that works
+    everywhere. `s` is already shell, so the alias is `S`."""
+    assert dashboard.parse_key(b"\x1bOQ") == "settings"
+    assert dashboard.parse_key(b"\x1b[12~") == "settings"
+    assert dashboard.parse_key(b"S") == "settings"
+    binding = dashboard.binding_for_token("settings")
+    assert binding is not None and binding.hint
+
+
+def test_all_column_names_is_the_full_ls_vocabulary():
+    """The Fields tab offers every real column, including ones off by default
+    in both views — that is the point of an enabled set over a hide list."""
+    from datetime import UTC, datetime
+
+    from jailbee.lifecycle import ls_field_specs
+
+    names = dashboard.all_column_names()
+    expected = [f.name for f in ls_field_specs(now=datetime(2026, 6, 8, tzinfo=UTC))]
+    assert list(names) == expected
+    assert "full_name" in names and "git_status" in names and "ip" in names
+
+
+def test_dynamic_column_names_are_exactly_the_show_if_ones():
+    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode"})
+
+
+def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
+    """Otherwise a repo whose containers are gone could never be unfolded:
+    it draws no group, so the Repos tab would not list it."""
+    groups = [
+        dashboard.RepoGroup("alpha", "/a", None, [_ci("alpha-one", "alpha")]),
+        dashboard.RepoGroup("empty", "/e", None, []),
+    ]
+    prefixes = dashboard.settings_repo_prefixes(groups, frozenset({"alpha", "vanished"}))
+
+    assert "alpha" in prefixes
+    assert "vanished" in prefixes  # folded but absent — still reachable
+    assert "empty" not in prefixes  # draws nothing, folds nothing
+    assert len(prefixes) == len(set(prefixes))  # no duplicate for a folded on-screen repo
+
+
+def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
+    from jailbee.dashboard_settings import open_settings
+
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    g = dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
+    overlay = open_settings(
+        field_names=dashboard.all_column_names(),
+        enabled=frozenset(dashboard.default_columns()),
+        repo_prefixes=("alpha",),
+        folded=frozenset(),
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=now,
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay=overlay,
+        )
+    )
+    # The live table stays on screen behind the panel — that is the whole
+    # reason the overlay is a panel and not a full-screen modal.
+    # (The container row renders as "one": display_name strips the repo
+    # prefix, same as the menu-overlay table-visibility check above.)
+    assert "one" in out
+    assert "settings" in out
+    assert "Fields" in out
+
+
+# ---------------------------------------------------------------------------
+# run() loop: a fake terminal, driven by a scripted key sequence
+# ---------------------------------------------------------------------------
+
+
+def _drive_run(mocker, key_sequence: list[bytes]) -> int:
+    """Run the real ``dashboard.run()`` key loop with a fake terminal.
+
+    Feeds ``key_sequence`` one key per main-loop iteration (``os.read`` is
+    mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
+    always terminates even if a test's own key list doesn't. Everything
+    that would touch a real terminal, the state DB, or Incus is mocked;
+    ``gather_live`` returns no containers, so these tests exercise overlay
+    and persistence behaviour without depending on the background
+    refresher thread ever publishing a snapshot before the key loop reads
+    it (a real race the tests must not depend on winning).
+    """
+    mocker.patch.object(
+        dashboard, "collect_config_paths", return_value=[Path("/x/.jailbee/config.yaml")]
+    )
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
+    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+
+    mock_stdin = mocker.Mock()
+    mock_stdin.isatty.return_value = True
+    mock_stdin.fileno.return_value = 0
+    mocker.patch.object(dashboard.sys, "stdin", mock_stdin)
+    mock_stdout = mocker.Mock()
+    mock_stdout.isatty.return_value = True
+    mocker.patch.object(dashboard.sys, "stdout", mock_stdout)
+
+    mocker.patch.object(dashboard.termios, "tcgetattr", return_value=object())
+    mocker.patch.object(dashboard.termios, "tcsetattr")
+    mocker.patch.object(dashboard.tty, "setcbreak")
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+
+    padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
+
+    return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+
+
+def test_run_degrades_when_save_view_state_fails(mocker):
+    """A DB write failure on the keypress path (fold key, Enter on a header,
+    the settings overlay toggle) must not crash the session.
+
+    Before this branch the TUI never wrote to the DB at all, so a failing
+    write is a new failure mode: ``run()``'s own ``try`` only catches
+    ``KeyboardInterrupt``, so an unguarded ``save_view_state`` propagating
+    a ``database is locked`` (or any other write failure) would end the
+    whole dashboard with a traceback. Fails if ``persist_view_state``'s
+    try/except is removed and the exception is left to propagate.
+    """
+    save = mocker.patch.object(
+        dashboard, "save_view_state", side_effect=OSError("database is locked")
+    )
+    # "S" opens the settings overlay, Space toggles the field under the
+    # cursor (a fold-key press on the Fields tab) — one of the three
+    # persist_view_state call sites, reached with no live groups at all.
+    rc = _drive_run(mocker, [b"S", b" "])
+
+    assert rc == 0  # run() returned normally, no exception propagated
+    save.assert_called_once()  # the write was attempted, and it failed
+
+
+def test_run_persists_view_state_when_the_write_succeeds(mocker):
+    """Sanity check for the harness itself: the same key sequence, without
+    a failing ``save_view_state``, writes through normally."""
+    from jailbee.db.view_prefs import FRONTEND_TUI
+
+    save = mocker.patch.object(dashboard, "save_view_state")
+    rc = _drive_run(mocker, [b"S", b" "])
+
+    assert rc == 0
+    save.assert_called_once()
+    _engine, frontend, state = save.call_args.args
+    assert frontend == FRONTEND_TUI
+    assert isinstance(state, dashboard.ViewState)
+
+
+def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
+    """F2/S must mirror ``h``'s own toggle: pressing it while another
+    overlay (the action menu, help) is open switches to settings, not just
+    closes whatever was open.
+
+    There is no live group in this harness (``gather_live`` returns
+    ``[]``), so a bare-table fold keypress (`Space` with no overlay open)
+    has nothing to act on and never reaches ``save_view_state`` — see
+    ``fold_target``. That makes ``save_view_state`` firing after
+    ``h`` then ``S`` then `Space` a discriminating signal that ``S``
+    actually opened the settings overlay (whose own `Space`/fold handling
+    unconditionally calls ``persist_view_state``), rather than merely
+    closing help and leaving the bare table's fold key to reject the
+    keypress silently. Fails if `"settings"` goes back to being grouped
+    with `("cancel", "quit")`, which only closes whatever overlay is open.
+    """
+    save = mocker.patch.object(dashboard, "save_view_state")
+    rc = _drive_run(mocker, [b"h", b"S", b" "])
+
+    assert rc == 0
+    save.assert_called_once()

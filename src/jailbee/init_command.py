@@ -106,13 +106,108 @@ def _ensure_user_shared_dirs(cfg: Config) -> None:
 
     Only the user's `shared_caches` list is iterated (not
     `effective_shared_caches()`): the agent/jetbrains auto-adds are handled
-    separately, and claude.json is a *file*-level disk that must not be
-    created as a directory. File-type binds the user wants must be
-    pre-created by hand — see `_ensure_integration_shared_dirs`.
+    separately, and a user-declared `type: file` mount is a *file*-level disk
+    that must not be created as a directory. File-type binds the user wants
+    must be pre-created by hand — see `_ensure_integration_shared_dirs`.
     """
     assert cfg.shared_dir is not None  # set by load_config
     for cache in cfg.shared_caches:
         (cfg.shared_dir / cache.host_subpath).mkdir(parents=True, exist_ok=True)
+
+
+def _relocate_claude_json(cfg: Config) -> None:
+    """Move a legacy `<shared_dir>/claude.json` into `claude/.claude.json`.
+
+    One-time upgrade step for repos initialised before Claude Code's global
+    config moved inside the `claude` directory mount (the golden image now
+    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+    `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`).
+
+    Idempotent and never destructive: with the destination already present the
+    source is a leftover from before the move, so it is left exactly as it is
+    rather than overwriting live state or deleting the user's copy.
+
+    Caller ordering note: moving the source of a disk device a live binds
+    profile still declares makes every `incus start` / `profile assign` for
+    the repo fail with "Missing source path ...". `apply.run_apply` may call
+    this directly because it rewrites the binds profile on the same run —
+    and if it aborts in between, the next `apply` re-runs this (idempotent)
+    and self-heals. **Every other caller must go through
+    `migrate_claude_json`**, which pairs the move with that profile write;
+    nothing else on those paths ever rewrites the profile, so there the
+    breakage would be permanent.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    source = cfg.shared_dir / "claude.json"
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    if source.is_symlink():
+        warn(
+            f"{source} is a symlink — leaving it in place, not relocating to {target}. "
+            "Move it into place by hand if it should back Claude Code's global config."
+        )
+        return
+    if not source.is_file() or target.exists():
+        if source.is_file() and target.exists():
+            warn(
+                f"Legacy {source} left in place — {target} already exists. "
+                "If the legacy file holds real Claude Code state, merge it "
+                "into the destination by hand; jailbee never overwrites an "
+                "existing destination."
+            )
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+    success(f"Moved {source} → {target}")
+
+
+def migrate_claude_json(cfg: Config, incus: Incus) -> None:
+    """Retire the `shared-claude-json` disk device, then relocate its source.
+
+    The two halves are inseparable, and only `run_apply` gets them for free:
+    it rewrites `<prefix>-binds` on every run anyway, so it calls
+    `_relocate_claude_json` directly. Every other caller must pair them —
+    a pre-1.2.0 binds profile still declares a disk device whose source is
+    `<shared_dir>/claude.json`, and Incus refuses every `start` and
+    `profile assign` for the repo once a disk device's source path is
+    missing. Moving the file without rewriting the profile therefore breaks
+    the repo until the user happens to run `jailbee apply`, and it does not
+    self-heal: the relocation is a no-op on every later run.
+
+    The profile is rewritten **before** the move, not after. The rendered
+    YAML no longer declares the device, so the write is valid while the file
+    is still in place, and a failure leaves the repo exactly as it was.
+
+    Only `<prefix>-binds` is refreshed, not the whole profile set `apply`
+    writes: the device is what makes the move unsafe, and `jailbee new` has
+    no business re-applying the rest of the config.
+
+    Idempotent: once the legacy path is gone this returns immediately.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    source = cfg.shared_dir / "claude.json"
+    if not source.is_file() and not source.is_symlink():
+        return
+    names = profile_names(cfg)
+    if incus.profile_exists(names.binds):
+        incus.profile_set_yaml(names.binds, binds_profile_yaml(cfg))
+    _relocate_claude_json(cfg)
+
+
+def _seed_claude_json(cfg: Config) -> None:
+    """Write `<shared_dir>/claude/.claude.json` as `{}` when absent.
+
+    Incus no longer requires this file to exist (there is no file-level disk
+    device to give a source path to), but the seed is kept deliberately: an
+    *empty* file fails Claude Code's parse with `Unexpected EOF`, and a valid
+    `{}` is the known-good pre-first-run state this repo has always shipped.
+    Claude Code rewrites it on first run.
+    """
+    assert cfg.shared_dir is not None  # set by load_config
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}\n")
 
 
 def _ensure_integration_shared_dirs(cfg: Config) -> None:
@@ -132,11 +227,15 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
     Directory-type mounts (`spec.dir_subpaths`) are `mkdir`'d; file-type
     mounts (`spec.seed_files`) are seeded with their configured content only
     if they don't already exist — required because Incus rejects the
-    container start if a file-level disk device's source is missing, and for
-    `claude.json` specifically an empty/zero-byte file fails to parse
+    container start if a file-level disk device's source is missing. Claude
+    Code's global config, `.claude.json`, is no longer one of these: it lives
+    inside the `claude` directory mount (the golden image exports
+    `CLAUDE_CONFIG_DIR=$HOME/.claude`), seeded by `_seed_claude_json` and
+    migrated from its old file-mount location by `_relocate_claude_json`. An
+    empty/zero-byte `.claude.json` still fails Claude Code's parse
     (`Unexpected EOF`), which under `ensure-claude.sh`'s `pipefail` aborts the
     binary install before the shared store is populated, hard-failing the
-    first `jailbee new` for the repo.
+    first `jailbee new` for the repo — hence the seed.
     """
     from jailbee.agents import enabled_agent_specs
 
@@ -149,6 +248,12 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
             if not target.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(seed)
+    if cfg.claude.enabled:
+        # Order matters: relocate first, seed second. Reversed, the seed
+        # creates `{}` at the destination, the relocation then no-ops on an
+        # existing target, and a real pre-move `.claude.json` is orphaned.
+        _relocate_claude_json(cfg)
+        _seed_claude_json(cfg)
     if cfg.jetbrains.enabled:
         (cfg.shared_dir / "jetbrains-config").mkdir(parents=True, exist_ok=True)
         (cfg.shared_dir / "jetbrains-data").mkdir(parents=True, exist_ok=True)

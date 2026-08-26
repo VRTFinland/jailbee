@@ -203,6 +203,32 @@ def test_doctor_cmd_passes_the_loaded_global_config(tmp_path, mocker):
     assert run.call_args.kwargs["gcfg"] is gcfg
 
 
+def test_doctor_renders_a_bracketed_detail_verbatim(tmp_path, mocker):
+    """The STATUS cell is markup, so the whole row renders with markup on.
+
+    Details are arbitrary text — SQLAlchemy appends `[SQL: ...] [parameters:
+    (...)]` to any DBAPI error, and paths get bracketed by hand. Unescaped,
+    the first shape is silently swallowed as a style tag and the second
+    raises MarkupError, which would take `doctor` itself down.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.doctor import CheckResult
+
+    detail = "boom [parameters: ('x',)] [/tmp/p]"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.doctor.run_checks", return_value=[CheckResult("db", True, detail)])
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert detail in result.stdout
+
+
 def test_doctor_warns_on_legacy_host_docker_mirror(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
@@ -1260,3 +1286,87 @@ def test_doctor_skips_the_port_check_without_incus_too(tmp_path):
     skipped = [r for r in results if "skipped" in r.detail]
     assert len(skipped) == 1
     assert "port forwards" in skipped[0].detail
+
+
+# ---- upgrade advice: `jb doctor` surfaces an owed base build / apply ----
+
+
+def test_doctor_reports_pending_upgrade_actions(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch(
+        "jailbee.upgrade.advice_lines",
+        return_value=[
+            "jailbee 1.4.0 changed what `jb base build` produces:",
+            "    - install.sh installs fd",
+        ],
+    )
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is False
+    assert "jb base build" in got.detail
+
+
+def test_doctor_is_happy_when_nothing_is_pending(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+
+
+def test_doctor_upgrade_check_survives_a_broken_state_db(make_cfg, tmp_path, mocker) -> None:
+    """Same rule as the CLI hint: this check may not be the thing that makes
+    `jailbee doctor` crash."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", side_effect=RuntimeError("db is locked"))
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+    assert "could not be read" in got.detail
+
+
+def test_doctor_upgrade_detail_preserves_the_structured_block(make_cfg, tmp_path, mocker) -> None:
+    """`advice_lines` returns a header line, then indented `    - reason`
+    bullets, then a `    Run ...` call-to-action — one such group per owed
+    action. Flattening that into a single "; "-joined, per-line-stripped
+    run-on destroys the indentation that distinguishes a bullet from a
+    header, so the detail must keep the newlines and the raw indentation
+    instead."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    lines = [
+        "jailbee 1.4.0 changed what `jb base build` produces:",
+        "    - install.sh installs fd",
+        "    - install.sh installs ripgrep",
+        "    Run `jb base build` to pick this up.",
+    ]
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=lines)
+
+    got = _check_upgrade_advice(cfg)
+
+    rendered = got.detail.split("\n")
+    assert rendered[0] == lines[0]
+    # The bullet's leading four-space "- " indentation must survive intact,
+    # not be stripped and glued onto the header with "; ".
+    assert rendered[1] == "    - install.sh installs fd"
+    assert rendered[2] == "    - install.sh installs ripgrep"
+
+
+def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    names = {r.name for r in results}
+    assert "upgrade actions" in names

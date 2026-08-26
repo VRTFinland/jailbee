@@ -304,8 +304,9 @@ terminal:
 #     the container, so credentials and settings survive container rebuilds
 #     and are shared between branches. For `claude`: <shared_dir>/claude
 #     (RW shared cache) as ~/.claude — credentials, settings, MCP, agents,
-#     skills, plugins — and <shared_dir>/claude.json (file-level shared
-#     cache) as ~/.claude.json (Claude's identity/onboarding state).
+#     skills, plugins, and (seeded at <shared_dir>/claude/.claude.json)
+#     Claude's identity/onboarding state, read from ~/.claude/.claude.json
+#     via CLAUDE_CONFIG_DIR=~/.claude.
 #   - Auto-extends strict-mode egress_allow with that agent's hosts — no
 #     need to list them by hand below. For `claude`: api.anthropic.com:443,
 #     code.claude.com:443, and downloads.claude.ai:443 (CLI self-update).

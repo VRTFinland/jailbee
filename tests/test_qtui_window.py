@@ -31,14 +31,12 @@ def test_set_groups_populates_tree_with_group_and_containers(qtbot):
 
 
 def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
-    from jailbee.config import ColumnConfig
-
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)
     win.set_groups(
         _groups(),
         now=datetime.now().astimezone(),
-        columns=ColumnConfig(fields=["name", "created"]),
+        columns=["name", "created"],
     )
     headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
     assert headers == ["NAME", "CREATED"]
@@ -349,3 +347,92 @@ def test_paused_checks_off_manual_in_refresh_menu(qtbot):
     qtbot.addWidget(win)
     checked = [a.text() for a in win.refresh_menu.actions() if a.isCheckable() and a.isChecked()]
     assert checked == ["Off (manual)"]
+
+
+def test_columns_menu_reflects_the_enabled_set(qtbot):
+    from jailbee.dashboard import all_column_names, dynamic_column_names
+
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    checked = {a.text() for a in win.columns_menu.actions() if a.isChecked()}
+
+    assert checked == {"name", "state"}
+    dynamic = dynamic_column_names()
+    expected_labels = {
+        f"{name} (shown only when it applies)" if name in dynamic else name
+        for name in all_column_names()
+    }
+    assert {a.text() for a in win.columns_menu.actions()} == expected_labels
+
+
+def test_columns_menu_marks_the_dynamic_columns(qtbot):
+    """A GUI user who ticks `pr` with no PR container must see why nothing
+    appeared — mirroring the TUI overlay's `(shown only when it applies)`
+    suffix, driven by the same `dynamic_column_names()` this
+    branch's TUI already uses. Fails if the menu goes back to a bare
+    `menu.addAction(name)` per column."""
+    from jailbee.dashboard import dynamic_column_names
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    labels_by_name = {}
+    for name in dynamic_column_names():
+        act = next(a for a in win.columns_menu.actions() if a.text().startswith(name))
+        labels_by_name[name] = act.text()
+
+    for name, label in labels_by_name.items():
+        assert label != name  # not a bare, unmarked action
+        assert "when it applies" in label
+
+    # enabled_columns() must still return bare names — nothing downstream
+    # (view_prefs, visible_fields) should ever see the decorated text.
+    assert all("(shown only" not in n for n in win.enabled_columns())
+
+
+def test_toggling_a_columns_action_emits_and_updates(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    seen: list[int] = []
+    win.columnsChanged.connect(lambda: seen.append(1))
+
+    act = next(a for a in win.columns_menu.actions() if a.text() == "ip")
+    # `act.trigger()` toggles the checkable action AND emits `triggered(checked)`
+    # in one call — the same effect `setChecked` + `triggered.emit(bool)` would
+    # have, but the latter is unusable here: this PySide6 build (6.11.1)
+    # resolves a bare `.emit(True)` on an overloaded `triggered` signal to its
+    # zero-arg overload and raises (`triggered() only accepts 0 argument(s)`),
+    # confirmed with a bare `QAction` outside any of this module's code.
+    act.trigger()
+
+    assert "ip" in win.enabled_columns()
+    assert seen  # the controller is told, so it can persist
+
+
+def test_the_last_column_cannot_be_unchecked(qtbot):
+    """Same rule as the TUI overlay: a table with no columns looks broken."""
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name",))
+    qtbot.addWidget(win)
+    act = next(a for a in win.columns_menu.actions() if a.text() == "name")
+    act.trigger()  # see the note in test_toggling_a_columns_action_emits_and_updates
+
+    assert win.enabled_columns() == ("name",)
+
+
+def test_a_stale_persisted_column_name_cannot_reach_zero_columns(qtbot):
+    """A persisted set can contain a name from a renamed/removed column
+    (``decode_names`` only validates JSON shape, not column vocabulary).
+    Unfiltered, that phantom would inflate the stored length past 1 without
+    the last-column guard noticing, and then get dropped by `_toggle_column`'s
+    own filtering anyway — reaching zero real columns from a single toggle.
+    The window must filter it out at construction instead, so only the one
+    real name remains and the ordinary last-column guard protects it."""
+    win = MainWindow(git_enabled=True, interval=3.0, enabled_columns=("name", "old_removed_col"))
+    qtbot.addWidget(win)
+    act = next(a for a in win.columns_menu.actions() if a.text() == "name")
+    act.trigger()
+
+    # Written as an equality against the real survivor, not a truthiness or
+    # membership check, so it fails on the empty-tuple outcome specifically —
+    # not merely on the phantom name still being present somewhere.
+    assert win.enabled_columns() == ("name",)
+    assert act.isChecked() is True  # the action snaps back

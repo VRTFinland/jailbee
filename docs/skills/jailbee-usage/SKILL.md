@@ -379,7 +379,7 @@ otherwise fight over.
 - **Optional mounts:** `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` to
   attach/detach an `optional_mounts` entry (e.g. `aws`) on a live container.
 - **Housekeeping:** `jailbee disk-usage`, `jailbee prune` (stopped containers >30 days),
-  `jailbee doctor` (host-level diagnostics), `jailbee apply` (re-push config — profiles,
+  `jailbee doctor` (host + repo diagnostics), `jailbee apply` (re-push config — profiles,
   ACL, /etc/hosts, dockerd proxy — after editing `.jailbee/config.yaml`; idempotent).
 - **Background jobs:** `jailbee job ls [--all-repos]` (in-flight/failed jobs with
   phase, pid, age, error, log path), `jailbee job log <name> [--follow]` (print or

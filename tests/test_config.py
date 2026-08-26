@@ -2521,7 +2521,7 @@ def test_push_default_source_default_is_base():
 
 
 def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mocker):
-    """claude.enabled auto-adds claude, claude-json AND claude-install."""
+    """claude.enabled auto-adds claude AND claude-install."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="claude:\n  enabled: true\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -2529,6 +2529,7 @@ def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mock
     assert "claude-install" in by_name
     assert by_name["claude-install"].host_subpath == "claude-install"
     assert by_name["claude-install"].container_path == "~/.local/share/claude"
+    assert "claude-json" not in by_name
 
 
 def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocker):
@@ -3101,16 +3102,6 @@ def test_effective_columns_explicit_empty_hide_beats_a_nonempty_global(make_cfg,
     assert eff.hide == []
 
 
-def test_effective_dashboard_columns_keeps_the_default_hide(make_cfg, tmp_path) -> None:
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
-    from jailbee.global_config import GlobalConfig
-
-    cfg = make_cfg(tmp_path)
-
-    eff = cfg.effective_dashboard_columns(GlobalConfig())
-    assert sorted(eff.hide) == sorted(DASHBOARD_DEFAULT_HIDE)
-
-
 def test_validate_runtime_rejects_an_unknown_ls_field(make_cfg, tmp_path) -> None:
     cfg = make_cfg(tmp_path, ls={"fields": ["name", "nosuchfield"]})
 
@@ -3386,32 +3377,6 @@ def test_load_path_global_dashboard_block_reaches_global_config(
     assert gcfg.dashboard.hide == ["ip"]
 
 
-def test_load_path_repo_explicit_empty_hide_beats_a_nonempty_global_dashboard(
-    tmp_path, monkeypatch, mocker
-) -> None:
-    """The dashboard-layer twin of the `ls` test above, and the property this
-    branch's review flagged as protected-but-uncovered: a repo block that
-    explicitly sets `dashboard.hide: []` must override a non-empty global
-    `dashboard.hide`, end to end. `Config._effective_columns` keys the merge
-    on `model_fields_set` rather than truthiness specifically so this works;
-    until now the property was only proven by a hand-built `Config`/
-    `GlobalConfig` pair (the `ls` equivalent at
-    `test_effective_columns_explicit_empty_hide_beats_a_nonempty_global`) or
-    by reading the code, never through the real YAML load path that
-    production actually takes."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    cfg_path, global_path = _write_layered(
-        tmp_path,
-        monkeypatch,
-        global_yaml="dashboard:\n  hide: [ip]\n",
-        repo_yaml="dashboard:\n  hide: []\n",
-    )
-
-    columns = load_config(cfg_path).effective_dashboard_columns(_load_global_yaml(global_path))
-
-    assert columns.hide == []
-
-
 def test_load_path_agents_layer_merges_per_agent_instead_of_replacing(
     tmp_path, monkeypatch, mocker
 ) -> None:
@@ -3569,33 +3534,33 @@ def test_load_config_column_warnings_empty_by_default(tmp_path, mocker) -> None:
     assert cfg.column_warnings() == []
 
 
-def test_load_config_repo_hide_only_still_inherits_global_fields_after_sanitize(
+def test_load_config_repo_ls_hide_only_still_inherits_global_fields_after_sanitize(
     tmp_path, monkeypatch, mocker
 ) -> None:
-    """The regression guard for the fix itself: `sanitize_column_blocks` must
-    only touch the sub-field it is actually correcting. A dashboard block
-    that sets `hide` (with one bad name to sanitize) but never mentions
-    `fields` must still inherit the global `fields` after going through
+    """`sanitize_column_blocks` must only touch the sub-field it is actually
+    correcting: a repo `ls:` block that sets `hide` (with one bad name to
+    sanitize) but never mentions `fields` must still inherit the global
+    `fields` through `effective_ls_columns` after going through
     `load_config` — if the sanitizer reconstructed the whole `ColumnConfig`
-    it would mark `fields` as explicitly set too (to its own default,
-    `None`), which would override the global `fields` list with `None`
-    instead of inheriting it, corrupting the merge for every repo that ever
-    sets `hide`, not just the ones with a typo."""
-    from jailbee.global_config import load_global_config
-
+    instead of touching only `hide`, it would mark `fields` as explicitly
+    set too (to its own default, `None`), which would override the global
+    `fields` list with `None` instead of inheriting it, corrupting the merge
+    for every repo that ever has a `hide` typo, not just the sanitizer's own
+    unit tests. `ls` is the live path this guards; the equivalent for the
+    deprecated `dashboard:` block was deleted along with
+    `effective_dashboard_columns`."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, state]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-    repo = _write_repo(tmp_path, config_yaml="dashboard:\n  hide: [ip, nosuchfield]\n")
+    cfg_path, global_path = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="ls:\n  fields: [name, state]\n",
+        repo_yaml="ls:\n  hide: [ip, nosuchfield]\n",
+    )
 
-    cfg = load_config(repo / ".jailbee" / "config.yaml")
-    gcfg, _ = load_global_config(xdg / "jailbee" / "global.yaml")
+    cfg = load_config(cfg_path)
+    gcfg = _load_global_yaml(global_path)
 
-    assert cfg.dashboard.hide == ["ip"]
-    assert any("nosuchfield" in w for w in cfg.column_warnings())
-    eff = cfg.effective_dashboard_columns(gcfg)
+    eff = cfg.effective_ls_columns(gcfg)
     assert eff.fields == ["name", "state"]
     assert eff.hide == ["ip"]
 
@@ -3798,3 +3763,43 @@ def test_host_ports_rejects_unknown_key(tmp_path):
     )
     with pytest.raises(ConfigError):
         load_config(cfg_path)
+
+
+def test_a_global_dashboard_block_is_reported_as_deprecated(tmp_path) -> None:
+    """`jailbee config validate` is where a user finds out the block stopped
+    mattering. Only fires when the key is actually present — a default block
+    must stay silent."""
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  hide: [mem]\n")
+
+    issues = global_config_issues(path)
+
+    assert any("dashboard" in i and "deprecated" in i for i in issues)
+
+
+def test_no_dashboard_block_reports_no_deprecation(tmp_path) -> None:
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("ls:\n  hide: [mem]\n")
+
+    assert not any("deprecated" in i for i in global_config_issues(path))
+
+
+def test_a_repo_dashboard_block_reports_deprecated_and_not_seeded(make_cfg, tmp_path) -> None:
+    """A repo block is doubly dead: deprecated like the global one, and never
+    seeded — the seed reads the personal layer only, so this one is simply
+    dropped. That has to be said out loud, not left to be discovered."""
+    from jailbee.config import ColumnConfig
+
+    # `model_copy(update=...)` adds the updated keys to __pydantic_fields_set__
+    # in Pydantic v2, which is what `"dashboard" in cfg.model_fields_set` reads.
+    cfg = make_cfg(tmp_path).model_copy(update={"dashboard": ColumnConfig(hide=["mem"])})
+    assert "dashboard" in cfg.model_fields_set  # the precondition this test rests on
+
+    issues = cfg.validate_runtime()
+
+    assert any("deprecated" in i for i in issues)
+    assert any("not seeded" in i or "not imported" in i for i in issues)

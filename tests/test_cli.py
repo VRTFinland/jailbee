@@ -2882,7 +2882,7 @@ def test_cli_config_show_effective_reflects_claude_auto_shared_caches(
 
     assert result.exit_code == 0, result.stdout + (result.stderr or "")
     assert "name: claude" in result.stdout
-    assert "name: claude-json" in result.stdout
+    assert "name: claude-json" not in result.stdout
 
 
 def test_cli_config_show_repo_layer_does_not_inject_auto_entries(tmp_path, monkeypatch):

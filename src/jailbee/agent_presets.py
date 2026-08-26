@@ -80,7 +80,6 @@ def claude_preset() -> dict[str, object]:
         "update": "__bundled__:ensure-claude.sh",
         "shared": [
             {"subpath": "claude", "path": "~/.claude"},
-            {"subpath": "claude.json", "path": "~/.claude.json", "type": "file", "seed": "{}\n"},
             {"subpath": "claude-install", "path": "~/.local/share/claude"},
         ],
         "egress_allow": list(CLAUDE_API_HOSTS),

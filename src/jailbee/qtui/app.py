@@ -7,7 +7,6 @@ layer and executes actions as ``jailbee`` subprocesses.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -19,7 +18,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
-from jailbee.dashboard import collect_config_paths, resolve_dashboard_columns
+from jailbee.dashboard import collect_config_paths, seed_view_state
+from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.qtui.actions import (
     TerminalNotFoundError,
     build_action,
@@ -41,7 +41,6 @@ from jailbee.qtui.window import MainWindow
 from jailbee.tui import error
 
 if TYPE_CHECKING:
-    from jailbee.config import ColumnConfig
     from jailbee.dashboard import RepoGroup
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
@@ -92,7 +91,6 @@ class AppController(QObject):
         interval: float,
         engine: object | None = None,
         paused: bool = False,
-        columns: ColumnConfig | None = None,
     ) -> None:
         super().__init__()
         self._window = window
@@ -100,8 +98,6 @@ class AppController(QObject):
         self._interval = interval
         self._engine = engine
         self._paused = paused
-        # Resolved once by `run()` at startup — never re-merged per refresh tick.
-        self._columns = columns
         # Timestamp of the last successful refresh, so a cadence change (a
         # menu action, not a refresh) can still update the status line
         # immediately instead of waiting for the next gather.
@@ -114,7 +110,7 @@ class AppController(QObject):
         self._latest = groups
         now = datetime.now().astimezone()
         self._last_refresh_at = now
-        self._window.set_groups(groups, now=now, columns=self._columns)
+        self._window.set_groups(groups, now=now)
         self._window.set_refresh_ok(at=now, interval=self._interval, paused=self._paused)
 
     @Slot(str)
@@ -168,7 +164,26 @@ class AppController(QObject):
                 refresh_interval=self._interval,
                 refresh_paused=self._paused,
                 card_style=self._window.current_card_style(),
-                collapsed_repos=json.dumps(sorted(self._window.collapsed_repos())),
+            ),
+        )
+
+    def _persist_view_state(self) -> None:
+        """Write the Qt dashboard's own view state — columns and folded repos.
+
+        Separate from `_persist`, which owns the Qt widget state in
+        `gui_state`. Two writers, two rows: nothing here can clobber the
+        TUI's row, and nothing here belongs in a table about window layout.
+        """
+        if self._engine is None:
+            return
+        from jailbee.db.view_prefs import FRONTEND_QT, ViewState, save_view_state
+
+        save_view_state(
+            self._engine,  # type: ignore[arg-type]  # Engine at runtime; typed as object to keep app.py PySide-only imports
+            FRONTEND_QT,
+            ViewState(
+                columns=self._window.enabled_columns(),
+                folded=frozenset(self._window.collapsed_repos()),
             ),
         )
 
@@ -184,8 +199,28 @@ class AppController(QObject):
 
     @Slot()
     def on_collapsed_changed(self) -> None:
-        """A card group was expanded/collapsed — persist the new set."""
-        self._persist()
+        """A card group was expanded/collapsed — persist the folded set.
+
+        Routed to ``_persist_view_state``, not ``_persist``: the folded set
+        lives in ``view_prefs``, not ``gui_state``, so this must never touch
+        the widget-layout row.
+        """
+        self._persist_view_state()
+
+    @Slot()
+    def on_columns_changed(self) -> None:
+        """The Columns menu toggled a column — repaint immediately, then persist.
+
+        Without the repaint, the change only reaches the table on whatever
+        the *next* refresh tick happens to push — and with "Off (manual)"
+        refresh, that tick may never come, making the menu look completely
+        inert. `set_groups(None)`'s "columns" default already reads the
+        window's own live `enabled_columns()`, so re-pushing the latest
+        snapshot here picks up the toggle without re-gathering anything.
+        """
+        if self._latest:
+            self._window.set_groups(self._latest, now=datetime.now().astimezone())
+        self._persist_view_state()
 
     def persist_on_close(self) -> None:
         """Save the full GUI-state snapshot (incl. table column widths/order)
@@ -413,6 +448,7 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
     window.layoutChanged.connect(controller.on_layout_changed)
     window.cardStyleChanged.connect(controller.on_card_style_changed)
     window.card_view.collapsedChanged.connect(controller.on_collapsed_changed)
+    window.columnsChanged.connect(controller.on_columns_changed)
 
 
 def run(
@@ -428,14 +464,15 @@ def run(
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
-    # Resolved once for the whole run — a live-refreshing dashboard must not
-    # re-merge config on every refresh tick.
-    columns = resolve_dashboard_columns(cwd_config)
-
     from jailbee.db import get_engine
     from jailbee.db.gui_state import load_gui_state
 
     engine = get_engine()
+
+    # Resolved once for the whole run — a live-refreshing dashboard must not
+    # re-merge config on every refresh tick.
+    view_state = seed_view_state(engine, FRONTEND_QT)
+
     state = load_gui_state(engine)
 
     resolved = interval if interval is not None else state.refresh_interval
@@ -443,15 +480,6 @@ def run(
     git_interval = max(git_interval, resolved)
     paused = state.refresh_paused
     git_enabled = not no_git
-
-    def _decode_collapsed(raw: str | None) -> set[str]:
-        if not raw:
-            return set()
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            return set()
-        return {str(x) for x in data} if isinstance(data, list) else set()
 
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
@@ -461,8 +489,9 @@ def run(
         layout=state.layout,
         header_state=state.table_header_state,
         card_style=state.card_style,
+        enabled_columns=view_state.columns,
     )
-    window.card_view.set_collapsed(_decode_collapsed(state.collapsed_repos))
+    window.card_view.set_collapsed(set(view_state.folded))
 
     thread = QThread()
     worker = RefreshWorker(
@@ -478,9 +507,7 @@ def run(
     # Kept on the GUI thread (never moveToThread'd) so cross-thread worker
     # signals resolve to queued connections; held in a local so it isn't
     # garbage-collected while `app.exec()` runs.
-    controller = AppController(
-        window, worker, interval=resolved, engine=engine, paused=paused, columns=columns
-    )
+    controller = AppController(window, worker, interval=resolved, engine=engine, paused=paused)
     _wire(window, worker, controller)
     if paused:
         worker.set_paused(True)

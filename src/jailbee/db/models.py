@@ -125,11 +125,14 @@ class BackgroundJob(SQLModel, table=True):
 
 
 class GuiState(SQLModel, table=True):
-    """Single-row (id=1) persisted state for the Qt dashboard GUI.
+    """Single-row (id=1) persisted state for the Qt dashboard *widget* itself
+    (layout, header, card style, refresh cadence).
 
     Machine-written UI state — kept in the state DB (not config.yaml) so it
     stays out of the user's hand-edited config. Written by the Qt app only;
-    the Rich TUI never touches it.
+    the Rich TUI never touches it. The folded-repos set used to live here
+    too, but moved to ``ViewPrefs`` since it is dashboard *view* state
+    shared in spirit with the TUI's columns, not Qt-widget plumbing.
     """
 
     __tablename__ = "gui_state"
@@ -140,4 +143,63 @@ class GuiState(SQLModel, table=True):
     refresh_interval: float | None = None
     refresh_paused: bool = False
     card_style: str = "compact"  # "compact" | "grid"
-    collapsed_repos: str | None = None  # JSON list[str] of collapsed repo prefixes
+
+
+class ViewPrefs(SQLModel, table=True):
+    """One dashboard front-end's persisted view state.
+
+    Keyed by front-end (``"tui"`` / ``"qt"``) because the two are
+    deliberately independent: a user may want a narrow TUI and a wide Qt
+    table, and neither follows the other. Machine-written UI state, so it
+    lives here rather than in config.yaml — the ``dashboard:`` config block
+    this replaces is deprecated (seeded once, then inert).
+
+    ``columns`` is a JSON list of enabled column names; ``None`` means the
+    built-in default set. Stored order is not significant today — the
+    dashboards iterate the canonical field-spec order and filter by
+    membership — but a list rather than a set leaves room for user-defined
+    ordering later without a migration.
+
+    ``folded_repos`` is a JSON list of folded repo prefixes. Prefixes that
+    are not currently registered are kept, so a repo whose containers are
+    momentarily gone does not silently unfold.
+
+    Two concurrent dashboards of the *same* front-end (two `jailbee
+    dashboard` processes, or two `jailbee gui` windows) share this one row
+    with no merge: each write is a full overwrite, so whichever process
+    saves last wins and the other's unsaved change is silently lost. This
+    is not guarded against — an unusual setup, and the two front-ends
+    already tolerate losing a concurrent write (see `db/view_prefs.py`).
+    """
+
+    __tablename__ = "view_prefs"
+
+    frontend: str = Field(primary_key=True)
+    columns: str | None = None
+    folded_repos: str | None = None
+
+
+class RepoUpgradeState(SQLModel, table=True):
+    """Per-repo record of the version at which `base build` / `apply` last ran.
+
+    Per repo, not global: both are repo-scoped operations (`golden.alias` is
+    derived from `container_prefix`, `apply` runs from a repo root), so
+    running `base build` in one repo must not silence another that has its
+    own golden image.
+
+    The `*_observed` flags separate a run jailbee actually saw from the
+    assumption written when a repo is first seen. See `jailbee.upgrade` —
+    the flag decides whether that version's own upgrade notes are considered
+    satisfied: an observed run sets an exclusive lower bound (that version's
+    notes are already satisfied), while an assumed one is inclusive (that
+    version's notes are not yet covered).
+    """
+
+    __tablename__ = "repo_upgrade_state"
+
+    container_prefix: str = Field(primary_key=True)
+    base_build_version: str
+    base_build_observed: bool
+    apply_version: str
+    apply_observed: bool
+    updated_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))

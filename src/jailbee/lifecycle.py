@@ -883,6 +883,22 @@ def new_container(
         f"→ Creating '{short_name(cfg, name)}' from base image "
         f"'{opts.from_base}' ({branch_note})..."
     )
+    # Migrate a legacy `<shared_dir>/claude.json` before the container exists.
+    # `jailbee base build` is global and `jailbee apply` is per-repo, so a repo
+    # that hasn't been re-`apply`ed yet would otherwise never run this: the
+    # destination wouldn't exist, Claude Code would onboard from scratch and
+    # write a fresh file there, and a later `jailbee apply` no-ops once that
+    # destination exists — orphaning the real, pre-move file for good.
+    #
+    # Here rather than after the clone (where it used to sit) because it
+    # rewrites `<prefix>-binds`: doing that before `incus init` means this
+    # container is created from an already-correct profile, and the write
+    # lands before anything in this run can fail half-way.
+    if cfg.claude.enabled:
+        from jailbee.init_command import migrate_claude_json
+
+        migrate_claude_json(cfg, incus)
+
     _phase("creating")
     incus.init(opts.from_base, name)
     incus.profile_assign(
@@ -2004,12 +2020,12 @@ def ls_field_specs(
             cell=lambda c: c.ip or "-",
             json=lambda c: c.ip,
             # `jailbee apply` writes /etc/hosts entries, so the address is
-            # rarely what you reach a container by — it costs 15 columns in
-            # every `ls` to answer a question most runs never ask. Still on
-            # by default in the dashboards, where a glance is free, and in
-            # JSON, where scripts depend on it.
+            # rarely what you reach a container by — it costs 15 columns to
+            # answer a question most views never ask. Off in the dashboards
+            # too, so the two default sets differ in exactly one column
+            # (`mem`); enable it in the dashboard settings UI or ask for it
+            # with `--fields ip`. Still on in JSON, where scripts depend on it.
             default_table=False,
-            default_dashboard=True,
         ),
         table_format.FieldSpec(
             name="memory_limit",

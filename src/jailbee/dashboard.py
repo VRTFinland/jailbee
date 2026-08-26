@@ -21,7 +21,7 @@ import threading
 import time
 import tty
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -37,6 +37,16 @@ from jailbee.config import (
     format_loose_after,
     load_config,
 )
+from jailbee.dashboard_settings import (
+    SettingsState,
+    enabled_names,
+    move_settings,
+    open_settings,
+    render_settings,
+    switch_tab,
+    toggle_current,
+)
+from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
     GlobalConfig,
     default_global_config_path,
@@ -51,7 +61,9 @@ from jailbee.lifecycle import (
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
+
+    from sqlalchemy.engine import Engine
 
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
@@ -153,25 +165,56 @@ def _global_config_or_defaults() -> GlobalConfig:
     return gcfg
 
 
-def resolve_dashboard_columns(cwd_config: Path | None) -> ColumnConfig:
-    """The dashboard's effective column preference, resolved once per launch.
+def seed_view_state(engine: Engine, frontend: str) -> ViewState:
+    """``frontend``'s view state, seeding its columns on first use.
 
-    Both dashboards render one shared table across every registered repo
-    (`render`, `qtui/window.py`'s `set_groups`), so a per-repo-group answer
-    is impossible — this resolves against the directory the user is
-    standing in (``cwd_config``), falling back to the global ``dashboard:``
-    block when there is no cwd repo or its config fails to load. Callers
-    (the TUI's ``run`` loop, the Qt ``AppController``) call this once at
-    startup and reuse the result on every refresh — never per frame.
+    The ``dashboard:`` config block is deprecated. It is read exactly once
+    per front-end — here — so that upgrading changes nobody's columns, and is
+    inert afterwards: a later edit to the YAML must not reach back into a
+    front-end the user has since configured through its own UI.
+
+    Only the **global** layer is consulted. The seeded value becomes a
+    personal setting that applies in every repo, so seeding it from whichever
+    repo the user happened to launch from first would let one repo's block
+    silently define their view everywhere. A repo-level block is reported as
+    deprecated *and* as not seeded by ``Config.validate_runtime``.
+
+    A stored column set is filtered against :func:`all_column_names` on the
+    way out, falling back to :func:`default_columns` if nothing survives —
+    ``decode_names`` only validates JSON shape, not column vocabulary, so a
+    renamed or removed column would otherwise reach both front-ends raw. Each
+    front-end's own last-column guard (``dashboard_settings.toggle_current``
+    here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
+    length, so a phantom name inflates that count without ever being a real,
+    keepable column — reaching zero real columns from a single ordinary
+    toggle. Filtering here, before either guard sees the set, is what keeps
+    that count honest.
+
+    This function itself never writes: the filtered value is only returned,
+    not saved back over the stored row. That does **not** mean an unknown
+    name survives in storage, though — the filtered value becomes the
+    long-lived ``enabled`` / ``self._enabled_columns`` each front-end holds
+    for the rest of the session, and *unrelated* actions save that same
+    value verbatim (folding a repo group, in both the TUI and the Qt
+    window, saves a `ViewState` built from it). So the first save triggered
+    by anything, not just a columns edit, drops the unknown name from
+    storage for good. A column removed in one release and reintroduced in
+    a later one will not come back for a user who reopens the dashboard and
+    triggers any such save in between. This is accepted, not an oversight:
+    preserving it would mean threading an unfiltered set through both
+    front-ends' save sites, or teaching :mod:`jailbee.db.view_prefs` the
+    column vocabulary it deliberately knows nothing about, for a narrow
+    scenario not judged worth that machinery.
     """
+    state = load_view_state(engine, frontend)
+    if state.columns is not None:
+        known = frozenset(all_column_names())
+        filtered = tuple(n for n in state.columns if n in known)
+        return replace(state, columns=filtered or default_columns())
     gcfg = _global_config_or_defaults()
-    if cwd_config is None:
-        return gcfg.dashboard
-    try:
-        cfg = load_config(cwd_config)
-    except Exception:  # same broad catch as _global_config_or_defaults: degrade, don't abort
-        return gcfg.dashboard
-    return cfg.effective_dashboard_columns(gcfg)
+    seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
+    save_view_state(engine, frontend, seeded)
+    return seeded
 
 
 def gather_rows(
@@ -288,29 +331,89 @@ def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[Repo
                 c.git_status = prev_status[c.name]
 
 
-def selectable_names(groups: list[RepoGroup]) -> list[str]:
-    """Flat list of container names in display order (headers excluded)."""
-    return [c.name for g in groups for c in g.containers]
+@dataclass(frozen=True)
+class Row:
+    """One cursor stop in the dashboard: a repo header or a container.
+
+    Headers are selectable so a folded group can be reached and unfolded, and
+    so the cursor behaves like the tree it is drawing. ``key`` is the repo
+    prefix for a header and the container name for a container — the two
+    namespaces are kept apart by ``kind`` rather than by a sentinel prefix,
+    which would break the moment a container name looked like a repo one.
+    """
+
+    kind: Literal["repo", "container"]
+    key: str
 
 
-def move_selection(names: list[str], current: str | None, delta: int) -> str | None:
+def selectable_rows(groups: list[RepoGroup], folded: frozenset[str] = frozenset()) -> list[Row]:
+    """Cursor stops in display order.
+
+    Every non-empty group contributes its header, folded or not; a folded
+    group contributes none of its containers. An empty group contributes
+    nothing at all, because :func:`render` draws no header for one and a
+    cursor stop on an invisible row is a dead keypress.
+    """
+    rows: list[Row] = []
+    for g in groups:
+        if not g.containers:
+            continue
+        rows.append(Row("repo", g.prefix))
+        if g.prefix in folded:
+            continue
+        rows += [Row("container", c.name) for c in g.containers]
+    return rows
+
+
+def move_selection(rows: list[Row], current: Row | None, delta: int) -> Row | None:
     """Move the highlight by ``delta`` rows, clamped at both ends."""
-    if not names:
+    if not rows:
         return None
-    if current not in names:
-        return names[0]
-    idx = names.index(current)
-    return names[max(0, min(len(names) - 1, idx + delta))]
+    if current not in rows:
+        return rows[0]
+    idx = rows.index(current)
+    return rows[max(0, min(len(rows) - 1, idx + delta))]
 
 
-def reconcile_selection(names: list[str], current: str | None, last_index: int) -> str | None:
+def reconcile_selection(rows: list[Row], current: Row | None, last_index: int) -> Row | None:
     """Keep ``current`` if still present; else clamp ``last_index`` into the
     refreshed list (nearest remaining row). None when the list is empty."""
-    if not names:
+    if not rows:
         return None
-    if current in names:
+    if current in rows:
         return current
-    return names[min(last_index, len(names) - 1)]
+    return rows[min(last_index, len(rows) - 1)]
+
+
+def container_of(row: Row | None) -> str | None:
+    """The container a row acts on, or None for a header or no selection.
+
+    Every action path (``open_menu``, ``quick_verb``, ``view_only_note``,
+    ``dispatch``) takes a container name, so a header row narrows to None
+    here and falls into their existing "nothing selected" handling rather
+    than each of them learning about rows.
+    """
+    return row.key if row is not None and row.kind == "container" else None
+
+
+def fold_target(groups: list[RepoGroup], row: Row | None) -> str | None:
+    """The repo prefix a fold key should act on for ``row``, else None.
+
+    Accepts either kind of row: folding from inside a group is the common
+    gesture ("get this out of my way"), and requiring the cursor to be on the
+    header first would make the key feel arbitrary.
+    """
+    if row is None:
+        return None
+    if row.kind == "repo":
+        return row.key
+    group = _find_group(groups, row.key)
+    return group.prefix if group is not None else None
+
+
+def toggle_folded(folded: frozenset[str], prefix: str) -> frozenset[str]:
+    """``folded`` with ``prefix`` flipped."""
+    return folded - {prefix} if prefix in folded else folded | {prefix}
 
 
 _NETWORK_MODES: tuple[str, ...] = ("strict", "loose")
@@ -453,31 +556,122 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     return [*prefix, ("Destroy", "destroy")]
 
 
+def default_columns() -> tuple[str, ...]:
+    """The built-in dashboard column set, in canonical field-spec order.
+
+    What a front-end renders before anyone has touched its settings, and the
+    reset target. `DASHBOARD_DEFAULT_HIDE` names the columns the dashboards
+    drop from the `ls` set: REPO is redundant under per-repo grouping, the
+    wide GIT STATUS combo and the JSON-only full_name add noise, and TTL is
+    folded into the NETWORK cell.
+    """
+    specs = ls_field_specs(now=datetime.now(UTC), all_repos=False)
+    return tuple(
+        f.name
+        for f in specs
+        if table_format.shows_by_default_in_dashboard(f) and f.name not in DASHBOARD_DEFAULT_HIDE
+    )
+
+
+def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
+    """Resolve a legacy ``dashboard:`` block into an enabled-name tuple.
+
+    The one remaining dashboard use of ``table_format.apply_column_config``,
+    confined to seeding a front-end's `view_prefs` row from the deprecated
+    config block (see ``seed_view_state``). Going through the old resolver is
+    what guarantees the seeded set is *exactly* what that block used to
+    render, including its two quirks: an explicit ``fields`` list wins
+    outright, and ``hide`` replaces the built-in list rather than extending
+    it.
+
+    That guarantee holds fully for a ``fields:`` block — naming a column
+    forces ``default_dashboard=True`` on it (see
+    ``table_format.apply_column_config``), overriding whatever the current
+    built-in default says. It does **not** hold for a ``hide:``-shaped
+    block (``fields`` empty/absent): a column *not* named in ``hide``
+    passes through with its current spec unchanged, so its inclusion here
+    is decided by :func:`table_format.shows_by_default_in_dashboard` as it
+    stands *today* — not as it stood when the block was written. IP left
+    the dashboard defaults in this same release (Part 1), so a ``hide:``
+    block that never mentioned ``ip`` seeds a set without it, even though
+    that block used to render IP for its user.
+    """
+    resolved = table_format.apply_column_config(
+        ls_field_specs(now=datetime.now(UTC), all_repos=False),
+        fields=columns.fields,
+        hide=columns.hide,
+    )
+    return tuple(f.name for f in resolved if table_format.shows_by_default_in_dashboard(f))
+
+
+def all_column_names() -> tuple[str, ...]:
+    """Every real column name, in canonical order — the Fields tab's list.
+
+    The same vocabulary ``jailbee ls --fields`` accepts, including columns off
+    by default in both views (``full_name``, ``git_status``, ``ip``, …): an
+    enabled set decides inclusion by membership, so any of them can be turned
+    on. ``repo`` is redundant under per-repo grouping but is not special-cased
+    — the user may want it.
+    """
+    return tuple(f.name for f in ls_field_specs(now=datetime.now(UTC), all_repos=False))
+
+
+def dynamic_column_names() -> frozenset[str]:
+    """Columns whose ``show_if`` can prune them even when enabled.
+
+    The settings overlay marks these so that an enabled column which does not
+    appear reads as the emptiness heuristic working, not as a bug.
+    """
+    specs = ls_field_specs(now=datetime.now(UTC), all_repos=False)
+    return frozenset(f.name for f in specs if f.show_if is not None)
+
+
+def settings_repo_prefixes(groups: list[RepoGroup], folded: frozenset[str]) -> tuple[str, ...]:
+    """The Repos tab's list: what is on screen, plus what is folded away.
+
+    A folded repo whose containers have since gone draws no group at all, so
+    listing only ``groups`` would leave it folded forever with no way back.
+    Deduped, on-screen groups first, absent folded prefixes sorted after them.
+
+    This is a snapshot taken once, when the overlay opens (see
+    ``open_settings_overlay`` in ``run()``) — a repo registered or a
+    container created/destroyed while the Repos tab is open does not appear
+    or disappear from the list until the overlay is closed and reopened.
+    """
+    on_screen = [g.prefix for g in groups if g.containers]
+    return tuple(dict.fromkeys(on_screen + sorted(folded)))
+
+
 def visible_fields(
     now: datetime,
     all_containers: list[ContainerInfo],
-    columns: ColumnConfig | None = None,
+    enabled: Sequence[str] | None = None,
 ) -> list[FieldSpecCI]:
     """The dashboard's visible columns, honouring each field's ``show_if``.
 
-    ``columns`` is the repo's effective ``dashboard:`` block. ``None`` means
-    the built-in default — today's hidden set — so callers that have no
-    config in hand still render what they always did.
+    ``enabled`` is the front-end's enabled-name set; ``None`` means
+    :func:`default_columns`. Membership decides inclusion — not
+    ``default_table``, which is why a column off by default everywhere can
+    be turned on here — and the field-spec list's own order decides
+    rendering order, so a stored list's order is not significant.
 
-    An explicit ``columns.fields`` list already has ``show_if`` cleared by
-    :func:`table_format.apply_column_config` — naming a column is a request
-    for that exact column, so it renders even when no container would
-    otherwise justify it. That's the same rule ``jailbee ls``'s configured
-    ``fields:`` list gets (see ``cli.py``'s ``ls`` command), applied once in
-    the resolver rather than copied here: this function's ``if f.show_if is
-    None or ...`` below is a no-op for those fields, and still prunes the
-    built-in default set (with or without ``hide``) exactly as before.
+    ``show_if`` applies to every column, enabled or not. This is the
+    deliberate difference from ``jailbee ls --fields``, where naming a column
+    clears its ``show_if`` (see ``table_format.apply_column_config``): there,
+    a name is a one-shot request; here it is a standing preference, and the
+    four dynamic columns (``job``, ``ttl``, ``pr``, ``mode``) would otherwise
+    render permanently empty for anyone who enabled them. The settings UI
+    marks those rows so the pruning does not read as a bug.
+
+    Unknown names are skipped rather than rejected — a stored set can outlive
+    a renamed column, and view state must not break the view.
 
     The ``network`` field is swapped for a dashboard-specific one whose cell
     folds the loose TTL inline (e.g. ``"loose (12m)"``); that is why the
-    standalone TTL column is hidden by default.
+    standalone TTL column is not in the default set.
 
-    Shared by the TUI ``render`` and the Qt model so both show the same set.
+    Shared by the TUI ``render`` and both Qt views, so all three show the
+    same columns for the same enabled set.
     """
 
     def _network_cell(c: ContainerInfo) -> str:
@@ -487,18 +681,11 @@ def visible_fields(
             return f"{c.network} (—)"
         return f"{c.network} ({format_duration_short(c.loose_until - now)})"
 
-    if columns is None:
-        columns = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
-    candidates = table_format.apply_column_config(
-        ls_field_specs(now=now, all_repos=False),
-        fields=columns.fields,
-        hide=columns.hide,
-    )
+    wanted = frozenset(default_columns() if enabled is None else enabled)
     fields = [
         f
-        for f in candidates
-        if table_format.shows_by_default_in_dashboard(f)
-        and (f.show_if is None or f.show_if(all_containers))
+        for f in ls_field_specs(now=now, all_repos=False)
+        if f.name in wanted and (f.show_if is None or f.show_if(all_containers))
     ]
     return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
 
@@ -537,6 +724,14 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
     KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
+    KeyBinding(
+        "fold",
+        (b" ",),
+        "Space",
+        "fold/unfold the repo group",
+        "Navigate",
+        brief="fold",
+    ),
     KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
     KeyBinding(
         "action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"
@@ -548,6 +743,15 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
     KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
+    KeyBinding(
+        "settings",
+        (b"\x1bOQ", b"\x1b[12~", b"S"),
+        "F2 / S",
+        "columns and repo folding",
+        "View",
+        brief="settings",
+    ),
+    KeyBinding("tab", (b"\t",), "", "", "View"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
@@ -602,9 +806,9 @@ class MenuState:
     index: int = 0
 
 
-# What occupies the slot under the table. Both overlays are mutually exclusive
-# by construction — "menu and help open at once" is not a representable state.
-Overlay = MenuState | Literal["help"]
+# What occupies the slot under the table. All three overlays are mutually
+# exclusive by construction — no combination of them is a representable state.
+Overlay = MenuState | SettingsState | Literal["help"]
 
 
 def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
@@ -700,6 +904,11 @@ def _hint_line(overlay: Overlay | None) -> str:
     """The keybinding hint shown on the last line of the panel body."""
     if isinstance(overlay, MenuState):
         return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+    if isinstance(overlay, SettingsState):
+        return (
+            "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
+            "[bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
+        )
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
     return "  ·  ".join(
@@ -709,16 +918,17 @@ def _hint_line(overlay: Overlay | None) -> str:
 
 def render(
     groups: list[RepoGroup],
-    selected: str | None,
+    selected: Row | None,
     *,
     now: datetime,
     last_refresh_age: float,
     interval: float,
     git_enabled: bool,
     refreshing: bool = False,
-    columns: ColumnConfig | None = None,
+    enabled: Sequence[str] | None = None,
     overlay: Overlay | None = None,
     notice: str | None = None,
+    folded: frozenset[str] = frozenset(),
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -735,15 +945,16 @@ def render(
     subtitle silently clipping it.
     """
     all_containers = [c for g in groups for c in g.containers]
-    # `mem` (used / limit) is a default-table field and `memory_limit` is not,
-    # so the plain default-table filter already yields the MEM column.
-    fields = visible_fields(now, all_containers, columns)
+    visible = [c for g in groups if g.prefix not in folded for c in g.containers]
+    fields = visible_fields(now, visible, enabled)
 
     table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
-    for f in fields:
-        # The NAME column carries a 2-char arrow gutter on data rows; pad its
-        # header so the column lines up.
-        header = ("  " + f.header) if f.name == "name" else f.header
+    for i, f in enumerate(fields):
+        # The *first* column carries a 2-char arrow gutter on data rows,
+        # whichever field that happens to be — the settings overlay lets
+        # `name` be disabled, so the gutter cannot be pinned to that field
+        # by name. Pad its header so the column lines up.
+        header = ("  " + f.header) if i == 0 else f.header
         table.add_column(header, justify=f.justify)
 
     if not all_containers:
@@ -756,33 +967,59 @@ def render(
             if not first_group:
                 table.add_row(*([""] * len(fields)))  # blank spacer between groups
             first_group = False
+            is_folded = g.prefix in folded
+            marker = "▸" if is_folded else "▾"
             is_orphan = g.repo_root is None
-            label = f"{g.prefix}  (orphan)" if is_orphan else g.prefix
+            label = f"{marker} {g.prefix}  ({len(g.containers)})"
+            if is_orphan:
+                label += "  (orphan)"
             label_style = "bold yellow" if is_orphan else "bold cyan"
-            table.add_row(f"[{label_style}]{label}[/]", *([""] * (len(fields) - 1)))
+            header_sel = selected is not None and selected == Row("repo", g.prefix)
+            gutter = "[bold cyan]▸[/] " if header_sel else "  "
+            table.add_row(
+                gutter + f"[{label_style}]{label}[/]",
+                *([""] * (len(fields) - 1)),
+                style="bold bright_white" if header_sel else None,
+            )
+            if is_folded:
+                continue
             for c in g.containers:
-                is_sel = c.name == selected
+                is_sel = (
+                    selected is not None and selected.kind == "container" and selected.key == c.name
+                )
                 cells: list[str] = []
-                for f in fields:
-                    if f.name == "name":
+                for i, f in enumerate(fields):
+                    # `name` shows the full container name (not the
+                    # repo-prefix-stripped display name) for an orphan row,
+                    # since there is no known repo to have stripped a prefix
+                    # from — independent of whether `name` happens to be the
+                    # first column.
+                    value = c.name if (f.name == "name" and is_orphan) else f.cell(c)
+                    if i == 0:
                         gutter = "[bold cyan]▸[/] " if is_sel else "  "
-                        name_val = c.name if is_orphan else f.cell(c)
-                        cells.append(gutter + name_val)
-                    else:
-                        cells.append(f.cell(c))
+                        value = gutter + value
+                    cells.append(value)
                 table.add_row(*cells, style="bold bright_white" if is_sel else None)
 
     body: list[RenderableType] = [table, ""]
     if overlay is not None:
-        panel = _render_menu(overlay) if isinstance(overlay, MenuState) else _render_help()
+        if isinstance(overlay, MenuState):
+            panel = _render_menu(overlay)
+        elif isinstance(overlay, SettingsState):
+            panel = render_settings(overlay, dynamic=dynamic_column_names())
+        else:
+            panel = _render_help()
         body += [panel, ""]
     body.append(_hint_line(overlay))
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
     mark = "  [yellow]⟳[/]" if refreshing else ""
+    n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
+    folded_note = f" · {n_folded} folded" if n_folded else ""
     title = (
-        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers   {now:%H:%M:%S}{mark}"
+        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers"
+        f"{folded_note}   {now:%H:%M:%S}{mark}"
     )
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
     note = f"[yellow]{notice}[/yellow]  ·  " if notice else ""
@@ -1058,9 +1295,15 @@ def run(
         error("No repos registered and no .jailbee/config.yaml in the current directory.")
         return 1
 
+    from jailbee.db import get_engine
+    from jailbee.db.view_prefs import FRONTEND_TUI
+
     # Resolved once for the whole run — a live-refreshing dashboard must not
     # re-merge config on every frame.
-    columns = resolve_dashboard_columns(cwd_config)
+    engine = get_engine()
+    view_state = seed_view_state(engine, FRONTEND_TUI)
+    enabled: tuple[str, ...] | None = view_state.columns
+    folded: frozenset[str] = view_state.folded
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)
@@ -1128,7 +1371,7 @@ def run(
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
-    selected: str | None = None
+    selected: Row | None = None
     sel_index = 0
     overlay: Overlay | None = None
     notice: str | None = None
@@ -1144,6 +1387,37 @@ def run(
         nonlocal notice, notice_until
         notice = text
         notice_until = time.monotonic() + _NOTICE_SECONDS
+
+    def persist_view_state(state: ViewState) -> None:
+        """Write ``state`` to ``view_prefs``, degrading instead of crashing.
+
+        Three call sites in this loop commit to SQLite straight from a
+        keypress (the fold key, Enter on a header, the overlay toggle).
+        ``run()``'s own ``try`` only catches ``KeyboardInterrupt``, so a
+        write failure here (``database is locked`` against a concurrent
+        background worker, a read-only state dir) would otherwise end the
+        whole session with a traceback. The fold/toggle already took effect
+        on screen by the time this runs — only persistence is lost.
+        """
+        try:
+            save_view_state(engine, FRONTEND_TUI, state)
+        except Exception:
+            log.debug("failed to save dashboard view state", exc_info=True)
+            set_notice("could not save view settings")
+
+    def open_settings_overlay() -> SettingsState:
+        """A fresh settings overlay over the current ``groups``/``folded``.
+
+        A small closure rather than inlining twice: opening from the plain
+        table and switching in from another overlay (see the `F2` handling
+        below) both need it.
+        """
+        return open_settings(
+            field_names=all_column_names(),
+            enabled=frozenset(enabled if enabled is not None else default_columns()),
+            repo_prefixes=settings_repo_prefixes(groups, folded),
+            folded=folded,
+        )
 
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     try:
@@ -1184,19 +1458,22 @@ def run(
                     groups = shared_groups
                     last_full = shared_last_full
                     refreshing = shared_refreshing
-                names = selectable_names(groups)
-                if isinstance(overlay, MenuState) and overlay.container not in names:
+                rows = selectable_rows(groups, folded)
+                if (
+                    isinstance(overlay, MenuState)
+                    and Row("container", overlay.container) not in rows
+                ):
                     # The menu's container vanished under it (destroyed, or its
                     # repo dropped out of the registry) — close rather than
                     # dispatch at a name that is no longer there.
                     set_notice(f"'{overlay.container}' is gone — menu closed")
                     overlay = None
                 if isinstance(overlay, MenuState):
-                    selected = overlay.container  # pinned while the menu is open
+                    selected = Row("container", overlay.container)  # pinned while the menu is open
                 else:
-                    selected = reconcile_selection(names, selected, sel_index)
-                if selected in names:
-                    sel_index = names.index(selected)
+                    selected = reconcile_selection(rows, selected, sel_index)
+                if selected in rows:
+                    sel_index = rows.index(selected)
                 if notice is not None and time.monotonic() >= notice_until:
                     notice = None
                 age = (time.monotonic() - last_full) if last_full else 0.0
@@ -1209,9 +1486,10 @@ def run(
                         interval=interval,
                         git_enabled=git_enabled,
                         refreshing=refreshing,
-                        columns=columns,
+                        enabled=enabled,
                         overlay=overlay,
                         notice=notice,
+                        folded=folded,
                     ),
                     refresh=True,
                 )
@@ -1228,6 +1506,25 @@ def run(
                         # One slot, so help replaces the menu rather than
                         # stacking on it — and toggles itself shut.
                         overlay = None if overlay == "help" else "help"
+                    elif key == "settings":
+                        # Mirrors help's own toggle, one line up: F2/S
+                        # switches to settings from any other overlay (the
+                        # action menu, help) instead of just closing it, and
+                        # toggles itself shut when settings is already open.
+                        if isinstance(overlay, SettingsState):
+                            overlay = None
+                        else:
+                            overlay = open_settings_overlay()
+                    elif isinstance(overlay, SettingsState):
+                        if key in ("up", "down"):
+                            overlay = move_settings(overlay, -1 if key == "up" else 1)
+                        elif key == "tab":
+                            overlay = switch_tab(overlay)
+                        elif key == "fold":
+                            overlay = toggle_current(overlay)
+                            enabled = enabled_names(overlay)
+                            folded = overlay.folded
+                            persist_view_state(ViewState(enabled, folded))
                     elif isinstance(overlay, MenuState):
                         if key in ("up", "down"):
                             overlay = move_menu(overlay, -1 if key == "up" else 1)
@@ -1241,22 +1538,37 @@ def run(
                 if key == "quit":
                     break
                 if key in ("up", "down"):
-                    selected = move_selection(names, selected, -1 if key == "up" else 1)
-                    if selected in names:
-                        sel_index = names.index(selected)
+                    selected = move_selection(rows, selected, -1 if key == "up" else 1)
+                    if selected in rows:
+                        sel_index = rows.index(selected)
                 elif key == "enter":
-                    overlay = open_menu(groups, selected)
-                    if overlay is None and selected is not None:
-                        note = view_only_note(groups, selected)
-                        set_notice(note or f"No actions available for '{selected}'")
+                    if selected is not None and selected.kind == "repo":
+                        folded = toggle_folded(folded, selected.key)
+                        persist_view_state(ViewState(enabled, folded))
+                    else:
+                        container = container_of(selected)
+                        overlay = open_menu(groups, container)
+                        if overlay is None and container is not None:
+                            note = view_only_note(groups, container)
+                            set_notice(note or f"No actions available for '{container}'")
+                elif key == "fold":
+                    prefix = fold_target(groups, selected)
+                    if prefix is None:
+                        set_notice("No repo group is selected")
+                    else:
+                        folded = toggle_folded(folded, prefix)
+                        persist_view_state(ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
+                elif key == "settings":
+                    overlay = open_settings_overlay()
                 elif key.startswith("action:"):
-                    verb = quick_verb(groups, selected, key)
-                    if verb is not None and selected is not None:
-                        dispatch(selected, verb)
+                    container = container_of(selected)
+                    verb = quick_verb(groups, container, key)
+                    if verb is not None and container is not None:
+                        dispatch(container, verb)
                     else:
-                        set_notice(quick_reject_note(groups, selected, key))
+                        set_notice(quick_reject_note(groups, container, key))
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:

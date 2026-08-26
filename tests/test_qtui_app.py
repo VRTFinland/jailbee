@@ -108,7 +108,9 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     worker = mock_worker_cls.return_value
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     # persist_on_close() (in run()'s `finally`) also calls save_gui_state —
     # patch it too so it doesn't try to open a real session on the sentinel.
@@ -140,6 +142,9 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     ]
     assert len(collapsed_targets) == 1
 
+    columns_targets = [c.args[0] for c in window.columnsChanged.connect.call_args_list]
+    assert len(columns_targets) == 1
+
 
 def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
     """Regression test for the threading bug: worker signals emitted from a
@@ -157,11 +162,7 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
 
     window = mocker.Mock()
 
-    def _set_groups(_groups: object, *, now: object, columns: object) -> None:
-        # `columns` is a required keyword here on purpose: if `on_groups`
-        # ever stopped forwarding it to `window.set_groups`, this mock
-        # would raise instead of silently tolerating the omission (which
-        # is exactly what a default value here would do).
+    def _set_groups(_groups: object, *, now: object) -> None:
         handled_on.append(QThread.currentThread())
 
     window.set_groups.side_effect = _set_groups
@@ -262,7 +263,6 @@ def test_controller_persists_on_layout_change(mocker):
     window.current_layout.return_value = "table"
     window.table_header_state.return_value = "Zm9v"
     window.current_card_style.return_value = "compact"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -283,13 +283,122 @@ def test_controller_persist_is_noop_without_engine(mocker):
     save.assert_not_called()
 
 
+def test_on_collapsed_changed_persists_view_state(mocker):
+    """A fold change must write `view_prefs`, columns and folded set alike —
+    not `gui_state`, which is `_persist`'s row."""
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    save_gui = mocker.patch("jailbee.db.gui_state.save_gui_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "state")
+    window.collapsed_repos.return_value = {"p", "q"}
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_collapsed_changed()
+
+    save_view.assert_called_once()
+    engine_arg, frontend_arg, state_arg = save_view.call_args.args
+    assert engine_arg is mocker.sentinel.engine
+    assert frontend_arg == "qt"
+    assert state_arg.columns == ("name", "state")
+    assert state_arg.folded == frozenset({"p", "q"})
+    # The two writers must never clobber each other's row.
+    save_gui.assert_not_called()
+
+
+def test_on_columns_changed_persists_view_state(mocker):
+    """The Columns menu's toggle must also land in `view_prefs`, carrying
+    whatever the window's own folded set currently is."""
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "ip")
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_columns_changed()
+
+    save_view.assert_called_once()
+    _engine_arg, frontend_arg, state_arg = save_view.call_args.args
+    assert frontend_arg == "qt"
+    assert state_arg.columns == ("name", "ip")
+    assert state_arg.folded == frozenset()
+
+
+def test_on_columns_changed_repaints_immediately(mocker):
+    """A column toggle must reach the table right away, not on whatever the
+    next refresh tick happens to push — with "Off (manual)" refresh, that
+    tick may never come, and the Columns menu would look completely inert.
+    This fails if on_columns_changed goes back to only persisting."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    groups = [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "ip")
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+    controller.on_groups(groups)  # populate self._latest, as a real refresh would
+    window.set_groups.reset_mock()
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_called_once()
+    assert window.set_groups.call_args.args[0] == groups
+
+
+def test_on_columns_changed_does_not_repaint_before_any_refresh(mocker):
+    """Before the first `on_groups`, `_latest` is empty — nothing to repaint,
+    and `window.set_groups` must not be called with a bogus empty snapshot."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name",)
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_not_called()
+
+
+def test_persist_view_state_is_noop_without_engine(mocker):
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+
+    controller.on_collapsed_changed()
+    controller.on_columns_changed()
+
+    save_view.assert_not_called()
+
+
+def test_on_layout_changed_does_not_touch_view_prefs(mocker):
+    """The mirror of `test_on_collapsed_changed_persists_view_state`: window
+    layout persistence must never write the `view_prefs` row."""
+    mocker.patch("jailbee.db.gui_state.save_gui_state")
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.current_layout.return_value = "table"
+    window.table_header_state.return_value = None
+    window.current_card_style.return_value = "compact"
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_layout_changed("table")
+
+    save_view.assert_not_called()
+
+
 def test_persist_on_close_writes_snapshot(mocker):
     save = mocker.patch("jailbee.db.gui_state.save_gui_state")
     window = mocker.Mock()
     window.current_layout.return_value = "cards"
     window.table_header_state.return_value = "AAAA"
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = {"gisgro"}
     controller = qapp.AppController(
         window, mocker.Mock(), interval=5.0, engine=mocker.sentinel.engine, paused=True
     )
@@ -300,10 +409,9 @@ def test_persist_on_close_writes_snapshot(mocker):
     assert state.refresh_interval == 5.0
     assert state.refresh_paused is True
     assert state.card_style == "grid"
-    assert state.collapsed_repos == '["gisgro"]'
 
 
-def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
+def test_persist_writes_card_style(qtbot, mocker):
     """Round-trips through a real in-memory engine (not a mocked
     save_gui_state) to exercise the actual GuiState(...) construction in
     _persist, mirroring test_db_gui_state.py's _engine() helper."""
@@ -319,19 +427,16 @@ def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
     controller = qapp.AppController(window, mocker.Mock(), interval=3.0, engine=engine)
 
     window._switch_card_style("grid")
-    window.card_view.set_collapsed({"gisgro"})
-    controller.on_collapsed_changed()
+    controller.on_card_style_changed("grid")
 
     saved = load_gui_state(engine)
     assert saved.card_style == "grid"
-    assert saved.collapsed_repos == '["gisgro"]'
 
 
 def test_on_card_style_changed_persists(mocker):
     save = mocker.patch("jailbee.db.gui_state.save_gui_state")
     window = mocker.Mock()
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -341,19 +446,19 @@ def test_on_card_style_changed_persists(mocker):
     save.assert_called_once()
     _engine_arg, state_arg = save.call_args.args
     assert state_arg.card_style == "grid"
-    assert state_arg.collapsed_repos == "[]"
 
 
-def test_run_restores_card_style_and_collapsed_repos(mocker):
+def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
     mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
-    window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(
@@ -361,7 +466,6 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
             refresh_interval=7.0,
             refresh_paused=False,
             card_style="grid",
-            collapsed_repos='["a", "b"]',
         ),
     )
     mocker.patch("jailbee.db.gui_state.save_gui_state")
@@ -370,10 +474,11 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
 
     _args, kwargs = mock_window_cls.call_args
     assert kwargs["card_style"] == "grid"
-    window.card_view.set_collapsed.assert_called_once_with({"a", "b"})
 
 
-def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
+def test_run_restores_enabled_columns_and_folded_repos(mocker):
+    """`run()` must seed the window's Columns menu and the card view's fold
+    state from the Qt front-end's own `view_prefs` row — not from the TUI's."""
     mocker.patch("jailbee.qtui.app.QApplication")
     mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
@@ -382,16 +487,20 @@ def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
     mocker.patch(
-        "jailbee.db.gui_state.load_gui_state",
-        return_value=GuiState(collapsed_repos="not-json"),
+        "jailbee.qtui.app.seed_view_state",
+        return_value=ViewState(columns=("name", "ip"), folded=frozenset({"repo-a"})),
     )
+    mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     mocker.patch("jailbee.db.gui_state.save_gui_state")
 
-    qapp.run(mocker.Mock(), None, interval=None, git_interval=10.0, no_git=False)
+    qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
 
-    window.card_view.set_collapsed.assert_called_once_with(set())
+    _args, kwargs = mock_window_cls.call_args
+    assert kwargs["enabled_columns"] == ("name", "ip")
+    window.card_view.set_collapsed.assert_called_once_with({"repo-a"})
 
 
 def _controller_with_group(
@@ -949,7 +1058,9 @@ def test_run_uses_persisted_interval_when_cli_none(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(layout="table", refresh_interval=7.0, refresh_paused=False),

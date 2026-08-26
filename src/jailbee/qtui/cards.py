@@ -34,12 +34,12 @@ from jailbee.qtui.model import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
     from PySide6.QtCore import QPoint
     from PySide6.QtGui import QContextMenuEvent
 
-    from jailbee.config import ColumnConfig
     from jailbee.dashboard import RepoGroup
 
 # Minimum card width — the FlowLayout fits as many columns as this allows.
@@ -275,7 +275,7 @@ class CardView(QScrollArea):
         self._structure: list[tuple[str, str, tuple[str, ...]]] = []
         self._card_style: str = "compact"
         self._now: datetime | None = None
-        self._columns: ColumnConfig | None = None
+        self._columns: Sequence[str] | None = None
         # Repo prefixes currently collapsed, and the live header/grid-host
         # widgets per prefix (rebuilt on every reconcile).
         self._collapsed: set[str] = set()
@@ -314,7 +314,7 @@ class CardView(QScrollArea):
         groups: list[RepoGroup],
         *,
         now: datetime,
-        columns: ColumnConfig | None = None,
+        columns: Sequence[str] | None = None,
     ) -> None:
         self._now = now
         self._columns = columns
@@ -337,11 +337,11 @@ class CardView(QScrollArea):
             self._render(self._groups, self._now, self._columns)
 
     def _render(
-        self, groups: list[RepoGroup], now: datetime, columns: ColumnConfig | None = None
+        self, groups: list[RepoGroup], now: datetime, columns: Sequence[str] | None = None
     ) -> None:
         self._groups = groups
         all_containers = [c for g in groups for c in g.containers]
-        fields = visible_fields(now, all_containers, columns)
+        fields = visible_fields(now, all_containers, enabled=columns)
         names = {c.name for c in all_containers}
         if self._selected not in names:
             self._selected = None

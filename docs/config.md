@@ -45,7 +45,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `chrome.enabled` | global | Personal — turn on if you want `jailbee chrome` / auto-launch. Default `false`. |
 | `chrome.dark_mode` | global | Personal preference |
 | `chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`) |
-| `ls` / `dashboard` (column preference) | global | Which columns you want to see is personal; see [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns) |
+| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). `dashboard:` is deprecated — the dashboards keep their own view state instead, not a config block at either layer. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
@@ -76,11 +76,12 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 Three top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
-`docker_registry_mirror` (see above), `ls` and `dashboard`. The two column
-blocks are merged field-by-field instead (repo block over global block) —
-the generic pipeline would *append* their `fields`/`hide` lists and
+`docker_registry_mirror` (see above), `ls` and `dashboard`. `ls`'s column
+block is merged field-by-field instead (repo block over global block) —
+the generic pipeline would *append* its `fields`/`hide` lists and
 concatenate the two layers' column lists rather than let one replace the
-other. See [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
+other. `dashboard` is deprecated and is never merged this way — see
+[`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
 `dashboard:` values it shows come from the repo file only. Use `jailbee config
@@ -518,12 +519,13 @@ the matching `golden.enable_snippets` entry.
 > they are appended by `Config.effective_shared_caches()` when
 > `jetbrains.enabled: true`. See `### jetbrains` below.
 >
-> The claude entries follow the same pattern — `claude-json` is a
-> **file-level** bind (`host_subpath` points to a regular file, not a
-> directory). Three claude rows are appended by
-> `Config.effective_shared_caches()` when `claude.enabled: true`:
-> `claude` → `~/.claude`, `claude-json` → `~/.claude.json`, and
-> `claude-install` → `~/.local/share/claude`. See `### claude` below.
+> The claude entries follow the same pattern. Two claude rows are appended
+> by `Config.effective_shared_caches()` when `claude.enabled: true`:
+> `claude` → `~/.claude` and `claude-install` → `~/.local/share/claude`.
+> Claude Code's global config (`.claude.json`) lives **inside** the shared
+> `~/.claude` mount: the golden image exports
+> `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+> `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. See `### claude` below.
 
 `ssh` is seeded on first `jailbee init` from host `~/.ssh/` (`config`,
 `known_hosts`, `config.d/`) when `ssh.seed_from_host` is on (default).
@@ -866,7 +868,7 @@ out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; `jailbee tmux <c>` lands in that window. `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
@@ -912,8 +914,8 @@ format Claude has to return is stated after it and stays JailBee's.
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when
 `claude.enabled` is `true`. Manual entries in `shared_caches:` with names
-`claude`, `claude-json`, or `claude-install` suppress the auto-add (same
-precedent as `effective_host_mounts`).
+`claude` or `claude-install` suppress the auto-add (same precedent as
+`effective_host_mounts`).
 
 ### `terminal` / `terminal.kitty`
 
@@ -1288,10 +1290,6 @@ Which columns `jailbee ls` and the dashboards show, by default.
 ls:
   fields: null      # explicit ordered list, or null for the built-in default
   hide: []          # subtractive; applies only when `fields` is null
-
-dashboard:
-  fields: null      # same shape as ls.fields
-  hide: [repo, full_name, git_status, created, ttl]   # dashboard's built-in default
 ```
 
 `fields`, when set, wins outright: naming a column is a request for exactly
@@ -1301,16 +1299,18 @@ with no container carrying one). `hide` is subtractive and only prunes the
 *built-in* default set — a dynamic rule such as `pr`'s "show only when
 something has one" still applies to a hidden-by-config column, unlike
 `fields`. This one rule is implemented once, in
-`table_format.apply_column_config`, and used by both `jailbee ls` and the
-dashboards.
+`table_format.apply_column_config`, and used by `jailbee ls`; the deprecated
+`dashboard:` block followed the same rule for its one-time import into
+`view_prefs` (see below).
 
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
-AHEAD ±, ↑, MERGE. The dashboards add IP and MEM, because a live number is
-worth its width in a view that refreshes and is a stale sample in one that
-does not. Both are reachable from `ls` with `--fields ip,mem` or an
-`ls.fields` list; conversely `dashboard.hide` prunes them from the
-dashboards. Four columns are dynamic and appear only when they have
+AHEAD ±, ↑, MERGE. The dashboards differ in exactly one column: they add MEM,
+because a live number is worth its width in a view that refreshes and is a
+stale sample in one that does not. IP is off in both — enable it in the
+dashboard settings UI, or ask for it from `ls` with `--fields ip`.
+
+Four columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
 in loose mode), `pr` (a container tracks a PR) and `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant).
@@ -1343,35 +1343,51 @@ Either way, `jailbee config validate` is where all three are still reported as
 errors, with the allowed set listed for the unknown-name case — the one
 command whose job is telling you what's wrong.
 
-Both blocks exist in `~/.config/jailbee/global.yaml` **and** in a repo's
+`ls:` exists in `~/.config/jailbee/global.yaml` **and** in a repo's
 `.jailbee/config.yaml`, merged the same field-by-field way as
 `loose_auto_revert`: the repo's block overrides the global one per field
 (setting only `hide` in the repo still inherits the global `fields`, and
-vice versa). Note these two keys are **not** part of the general
-deep-merge pipeline used by the rest of the file — that pipeline *appends*
-list values, which would concatenate the two `fields` lists instead of
+vice versa). Note the key is **not** part of the general deep-merge
+pipeline used by the rest of the file — that pipeline *appends* list
+values, which would concatenate the two `fields` lists instead of
 replacing one with the other. A repo block that names `fields` replaces the
 global list outright; `fields: null` in the repo discards the global list
 and restores the built-in default set. Column choice is a personal
 preference, so the normal home is `global.yaml`; a repo that sets the block
 does so for everyone working in that repo — deliberate, and rare.
 
-`hide` **replaces** the list it is set in, at either layer — it does not
-extend the built-in one. The `dashboard:` example above shows the built-in
-default (`[repo, full_name, git_status, created, ttl]`) because that is
-what you would otherwise be overwriting: writing `dashboard: {hide: [ip]}`
-hides IP *and brings REPO, FULL NAME, GIT STATUS, CREATED and TTL back into
-the table*. To hide one more column, copy the default list and append to it.
+`--fields` on the CLI beats both `ls:` blocks outright — this is a
+remembered preference, not a lock.
 
-`--fields` on the CLI beats both blocks outright — this is a remembered
-preference, not a lock.
+### The dashboards remember their own columns
 
-The dashboards (`jailbee dashboard`, `jailbee gui`) render **one shared table**
-across every registered repo, so a per-repo-group answer isn't possible.
-Both resolve their `dashboard:` block against the repo you launched from
-(the cwd's `.jailbee/config.yaml`), falling back to the global file when there
-is no cwd repo or its config fails to load — resolved once at startup, not
-re-resolved per refresh.
+`jailbee dashboard` and `jailbee gui` do **not** read a `dashboard:` block.
+Each remembers its own columns and its own folded repo groups, because a
+live view can own the state you are looking at:
+
+- In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
+  `Space` toggles, `Tab` switches between Fields and Repos, `Esc` closes.
+  Changes apply immediately — the table stays on screen behind the panel.
+- In the GUI, use **View ▸ Columns**.
+
+The two are independent on purpose: a wide Qt table and a narrow TUI is a
+supported setup. State lives in `state.sqlite`'s `view_prefs` table, one row
+per front-end — machine-written, so it stays out of your hand-edited config.
+
+Enabling a column means "show it when it has something to say": the four
+dynamic columns (`job`, `ttl`, `pr`, `mode`) still appear only when they
+apply, and the overlay marks them so. This differs from `ls --fields`, where
+naming a column forces it on — there a name is a one-shot request, here it is
+a standing preference.
+
+**`dashboard:` is deprecated.** The key is still accepted, so an existing
+config keeps loading, but it is ignored: it is imported into each
+front-end's own settings the first time you open that dashboard after
+upgrading, and can be deleted once both have been opened at least once.
+`jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` is
+imported this way — the setting is personal and applies in every repo, so a
+repo-level `dashboard:` block is reported and dropped rather than seeded.
+`ls:` is unaffected and still lives in config.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a
 hardcoded selection — name, state, `mode`/`base`/`network`, a job badge and

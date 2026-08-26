@@ -44,8 +44,7 @@ if [ -z "${LATEST}" ]; then
     echo "==> ensure-claude: empty store, installing Claude Code"
     # The installer runs `claude` as a final smoke-check; that invocation can
     # exit non-zero for reasons unrelated to the binary install (historically a
-    # not-yet-valid ~/.claude.json — see the seed_files loop in
-    # init_command._ensure_integration_shared_dirs). Under
+    # not-yet-valid ~/.claude.json — see init_command._seed_claude_json). Under
     # `pipefail` such a failure would abort before we (re)create the symlink,
     # leaving an empty store that later surfaces as an opaque exit-127 in the
     # autostart `claude` step. Run the installer tolerantly, then verify the
