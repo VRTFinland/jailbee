@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from jailbee.cswap import Cswap, CswapError, CswapMissingError, CswapTimeoutError
+from jailbee.cswap import CSWAP_BINARY, Cswap, CswapError, CswapMissingError, CswapTimeoutError
 
 _LIST_PAYLOAD = {
     "schemaVersion": 1,
@@ -359,17 +360,33 @@ def test_available_is_true_when_the_binary_is_on_path(tmp_path, mocker):
     assert _cswap(tmp_path).available() is True
 
 
-def test_conftest_hides_cswap_but_not_other_binaries(tmp_path):
-    """Pin `_neutralize_cswap_autodetect` (tests/conftest.py).
-
-    Nothing in this test mocks cswap — the suite-wide autouse fixture must
-    make `available()` False by itself, on any machine, real install or not.
-    It must also be a scalpel, not a hammer: `shutil.which` still has to
-    answer truthfully for a binary that is not cswap, or every other
-    binary-detection test in the suite would be lying about the host too.
+def test_the_conftest_fixture_hides_a_real_cswap_on_path(tmp_path, monkeypatch):
+    """Pin `_neutralize_cswap_autodetect` (tests/conftest.py) so it cannot be
+    deleted or narrowed silently: this test plants a genuinely executable
+    `cswap` (and `claude-swap`) on `PATH` itself, so it fails without the
+    fixture instead of merely trusting the host has neither installed.
     """
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    cswap_exe = bindir / CSWAP_BINARY
+    claude_swap_exe = bindir / "claude-swap"
+    probe_exe = bindir / "jailbee-fake-probe"
+    for exe in (cswap_exe, claude_swap_exe, probe_exe):
+        exe.write_text("#!/bin/sh\nexit 0\n")
+        exe.chmod(0o755)
+
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+
+    # The fixture's cswap-shaped hole: both aliases vanish even though they
+    # are genuinely on PATH right now.
+    assert shutil.which(CSWAP_BINARY) is None
+    assert shutil.which("claude-swap") is None
+    # The delegation still answers truthfully for a name the fixture does
+    # not cover — asserted against a binary this test created itself, not a
+    # bet on what the host happens to have installed.
+    assert shutil.which("jailbee-fake-probe") == str(probe_exe)
+    # Pinned through the public method the production code actually calls.
     assert _cswap(tmp_path).available() is False
-    assert shutil.which("sh") is not None
 
 
 # --- version -------------------------------------------------------------
