@@ -838,3 +838,115 @@ def test_migrate_to_v8_is_idempotent() -> None:
         sql = "SELECT name FROM sqlite_master WHERE type='table'"
         names = {row[0] for row in conn.exec_driver_sql(sql)}
     assert "egress_override" in names
+
+
+def test_claude_account_holding_is_keyed_by_identity_not_slot() -> None:
+    """Two accounts may share a slot number across repos; identity is the key."""
+    from jailbee.db.models import ClaudeAccountHolding
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 8, 26, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email="work@example.com",
+                org_uuid="org-1",
+                container_prefix="repoa",
+                slot="1",
+                state="held",
+                since=now,
+            )
+        )
+        s.add(
+            ClaudeAccountHolding(
+                email="me@example.com",
+                org_uuid="",
+                container_prefix="repob",
+                slot="1",
+                state="held",
+                since=now,
+            )
+        )
+        s.commit()
+        row = s.get(ClaudeAccountHolding, ("work@example.com", "org-1"))
+        assert row is not None
+        assert row.container_prefix == "repoa"
+        assert row.since == now, "UTC round-trips"
+        other = s.get(ClaudeAccountHolding, ("me@example.com", ""))
+        assert other is not None and other.container_prefix == "repob"
+
+
+def test_claude_account_allow_is_per_repo_and_per_identity() -> None:
+    from jailbee.db.models import ClaudeAccountAllow
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(ClaudeAccountAllow(container_prefix="repoa", email="a@x", org_uuid=""))
+        s.add(ClaudeAccountAllow(container_prefix="repoa", email="b@x", org_uuid=""))
+        s.add(ClaudeAccountAllow(container_prefix="repob", email="a@x", org_uuid=""))
+        s.commit()
+        rows = s.exec(
+            select(ClaudeAccountAllow).where(ClaudeAccountAllow.container_prefix == "repoa")
+        ).all()
+        assert {r.email for r in rows} == {"a@x", "b@x"}
+
+
+def test_v8_db_migrates_to_current_adding_the_claude_pool_tables() -> None:
+    """A POPULATED v8 DB gains both tables and lands on the current version.
+
+    Starting from a populated v8 is the whole point: on a fresh database this
+    would pass with an empty migration function, because `_ensure_schema` runs
+    `create_all` before the migration loop (see `_migrate_to_v3`'s docstring).
+    """
+    from jailbee.db import CURRENT_SCHEMA_VERSION, _ensure_schema
+    from jailbee.db.models import (
+        ClaudeAccountAllow,
+        ClaudeAccountHolding,
+        RegisteredRepo,
+        SchemaMeta,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 8, 26, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=8))
+        s.add(RegisteredRepo(container_prefix="sampleapp", repo_root="/r", registered_at=now))
+        s.commit()
+    # The v8 shape: neither pool table exists yet.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE claude_account_holding")
+        conn.exec_driver_sql("DROP TABLE claude_account_allow")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+        assert s.get(RegisteredRepo, "sampleapp") is not None, "unrelated data preserved"
+        s.add(
+            ClaudeAccountHolding(
+                email="w@x",
+                org_uuid="",
+                container_prefix="sampleapp",
+                slot="1",
+                state="held",
+                since=now,
+            )
+        )
+        s.add(ClaudeAccountAllow(container_prefix="sampleapp", email="w@x", org_uuid=""))
+        s.commit()
+
+
+def test_migrate_to_v9_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v9
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)  # tables already present
+    with engine.begin() as conn:
+        _migrate_to_v9(conn)  # must not raise on an already-migrated DB
+        sql = "SELECT name FROM sqlite_master WHERE type='table'"
+        names = {row[0] for row in conn.exec_driver_sql(sql)}
+    assert {"claude_account_holding", "claude_account_allow"} <= names
