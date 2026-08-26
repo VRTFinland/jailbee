@@ -5651,19 +5651,26 @@ def _list_containers_for_status(cfg: "Config", incus: "IncusType") -> list[str]:
 def _print_egress_override_status() -> None:
     """Render the egress-override section of `jailbee net status`.
 
-    The whole data fetch — config load, container listing, the DB session,
-    and every per-container `container_extras` call — runs inside one try,
-    like `_print_port_forward_status`'s. Any failure in there (no repo
-    config reachable from cwd, Incus unavailable, a container destroyed
-    between the listing and its own query, the state DB unreachable) is
-    caught so it can never take down the rest of `jailbee net status`.
+    Two separate exits, because they mean different things:
 
-    Unlike the sibling sections, a caught failure is NOT fully silent: this
-    section is the feature's audit surface — it reports a widening of a
-    security boundary that never passed code review, where the siblings
-    report conveniences — so a swallowed failure still prints a one-line
-    note on stderr before returning. A security-relevant widening that
-    silently stops being reported is worse than a noisy status command.
+    - No repo config reachable from cwd is ordinary use — `net status` is a
+      global command (timer state, every registered repo), routinely run
+      outside any one repo checkout — so that case returns silently, like
+      `_print_loose_status`'s.
+    - Once a repo config is found, the rest of the fetch (container listing,
+      the DB session, every per-container `container_extras` call — each of
+      which is a real `incus config get` subprocess call) is guarded by its
+      own try so a failure there (Incus unreachable, a container destroyed
+      between the listing and its own query, the state DB unavailable)
+      can't crash the rest of `jailbee net status`. Unlike the sibling
+      sections, that failure is NOT silent: this section is the feature's
+      audit surface — it reports a widening of a security boundary that
+      never passed code review, where the siblings report conveniences —
+      so it prints a one-line note on stderr before returning. A security-
+      relevant widening that silently stops being reported is worse than a
+      noisy status command. Training the user to expect a note on every
+      routine no-repo invocation would defeat that purpose, which is why
+      the first exit stays silent.
     """
     from sqlmodel import Session
 
@@ -5673,6 +5680,10 @@ def _print_egress_override_status() -> None:
 
     try:
         cfg = load_config(find_repo_config())
+    except Exception:
+        return
+
+    try:
         from jailbee.incus import Incus
 
         incus = Incus()

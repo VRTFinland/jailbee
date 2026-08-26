@@ -498,3 +498,26 @@ def test_net_status_survives_and_reports_a_mid_fetch_failure(tmp_path, mocker):
     assert "Egress overrides" not in result.stdout
     # ... but the failure was not swallowed silently.
     assert "egress-override" in result.stderr.lower()
+
+
+def test_net_status_is_silent_when_no_repo_config_is_reachable(mocker, capsys):
+    """Fix round 2: `net status` is a global command (timer state, every
+    registered repo) that is routinely run outside any one repo checkout —
+    that is ordinary use, not a failure, unlike the mid-fetch failure above.
+    Round 1's "could not gather" stderr note must NOT fire for it: training
+    the user to see a note on every routine no-repo invocation would defeat
+    the point of that note existing at all. This case returns silently,
+    exactly like `_print_loose_status`'s documented no-repo skip."""
+    from jailbee.cli import _print_egress_override_status
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.cli.find_repo_config",
+        side_effect=ConfigNotFoundError("no .jailbee/config.yaml here"),
+    )
+
+    _print_egress_override_status()
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
