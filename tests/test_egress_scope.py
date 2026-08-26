@@ -106,3 +106,103 @@ def test_extra_acl_name_stays_within_the_limit_and_stays_unique():
 def test_extra_acl_name_is_deterministic():
     long = "r" + "a" * 61
     assert egress_scope.extra_acl_name(long) == egress_scope.extra_acl_name(long)
+
+
+def test_effective_repo_entries_appends_overrides_after_config(db_session, make_cfg, tmp_path, frozen_now):
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "nexus.corp:443", now=frozen_now)
+
+    entries = egress_scope.effective_repo_entries(cfg, db_session)
+
+    assert entries[0] == "github.com"
+    assert "nexus.corp:443" in entries
+
+
+def test_effective_repo_entries_dedupes_an_override_already_in_config(
+    db_session, make_cfg, tmp_path, frozen_now
+):
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
+
+    assert egress_scope.effective_repo_entries(cfg, db_session).count("github.com") == 1
+
+
+def test_repo_file_egress_allow_reads_only_that_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("egress_allow:\n  - github.com\n  - 10.0.0.0/8\n")
+    assert egress_scope.repo_file_egress_allow(path) == ["github.com", "10.0.0.0/8"]
+
+
+def test_repo_file_egress_allow_handles_an_absent_key(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("container_prefix: myrepo\n")
+    assert egress_scope.repo_file_egress_allow(path) == []
+
+
+def test_classify_sources_marks_a_config_duplicate_redundant(
+    db_session, make_cfg, tmp_path, frozen_now, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
+    incus = mocker.MagicMock()
+
+    rows = egress_scope.classify_sources(cfg, db_session, incus)
+
+    override = next(r for r in rows if r.source == "repo-override")
+    assert override.entry == "github.com"
+    assert override.redundant
+
+
+def test_classify_sources_includes_container_rows_only_when_asked(
+    db_session, make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = '["nexus.corp:443"]'
+
+    without = egress_scope.classify_sources(cfg, db_session, incus)
+    assert all(r.source != "container" for r in without)
+
+    with_ct = egress_scope.classify_sources(cfg, db_session, incus, container="myrepo-feat")
+    assert [r.entry for r in with_ct if r.source == "container"] == ["nexus.corp:443"]
+
+
+def test_render_config_block_emits_file_entries_then_overrides():
+    block = egress_scope.render_config_block(
+        ["github.com", "archive.ubuntu.com:443"],
+        ["nexus.corp:443", "10.0.5.0/24"],
+        prefix="myrepo",
+    )
+    assert (
+        block.index("github.com")
+        < block.index("archive.ubuntu.com:443")
+        < block.index("nexus.corp:443")
+        < block.index("10.0.5.0/24")
+    )
+
+
+def test_render_config_block_output_is_a_single_valid_egress_allow_key():
+    import yaml
+
+    block = egress_scope.render_config_block(
+        ["github.com"], ["nexus.corp:443"], prefix="myrepo"
+    )
+    parsed = yaml.safe_load(block)
+    assert parsed == {"egress_allow": ["github.com", "nexus.corp:443"]}
+
+
+def test_render_config_block_dedupes_an_override_already_in_the_file():
+    import yaml
+
+    block = egress_scope.render_config_block(
+        ["github.com"], ["github.com"], prefix="myrepo"
+    )
+    assert yaml.safe_load(block) == {"egress_allow": ["github.com"]}
+
+
+def test_render_config_block_emits_no_key_when_there_is_nothing_to_promote():
+    import yaml
+
+    block = egress_scope.render_config_block(["github.com"], [], prefix="myrepo")
+    assert yaml.safe_load(block) is None
+    assert block.lstrip().startswith("#")

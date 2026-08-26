@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlmodel import select
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
+    from jailbee.config import Config
     from jailbee.incus import Incus
 
 EGRESS_EXTRA_KEY = "user.jailbee.egress_extra"
@@ -139,3 +142,134 @@ def extra_acl_name(container: str) -> str:
     head_len = ACL_NAME_MAX - len(_ACL_SUFFIX) - _DIGEST_LEN - 1
     digest = hashlib.sha256(container.encode()).hexdigest()[:_DIGEST_LEN]
     return f"{container[:head_len]}-{digest}{_ACL_SUFFIX}"
+
+
+# ---- composition, classification, and rendering ---------------------------
+
+
+CONFIG_SOURCE = "config"
+REPO_SOURCE = "repo-override"
+CONTAINER_SOURCE = "container"
+
+
+@dataclass(frozen=True)
+class EntryRow:
+    """One applicable entry and where it came from.
+
+    ``redundant`` marks an override that ``config.yaml`` already grants —
+    which is how a user sees that a promoted entry can now be removed.
+    """
+
+    entry: str
+    source: str
+    redundant: bool = False
+
+
+def effective_repo_entries(cfg: Config, session: Session) -> list[str]:
+    """Every raw entry that applies to this repo's shared ACL.
+
+    ``cfg.effective_egress_allow()`` first (config plus jailbee's feature
+    auto-additions), then host-local repo overrides. Order is preserved so
+    the ACL diff stays readable; duplicates are dropped.
+    """
+    seen: dict[str, None] = {}
+    for entry in [*cfg.effective_egress_allow(), *repo_extras(session, cfg.container_prefix)]:
+        seen.setdefault(entry, None)
+    return list(seen)
+
+
+def repo_file_egress_allow(config_path: Path) -> list[str]:
+    """The repo config file's own ``egress_allow``, read raw from that file.
+
+    Deliberately NOT ``cfg.egress_allow``: `deep_merge` appends lists and
+    ``egress_allow`` is not in ``config._HOST_LEVEL_KEYS``, so the loaded
+    value already carries the *global* config's entries. Writing those into
+    a committed repo config would push one machine's host-level policy to
+    the whole team.
+    """
+    import yaml
+
+    if not config_path.is_file():
+        return []
+    raw = yaml.safe_load(config_path.read_text()) or {}
+    if not isinstance(raw, dict):
+        return []
+    value = raw.get("egress_allow") or []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def classify_sources(
+    cfg: Config,
+    session: Session,
+    incus: Incus,
+    container: str | None = None,
+) -> list[EntryRow]:
+    """Every applicable entry with its source, config rows first.
+
+    Backs both ``jb net egress ls`` and ``jb net egress export``, so the two
+    can never disagree about what counts as an override — an ``export`` that
+    emitted a row ``ls`` calls config-sourced would put a duplicate into the
+    user's config.
+    """
+    config_entries = cfg.effective_egress_allow()
+    config_set = set(config_entries)
+
+    rows = [EntryRow(entry=e, source=CONFIG_SOURCE) for e in config_entries]
+    rows += [
+        EntryRow(entry=e, source=REPO_SOURCE, redundant=e in config_set)
+        for e in repo_extras(session, cfg.container_prefix)
+    ]
+    if container is not None:
+        repo_set = config_set | set(repo_extras(session, cfg.container_prefix))
+        rows += [
+            EntryRow(entry=e, source=CONTAINER_SOURCE, redundant=e in repo_set)
+            for e in container_extras(incus, container)
+        ]
+    return rows
+
+
+def render_config_block(
+    file_entries: list[str],
+    overrides: list[str],
+    *,
+    prefix: str,
+) -> str:
+    """The complete replacement for the repo config's ``egress_allow:`` key.
+
+    A whole-key replacement, not a fragment. Emitting only the override rows
+    under an ``egress_allow:`` key would produce a duplicate mapping key when
+    pasted into a config that already has one — ``yaml.safe_load`` silently
+    keeps the last, so the user's existing entries would vanish with no
+    error. Emitting bare list items instead is not valid YAML on its own and
+    cannot be appended to the ``egress_allow: []`` that `jb config init`
+    writes.
+
+    ``file_entries`` must come from `repo_file_egress_allow`, never from
+    ``cfg.effective_egress_allow()`` — the latter folds in the claude /
+    github / jetbrains feature hosts, which track jailbee releases and go
+    stale the moment they are frozen into a config file.
+    """
+    import yaml
+
+    merged: dict[str, None] = {}
+    for entry in [*file_entries, *overrides]:
+        merged.setdefault(entry, None)
+
+    if not overrides:
+        return (
+            f"# jailbee: no host-local egress overrides to promote for repo "
+            f"'{prefix}'.\n"
+        )
+
+    promoted = [e for e in overrides if e not in set(file_entries)]
+    header = (
+        f"# jailbee: replaces the `egress_allow:` key in your repo config\n"
+        f"# ({len(file_entries)} existing + {len(promoted)} host-local "
+        f"override(s) for repo '{prefix}').\n"
+        f"# Replace the whole key, run `jailbee apply`, then drop the now-\n"
+        f"# redundant overrides with `jailbee net egress rm`.\n"
+    )
+    body = yaml.safe_dump({"egress_allow": list(merged)}, sort_keys=False)
+    return header + body
