@@ -1770,6 +1770,17 @@ run them before relying on it.
    exit
    jailbee claude add --alias two
 
+   jailbee claude ls
+   # expect: HOLDER names this repo on the account just captured, with `<-`,
+   #         and its NOTE is NOT "live here, unclaimed".
+   # This is the ONE available check on a premise nothing else can reach:
+   #   `jailbee claude add` keys the ledger row on the identity `cswap status`
+   #   reports after the capture, while `ls` looks the row up by the identity
+   #   `cswap list` reports. If those two payloads spell `organizationUuid`
+   #   differently for the same managed account, the row is written one way and
+   #   read the other — and "live here, unclaimed" is exactly what appears.
+   #   No unit test can reach this; it needs a real cswap.
+
    jailbee claude use one
    # expect: success, no browser, "picks the new credential up on its next message"
    jailbee shell feat-claude-swap-a
@@ -1781,7 +1792,12 @@ run them before relying on it.
 
    If it instead fails, hangs, or `/status` still reports account 2, the
    "no restart needed" claim in the skill and `jailbee claude use`'s own
-   success message are both wrong and need walking back.
+   success message are both wrong and need walking back. If instead the `ls`
+   above shows "live here, unclaimed" on the account that was just captured,
+   the two `cswap` payloads disagree on `organizationUuid` and
+   `claude_accounts.claim_captured`'s identity read-back needs to key on
+   whatever `cswap list` reports instead — record both payloads
+   (`cswap status --json`, `cswap list --json`) before changing anything.
 
 2. **The holding refusal is real across repos.**
 
