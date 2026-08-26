@@ -35,10 +35,11 @@ from jailbee.db.models import ClaudeAccountAllow, ClaudeAccountHolding, Register
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from datetime import datetime
 
     from sqlmodel import Session
 
-    from jailbee.cswap import Account
+    from jailbee.cswap import Account, Cswap
 
 CLAIMING = "claiming"
 """A holding reserved but not yet confirmed by a successful `cswap switch`."""
@@ -261,3 +262,132 @@ def current_account(accounts: Sequence[Account]) -> Account | None:
         if account.active:
             return account
     return None
+
+
+# ---- the two-phase claim -------------------------------------------------
+
+
+def use(
+    session: Session,
+    cswap: Cswap,
+    accounts: Sequence[Account],
+    *,
+    prefix: str,
+    ref: str,
+    now: datetime,
+    force: bool = False,
+) -> str:
+    """Switch this repo to ``ref``. Returns the message to print.
+
+    The claim is two-phase because the database transaction is deliberately
+    **not** held across the `cswap switch` subprocess — that would hold
+    SQLite's write lock for seconds while a network fetch and a credential
+    rewrite happen. So the row is committed as ``claiming`` first, the
+    subprocess runs unlocked, and the row is then confirmed or deleted.
+
+    A ``claiming`` row that outlives its command is a crash artifact:
+    `jailbee doctor` reports it and `jailbee claude release <ref>` clears it.
+    """
+    target = resolve_ref(accounts, ref)
+
+    allowed = allowed_identities(session, prefix)
+    if allowed and target.identity not in allowed:
+        raise PoolError(
+            f"Account {target.number} ({target.label}) is not allowed for "
+            f"`{prefix}`.\n"
+            f"Widen the list:  jailbee claude allow"
+        )
+
+    held = holders(session)
+    holder = held.get(target.identity)
+    if holder is not None and holder.container_prefix != prefix:
+        raise PoolError(_held_elsewhere_message(target, holder))
+
+    live = cswap.status()
+    if holder is not None and holder.state == HELD and live.identity == target.identity:
+        # A true no-op: this repo already holds this account. `cswap move`
+        # can renumber slots after the fact though, so the display-only
+        # `slot` column is still refreshed — without a switch, a lock, or a
+        # keychain touch.
+        row = session.get(ClaudeAccountHolding, target.identity)
+        if row is not None and row.slot != str(target.number):
+            row.slot = str(target.number)
+            session.add(row)
+            session.commit()
+        return f"Already on account {target.number} ({target.label}) — nothing to switch."
+
+    if live.email is not None and not live.managed and not force:
+        raise PoolError(
+            f"This repo's current login ({live.email}) is not in the pool.\n"
+            f"Switching replaces it: cswap stashes the credential first, but "
+            f"getting it back is a manual recovery.\n"
+            f"Save it first:  jailbee claude add --alias <name>\n"
+            f"Or switch anyway:  jailbee claude use {ref} --force"
+        )
+
+    # Phase 1: reserve, and commit so the reservation is visible to a
+    # concurrent `jailbee claude use` in another repo.
+    row = session.get(ClaudeAccountHolding, target.identity)
+    if row is None:
+        row = ClaudeAccountHolding(
+            email=target.email,
+            org_uuid=target.org_uuid,
+            container_prefix=prefix,
+            slot=str(target.number),
+            state=CLAIMING,
+            since=now,
+        )
+    else:
+        # Ours already (a `held` re-selection whose live login drifted, or a
+        # stale `claiming` row from a crashed run). Slot is display-only and
+        # refreshed here, since `cswap move` renumbers.
+        row.container_prefix = prefix
+        row.slot = str(target.number)
+        row.state = CLAIMING
+        row.since = now
+    session.add(row)
+    session.commit()
+
+    # Phase 2: the subprocess, with no transaction held.
+    try:
+        message = cswap.switch(str(target.number))
+    except Exception:
+        session.delete(row)
+        session.commit()
+        raise
+
+    row.state = HELD
+    row.since = now
+    session.add(row)
+    for other in session.exec(
+        select(ClaudeAccountHolding).where(ClaudeAccountHolding.container_prefix == prefix)
+    ).all():
+        if (other.email, other.org_uuid) != target.identity:
+            session.delete(other)
+    session.commit()
+    return message
+
+
+def _held_elsewhere_message(target: Account, holder: Holder) -> str:
+    """The held-elsewhere refusal, with a directly runnable fix.
+
+    ``registered_repo.repo_root`` makes the fix a command the user can paste.
+    When that row is gone — a checkout deleted without releasing — fall back
+    to the account-scoped form, which works from anywhere.
+    """
+    lines = [
+        f"Account {target.number} ({target.label}) is held by repo `{holder.container_prefix}`."
+    ]
+    if holder.state == CLAIMING:
+        lines.append(
+            "That holding is still `claiming` — either a switch is running "
+            "right now, or one crashed."
+        )
+    if holder.repo_root:
+        lines.append(f"Release it there:  cd {holder.repo_root} && jailbee claude release")
+    else:
+        lines.append(
+            f"That repo is not registered on this host (checkout gone?).\n"
+            f"Release it from here:  jailbee claude release {target.number}"
+        )
+    return "\n".join(lines)
