@@ -227,6 +227,10 @@ def _incus_with(mocker, *, extras, local_eth0=None):
 def test_apply_container_acl_writes_acl_and_overrides_the_nic(
     db_session, make_cfg, tmp_path, mocker
 ):
+    import yaml
+
+    from jailbee.network import ALLOWLIST_DESC_PREFIX
+
     mocker.patch(
         "jailbee.egress_scope.resolve_entries",
         return_value=[
@@ -235,12 +239,24 @@ def test_apply_container_acl_writes_acl_and_overrides_the_nic(
     )
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=["nexus.corp:443"])
+    incus.network_acl_exists.return_value = True
 
     egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
 
     incus.network_acl_set_yaml.assert_called_once()
-    acl_written = incus.network_acl_set_yaml.call_args[0][0]
+    acl_written, body_written = incus.network_acl_set_yaml.call_args[0]
     assert acl_written == "myrepo-feat-extra"
+    # The YAML body is the enforcement payload: a wrong body silently allows
+    # or blocks the wrong destinations, so parse it back and check the rule.
+    parsed_body = yaml.safe_load(body_written)
+    assert {
+        "action": "allow",
+        "destination": "10.0.5.7",
+        "description": f"{ALLOWLIST_DESC_PREFIX}nexus.corp:443",
+        "state": "enabled",
+        "protocol": "tcp",
+        "destination_port": "443",
+    } in parsed_body["egress"]
     incus.config_device_override.assert_called_once_with(
         "myrepo-feat",
         "eth0",
@@ -252,16 +268,63 @@ def test_apply_container_acl_writes_acl_and_overrides_the_nic(
     )
 
 
+def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(
+    db_session, make_cfg, tmp_path, mocker
+):
+    """`network_acl_set_yaml` is `incus network acl edit`, which requires the
+    ACL to already exist — the first materialisation on a real host must
+    create it first."""
+    mocker.patch(
+        "jailbee.egress_scope.resolve_entries",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"])
+    incus.network_acl_exists.return_value = False
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+
+    incus.network_acl_create.assert_called_once_with("myrepo-feat-extra")
+
+
+def test_apply_container_acl_does_not_recreate_an_existing_acl(
+    db_session, make_cfg, tmp_path, mocker
+):
+    mocker.patch(
+        "jailbee.egress_scope.resolve_entries",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"])
+    incus.network_acl_exists.return_value = True
+
+    egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="strict")
+
+    incus.network_acl_create.assert_not_called()
+
+
 def test_apply_container_acl_in_loose_mode_tears_the_override_down(
     db_session, make_cfg, tmp_path, mocker
 ):
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=["nexus.corp:443"], local_eth0={"type": "nic"})
+    incus.network_acl_exists.return_value = True
 
     egress_scope.apply_container_acl(cfg, db_session, incus, "myrepo-feat", mode="loose")
 
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
     incus.config_device_override.assert_not_called()
+    # An orphan ACL left behind on every `jailbee net loose` is a real leak,
+    # not just tidiness — assert the delete actually happens.
+    incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
+    # And the ORDER matters: Incus refuses to delete an ACL still referenced
+    # by an instance NIC, so the NIC device must come off first.
+    methods = [call[0] for call in incus.mock_calls]
+    assert methods.index("config_device_remove") < methods.index("network_acl_delete")
 
 
 def test_apply_container_acl_with_no_extras_removes_acl_and_override(
@@ -275,6 +338,8 @@ def test_apply_container_acl_with_no_extras_removes_acl_and_override(
 
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
     incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
+    methods = [call[0] for call in incus.mock_calls]
+    assert methods.index("config_device_remove") < methods.index("network_acl_delete")
 
 
 def test_apply_container_acl_updates_an_existing_override_in_place(

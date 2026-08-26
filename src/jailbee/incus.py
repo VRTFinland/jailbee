@@ -520,7 +520,25 @@ class Incus:
         """
         args = ["config", "device", "remove", name, device_name]
         if missing_ok:
-            self._run(args, check=False)
+            # `_run_retrying_on_etag(args)`, not `_run(args, check=False)`: a
+            # container that just booted churns `volatile.*` keys, which can
+            # bounce this removal off a transient ETag mismatch. Swallowing
+            # that immediately — as a bare `check=False` would — leaves the
+            # device in place while the caller believes teardown succeeded.
+            # Retry the transient case first; only a genuine failure (no such
+            # local device, or the ETag race never resolves) is swallowed.
+            #
+            # Passing `check=False` down into `_run_retrying_on_etag` would
+            # defeat this: `_run` only raises `IncusError` on a bad exit code
+            # when `check=True`, so with `check=False` the retry loop's
+            # `except IncusError` would never fire and an ETag race would go
+            # unretried — the same bug this replaces. So this calls it with
+            # its default `check=True` and catches the resulting
+            # `IncusError` here instead.
+            try:
+                self._run_retrying_on_etag(args)
+            except IncusError:
+                pass
             return
         self._run_retrying_on_etag(args)
 

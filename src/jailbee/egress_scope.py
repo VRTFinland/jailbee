@@ -46,9 +46,12 @@ EGRESS_EXTRA_KEY = "user.jailbee.egress_extra"
 ACL_NAME_MAX = 63
 """Maximum length of an Incus network ACL name.
 
-Verified against a live Incus daemon during implementation (the plan's
-host-verification checklist); `derive_container_name` imposes no length cap
-of its own, so a long branch name can leave no room for the suffix.
+An assumption, not a verified fact: this environment has no running Incus
+daemon, so the plan's host-verification checklist (create a 63-char and a
+64-char ACL name against a real daemon) has NOT been run. Treat this value as
+pending maintainer verification — if it turns out wrong, update it and
+re-run Task 2's tests. `derive_container_name` imposes no length cap of its
+own, so a long branch name can leave no room for the suffix.
 """
 
 _ACL_SUFFIX = "-extra"

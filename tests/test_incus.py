@@ -780,3 +780,37 @@ def test_config_device_remove_missing_ok_swallows_failure(mocker):
 
     # Must not raise.
     Incus().config_device_remove("ct", "eth0", missing_ok=True)
+
+
+def test_config_device_remove_missing_ok_retries_a_transient_etag_race(incus, mocker):
+    """A container that just booted can bounce a teardown off a transient
+    ETag mismatch. `missing_ok=True` must retry that, not swallow it on the
+    first attempt — a swallowed ETag failure would leave the device (and the
+    strict ACL still attached to it) in place while the caller believes the
+    teardown succeeded."""
+    sleep = mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR), _cp(returncode=0)],
+    )
+
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == 2
+    sleep.assert_called_once()  # backed off between the two attempts
+
+
+def test_config_device_remove_missing_ok_swallows_persistent_etag_failure(incus, mocker):
+    """Even if the ETag race never resolves, `missing_ok=True` must not
+    raise — it exhausts the same bounded retries as every other
+    read-modify-write, then swallows."""
+    mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR)] * 10,
+    )
+
+    # Must not raise.
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == incus._ETAG_RETRIES
