@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,19 +36,44 @@ def state_dir() -> Path:
     return Path.home() / ".local" / "state" / "jailbee"
 
 
+_ENGINES: dict[Path, Engine] = {}
+_ENGINE_LOCK = threading.Lock()
+
+
 def get_engine() -> Engine:
-    """Return a SQLite engine for `state.sqlite`, creating + bootstrapping on first call."""
+    """Return a SQLite engine for `state.sqlite`, bootstrapping it once.
+
+    Cached per database path, for the lifetime of the process. Callers treat
+    this as cheap — `dashboard.registered_repo_configs` calls it on every
+    refresh tick — and without the cache each of those calls opened a new
+    connection pool *and* re-ran `_ensure_schema`, `create_all` included.
+
+    Running the schema check once per process is also what keeps a stale
+    process honest: a dashboard left open across an upgrade goes on serving
+    the schema it started with instead of repeatedly re-asserting its own
+    (older) idea of it over a database a newer jailbee has since migrated.
+    Migrations are additive, so the rows and tables it did not create are
+    simply invisible to it until it is restarted.
+
+    Locked because both dashboards refresh from a worker thread while the
+    UI thread reads the same database.
+    """
     path = state_dir()
     path.mkdir(parents=True, exist_ok=True)
-    db_path = path / "state.sqlite"
-    engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"timeout": 30, "check_same_thread": False},
-    )
-    with engine.begin() as conn:
-        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-    _ensure_schema(engine)
-    return engine
+    db_path = (path / "state.sqlite").resolve()
+    with _ENGINE_LOCK:
+        cached = _ENGINES.get(db_path)
+        if cached is not None:
+            return cached
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"timeout": 30, "check_same_thread": False},
+        )
+        with engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        _ensure_schema(engine)
+        _ENGINES[db_path] = engine
+        return engine
 
 
 def _migrate_to_v2(conn: Connection) -> None:

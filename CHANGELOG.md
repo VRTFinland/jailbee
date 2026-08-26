@@ -159,6 +159,17 @@
 
 ### Fixed
 
+- **The state database is opened once per process, not once per call.**
+  `get_engine` built a fresh engine — new connection pool, full
+  `_ensure_schema` including `create_all` — on every call, and the dashboards
+  call it on every refresh tick. Besides the per-tick cost, that is what gave
+  the reset above its reach: a dashboard left open across an upgrade kept
+  re-asserting its own (older) idea of the schema over a database a newer
+  jailbee had already migrated, several times a minute, for as long as the
+  window stayed open. The engine is now cached per database path for the
+  lifetime of the process, so the schema is checked once, at startup: a stale
+  process serves the schema it started with and simply does not see rows and
+  tables added since, until it is restarted.
 - **An older jailbee no longer wipes the state database.** `_ensure_schema`
   reset the whole database whenever the on-disk schema version was one it
   could not reach by forward migration — which includes the everyday case of

@@ -243,6 +243,49 @@ def test_a_second_reset_does_not_clobber_the_first_backup(
     assert len(backups) == 2, f"expected both backups kept, got {backups}"
 
 
+def test_get_engine_is_cached_so_the_schema_check_runs_once_per_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> None:
+    """A long-running process must not re-bootstrap the schema forever.
+
+    `dashboard.registered_repo_configs` calls `get_engine` on every refresh
+    tick, so an unbounded re-check meant a dashboard left open across an
+    upgrade kept applying its own (older) idea of the schema to a database a
+    newer jailbee had already migrated — the loop that emptied the repo
+    registry. One check per process also drops a `create_all` round-trip from
+    every tick.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    import jailbee.db as db
+
+    spy = mocker.spy(db, "_ensure_schema")
+    first = db.get_engine()
+    second = db.get_engine()
+
+    assert first is second
+    assert spy.call_count == 1
+
+
+def test_get_engine_caches_per_database_not_globally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two state dirs are two databases — the cache is keyed by path."""
+    import jailbee.db as db
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "a"))
+    first = db.get_engine()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "b"))
+    second = db.get_engine()
+
+    assert first is not second
+    assert (tmp_path / "a" / "jailbee" / "state.sqlite").exists()
+    assert (tmp_path / "b" / "jailbee" / "state.sqlite").exists()
+
+
 def test_state_dir_respects_xdg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
