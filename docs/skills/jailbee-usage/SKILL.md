@@ -346,7 +346,7 @@ to run `jailbee claude ls` on the host to see which account still has quota,
 then `jailbee claude use <n>`. The switch is a credential-file replacement —
 Claude Code picks it up on its next message, no container restart needed.
 
-Two refusals worth explaining if the user hits them:
+Refusals worth explaining if the user hits them:
 
 - **"held by repo X"** — one stored account may be live in one place at a
   time. The refusal names the repo and prints the exact fix to run there:
@@ -357,6 +357,9 @@ Two refusals worth explaining if the user hits them:
   manual job, not something `jailbee claude` automates — the supported path
   is capturing it first: `jailbee claude add --alias <name>`. `--force`
   switches anyway if the user accepts that.
+- **no match for `<n>`/alias/email** — a typo in the reference is refused,
+  not silently ignored; re-run `jailbee claude ls` for the exact slot,
+  alias, or email to pass.
 
 Never suggest `/logout` to change accounts. Current Claude Code may revoke
 the refresh token of the account being left, which kills any stored copy of

@@ -1783,21 +1783,35 @@ feature, so run all of them before relying on it.
 
 2. **The holding refusal is real across repos.**
 
+   The pool keys a holding on `container_prefix`, which defaults to the
+   repo's directory name and is the *same value for every branch container
+   of that repo* (`config.py`'s `load_config`) — it's this `container_prefix`
+   that `jailbee claude use` records as the holder, not the branch container
+   name. So a second branch of `SampleApp` shares `SampleApp`'s holding and
+   can never trigger this refusal — it takes a second, genuinely different
+   repo, with its own `container_prefix`. Get one either by cloning (or
+   copying) the sample repo into a differently named directory, e.g.
+   `SampleApp2`, or by keeping one clone and setting a distinct
+   `container_prefix:` in its `.jailbee/config.yaml`; either way, make sure
+   `agents.claude.enabled` is also set there. `cd` into that second repo
+   **before** running anything below — this whole step targets the second
+   repo, no branch container is involved.
+
    ```bash
-   jailbee new feat/claude-swap-b
-   cd <path to feat/claude-swap-b's repo, or wherever registered>
+   cd ../SampleApp2                # a different repo/container_prefix, not a branch of SampleApp
    jailbee claude use one
-   # expect: exit 1, "Account N (one) is held by repo `<...-feat-claude-swap-a>`."
-   #         and a runnable "Release it there:  cd <repo_root> && jailbee claude release"
-   # copy-paste that exact line, then retry:
+   # expect: exit 1, "Account N (one) is held by repo `SampleApp`."
+   #         and a runnable "Release it there:  cd <SampleApp's repo_root> && jailbee claude release"
+   # copy-paste that exact line, then retry from SampleApp2:
    jailbee claude use one
    # expect: success this time
+   cd -                             # back to SampleApp
    ```
 
-   If the printed `cd …` command doesn't actually work from a fresh shell,
-   or the second repo silently takes the account instead of refusing, the
-   composite-primary-key enforcement in `claude_accounts.py` isn't doing
-   its job.
+   If it instead refuses using a branch name where the message should name
+   a repo, or the second repo silently takes the account instead of being
+   refused, the composite-primary-key enforcement in `claude_accounts.py`
+   isn't doing its job.
 
 3. **The primary lock suffices when the legacy lock is a different file.**
 
@@ -1841,8 +1855,12 @@ jailbee doctor
 ```
 
 ```bash
-jailbee destroy feat-claude-swap-a feat-claude-swap-b --force
+jailbee destroy feat-claude-swap-a --force
 ```
+
+`SampleApp2` (step 2) has no container to destroy — it was only ever used
+for `jailbee claude` commands. `jailbee claude rm one` / `jailbee claude rm
+two` from either repo resets the pool afterwards, if desired.
 
 ## GUI dashboard (`jailbee gui`)
 
