@@ -42,8 +42,12 @@ def _manifest_shape_errors(notes: tuple) -> list[str]:
     """Every way a manifest can be malformed, as messages. Returns [] when clean.
 
     A helper rather than inline assertions so the same predicates guard the
-    real manifest and are themselves exercised by the synthetic cases below —
-    `UPGRADE_NOTES` ships empty, so asserting against it alone can never fail.
+    real manifest and are themselves exercised by the synthetic cases below.
+
+    Several entries may share a version, deliberately: one release can change
+    `base build` and `apply` for unrelated reasons, and `reason` is shown to
+    the user per action. Forcing one entry per version would make a
+    multi-action release attribute every reason to every action.
     """
     from jailbee.upgrade import ACTIONS
 
@@ -52,9 +56,6 @@ def _manifest_shape_errors(notes: tuple) -> list[str]:
 
     if versions != sorted(versions):
         errors.append("versions not in ascending order")
-
-    if len(versions) != len(set(versions)):
-        errors.append("one entry per version")
 
     for note in notes:
         if not note.actions:
@@ -88,14 +89,37 @@ def test_manifest_shape_rejects_descending_versions() -> None:
     assert errors, "should reject descending versions"
 
 
-def test_manifest_shape_rejects_duplicate_versions() -> None:
-    """Each version must appear at most once."""
+def test_manifest_shape_accepts_several_entries_per_version() -> None:
+    """One release may carry several entries, so each action's reasons stay
+    about that action. Ascending order still holds with equal versions."""
     notes = (
-        _note(1, 0, 0, "base_build", reason="first"),
-        _note(1, 0, 0, "apply", reason="duplicate"),
+        _note(1, 0, 0, "base_build", reason="image changed"),
+        _note(1, 0, 0, "base_build", "apply", reason="config location moved"),
     )
     errors = _manifest_shape_errors(notes)
-    assert errors, "should reject duplicate versions"
+    assert errors == [], f"several entries per version are allowed: {errors}"
+
+
+def test_pending_splits_reasons_per_action_within_one_version() -> None:
+    """The point of allowing several entries per version: an action must not
+    be handed a reason that belongs to the other action."""
+    from jailbee.upgrade import Watermark, pending
+
+    notes = (
+        _note(1, 2, 0, "base_build", reason="image changed"),
+        _note(1, 2, 0, "base_build", "apply", reason="config location moved"),
+    )
+    got = pending(
+        "1.2.0",
+        {
+            "base_build": Watermark((1, 1, 0), observed=True),
+            "apply": Watermark((1, 1, 0), observed=True),
+        },
+        notes=notes,
+    )
+    by_action = {a.action: a.reasons for a in got.actions}
+    assert by_action["base_build"] == ("image changed", "config location moved")
+    assert by_action["apply"] == ("config location moved",)
 
 
 def test_manifest_shape_rejects_empty_actions() -> None:

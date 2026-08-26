@@ -77,12 +77,16 @@ class UpgradeNote:
 UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 2, 0),
-        actions=frozenset({"base_build", "apply"}),
+        actions=frozenset({"base_build"}),
         reason=(
             "install.sh masks Ubuntu's apt-daily timers and heals a pruned "
-            "`claude` launcher at login; Claude Code's global config moves "
-            "into the shared `~/.claude` mount"
+            "`claude` launcher at login"
         ),
+    ),
+    UpgradeNote(
+        version=(1, 2, 0),
+        actions=frozenset({"base_build", "apply"}),
+        reason="Claude Code's global config moves into the shared `~/.claude` mount",
     ),
 )
 """What each release requires, ascending by version. Maintained by hand.
@@ -92,6 +96,13 @@ what `jailbee apply` writes — see the rule in `CLAUDE.md`. Use the *upcoming*
 release's version number; an entry above the running version is invisible
 until that version ships, so adding it early is safe, but if the release
 number changes before publication the entry is wrong.
+
+One release may carry **several** entries, one per thing that changed, rather
+than one entry listing every action it touches. `reason` is rendered under the
+action it belongs to, so a single entry declaring both actions would tell the
+user running `jailbee apply` about golden-image changes that have nothing to
+do with `apply`. Split by reason, and let each entry name only the actions
+that reason actually requires.
 
     UPGRADE_NOTES = (
         UpgradeNote(
