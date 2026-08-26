@@ -19,7 +19,7 @@ Common conventions:
 
 ## Table of contents
 
-- [Setup & host (`init`, `apply`, `doctor`, `base`, `registry`, `net install`)](#setup--host)
+- [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `net install`)](#setup--host)
 - [Config (`config show|validate|init`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
@@ -39,14 +39,15 @@ speculatively.
 
 | Command | What it does |
 |---|---|
+| `jailbee setup [--yes] [--only completions\|timer\|skills] [--shell bash\|zsh\|fish]` | Per-*machine* post-install steps, the counterpart to the per-repo `jailbee init`: completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user timer, and jailbee's Claude skills in `~/.claude/skills`. Interactive by default (one question per step, defaulting to yes for a missing step and no for an installed one); `--yes` asks nothing and never edits a shell rc. Idempotent — re-run after upgrading jailbee. Needs no repo config, so it works from any directory. Does **not** touch host prerequisites (Incus, firewall, UID delegation): `jailbee doctor` reports those. |
 | `jailbee init` | First-time setup: create per-repo Incus profiles, egress ACL, the `jailbee-loose` bridge, shared dirs; install the `jailbee-net-refresh` user timer. Errors if profiles already exist. |
 | `jailbee apply [-y] [--no-restart]` | Re-push current config (profiles, ACL, `/etc/hosts`, dockerd proxy) to running containers. Replaces the old `jailbee init --reapply` / `jailbee net refresh`. Idempotent; prompts to restart containers if profiles changed (`-y` to skip prompt, `--no-restart` to never restart). |
 | `jailbee base build` | Build the golden image from `install.d/` snippets. 10–15 min, one-time (re-run after changing `golden.*` or snippets). |
 | `jailbee base prune [--all] [--days N] [--yes-to-all]` | Remove superseded dated golden-image archives (`<alias>-YYYY-MM-DD`). Lists all candidates up front and confirms once — a single batch confirmation, not per-archive — printing the total count + size before prompting. The live base image is always kept; archives currently in use by a container are skipped (batch continues, exit 0). `--all` prunes archives for every registered repo, not just the current one. `--days N` limits removal to archives older than N days (omitted: every dated archive is a candidate). `--yes-to-all` skips the confirmation prompt entirely. |
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base image and dated archive with its size, a per-repo subtotal, a prunable figure (archives only, i.e. what `jailbee base prune` would reclaim), and a grand total across images shown. `--all` includes every registered repo, not just the current one. |
-| `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, subuid/subgid mapping, keyring limits, registry mirror, GitHub token perms, agent setup, port forwards, and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
+| `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, subuid/subgid mapping, keyring limits, registry mirror, GitHub token perms, agent setup, port forwards, the `jailbee setup` steps (`shell completions`, `claude skills (host)`), and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
 | `jailbee registry up [--recreate]\|down\|status` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. |
-| `jailbee net install` | (Re)install the `jailbee-net-refresh` user systemd timer + service. Idempotent; safe to re-run. |
+| `jailbee net install` | (Re)install the `jailbee-net-refresh` user systemd timer + service. Idempotent; safe to re-run. Equivalent to `jailbee setup --yes --only timer`. |
 | `jailbee version` / `jailbee --version` | Print the version. |
 
 ## Config

@@ -4,6 +4,31 @@
 
 ### Added
 
+- **`jb setup` installs the post-install steps a package install cannot.**
+  Shell completions for both console scripts, the `jailbee-net-refresh` user
+  timer, and jailbee's Claude Code skills in `~/.claude/skills` used to be
+  inlined in this repo's `make install`, which meant a `uv tool install
+  jailbee` never performed them and nothing said so. `jb setup` is the
+  machine-level counterpart to the per-repo `jb init`: interactive by default
+  (one question per step, defaulting to yes for a missing step and no for one
+  already in place), `--yes` for scripts, `--only` to pick steps and
+  `--shell` to override shell detection. It needs no repo config, so it works
+  from the directory a fresh install starts in, and every step is idempotent
+  — re-run it after upgrading. Completions go where each shell already looks,
+  so bash and fish need no rc edit; zsh's `compinit` line is offered
+  interactively and only ever printed under `--yes`. Host prerequisites
+  (Incus, the firewall, UID delegation) are deliberately out of scope: the
+  command ends by pointing at `jb doctor` and
+  [docs/installation.md](docs/installation.md).
+- **The commands you run daily say once when a setup step is missing.**
+  `jb ls`, `jb new` and `jb shell` print a one-shot hint on stderr naming the
+  missing steps and `jb setup`. It fires at most once per machine — running
+  `jb setup` silences it too, declined steps included — so a long-time user
+  whose install predates this sees it once and never again. `jb doctor` is
+  where the state stays visible: it grew `shell completions` and
+  `claude skills (host)` checks (the latter only when the Claude integration
+  is enabled), and its inactive-timer advice now names `jb setup` rather than
+  `jb init`, which is per repo and refuses to run twice.
 - **jailbee now tells you when a release needs `jb base build` or `jb apply`
   re-run.** Some releases change what the golden image contains
   (`provision/install.sh`, `install.d.available/` snippets, provisioning env)

@@ -145,15 +145,31 @@ jailbee new feat/my-branch   # spin up an isolated env for a branch
 See **[Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md)** for the full first-run
 walkthrough.
 
-## Shell completion
+## Post-install setup
 
-Install Typer's completion script once per shell:
+Installing the package puts `jailbee` and `jb` on your `PATH` and nothing
+else. One command installs the rest:
 
 ```bash
-jailbee --install-completion
+jailbee setup
 ```
 
-Restart the shell, and TAB completes commands, options, and:
+It asks about three steps, each idempotent — re-run it after upgrading:
+
+- **shell completions** for both `jailbee` and `jb` (bash, zsh or fish),
+- the **`jailbee-net-refresh` user timer**, which keeps strict-mode egress
+  allowlists current and expires `jailbee net loose --for` TTLs,
+- JailBee's **Claude Code skills** in `~/.claude/skills`, so Claude on your
+  host knows how to drive `jailbee`.
+
+`jailbee doctor` reports any step that is missing. Host prerequisites — Incus,
+the firewall, UID delegation — are separate; see
+[Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md).
+
+### Shell completion
+
+Restart the shell after `jailbee setup`, and TAB completes commands, options,
+and:
 
 - **container names** on every command that takes one (`jailbee shell`, `jailbee destroy`,
   `jailbee git push`, `jailbee ide`, …) — short names, from the containers that exist in

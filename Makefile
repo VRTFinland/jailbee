@@ -1,40 +1,33 @@
 .PHONY: install install-gui install-skill check build publish-testpypi \
         changelog release
 
-# Use bash for recipe lines — Typer's --show-completion uses
-# shellingham, which inspects the parent process; under the default
-# /bin/sh make would emit "Shell sh not supported."
+# Use bash for recipe lines — the `release` target relies on bash features
+# (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
 SHELL := /bin/bash
 
 # Install/reinstall the `jailbee` CLI globally from the current checkout WITH
-# the optional Qt GUI extra (PySide6). Also (re)installs the user systemd
-# timer that refreshes the egress pool and bash completion. `jailbee net
-# install` is idempotent, so re-running this target is safe. Requires libGL
-# on the host; `jailbee gui` and `jailbee dashboard --gui` work after this.
-install: install-skill
+# the optional Qt GUI extra (PySide6), then run the post-install steps:
+# shell completions for `jailbee` and `jb`, the egress-refresh user timer,
+# and the bundled Claude skills. `jailbee setup` is idempotent and `--yes`
+# keeps it non-interactive (it never edits a shell rc in that mode), so
+# re-running this target is safe. Requires libGL on the host; `jailbee gui`
+# and `jailbee dashboard --gui` work after this.
+install:
 	uv tool install '.[gui]' --force --reinstall
-	jailbee net install
-	mkdir -p ~/.local/share/bash-completion/completions
-	@for name in jailbee jb; do \
-		$$name --show-completion > ~/.local/share/bash-completion/completions/$$name; \
-	done
-	@echo "Bash completion installed. Open a new shell to activate."
+	jailbee setup --yes
 
 # Alias for `make install` — kept for back-compat and discoverability now that
 # `make install` includes the optional Qt GUI extra by default.
 install-gui: install
 
-# Copy the bundled Claude skills into the user's skills directory.
-# Each is removed first so re-running overwrites any previous install,
-# keeping the source-of-truth in this repo. `make install` depends on
-# this target, so the skills install and update alongside the CLI.
+# Just the bundled Claude skills, for when only they changed. `make install`
+# does this too, via `jailbee setup`, which is also what an end user runs —
+# the copying lives in the package, not here, so there is one implementation
+# to keep correct. Deliberately `uv run`, not the installed `jailbee`: from
+# a checkout the skills to install are this tree's `docs/skills`, and the
+# installed wheel carries the copy from whenever it was last built.
 install-skill:
-	mkdir -p ~/.claude/skills
-	@for skill in jailbee-repo-setup jailbee-usage; do \
-		rm -rf ~/.claude/skills/$$skill; \
-		cp -r docs/skills/$$skill ~/.claude/skills/; \
-		echo "Installed: ~/.claude/skills/$$skill"; \
-	done
+	uv run jailbee setup --yes --only skills
 
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:

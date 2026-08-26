@@ -389,8 +389,9 @@ otherwise fight over.
 
 ## Shell completion
 
-`jailbee --install-completion` installs Typer's completion script (once per
-shell; restart it after). Beyond commands/flags, TAB dynamically completes:
+`jailbee setup` installs the completion scripts for both `jailbee` and `jb`
+(once per machine; restart the shell after). Beyond commands/flags, TAB
+dynamically completes:
 
 - container names, on every command that takes one
 - branch names, on `jailbee new` and `jailbee retarget`
