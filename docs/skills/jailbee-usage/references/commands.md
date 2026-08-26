@@ -27,7 +27,7 @@ Common conventions:
 - [Git bridge (`git fetch|checkout|pull|push|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
 - [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
-- [Network (`net strict|loose|refresh|status|unregister|install`)](#network)
+- [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
 - [GUI (`ide`, `chrome`, `chrome-pool`)](#gui)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
@@ -667,8 +667,36 @@ its base."
 | `jailbee net strict [NAME]` | Egress allowlist (default mode). Clears any loose TTL. **`github.com` intentionally blocked** — don't add it to the allowlist; use loose for pushes. |
 | `jailbee net loose [NAME] [--for DUR\|--no-revert]` | Full NAT (uses the `jailbee-loose` bridge). Auto-reverts to the previous mode after a TTL (default 5 min, `loose_auto_revert` config). `--for` sets that TTL for this switch only: `30s`/`45m`/`4h`, max 24h, or `never` (= `--no-revert`); the two flags are mutually exclusive and a bad value exits 2. With neither flag JailBee asks — only on a TTY, with `JAILBEE_NONINTERACTIVE` unset and the policy enabled; otherwise `loose_auto_revert.after` applies with no prompt. With `enabled: false` JailBee schedules no TTL and never asks, but an explicit `--for` is still honoured and still auto-reverts. |
 | `jailbee net refresh [--json]` | Re-resolve `egress_allow` hostnames, merge into the per-repo pool, push ACL + `/etc/hosts`. Useful after CDN IP rotation. |
-| `jailbee net status` | Refresh-timer health, registered repos, per-repo pool sizes, per-container loose expiry. |
+| `jailbee net status` | Refresh-timer health, registered repos, per-repo pool sizes, per-container loose expiry, and (new) an "Egress overrides" section listing every host-local override on this host. |
 | `jailbee net unregister [--repo <path>]` | Remove the repo from the refresh registry. `jailbee apply` re-registers. |
+
+### Egress overrides — `jailbee net egress`
+
+Also available as the short root alias `jailbee egress` (hidden from
+`jailbee --help`, works identically). `NAME` resolves the same way as every
+other container command (short branch name, full name, or an interactive
+picker on a TTY); `--repo` always short-circuits that resolution — a
+repo-scope change touches no one container.
+
+| Command | Behaviour |
+|---|---|
+| `jailbee net egress add ENTRY [NAME] [--repo]` | Allow one host. Defaults to container scope (stored in the container's `user.jailbee.egress_extra` label — dies with the container). `--repo` stores a host-local, uncommitted override applying to every container of this repo on this host instead. Rejects before storing anything: a malformed `ENTRY` (exit 2) or a hostname that fails to resolve (exit 1) — two different failures, two different codes. A no-op (exit 0, informational) if the entry is already covered by `config.yaml` or already stored at that scope. Materialises against the container's **current** network mode: adding to a `loose` container stores the label but touches no ACL/NIC until the container returns to `strict` (`--repo` has no container to materialise against, so it always just stores). |
+| `jailbee net egress rm ENTRY [NAME] [--repo]` | Remove an override. **Refuses** (exit 1, points at the config file) an entry that exists *only* in `config.yaml` — overrides can only widen the allowlist, never narrow config. Removes normally if the same entry is *also* stored as an override (typically one promoted with `export` and then pasted, or re-added on purpose) — that's the row that goes away, config is untouched. Same current-network-mode materialisation as `add`. |
+| `jailbee net egress ls [NAME] [--format table\|json]` | Show every applicable entry with its source (`config`, `repo-override`, `container`) and a `redundant` note when an override duplicates a wider-scoped entry that already covers it — a repo-override row against `config.yaml`, or a container row against either `config.yaml` or a repo-scope override. With no `NAME`, shows repo scope only (config + repo overrides) — a read command must not prompt for a container — and prints a one-line stderr hint that container-scope entries are hidden; pass `NAME` to include that container's own overrides. |
+| `jailbee net egress export [NAME]` | Print a **complete replacement** for the repo config's `egress_allow:` key — existing file entries plus promotable overrides — sourced from the repo config file itself, never from the global config layer or jailbee's feature auto-added hosts (those track releases and would go stale frozen into a file). Paste over the *whole* key, don't append one below it: a second `egress_allow:` mapping key makes `yaml.safe_load` silently keep only the last one, discarding the first. With no `NAME`, repo-scope overrides only; pass `NAME` to include that container's overrides too. After pasting and `jailbee apply`, the now-redundant overrides can be dropped with `jailbee net egress rm`. |
+
+Overrides are **additive only** — neither scope can revoke what
+`config.yaml` grants. See [docs/security.md](../../../security.md#egress-overrides)
+for the security posture: an override widens a boundary that never passes
+code review, and no container can reach these commands to grant itself
+egress (no `jailbee` binary, no Incus socket inside a container).
+
+`--repo` add/rm only store or remove the override row — they never touch a
+container's ACL or `/etc/hosts` themselves. `jailbee apply`, or the next
+`jailbee net refresh` timer tick, is what actually materialises a `--repo`
+change. Container-scope add/rm are the opposite: they materialise
+immediately (against the container's current network mode, per the table
+above), with no separate apply step needed.
 
 ## GUI
 

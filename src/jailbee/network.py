@@ -22,9 +22,34 @@ from __future__ import annotations
 import yaml
 
 from jailbee.config import Config
-from jailbee.egress import EgressEntry, build_egress_entries
+from jailbee.egress import EgressEntry
 
 ALLOWLIST_DESC_PREFIX = "allowlisted: "
+
+
+def _allow_rules(entries: list[EgressEntry]) -> list[dict[str, str]]:
+    """The `allow` egress rules for `entries`, shared by both ACL renderers.
+
+    `allowlist_acl_yaml` (the repo ACL) and `extra_acl_yaml` (a container's
+    own extra ACL) used to duplicate this loop verbatim. Drift between the
+    two copies would silently break `entries_from_acl_yaml`'s round-trip —
+    which `/etc/hosts` pinning depends on for both ACL kinds — since it
+    parses both back with the same rule shape.
+    """
+    rules: list[dict[str, str]] = []
+    for entry in entries:
+        for dest in entry.destinations:
+            rule: dict[str, str] = {
+                "action": "allow",
+                "destination": dest,
+                "description": f"{ALLOWLIST_DESC_PREFIX}{entry.description}",
+                "state": "enabled",
+            }
+            if entry.port is not None:
+                rule["protocol"] = "tcp"
+                rule["destination_port"] = str(entry.port)
+            rules.append(rule)
+    return rules
 
 
 def acl_name(cfg: Config) -> str:
@@ -34,16 +59,18 @@ def acl_name(cfg: Config) -> str:
 
 def allowlist_acl_yaml(
     cfg: Config,
-    entries: list[EgressEntry] | None = None,
+    entries: list[EgressEntry],
     mirror_endpoint: tuple[str, int] | None = None,
 ) -> str:
-    """Generate the <repo>-allowlist ACL YAML.
+    """Generate the <repo>-allowlist ACL YAML from already-resolved entries.
 
-    Pass `entries` to reuse a list of already-resolved entries (so the
-    same DNS answers feed both the ACL and `/etc/hosts`).
-    When omitted, resolves hostnames in `egress_allow` to IPv4 at call
-    time; raises `egress.NetworkResolveError` on any failure (no partial
-    ACLs).
+    `entries` is required: the caller owns resolution, so the same DNS
+    answers feed both the ACL and `/etc/hosts`. It used to default to
+    resolving `cfg.egress_allow` here, which became a silent bug once
+    host-local repo overrides existed — that path would render an ACL
+    missing them, with no error. Callers build the list with
+    `egress_scope.effective_repo_entries` + `egress.build_egress_entries`
+    (or from the IP pool, in `egress_pool._write_acl`).
 
     Pass `mirror_endpoint=(ip, port)` to auto-inject an allow rule for
     the host Docker registry mirror. The mirror rule's
@@ -51,9 +78,6 @@ def allowlist_acl_yaml(
     it is invisible to `entries_from_acl_yaml` and the /etc/hosts
     pinning path.
     """
-    if entries is None:
-        entries = build_egress_entries(cfg.effective_egress_allow())
-
     egress: list[dict[str, str]] = []
 
     # DHCP — required for the container to acquire an IPv4/IPv6 lease
@@ -113,18 +137,7 @@ def allowlist_acl_yaml(
         )
 
     # Allowlist rules from config.
-    for entry in entries:
-        for dest in entry.destinations:
-            rule: dict[str, str] = {
-                "action": "allow",
-                "destination": dest,
-                "description": f"{ALLOWLIST_DESC_PREFIX}{entry.description}",
-                "state": "enabled",
-            }
-            if entry.port is not None:
-                rule["protocol"] = "tcp"
-                rule["destination_port"] = str(entry.port)
-            egress.append(rule)
+    egress.extend(_allow_rules(entries))
 
     # No explicit default-reject rule: Incus prioritises by action type
     # so it would be evaluated before allow rules. The NIC's implicit
@@ -197,3 +210,25 @@ def entries_from_acl_yaml(acl_yaml: str) -> list[EgressEntry]:
                 description=raw,
             )
     return list(by_desc.values())
+
+
+def extra_acl_yaml(name: str, entries: list[EgressEntry]) -> str:
+    """Generate a per-container extra allowlist ACL.
+
+    Allow rules only. DHCP, DNS and the registry-mirror rules deliberately
+    stay out: this ACL is applied to the same NIC as `<repo>-allowlist`,
+    which already carries them, and Incus combines the rules of every ACL on
+    a NIC. Default-deny is unaffected — it comes from the NIC's implicit
+    default action at the chain tail, not from any rule here.
+
+    Descriptions use the same `ALLOWLIST_DESC_PREFIX` as the repo ACL, so
+    `entries_from_acl_yaml` reads this ACL back unchanged and `/etc/hosts`
+    pinning works identically for both.
+    """
+    acl = {
+        "name": name,
+        "description": "jailbee per-container egress additions",
+        "egress": _allow_rules(entries),
+        "ingress": [],
+    }
+    return yaml.safe_dump(acl, sort_keys=False)

@@ -278,7 +278,7 @@ def _neutralize_kitty_autodetect(request, mocker):
 
 @pytest.fixture
 def db_engine() -> Engine:
-    """In-memory SQLite engine with the gie schema applied. One per test."""
+    """In-memory SQLite engine with the jailbee schema applied. One per test."""
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},

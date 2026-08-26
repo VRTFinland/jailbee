@@ -178,6 +178,7 @@ def test_apply_hosts_reads_live_acl_when_no_entries():
     """Default path: query incus.network_acl_show, mirror its destinations."""
     cfg = _make_cfg(["github.com"])
     incus = MagicMock()
+    incus.network_acl_exists.return_value = False
     incus.network_acl_show.return_value = _acl_yaml(_allowlisted("github.com", ["140.82.121.4"]))
 
     apply_hosts(cfg, incus, "myrepo-feat-x")
@@ -262,6 +263,52 @@ def test_apply_hosts_script_strips_existing_block():
     # inside a user-written comment further down /etc/hosts.
     assert "^# BEGIN jailbee-managed allowlist" in script
     assert "^# END jailbee-managed allowlist" in script
+
+
+def test_apply_hosts_pins_the_containers_own_extras(make_cfg, tmp_path, mocker):
+    from jailbee.egress import EgressEntry
+    from jailbee.hosts import apply_hosts
+    from jailbee.network import allowlist_acl_yaml, extra_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = True
+
+    def _show(name: str) -> str:
+        if name == "myrepo-feat-extra":
+            return extra_acl_yaml(
+                name,
+                [EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")],
+            )
+        return allowlist_acl_yaml(
+            cfg,
+            [EgressEntry(destinations=["1.1.1.1"], port=None, description="github.com")],
+        )
+
+    incus.network_acl_show.side_effect = _show
+
+    apply_hosts(cfg, incus, "myrepo-feat")
+
+    script = incus.exec.call_args[0][1][2]
+    assert "1.1.1.1 github.com" in script
+    assert "10.0.5.7 nexus.corp" in script
+
+
+def test_apply_hosts_skips_the_extra_acl_when_absent(make_cfg, tmp_path, mocker):
+    from jailbee.egress import EgressEntry
+    from jailbee.hosts import apply_hosts
+    from jailbee.network import allowlist_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = False
+    incus.network_acl_show.return_value = allowlist_acl_yaml(
+        cfg, [EgressEntry(destinations=["1.1.1.1"], port=None, description="github.com")]
+    )
+
+    apply_hosts(cfg, incus, "myrepo-feat")
+
+    incus.network_acl_show.assert_called_once()
 
 
 # ---- apply_hosts: mirror_endpoint -------------------------------------------

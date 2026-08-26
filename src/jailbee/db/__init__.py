@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 def state_dir() -> Path:
@@ -148,6 +148,20 @@ def _migrate_to_v7(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v8(conn: Connection) -> None:
+    """v7 -> v8: add the egress_override table. ``create_all`` (run before the
+    migration loop in ``_ensure_schema``) already creates the new table, so
+    this step is an idempotent no-op guard whose job is to let the version
+    bump to 8 — the same shape as ``_migrate_to_v7``.
+
+    v7 was claimed independently by two branches (``host_setup_state`` and
+    ``egress_override``); both steps are no-op guards, so a database already
+    at v7 from either side converges here — ``create_all`` supplies whichever
+    table it is missing.
+    """
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -156,6 +170,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
 
 

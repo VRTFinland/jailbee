@@ -800,3 +800,103 @@ def test_missing_binary_error_names_the_configured_binary(mocker):
         Incus(binary="/opt/incus/bin/incus").list_containers()
 
     assert "/opt/incus/bin/incus" in str(excinfo.value)
+
+
+def test_config_device_override_passes_key_values(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_override("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "override", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_set_passes_key_values(mocker):
+    """`config_device_set` is the in-place update path for a RUNNING
+    container's NIC — the hot path of every `jailbee apply` re-materialising
+    a container's egress ACL against an existing local `eth0` device — but
+    had no dedicated test in a fully-mocked suite, which is exactly where an
+    argv typo would otherwise go uncaught."""
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_set("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "set", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_remove_missing_ok_false_raises(mocker):
+    """The six pre-existing `missing_ok=False` (the default) callers depend
+    on a genuine removal failure raising — unlike `missing_ok=True`, which
+    deliberately swallows it."""
+    from jailbee.incus import Incus, IncusError
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    with pytest.raises(IncusError):
+        Incus().config_device_remove("ct", "eth0")
+
+
+def test_config_device_remove_missing_ok_swallows_failure(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    # Must not raise.
+    Incus().config_device_remove("ct", "eth0", missing_ok=True)
+
+
+def test_config_device_remove_missing_ok_retries_a_transient_etag_race(incus, mocker):
+    """A container that just booted can bounce a teardown off a transient
+    ETag mismatch. `missing_ok=True` must retry that, not swallow it on the
+    first attempt — a swallowed ETag failure would leave the device (and the
+    strict ACL still attached to it) in place while the caller believes the
+    teardown succeeded."""
+    sleep = mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR), _cp(returncode=0)],
+    )
+
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == 2
+    sleep.assert_called_once()  # backed off between the two attempts
+
+
+def test_config_device_remove_missing_ok_swallows_persistent_etag_failure(incus, mocker):
+    """Even if the ETag race never resolves, `missing_ok=True` must not
+    raise — it exhausts the same bounded retries as every other
+    read-modify-write, then swallows."""
+    mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR)] * 10,
+    )
+
+    # Must not raise.
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == incus._ETAG_RETRIES
+
+
+def test_network_acl_list_returns_names(mocker):
+    import json as _json
+
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(
+        returncode=0,
+        stdout=_json.dumps([{"name": "a-allowlist"}, {"name": "b-extra"}]),
+        stderr="",
+    )
+    assert Incus().network_acl_list() == ["a-allowlist", "b-extra"]

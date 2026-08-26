@@ -188,13 +188,13 @@ def test_cap_evicts_oldest_first(
 
 
 def test_resolve_with_status_all_ok(mocker: MockerFixture) -> None:
-    from jailbee import egress_pool
+    from jailbee import egress
 
     mocker.patch(
-        "jailbee.egress_pool.resolve_hostnames",
+        "jailbee.egress.resolve_hostnames",
         return_value={"github.com": ["1.1.1.1"], "api.github.com": ["1.1.1.2"]},
     )
-    resolved, failed = egress_pool.resolve_with_status(
+    resolved, failed = egress.resolve_with_status(
         ["github.com", "api.github.com"],
     )
     assert resolved == {"github.com": ["1.1.1.1"], "api.github.com": ["1.1.1.2"]}
@@ -202,17 +202,17 @@ def test_resolve_with_status_all_ok(mocker: MockerFixture) -> None:
 
 
 def test_resolve_with_status_total_failure(mocker: MockerFixture) -> None:
-    from jailbee import egress_pool
+    from jailbee import egress
     from jailbee.egress import NetworkResolveError
 
     def boom(names: list[str]) -> dict[str, list[str]]:
         raise NetworkResolveError(names[0], Exception("getaddrinfo: -3"))
 
     mocker.patch(
-        "jailbee.egress_pool.resolve_hostnames",
+        "jailbee.egress.resolve_hostnames",
         side_effect=boom,
     )
-    resolved, failed = egress_pool.resolve_with_status(
+    resolved, failed = egress.resolve_with_status(
         ["github.com", "api.github.com"],
     )
     assert resolved == {}
@@ -221,7 +221,7 @@ def test_resolve_with_status_total_failure(mocker: MockerFixture) -> None:
 
 def test_resolve_with_status_partial_failure(mocker: MockerFixture) -> None:
     """When the batched resolve fails, try one at a time and split."""
-    from jailbee import egress_pool
+    from jailbee import egress
     from jailbee.egress import NetworkResolveError
 
     def selective(names: list[str]) -> dict[str, list[str]]:
@@ -232,10 +232,10 @@ def test_resolve_with_status_partial_failure(mocker: MockerFixture) -> None:
         raise NetworkResolveError(names[0], Exception("temp fail"))
 
     mocker.patch(
-        "jailbee.egress_pool.resolve_hostnames",
+        "jailbee.egress.resolve_hostnames",
         side_effect=selective,
     )
-    resolved, failed = egress_pool.resolve_with_status(
+    resolved, failed = egress.resolve_with_status(
         ["github.com", "api.github.com"],
     )
     assert resolved == {"github.com": ["1.1.1.1"]}

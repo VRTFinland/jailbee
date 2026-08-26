@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jailbee.config import Config, ConfigError
 from jailbee.constants import SHARED_SUBDIRS
-from jailbee.egress import EgressEntry
+from jailbee.egress import EgressEntry, build_egress_entries
 from jailbee.incus import Incus, IncusError
 from jailbee.network import acl_name, allowlist_acl_yaml
 from jailbee.profiles import (
@@ -350,10 +350,20 @@ def apply_allowlist_acl(
 
     Raises ``RuntimeError`` if the ACL already exists — use `jailbee apply` to
     update it. Pass `entries` to reuse already-resolved entries so the same
-    DNS answers are used for both ACL and `/etc/hosts`. Pass
-    `mirror_endpoint=(ip, port)` to auto-include the host Docker registry
-    mirror rule.
+    DNS answers are used for both ACL and `/etc/hosts`. When omitted,
+    resolves hostnames in `cfg.effective_egress_allow()` to IPv4 here (the
+    caller — `run_init` — has no pre-resolved entries of its own).
+    Pass `mirror_endpoint=(ip, port)` to auto-include the host Docker
+    registry mirror rule.
     """
+    if entries is None:
+        # Deliberately NOT egress_scope.effective_repo_entries: run_init has no
+        # DB session to read host-local repo overrides from, so the very first
+        # ACL jailbee writes can lag one added before `jailbee init` ran. The
+        # window closes on the first refresh — `refresh_pool` (which both
+        # `jb new` and `jb apply` run before a container can observe the ACL)
+        # is wired to `effective_repo_entries` and rewrites this same ACL.
+        entries = build_egress_entries(cfg.effective_egress_allow())
     _apply_acl_strict(
         incus,
         acl_name(cfg),

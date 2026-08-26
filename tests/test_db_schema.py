@@ -791,3 +791,50 @@ def test_migrate_to_v7_is_idempotent() -> None:
         sql = "SELECT name FROM sqlite_master WHERE type='table'"
         names = {row[0] for row in conn.exec_driver_sql(sql)}
     assert "host_setup_state" in names
+
+
+def test_v7_db_migrates_to_current_adding_egress_override() -> None:
+    """An existing v7 DB gains the new table and lands on the current version
+    without losing unrelated data. `create_all` makes the table;
+    `_migrate_to_v8` only lets the version bump — the same shape as v7.
+
+    v7 was claimed by two branches at once (`host_setup_state` here,
+    `egress_override` on the egress-override branch); a DB stamped v7 by
+    either of them converges on the same schema, because both steps are
+    no-op guards and `create_all` supplies whichever table is missing.
+    """
+    from jailbee.db import CURRENT_SCHEMA_VERSION, _ensure_schema
+    from jailbee.db.models import EgressOverride, RegisteredRepo, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 8, 26, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=7))
+        s.add(RegisteredRepo(container_prefix="sampleapp", repo_root="/r", registered_at=now))
+        s.commit()
+    # Simulate the v7 shape written by the *other* branch: the table is absent.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE egress_override")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        repo = s.get(RegisteredRepo, "sampleapp")
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+        assert repo is not None, "unrelated data preserved (non-destructive)"
+        s.add(EgressOverride(container_prefix="sampleapp", entry="nexus.corp:443", added_at=now))
+        s.commit()
+
+
+def test_migrate_to_v8_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v8
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)  # table already present
+    with engine.begin() as conn:
+        _migrate_to_v8(conn)  # must not raise on an already-migrated DB
+        sql = "SELECT name FROM sqlite_master WHERE type='table'"
+        names = {row[0] for row in conn.exec_driver_sql(sql)}
+    assert "egress_override" in names
