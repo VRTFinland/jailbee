@@ -332,13 +332,25 @@ and back again.
 
 ### How do I allow a host through in strict mode?
 
-Add it to `egress_allow` as `host[:port]` (a CIDR or IPv4 also works) and run
-`jailbee apply --no-restart`. Prefer the `host:port` form — a port-less entry
-allows *any* protocol and port. Hostnames are resolved into the ACL and
-re-resolved every minute into a cumulative IP pool, so CDN addresses that
-rotate keep working; a hostname that fails to resolve aborts the whole apply.
+For a host the whole team needs, add it to `egress_allow` as `host[:port]`
+(a CIDR or IPv4 also works) and run `jailbee apply --no-restart`. Prefer the
+`host:port` form — a port-less entry allows *any* protocol and port.
+Hostnames are resolved into the ACL and re-resolved every minute into a
+cumulative IP pool, so CDN addresses that rotate keep working; a hostname
+that fails to resolve aborts the whole apply.
 
-→ [`egress_allow`](config.md#egress_allow)
+For a host only you need, or one you want to try before committing it,
+`jailbee net egress add <host>[:<port>] [<container>]` widens that one
+container's allowlist, and on a strict container it takes effect at once (on a
+`loose` one it is stored and applies when the container returns to strict).
+`--repo` widens every container of the repo on this machine instead, pushed by
+the next `jailbee apply`. Neither touches `config.yaml` — container entries
+die with the container, repo entries are host-local state.
+`jailbee net egress export` prints the config key back with those overrides
+folded in, for when one has earned a place in git.
+
+→ [`egress_allow`](config.md#egress_allow),
+[Egress overrides](security.md#egress-overrides)
 
 ### Does `loose` stay on until I remember to switch back?
 

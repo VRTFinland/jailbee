@@ -79,7 +79,10 @@ sped up and say so on screen; nothing else is edited.
   resolves them into the kernel ACL, keeps a cumulative pool as CDN
   addresses rotate, and pins the container's `/etc/hosts` to match. Any
   protocol, not just HTTP — `ssh`, `git+ssh` and a database client work
-  under the same list.
+  under the same list. `jailbee net egress add` widens one container's copy
+  of that list — or this machine's copy of the repo's — without editing the
+  committed config, so a host only you need never lands in git; see
+  [Egress overrides](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#egress-overrides).
 - **First-class Claude Code** — opt in with `claude.enabled: true` and every
   container gets Claude Code installed, sharing one login and one settings
   directory across the repo's containers while your host `~/.claude` is

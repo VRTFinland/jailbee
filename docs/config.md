@@ -606,6 +606,23 @@ against unattended agents producing surprise pushes, and how to switch to
 loose-mode to push/fetch/run `gh` — is documented in
 [Security and limitations](security.md).
 
+**Widening the list without editing it.** This key is the committed,
+shared-by-everyone allowlist. `jailbee net egress add <entry> [<name>]`
+widens one container's copy of it, and `--repo` this host's copy of the
+repo's, without touching `config.yaml` — useful for a host that only one
+developer needs, or for trying an entry before proposing it to the team.
+Container-scoped entries live in the container's own
+`user.jailbee.egress_extra` label, die with the container and are materialised
+as the command runs; repo-scoped ones are host-local state, not in git, and go
+live on the next `jailbee apply`. Overrides are additive only: they can
+never narrow what this key grants, so reading `egress_allow` still tells you
+the minimum every container of the repo can reach — but not the maximum on a
+given machine, which is what `jailbee net egress ls` and `jailbee net status`
+report. `jailbee net egress export` prints the whole key back with the
+promotable overrides folded in, for when a temporary entry has earned its
+place here. See [Egress overrides](security.md#egress-overrides) for the
+security posture and [Commands](commands.md) for the flags.
+
 #### `loose_auto_revert`
 
 Auto-reverts `jailbee net loose <c>` back to the previous network mode
