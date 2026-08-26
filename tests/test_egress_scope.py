@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 import pytest
 
@@ -109,7 +108,9 @@ def test_extra_acl_name_is_deterministic():
     assert egress_scope.extra_acl_name(long) == egress_scope.extra_acl_name(long)
 
 
-def test_effective_repo_entries_appends_overrides_after_config(db_session, make_cfg, tmp_path, frozen_now):
+def test_effective_repo_entries_appends_overrides_after_config(
+    db_session, make_cfg, tmp_path, frozen_now
+):
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
     egress_scope.add_repo_extra(db_session, cfg.container_prefix, "nexus.corp:443", now=frozen_now)
 
@@ -185,9 +186,7 @@ def test_render_config_block_emits_file_entries_then_overrides():
 def test_render_config_block_output_is_a_single_valid_egress_allow_key():
     import yaml
 
-    block = egress_scope.render_config_block(
-        ["github.com"], ["nexus.corp:443"], prefix="myrepo"
-    )
+    block = egress_scope.render_config_block(["github.com"], ["nexus.corp:443"], prefix="myrepo")
     parsed = yaml.safe_load(block)
     assert parsed == {"egress_allow": ["github.com", "nexus.corp:443"]}
 
@@ -195,9 +194,7 @@ def test_render_config_block_output_is_a_single_valid_egress_allow_key():
 def test_render_config_block_dedupes_an_override_already_in_the_file():
     import yaml
 
-    block = egress_scope.render_config_block(
-        ["github.com"], ["github.com"], prefix="myrepo"
-    )
+    block = egress_scope.render_config_block(["github.com"], ["github.com"], prefix="myrepo")
     assert yaml.safe_load(block) == {"egress_allow": ["github.com"]}
 
 
@@ -224,9 +221,7 @@ def _incus_with(mocker, *, extras, local_eth0=None):
     return incus
 
 
-def test_apply_container_acl_writes_acl_and_overrides_the_nic(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_writes_acl_and_overrides_the_nic(make_cfg, tmp_path, mocker):
     import yaml
 
     from jailbee.network import ALLOWLIST_DESC_PREFIX
@@ -268,9 +263,7 @@ def test_apply_container_acl_writes_acl_and_overrides_the_nic(
     )
 
 
-def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(make_cfg, tmp_path, mocker):
     """`network_acl_set_yaml` is `incus network acl edit`, which requires the
     ACL to already exist — the first materialisation on a real host must
     create it first."""
@@ -289,9 +282,7 @@ def test_apply_container_acl_creates_the_acl_when_it_does_not_exist(
     incus.network_acl_create.assert_called_once_with("myrepo-feat-extra")
 
 
-def test_apply_container_acl_does_not_recreate_an_existing_acl(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_does_not_recreate_an_existing_acl(make_cfg, tmp_path, mocker):
     mocker.patch(
         "jailbee.egress_scope.resolve_entries",
         return_value=[
@@ -307,9 +298,7 @@ def test_apply_container_acl_does_not_recreate_an_existing_acl(
     incus.network_acl_create.assert_not_called()
 
 
-def test_apply_container_acl_in_loose_mode_tears_the_override_down(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_in_loose_mode_tears_the_override_down(make_cfg, tmp_path, mocker):
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=["nexus.corp:443"], local_eth0={"type": "nic"})
     incus.network_acl_exists.return_value = True
@@ -327,9 +316,7 @@ def test_apply_container_acl_in_loose_mode_tears_the_override_down(
     assert methods.index("config_device_remove") < methods.index("network_acl_delete")
 
 
-def test_apply_container_acl_with_no_extras_removes_acl_and_override(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_with_no_extras_removes_acl_and_override(make_cfg, tmp_path, mocker):
     cfg = make_cfg(tmp_path / "myrepo")
     incus = _incus_with(mocker, extras=[], local_eth0={"type": "nic"})
     incus.network_acl_exists.return_value = True
@@ -342,9 +329,7 @@ def test_apply_container_acl_with_no_extras_removes_acl_and_override(
     assert methods.index("config_device_remove") < methods.index("network_acl_delete")
 
 
-def test_apply_container_acl_updates_an_existing_override_in_place(
-    make_cfg, tmp_path, mocker
-):
+def test_apply_container_acl_updates_an_existing_override_in_place(make_cfg, tmp_path, mocker):
     """Re-materialising must not detach the NIC of a running container."""
     mocker.patch(
         "jailbee.egress_scope.resolve_entries",

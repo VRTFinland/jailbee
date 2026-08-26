@@ -262,10 +262,7 @@ def render_config_block(
         merged.setdefault(entry, None)
 
     if not overrides:
-        return (
-            f"# jailbee: no host-local egress overrides to promote for repo "
-            f"'{prefix}'.\n"
-        )
+        return f"# jailbee: no host-local egress overrides to promote for repo '{prefix}'.\n"
 
     promoted = [e for e in overrides if e not in set(file_entries)]
     header = (

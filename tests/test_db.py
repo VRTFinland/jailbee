@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db import CURRENT_SCHEMA_VERSION, _ensure_schema
@@ -28,9 +27,7 @@ def test_egress_override_roundtrips(db_session, frozen_now):
 
 
 def test_schema_version_is_seven(db_engine):
-    from sqlmodel import Session
 
-    from jailbee.db import CURRENT_SCHEMA_VERSION
     from jailbee.db.models import SchemaMeta
 
     assert CURRENT_SCHEMA_VERSION == 7
@@ -40,9 +37,7 @@ def test_schema_version_is_seven(db_engine):
 
 def test_v6_database_migrates_to_v7_without_losing_rows(tmp_path):
     """A v6 DB with pool data migrates forward, not through the destructive reset."""
-    from sqlmodel import Session, SQLModel, create_engine
 
-    from jailbee.db import _ensure_schema
     from jailbee.db.models import RegisteredRepo, SchemaMeta
 
     db = tmp_path / "state.sqlite"

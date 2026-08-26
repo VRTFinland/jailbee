@@ -296,11 +296,9 @@ def refresh_pool(
         )
 
     try:
-        _refresh_container_extras(
-            cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host
-        )
+        _refresh_container_extras(cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host)
         _prune_container_pools(incus, session)
-    except Exception as e:  # noqa: BLE001 - a container-scope failure must not
+    except Exception as e:
         # invalidate the repo-scope work already committed above.
         log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
 
@@ -481,9 +479,7 @@ def _refresh_container_extras(
                     "; ".join(f"{n}: {e}" for n, e in failed.items()),
                 )
             merge_resolved_ips(session, key, resolved, now=now)
-            evict_expired(
-                session, key, set(resolved), now=now, ttl=ttl, max_per_host=max_per_host
-            )
+            evict_expired(session, key, set(resolved), now=now, ttl=ttl, max_per_host=max_per_host)
             session.commit()
 
             entries = _entries_from_pool(session, key, extras)

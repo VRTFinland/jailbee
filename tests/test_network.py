@@ -84,7 +84,8 @@ def test_acl_has_no_explicit_reject_egress(mock_resolve):
     per-NIC default action, rendered at the tail of the generated chain.
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     rejects = [r for r in parsed["egress"] if r["action"] == "reject"]
     assert rejects == [], f"unexpected explicit reject in egress: {rejects}"
 
@@ -92,7 +93,8 @@ def test_acl_has_no_explicit_reject_egress(mock_resolve):
 def test_acl_has_no_explicit_reject_ingress(mock_resolve):
     """Same as above for the ingress side."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     rejects = [r for r in parsed["ingress"] if r["action"] == "reject"]
     assert rejects == [], f"unexpected explicit reject in ingress: {rejects}"
 
@@ -181,7 +183,8 @@ def test_acl_bare_host_has_no_port_field(make_cfg, tmp_path, mocker):
 def test_acl_egress_all_allow(mock_resolve):
     """Every egress rule is `allow` — default-deny is implicit via NIC."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     actions = [r["action"] for r in parsed["egress"]]
     assert actions and all(a == "allow" for a in actions), actions
 
@@ -189,7 +192,8 @@ def test_acl_egress_all_allow(mock_resolve):
 def test_acl_egress_allows_dhcpv4(mock_resolve):
     """Default-deny ACL must allow DHCPv4 client→server."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     dhcp = [
         r
         for r in parsed["egress"]
@@ -202,7 +206,8 @@ def test_acl_egress_allows_dhcpv4(mock_resolve):
 def test_acl_egress_allows_dhcpv6(mock_resolve):
     """Default-deny ACL must allow DHCPv6 client→server."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     dhcp = [
         r
         for r in parsed["egress"]
@@ -215,7 +220,8 @@ def test_acl_egress_allows_dhcpv6(mock_resolve):
 def test_acl_ingress_allows_dhcpv4(mock_resolve):
     """Default-deny ingress must allow DHCPv4 server→client reply."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     dhcp = [
         r
         for r in parsed["ingress"]
@@ -228,7 +234,8 @@ def test_acl_ingress_allows_dhcpv4(mock_resolve):
 def test_acl_ingress_allows_dhcpv6(mock_resolve):
     """Default-deny ingress must allow DHCPv6 server→client reply."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     dhcp = [
         r
         for r in parsed["ingress"]
@@ -241,7 +248,8 @@ def test_acl_ingress_allows_dhcpv6(mock_resolve):
 def test_acl_ingress_all_allow(mock_resolve):
     """Every ingress rule is `allow` — default-deny is implicit via NIC."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    parsed = yaml.safe_load(allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow())))
+    acl_yaml = allowlist_acl_yaml(cfg, build_egress_entries(cfg.effective_egress_allow()))
+    parsed = yaml.safe_load(acl_yaml)
     actions = [r["action"] for r in parsed["ingress"]]
     assert actions and all(a == "allow" for a in actions), actions
 

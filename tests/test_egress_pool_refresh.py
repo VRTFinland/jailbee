@@ -404,7 +404,6 @@ def test_hosts_merges_container_extras_with_repo_entries(
     assert {ip for e in bar_entries for ip in e.destinations} == {"1.1.1.1"}
 
 
-
 def test_refresh_all_iterates_registered_repos(
     db_session: Session,
     gcfg: Any,
@@ -873,7 +872,9 @@ def test_prune_container_pools_drops_rows_for_a_vanished_container(
     cfg = make_cfg(tmp_path / "myrepo")
     merge_resolved_ips(db_session, "ct:myrepo-gone", {"nexus.corp": ["10.0.5.7"]}, now=frozen_now)
     merge_resolved_ips(db_session, "ct:myrepo-live", {"nexus.corp": ["10.0.5.8"]}, now=frozen_now)
-    merge_resolved_ips(db_session, cfg.container_prefix, {"github.com": ["1.1.1.1"]}, now=frozen_now)
+    merge_resolved_ips(
+        db_session, cfg.container_prefix, {"github.com": ["1.1.1.1"]}, now=frozen_now
+    )
     db_session.commit()
 
     incus = mocker.MagicMock()

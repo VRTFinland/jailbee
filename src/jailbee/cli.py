@@ -4959,9 +4959,7 @@ def egress_add_cmd(
     incus, container = _egress_target(name, repo, cfg)
     with Session(get_engine()) as session:
         if repo:
-            if not egress_scope.add_repo_extra(
-                session, cfg.container_prefix, entry, now=_now()
-            ):
+            if not egress_scope.add_repo_extra(session, cfg.container_prefix, entry, now=_now()):
                 info(f"'{entry}' is already a repo override — nothing to do.")
                 return
             success(f"Added repo override '{entry}'. Run `jailbee apply` to push it.")
@@ -5037,9 +5035,7 @@ def egress_rm_cmd(
             else:
                 error(f"'{entry}' is not an override on '{container}'.")
             raise typer.Exit(1)
-        egress_scope.set_container_extras(
-            incus, container, [e for e in extras if e != entry]
-        )
+        egress_scope.set_container_extras(incus, container, [e for e in extras if e != entry])
         mode = _egress_container_mode(cfg, incus, container)
         egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
@@ -5690,9 +5686,7 @@ def _print_egress_override_status() -> None:
         names = _list_containers_for_status(cfg, incus)
         with Session(get_engine()) as session:
             repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
-            per_container = {
-                name: egress_scope.container_extras(incus, name) for name in names
-            }
+            per_container = {name: egress_scope.container_extras(incus, name) for name in names}
     except Exception:
         hint(["Could not gather egress-override status for `jailbee net status`."])
         return

@@ -19,9 +19,7 @@ def _repo(tmp_path, mocker, *, egress_allow=None, extras=None):
     repo_root.mkdir()
     cfg_dir = repo_root / ".jailbee"
     cfg_dir.mkdir()
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump({"egress_allow": list(egress_allow or [])})
-    )
+    (cfg_dir / "config.yaml").write_text(yaml.safe_dump({"egress_allow": list(egress_allow or [])}))
     cfg = make_config(repo_root, egress_allow=list(egress_allow or []))
 
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
@@ -159,9 +157,7 @@ def test_rm_of_a_config_entry_points_at_the_config_file(tmp_path, mocker):
     refuses and points the user at config.yaml."""
     _repo(tmp_path, mocker, egress_allow=["github.com"])
 
-    result = runner.invoke(
-        app, ["net", "egress", "rm", "github.com"], env={"COLUMNS": "250"}
-    )
+    result = runner.invoke(app, ["net", "egress", "rm", "github.com"], env={"COLUMNS": "250"})
 
     assert result.exit_code == 1
     assert "config.yaml" in result.output
@@ -177,7 +173,7 @@ def test_rm_of_a_promoted_container_override_succeeds(tmp_path, mocker):
     override permanently undeletable and stuck showing "redundant" in `ls`
     forever, and making `export`'s own printed advice ("drop the
     now-redundant overrides with `jailbee net egress rm`") unfollowable."""
-    cfg, incus = _repo(tmp_path, mocker, egress_allow=["github.com"], extras=["github.com"])
+    _cfg, incus = _repo(tmp_path, mocker, egress_allow=["github.com"], extras=["github.com"])
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
 
     result = runner.invoke(app, ["net", "egress", "rm", "github.com"])
@@ -441,7 +437,7 @@ def test_config_show_repo_layer_is_untouched_by_overrides(tmp_path, mocker):
 def test_net_status_lists_containers_carrying_overrides(tmp_path, mocker, capsys):
     from jailbee.cli import _print_egress_override_status
 
-    cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
+    cfg, _incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
     mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
     # `_print_egress_override_status` loads its config via `load_config(
     # find_repo_config())` directly (matching its sibling `_print_loose_status`'s
@@ -468,7 +464,7 @@ def test_net_status_survives_and_reports_a_mid_fetch_failure(tmp_path, mocker):
     override that widens a security boundary without passing code review),
     the swallowed failure must not go unreported either: a one-line stderr
     note is required, not silence."""
-    cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
+    cfg, _incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
     mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
     mocker.patch("jailbee.cli.load_config", return_value=cfg)
     mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
