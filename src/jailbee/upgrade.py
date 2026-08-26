@@ -77,10 +77,11 @@ class UpgradeNote:
 UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 2, 0),
-        actions=frozenset({"base_build"}),
+        actions=frozenset({"base_build", "apply"}),
         reason=(
             "install.sh masks Ubuntu's apt-daily timers and heals a pruned "
-            "`claude` launcher at login"
+            "`claude` launcher at login; Claude Code's global config moves "
+            "into the shared `~/.claude` mount"
         ),
     ),
 )
