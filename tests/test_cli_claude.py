@@ -409,6 +409,65 @@ def test_allow_with_nothing_checked_clears_the_restriction(tmp_path, mocker):
     assert "every account" in result.output
 
 
+def test_allow_a_typo_mid_list_leaves_the_previous_allowlist_intact(tmp_path, mocker):
+    """A real allowlist already exists; the replacement's SECOND ref is bad.
+
+    Unlike `test_allow_rejects_an_unknown_reference_and_stores_nothing` (which
+    starts from an unrestricted pool, so "still empty" is true whether or not
+    the write is atomic), this starts from a genuine two-account allowlist —
+    and the replacement's refs before the typo resolve to only ONE of those
+    two accounts, so an incremental (per-ref) write would visibly shrink the
+    stored set before the typo aborts the command. Asserts the previous list
+    survives byte-for-byte, not merely non-empty.
+    """
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.db import get_engine
+
+    _repo(tmp_path, mocker)
+    runner.invoke(app, ["claude", "allow", "1", "2"])
+    with Session(get_engine()) as s:
+        assert claude_accounts.allowed_identities(s, "gisgro") == {
+            WORK.identity,
+            PERSONAL.identity,
+        }
+
+    result = runner.invoke(app, ["claude", "allow", "1", "nope", "2"])
+
+    assert result.exit_code == 1
+    with Session(get_engine()) as s:
+        assert claude_accounts.allowed_identities(s, "gisgro") == {
+            WORK.identity,
+            PERSONAL.identity,
+        }, "the previous allowlist must survive a typo partway through a replacement"
+
+
+def test_allow_picker_cancel_leaves_the_allowlist_unchanged(tmp_path, mocker):
+    """`None` (cancel) from the checkbox picker must not be read as `[]` (clear).
+
+    The two returns are one `is None` check apart, and conflating them either
+    silently wipes an allowlist the user meant to keep, or keeps one they
+    meant to clear.
+    """
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.db import get_engine
+
+    _repo(tmp_path, mocker)
+    runner.invoke(app, ["claude", "allow", "1"])
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_claude_accounts_multi", return_value=None)
+
+    result = runner.invoke(app, ["claude", "allow"])
+
+    assert result.exit_code == 0
+    with Session(get_engine()) as s:
+        assert claude_accounts.allowed_identities(s, "gisgro") == {WORK.identity}
+    assert "unchanged" in result.output
+
+
 # --- release ----------------------------------------------------------
 
 
@@ -511,6 +570,74 @@ def test_rm_removes_from_the_pool_and_the_ledger(tmp_path, mocker):
     fake.remove.assert_called_once_with("2")
     with Session(get_engine()) as s:
         assert s.get(ClaudeAccountHolding, PERSONAL.identity) is None
+
+
+def test_rm_warns_when_held_by_another_repo_but_still_removes(tmp_path, mocker):
+    """Another repo's holding is a warning, not a refusal — rm proceeds."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=PERSONAL.email,
+                org_uuid=PERSONAL.org_uuid,
+                container_prefix="otherrepo",
+                slot="2",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    result = runner.invoke(app, ["claude", "rm", "personal"])
+
+    assert result.exit_code == 0
+    assert "otherrepo" in result.output, "the warning must name the other repo"
+    fake.remove.assert_called_once_with("2")
+    with Session(get_engine()) as s:
+        assert s.get(ClaudeAccountHolding, PERSONAL.identity) is None, (
+            "the warning does not block the removal"
+        )
+
+
+def test_rm_when_cswap_fails_leaves_the_ledger_intact(tmp_path, mocker):
+    """cswap.remove runs first; when it raises, no ledger row is touched."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+
+    _, fake = _repo(tmp_path, mocker)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email=WORK.email,
+                org_uuid=WORK.org_uuid,
+                container_prefix="gisgro",
+                slot="1",
+                state="held",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+    fake.remove.side_effect = CswapError("cancelled")
+
+    result = runner.invoke(app, ["claude", "rm", "work"])
+
+    assert result.exit_code == 1
+    with Session(get_engine()) as s:
+        assert s.get(ClaudeAccountHolding, WORK.identity) is not None, (
+            "a failed cswap.remove must not touch the ledger"
+        )
 
 
 def test_rm_without_an_argument_and_without_a_tty_fails(tmp_path, mocker):
