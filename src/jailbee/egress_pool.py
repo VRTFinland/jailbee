@@ -528,6 +528,7 @@ def _update_strict_container_hosts(
     Per-container ``IncusError`` is caught and logged; failure on one
     container does not abort the cycle.
     """
+    from jailbee import egress_scope
     from jailbee.egress_scope import effective_repo_entries
     from jailbee.hosts import apply_hosts
     from jailbee.incus import IncusError
@@ -540,11 +541,16 @@ def _update_strict_container_hosts(
         if container.state != "Running" or container.network != "strict":
             continue
         try:
+            ct_entries = _entries_from_pool(
+                session,
+                container_pool_key(container.name),
+                egress_scope.container_extras(incus, container.name),
+            )
             apply_hosts(
                 cfg,
                 incus,
                 container.name,
-                entries=entries,
+                entries=[*entries, *ct_entries],
                 mirror_endpoint=mirror_endpoint,
             )
         except IncusError as e:

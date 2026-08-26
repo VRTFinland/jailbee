@@ -34,6 +34,11 @@ def incus(mocker: MockerFixture) -> Any:
     i = mocker.Mock()
     i.network_acl_set_yaml.return_value = None
     i.list_containers.return_value = []
+    # Real Incus.config_get returns None for an unset key; a bare Mock
+    # would return a truthy Mock instance instead, which
+    # `egress_scope.container_extras` (now on the `_update_strict_container_hosts`
+    # path too) would try to json.loads() and blow up on.
+    i.config_get.return_value = None
     return i
 
 

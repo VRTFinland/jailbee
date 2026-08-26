@@ -115,7 +115,7 @@ def apply_hosts(
     underlying exec; the caller decides whether to warn or abort.
     """
     if entries is None:
-        entries = _entries_from_live_acl(cfg, incus)
+        entries = _entries_from_live_acl(cfg, incus, name)
     block = render_hosts_block(entries, mirror_endpoint=mirror_endpoint)
     if not block:
         return
@@ -151,17 +151,27 @@ mv "$tmp" /etc/hosts
     incus.exec(name, ["bash", "-c", script])
 
 
-def _entries_from_live_acl(cfg: Config, incus: Incus) -> list[EgressEntry]:
-    """Read the live `<repo>-allowlist` ACL and return its allowlisted entries.
+def _entries_from_live_acl(cfg: Config, incus: Incus, container: str) -> list[EgressEntry]:
+    """The allowlisted entries of both ACLs applied to `container`'s NIC.
+
+    The repo ACL, plus the container's own `<name>-extra` when it exists.
+    Both are read from Incus rather than re-resolved, so `/etc/hosts` pins
+    exactly the IPs the ACLs enforce — re-resolving would desync for
+    GSLB-rotating hosts.
 
     Local import keeps `jailbee --help` startup fast (`network` pulls yaml).
-    Returns `[]` if the wrapper returns a non-string payload (defensive
-    guard so unit tests that pass a `MagicMock` incus don't accidentally
-    feed a mock object to `yaml.safe_load`).
+    Returns `[]` for a non-string payload (defensive guard so unit tests
+    passing a `MagicMock` incus don't feed a mock to `yaml.safe_load`).
     """
+    from jailbee.egress_scope import extra_acl_name
     from jailbee.network import acl_name, entries_from_acl_yaml
 
-    yaml_text = incus.network_acl_show(acl_name(cfg))
-    if not isinstance(yaml_text, str):
-        return []
-    return entries_from_acl_yaml(yaml_text)
+    entries: list[EgressEntry] = []
+    for name in (acl_name(cfg), extra_acl_name(container)):
+        if name != acl_name(cfg) and not incus.network_acl_exists(name):
+            continue
+        yaml_text = incus.network_acl_show(name)
+        if not isinstance(yaml_text, str):
+            continue
+        entries.extend(entries_from_acl_yaml(yaml_text))
+    return entries
