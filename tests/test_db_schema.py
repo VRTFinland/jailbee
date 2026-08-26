@@ -98,7 +98,7 @@ def test_get_engine_creates_db_and_schema(
     with Session(engine) as s:
         meta = s.get(SchemaMeta, 1)
     assert meta is not None
-    assert meta.version == 6
+    assert meta.version == 7
 
 
 def test_schema_mismatch_drops_and_recreates(
@@ -137,7 +137,7 @@ def test_schema_mismatch_drops_and_recreates(
         meta = s.get(SchemaMeta, 1)
     assert rows == []
     assert meta is not None
-    assert meta.version == 6
+    assert meta.version == 7
 
 
 def test_state_dir_respects_xdg(
@@ -262,7 +262,7 @@ def test_v1_db_migrates_to_current_preserving_data() -> None:
     # not just the next version, so this lands on 6 (v2's op_kind step, v3's
     # no-op gui_state guard, v4's card_style/collapsed_repos columns, v5's
     # no-op repo_upgrade_state guard, and v6's view_prefs copy step), not 2.
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == 7
     assert repo is not None  # unrelated data preserved (non-destructive)
 
 
@@ -320,7 +320,7 @@ def test_v2_db_migrates_to_current_adding_gui_state() -> None:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         state = s.get(GuiState, 1)
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == 7
     assert repo is not None  # unrelated data preserved
     assert state is not None and state.layout == "table"
 
@@ -377,14 +377,14 @@ def test_v3_db_migrates_to_v4_adding_gui_state_columns() -> None:
     assert {"card_style", "collapsed_repos"} <= cols
     assert state is not None
     assert state.card_style == "compact"  # back-filled default
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == 7
     assert repo is not None  # unrelated data preserved (non-destructive)
 
     # Idempotency: re-running the bootstrap must not error or change state.
     _ensure_schema(engine)
     with Session(engine) as s:
         meta2 = s.get(SchemaMeta, 1)
-    assert meta2 is not None and meta2.version == 6
+    assert meta2 is not None and meta2.version == 7
 
 
 def test_migrate_to_v4_is_idempotent() -> None:
@@ -454,7 +454,7 @@ def test_v4_db_migrates_to_current_adding_repo_upgrade_state() -> None:
     with Session(engine) as s:
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "sampleapp")
-        assert meta is not None and meta.version == 6
+        assert meta is not None and meta.version == 7
         assert repo is not None, "unrelated data preserved (non-destructive)"
         s.add(
             RepoUpgradeState(
@@ -518,7 +518,7 @@ def test_v4_db_migrates_to_current_moving_collapsed_repos_to_view_prefs() -> Non
         meta = s.get(SchemaMeta, 1)
         repo = s.get(RegisteredRepo, "p")
         qt = s.get(ViewPrefs, "qt")
-    assert meta is not None and meta.version == 6
+    assert meta is not None and meta.version == 7
     assert repo is not None  # unrelated data preserved (non-destructive)
     assert qt is not None
     assert qt.folded_repos == '["gisgro","other"]'

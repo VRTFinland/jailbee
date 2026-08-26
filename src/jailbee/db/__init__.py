@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db.models import SchemaMeta
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def state_dir() -> Path:
@@ -107,6 +107,14 @@ def _migrate_to_v6(conn: Connection) -> None:
     )
 
 
+def _migrate_to_v7(conn: Connection) -> None:
+    """v6 -> v7: add the egress_override table. ``create_all`` (run before the
+    migration loop in ``_ensure_schema``) already creates the new table, so
+    this step is an idempotent no-op guard whose job is to let the version
+    bump to 7, mirroring how fresh tables are handled elsewhere."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -114,6 +122,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
+    7: _migrate_to_v7,
 }
 
 

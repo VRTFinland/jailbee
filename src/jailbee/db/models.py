@@ -69,6 +69,22 @@ class PoolIP(SQLModel, table=True):
     last_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
 
 
+class EgressOverride(SQLModel, table=True):
+    """One host-local addition to a repo's egress allowlist.
+
+    Host-local by design: these never reach a teammate, because they are not
+    in `config.yaml`. Container-scope overrides do NOT live here — they are
+    kept in the container's `user.jailbee.egress_extra` label so they die
+    with the container (see `jailbee.egress_scope`).
+    """
+
+    __tablename__ = "egress_override"
+
+    container_prefix: str = Field(primary_key=True, index=True)
+    entry: str = Field(primary_key=True)
+    added_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
 class RefreshState(SQLModel, table=True):
     """Per-repo bookkeeping: when did we last refresh and how did it go."""
 
