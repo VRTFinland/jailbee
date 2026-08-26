@@ -112,6 +112,44 @@ boundary — ACL plus whatever forwards are open — can be read off one
 command, and `jailbee doctor` separately reports `host_ports` entries that
 are declared in config but missing from a running container.
 
+## Egress overrides
+
+`jailbee net egress add` widens a container's, or a repo's, strict-mode
+allowlist **without passing code review**. That is the point of the feature
+and also its risk: unlike `egress_allow` in `.jailbee/config.yaml`, an
+override is never seen by a teammate, a reviewer, or CI — it lives in the
+container's own `user.jailbee.egress_extra` label (container scope, the
+default) or in host-local state (`--repo`, applying to every container of
+the repo on this machine).
+
+The mitigation is visibility, not a prompt: `jailbee net egress ls` shows
+every applicable entry and where it came from (`config`, `repo-override`,
+`container`), and `jailbee net status` lists every override on the host —
+both host-local sections that never leave the machine, so they can only be
+read by someone who already has a shell there. `--repo` is the wider of the
+two scopes; the flag itself is the confirmation that the change is repo-wide
+rather than one container.
+
+Overrides are **additive only**. Neither scope can revoke what
+`config.yaml` grants — `jailbee net egress rm` refuses an entry that exists
+only in the config file, pointing at it instead — so a repo cannot be
+quietly narrowed on one developer's machine. `jailbee net egress export`
+prints the whole `egress_allow:` key with host-local overrides folded in,
+for pasting over the config to promote a durable one into git; the
+overrides it just promoted can then be dropped with `jailbee net egress
+rm` now that `config.yaml` covers them.
+
+**No container can grant itself egress.** A container holds no `jailbee`
+binary and no access to the host's Incus socket, so code inside it —
+including an agent, and including the untrusted head checked out by
+`jailbee new --pr` for review — cannot reach these commands. That is the
+first question a security reviewer should ask, and the answer is
+structural, not policy: there is nothing to invoke. This is unrelated to
+the `branch_config` escalation gate, which weighs what a branch's
+*committed* autostart configuration is allowed to grant itself on
+`jailbee new`; `jailbee net egress` is the operator, at a host shell,
+typing a command.
+
 ## Limitations
 
 - Linux host only

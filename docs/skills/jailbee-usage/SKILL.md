@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -292,6 +292,37 @@ never asks, but an explicit `--for` is still honoured.
 allowlist to "fix" a failing push; switch to loose for the op instead. `jailbee net
 refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 `jailbee net status` shows the refresh timer + per-repo pools.
+
+## Egress overrides — `jailbee net egress`
+
+For a host a container needs that isn't in `.jailbee/config.yaml`'s
+`egress_allow`, and doesn't belong there (a one-off, not something the
+whole team needs), add it without touching the config:
+
+```bash
+jailbee net egress add pypi.org feat-foo   # this container only
+jailbee net egress add pypi.org --repo     # every container of this repo, this host
+jailbee net egress ls feat-foo             # what applies, and where each entry came from
+jailbee net egress rm pypi.org feat-foo    # undo it
+```
+
+Three facts that matter when explaining this:
+
+- **Additive only.** An override can widen the strict-mode allowlist, never
+  narrow it — `config.yaml` is always the floor. `rm` refuses an entry that
+  exists only in `config.yaml`, pointing at the file instead.
+- **Container scope is the default**, and dies with the container (stored
+  in its own label). `--repo` is the wider, explicit opt-in: every
+  container of the repo, on this host only.
+- **Host-local, not committed** either way — never shared with the team,
+  never seen by a reviewer or CI. That's also the risk: see
+  [docs/security.md](../../security.md#egress-overrides) before suggesting
+  one as a substitute for adding to `config.yaml`. If a host turns out to
+  be needed permanently, `jailbee net egress export` prints a paste-over
+  replacement for the config's `egress_allow:` key.
+
+Also available as the short root alias `jailbee egress add|rm|ls|export`.
+Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 
 ## Port forwarding — `jailbee port`
 

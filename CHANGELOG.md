@@ -4,6 +4,24 @@
 
 ### Added
 
+- **`jailbee net egress ls|add|rm|export`** (short alias `jailbee egress`)
+  widens one container's, or this host's copy of the repo's, strict-mode
+  allowlist without editing committed config. `add`/`rm` default to
+  container scope (the entry lives in the container's own
+  `user.jailbee.egress_extra` label and dies with it); `--repo` scopes to
+  every container of the repo on this host instead (host-local state, not
+  in git). Both materialise against the container's **current** network
+  mode — adding to a `loose` container stores the label but changes no ACL
+  until it returns to `strict`. Overrides are additive only: `rm` refuses
+  an entry that exists only in `config.yaml`, pointing at the file, but
+  removes one that is *also* stored as an override, which is what makes
+  the promote-then-clean-up workflow below actually work. `ls` shows every
+  applicable entry with its source; `export` prints a complete replacement
+  for the config's `egress_allow:` key (existing entries plus promotable
+  overrides) to paste over the whole key rather than append — a second
+  `egress_allow:` key would make `yaml.safe_load` silently keep only the
+  last one. `jailbee net status` gained a section listing every
+  egress override on the host.
 - **jailbee now tells you when a release needs `jb base build` or `jb apply`
   re-run.** Some releases change what the golden image contains
   (`provision/install.sh`, `install.d.available/` snippets, provisioning env)

@@ -124,6 +124,11 @@ host_ports: []
 # (e.g. github.com, archive.ubuntu.com:443). Hostnames are resolved to
 # IPv4 at ACL-apply time. The `loose` network mode ignores this list
 # (everything reachable).
+#
+# For a one-off host that should not be committed, use
+# `jailbee net egress add <host>` instead — it applies to one container (or,
+# with --repo, to this host's copy of the repo) and is not shared with the
+# team.
 egress_allow: []
 # Example:
 # egress_allow:
@@ -375,6 +380,11 @@ host_mounts:
 # CDN hosts when jetbrains.enabled (plus AI Assistant hosts when
 # jetbrains.ai_enabled). Add hostnames here only for endpoints not
 # covered by those blocks. Repo-level `egress_allow` appends.
+#
+# For a one-off host that should not be committed, use
+# `jailbee net egress add <host>` instead — it applies to one container (or,
+# with --repo, to this host's copy of the repo) and is not shared with the
+# team.
 egress_allow: []
 
 # Host-level docker registry mirror (host:port). See `jailbee registry up`.
