@@ -159,6 +159,45 @@
 
 ### Fixed
 
+- **`jb doctor` reports when the refresh timer runs a different jailbee.**
+  `install_systemd_units` bakes `which("jailbee")` into
+  `jailbee-net-refresh.service` at install time and rewrites the unit only
+  when its rendered content changes, so a path that stops being the current
+  install sticks — and that unit fires every minute, unprompted, carrying the
+  `loose` TTL auto-revert with it. A stale one therefore means old code on a
+  schedule (which is how the state database used to get reset) and a TTL that
+  quietly stops honouring `jb net loose --for`. The new `net refresh binary`
+  check compares the unit's `ExecStart` with the `jailbee` on PATH and points
+  at `jb init` when they differ. It reports nothing when there is nothing to
+  compare — no unit (the timer check already says so) or no `jailbee` on PATH
+  (a `uv run` dev invocation is not a broken unit).
+- **The state database is opened once per process, not once per call.**
+  `get_engine` built a fresh engine — new connection pool, full
+  `_ensure_schema` including `create_all` — on every call, and the dashboards
+  call it on every refresh tick. Besides the per-tick cost, that is what gave
+  the reset above its reach: a dashboard left open across an upgrade kept
+  re-asserting its own (older) idea of the schema over a database a newer
+  jailbee had already migrated, several times a minute, for as long as the
+  window stayed open. The engine is now cached per database path for the
+  lifetime of the process, so the schema is checked once, at startup: a stale
+  process serves the schema it started with and simply does not see rows and
+  tables added since, until it is restarted.
+- **An older jailbee no longer wipes the state database.** `_ensure_schema`
+  reset the whole database whenever the on-disk schema version was one it
+  could not reach by forward migration — which includes the everyday case of
+  running an older jailbee against a newer database (a rollback, or a
+  maintainer moving between branches). The reset was justified with "pool data
+  is regenerable from DNS", but it dropped every table: `registered_repo` in
+  particular is the dashboard's only way to map a container back to its repo
+  and the refresh timer's only work list, and nothing rebuilds it. The visible
+  result was a dashboard where every repo except the current directory's
+  rendered as a view-only `(orphan)` group, plus egress pools that quietly
+  stopped being refreshed — with no error anywhere. A newer database is now
+  used as-is (migrations are additive, so it is a superset) and its version is
+  left alone. A genuine gap in the migration chain still resets, but copies
+  the database aside first — `state.sqlite.bak-v<version>`, via SQLite's own
+  backup API so WAL contents come along — and logs where it went. Re-register
+  a repo the old behaviour dropped by running `jb apply` in it.
 - **Claude Code no longer re-onboards in every new container after the
   `.claude.json` relocation.** The relocation has two halves: `jailbee new`
   retires the `shared-claude-json` device (the whole repo's, since it rewrites

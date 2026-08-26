@@ -718,6 +718,115 @@ def test_doctor_pool_check_timer_inactive(tmp_path: Path, mocker) -> None:
     assert "inactive" in timer_check.detail
 
 
+def _pool_session(mocker) -> None:
+    """Stub out the DB half of `_check_egress_pool` — the unit checks run first
+    and are all this file's timer/binary tests care about."""
+    fake_session = mocker.MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.get.return_value = None
+    fake_session.exec.return_value.all.return_value = []
+    mocker.patch("jailbee.doctor.Session", return_value=fake_session)
+    mocker.patch("jailbee.doctor.get_engine")
+
+
+def _systemctl(mocker, *, active: str = "active", exec_start: str = "") -> None:
+    """Answer `is-active` and `show --property=ExecStart` separately."""
+
+    def run(cmd, *a, **k):
+        if "show" in cmd:
+            return mocker.Mock(stdout=exec_start, returncode=0)
+        return mocker.Mock(stdout=f"{active}\n", returncode=0 if active == "active" else 3)
+
+    mocker.patch("jailbee.doctor.subprocess.run", side_effect=run)
+
+
+def _jailbee_on_path(path: str | None):
+    """Patch `which` as a context manager, never through `mocker`.
+
+    `jailbee.doctor.shutil` is the global shutil module, so this is a
+    process-wide patch, and the autouse `incus_on_path` fixture holds one of
+    its own. A `mocker.patch` here would be undone *after* that fixture's
+    context exits — wrong order, leaving `which` patched for the rest of the
+    session and breaking tests that shell out later (see the same note at the
+    bottom of this file).
+    """
+    return patch("jailbee.doctor.shutil.which", return_value=path)
+
+
+def test_doctor_flags_a_timer_unit_running_a_different_jailbee(tmp_path: Path, mocker) -> None:
+    """The unit freezes `which jailbee` at install time and is only rewritten
+    when its content changes, so a stale path keeps running old code every
+    minute — unprompted, and with the TTL auto-revert riding along."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(
+        mocker,
+        exec_start="{ path=/old/venv/bin/jailbee ; argv[]=/old/venv/bin/jailbee net refresh }",
+    )
+    _pool_session(mocker)
+
+    with _jailbee_on_path("/home/u/.local/bin/jailbee"):
+        results = _check_egress_pool(cfg)
+
+    check = next(r for r in results if r.name == "net refresh binary")
+    assert check.ok is False
+    assert "/old/venv/bin/jailbee" in check.detail
+    assert "/home/u/.local/bin/jailbee" in check.detail
+    assert "jailbee init" in check.detail
+
+
+def test_doctor_accepts_a_timer_unit_running_the_jailbee_on_path(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    bin_path = str(tmp_path / "bin" / "jailbee")
+    _systemctl(mocker, exec_start=f"{{ path={bin_path} ; argv[]={bin_path} net refresh }}")
+    _pool_session(mocker)
+
+    with _jailbee_on_path(bin_path):
+        results = _check_egress_pool(cfg)
+
+    check = next(r for r in results if r.name == "net refresh binary")
+    assert check.ok is True
+    assert bin_path in check.detail
+
+
+def test_doctor_omits_the_binary_check_when_the_unit_is_absent(tmp_path: Path, mocker) -> None:
+    """No unit, no second failure: the timer check above already reports it
+    and names the same fix, and doctor's exit code should not be argued twice
+    from one cause."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(mocker, active="inactive", exec_start="")
+    _pool_session(mocker)
+
+    with _jailbee_on_path("/home/u/.local/bin/jailbee"):
+        results = _check_egress_pool(cfg)
+
+    assert [r for r in results if r.name == "net refresh binary"] == []
+    assert next(r for r in results if "timer" in r.name).ok is False
+
+
+def test_doctor_omits_the_binary_check_when_jailbee_is_not_on_path(tmp_path: Path, mocker) -> None:
+    """Nothing to compare against — a `uv run` dev invocation with no global
+    install must not be reported as a broken unit."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(
+        mocker,
+        exec_start="{ path=/home/u/.local/bin/jailbee ; argv[]=/home/u/.local/bin/jailbee }",
+    )
+    _pool_session(mocker)
+
+    with _jailbee_on_path(None):
+        results = _check_egress_pool(cfg)
+
+    assert [r for r in results if r.name == "net refresh binary"] == []
+
+
 # ---- kernel keyring quota check ----
 
 
