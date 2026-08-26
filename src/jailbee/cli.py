@@ -5651,17 +5651,25 @@ def _list_containers_for_status(cfg: "Config", incus: "IncusType") -> list[str]:
 def _print_egress_override_status() -> None:
     """Render the egress-override section of `jailbee net status`.
 
-    Best-effort — silently skips when no repo config is reachable from cwd or
-    Incus is unavailable, matching the sibling sections.
+    The whole data fetch — config load, container listing, the DB session,
+    and every per-container `container_extras` call — runs inside one try,
+    like `_print_port_forward_status`'s. Any failure in there (no repo
+    config reachable from cwd, Incus unavailable, a container destroyed
+    between the listing and its own query, the state DB unreachable) is
+    caught so it can never take down the rest of `jailbee net status`.
 
-    This section is the feature's audit surface: an override widens a
-    security boundary without passing code review, so it must be visible
-    somewhere the user already looks.
+    Unlike the sibling sections, a caught failure is NOT fully silent: this
+    section is the feature's audit surface — it reports a widening of a
+    security boundary that never passed code review, where the siblings
+    report conveniences — so a swallowed failure still prints a one-line
+    note on stderr before returning. A security-relevant widening that
+    silently stops being reported is worse than a noisy status command.
     """
     from sqlmodel import Session
 
     from jailbee import egress_scope
     from jailbee.db import get_engine
+    from jailbee.tui import hint
 
     try:
         cfg = load_config(find_repo_config())
@@ -5669,12 +5677,14 @@ def _print_egress_override_status() -> None:
 
         incus = Incus()
         names = _list_containers_for_status(cfg, incus)
+        with Session(get_engine()) as session:
+            repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
+            per_container = {
+                name: egress_scope.container_extras(incus, name) for name in names
+            }
     except Exception:
+        hint(["Could not gather egress-override status for `jailbee net status`."])
         return
-
-    with Session(get_engine()) as session:
-        repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
-        per_container = {name: egress_scope.container_extras(incus, name) for name in names}
 
     per_container = {k: v for k, v in per_container.items() if v}
     if not repo_rows and not per_container:

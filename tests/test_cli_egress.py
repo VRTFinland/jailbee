@@ -458,3 +458,43 @@ def test_net_status_lists_containers_carrying_overrides(tmp_path, mocker, capsys
     _print_egress_override_status()
 
     assert "myrepo-feat" in capsys.readouterr().out
+
+
+def test_net_status_survives_and_reports_a_mid_fetch_failure(tmp_path, mocker):
+    """Fix round 1: the per-container `container_extras` loop can legitimately
+    raise partway through (a container destroyed between the listing and its
+    own query, Incus flaking) — that must not crash the rest of `jailbee net
+    status`. And because this section is the feature's audit surface (an
+    override that widens a security boundary without passing code review),
+    the swallowed failure must not go unreported either: a one-line stderr
+    note is required, not silence."""
+    cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
+    mocker.patch("jailbee.cli.load_config", return_value=cfg)
+    mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
+    mocker.patch(
+        "jailbee.cli._list_containers_for_status",
+        return_value=["myrepo-bug", "myrepo-feat"],
+    )
+    # First container's lookup succeeds, the second raises.
+    mocker.patch(
+        "jailbee.egress_scope.container_extras",
+        side_effect=[["nexus.corp:443"], RuntimeError("incus unreachable")],
+    )
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(stdout="active\n", returncode=0),
+    )
+
+    result = runner.invoke(app, ["net", "status"])
+
+    assert result.exit_code == 0, result.output
+    # The rest of `net status` still ran and printed its own sections.
+    assert "Timer: jailbee-net-refresh.timer (active)" in result.stdout
+    assert "Registered repos:" in result.stdout
+    # The egress-override section itself printed nothing (it raised before
+    # it had anything to show) ...
+    assert "myrepo-bug" not in result.stdout
+    assert "Egress overrides" not in result.stdout
+    # ... but the failure was not swallowed silently.
+    assert "egress-override" in result.stderr.lower()
