@@ -495,8 +495,70 @@ class Incus:
             args.append(f"{k}={v}")
         self._run_retrying_on_etag(args)
 
-    def config_device_remove(self, name: str, device_name: str) -> None:
-        self._run_retrying_on_etag(["config", "device", "remove", name, device_name])
+    def config_device_override(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Copy a profile-inherited device onto the instance, with overrides.
+
+        Fails when the instance already has a local device of this name —
+        use `config_device_set` for that case.
+        """
+        args = ["config", "device", "override", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_set(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Update keys on an instance-local device."""
+        args = ["config", "device", "set", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_remove(
+        self,
+        name: str,
+        device_name: str,
+        *,
+        missing_ok: bool = False,
+    ) -> None:
+        """Remove an instance-local device.
+
+        ``missing_ok=True`` swallows the failure when there is no such local
+        device, mirroring `config_unset`. Callers that re-materialise derived
+        state want removal to be idempotent.
+        """
+        args = ["config", "device", "remove", name, device_name]
+        if missing_ok:
+            # `_run_retrying_on_etag(args)`, not `_run(args, check=False)`: a
+            # container that just booted churns `volatile.*` keys, which can
+            # bounce this removal off a transient ETag mismatch. Swallowing
+            # that immediately — as a bare `check=False` would — leaves the
+            # device in place while the caller believes teardown succeeded.
+            # Retry the transient case first; only a genuine failure (no such
+            # local device, or the ETag race never resolves) is swallowed.
+            #
+            # Passing `check=False` down into `_run_retrying_on_etag` would
+            # defeat this: `_run` only raises `IncusError` on a bad exit code
+            # when `check=True`, so with `check=False` the retry loop's
+            # `except IncusError` would never fire and an ETag race would go
+            # unretried — the same bug this replaces. So this calls it with
+            # its default `check=True` and catches the resulting
+            # `IncusError` here instead.
+            try:
+                self._run_retrying_on_etag(args)
+            except IncusError:
+                pass
+            return
+        self._run_retrying_on_etag(args)
 
     # ---- Snapshots ----------------------------------------------------------
 
@@ -538,10 +600,14 @@ class Incus:
         if result.returncode != 0:
             raise IncusError(f"`incus network acl edit {name}` failed: {result.stderr.strip()}")
 
-    def network_acl_exists(self, name: str) -> bool:
+    def network_acl_list(self) -> list[str]:
+        """Names of every network ACL known to the daemon."""
         result = self._run(["network", "acl", "list", "--format", "json"])
         acls = json.loads(result.stdout) if result.stdout else []
-        return any(a["name"] == name for a in acls)
+        return [a["name"] for a in acls]
+
+    def network_acl_exists(self, name: str) -> bool:
+        return name in self.network_acl_list()
 
     def network_acl_show(self, name: str) -> str:
         """Return the ACL's current state as YAML (raw stdout)."""

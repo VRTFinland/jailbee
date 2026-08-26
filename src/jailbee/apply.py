@@ -143,6 +143,7 @@ def run_apply(
     confirm_fn: ConfirmFn | None = None,
 ) -> ApplyResult:
     """Apply current config to profiles, ACL, and live container state."""
+    from jailbee import egress_scope
     from jailbee.lifecycle import short_name
     from jailbee.tui import info, warn
 
@@ -299,6 +300,15 @@ def run_apply(
                 )
                 ports_changed.append(ci.name)
 
+        # Re-materialise from the label so a profile change cannot leave a
+        # stale local `eth0` behind. Unconditional — for every container,
+        # not just running ones: `incus config device override`/`set` work
+        # on a stopped instance too, and skipping it here left a stopped
+        # container's NIC frozen on whatever ACL/bridge was current the
+        # last time it happened to be running, forever. Only the
+        # `/etc/hosts` step below genuinely needs the container up.
+        egress_scope.apply_container_acl(cfg, incus, ci.name, mode=ci.network or "strict")
+
         if ci.state != "Running":
             continue
         running_names.append(ci.name)
@@ -324,6 +334,10 @@ def run_apply(
             # internally; we only need to pass CA + port.
             apply_docker_proxy(incus, ci.name, mirror_ca_pem, mirror_port)
             docker_proxy_reapplied.append(ci.name)
+
+    orphans = _sweep_orphan_extra_acls(cfg, incus)
+    if orphans:
+        info(f"Removed {len(orphans)} orphan egress ACL(s): {', '.join(orphans)}")
 
     restarted: list[str] = []
     restart_failures: list[tuple[str, str]] = []
@@ -359,6 +373,41 @@ def run_apply(
         ports_changed=ports_changed,
         port_failures=port_failures,
     )
+
+
+def _sweep_orphan_extra_acls(cfg: Config, incus: Incus) -> list[str]:
+    """Delete this repo's per-container extra ACLs whose container is gone.
+
+    The `user.jailbee.egress_extra` label dies with its container, but the ACL
+    is a standalone Incus object. `destroy_container` deletes it on the happy
+    path; this covers an interrupted destroy and a container removed with
+    `incus delete` directly.
+
+    Scoped to this repo's own containers by construction: only names derived
+    from a `<prefix>-<something>-extra` container are considered — a non-empty
+    component is required between the prefix and the suffix, so the
+    degenerate `<prefix>-extra` (no container name at all) is never swept.
+    That means another repo's ACLs and a hand-made ACL, including one
+    literally named `<prefix>-extra`, are never touched.
+    """
+    from jailbee import egress_scope
+
+    live = {c["name"] for c in incus.list_containers()}
+    expected = {egress_scope.extra_acl_name(name) for name in live}
+    prefix = f"{cfg.container_prefix}-"
+    suffix = "-extra"
+
+    deleted: list[str] = []
+    for acl in incus.network_acl_list():
+        if not acl.startswith(prefix) or not acl.endswith(suffix):
+            continue
+        if len(acl) <= len(prefix) + len(suffix):
+            continue  # no container-name component between prefix and suffix
+        if acl in expected:
+            continue
+        incus.network_acl_delete(acl)
+        deleted.append(acl)
+    return deleted
 
 
 def _apply_acl_with_nft_quirk(incus: Incus, name: str, acl_yaml: str) -> None:

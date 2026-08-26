@@ -4,6 +4,49 @@
 
 ### Added
 
+- **`jb setup` installs the post-install steps a package install cannot.**
+  Shell completions for both console scripts, the `jailbee-net-refresh` user
+  timer, and jailbee's Claude Code skills in `~/.claude/skills` used to be
+  inlined in this repo's `make install`, which meant a `uv tool install
+  jailbee` never performed them and nothing said so. `jb setup` is the
+  machine-level counterpart to the per-repo `jb init`: interactive by default
+  (one question per step, defaulting to yes for a missing step and no for one
+  already in place), `--yes` for scripts, `--only` to pick steps and
+  `--shell` to override shell detection. It needs no repo config, so it works
+  from the directory a fresh install starts in, and every step is idempotent
+  — re-run it after upgrading. Completions go where each shell already looks,
+  so bash and fish need no rc edit; zsh's `compinit` line is offered
+  interactively and only ever printed under `--yes`. Host prerequisites
+  (Incus, the firewall, UID delegation) are deliberately out of scope: the
+  command ends by pointing at `jb doctor` and
+  [docs/installation.md](docs/installation.md).
+- **The commands you run daily say once when a setup step is missing.**
+  `jb ls`, `jb new` and `jb shell` print a one-shot hint on stderr naming the
+  missing steps and `jb setup`. It fires at most once per machine — running
+  `jb setup` silences it too, declined steps included — so a long-time user
+  whose install predates this sees it once and never again. `jb doctor` is
+  where the state stays visible: it grew `shell completions` and
+  `claude skills (host)` checks (the latter only when the Claude integration
+  is enabled), and its inactive-timer advice now names `jb setup` rather than
+  `jb init`, which is per repo and refuses to run twice.
+- **`jailbee net egress ls|add|rm|export`** (short alias `jailbee egress`)
+  widens one container's, or this host's copy of the repo's, strict-mode
+  allowlist without editing committed config. `add`/`rm` default to
+  container scope (the entry lives in the container's own
+  `user.jailbee.egress_extra` label and dies with it); `--repo` scopes to
+  every container of the repo on this host instead (host-local state, not
+  in git). Both materialise against the container's **current** network
+  mode — adding to a `loose` container stores the label but changes no ACL
+  until it returns to `strict`. Overrides are additive only: `rm` refuses
+  an entry that exists only in `config.yaml`, pointing at the file, but
+  removes one that is *also* stored as an override, which is what makes
+  the promote-then-clean-up workflow below actually work. `ls` shows every
+  applicable entry with its source; `export` prints a complete replacement
+  for the config's `egress_allow:` key (existing entries plus promotable
+  overrides) to paste over the whole key rather than append — a second
+  `egress_allow:` key would make `yaml.safe_load` silently keep only the
+  last one. `jailbee net status` gained a section listing every
+  egress override on the host.
 - **jailbee now tells you when a release needs `jb base build` or `jb apply`
   re-run.** Some releases change what the golden image contains
   (`provision/install.sh`, `install.d.available/` snippets, provisioning env)

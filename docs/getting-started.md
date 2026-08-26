@@ -1,6 +1,8 @@
 # Getting started
 
-This assumes `jailbee` is installed (see [Installation](installation.md)).
+This assumes `jailbee` is installed and `jailbee setup` has been run — see
+[Installation](installation.md), whose last step is that command (shell
+completions, the egress-refresh timer, the Claude skills).
 
 ## Concepts
 

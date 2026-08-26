@@ -21,7 +21,7 @@
 
 ## Quick install
 
-On a fresh Ubuntu 26.04 host with Incus's default networking, these four
+On a fresh Ubuntu 26.04 host with Incus's default networking, these five
 steps are all you need — they are per-host and one-time. Per-repo setup
 (building the image, creating containers) then continues in
 [Getting started](getting-started.md).
@@ -97,7 +97,36 @@ ln -s ~/.venvs/jailbee/bin/jailbee ~/.local/bin/jailbee   # and jb, if you want 
 Reaching for `pip install --break-system-packages` instead is not
 recommended: it installs into the Python that `apt` owns.
 
-### 4. You're done with host setup
+### 4. Set up your shell and the refresh timer
+
+```bash
+jailbee setup
+```
+
+Installing the package puts `jailbee` and `jb` on your `PATH` and nothing
+else. Three things live outside the package, and `jailbee setup` is what
+installs them — interactively, one question per step:
+
+| Step | What it is | Without it |
+| --- | --- | --- |
+| `completions` | Completion scripts for **both** `jailbee` and `jb`, for your shell | No TAB completion of commands, container names or branches |
+| `timer` | The `jailbee-net-refresh` **user systemd timer** | Strict-mode allowlists go stale as the IPs behind GitHub et al. change, and `jailbee net loose --for 2h` never reverts |
+| `skills` | JailBee's [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) in `~/.claude/skills` | Claude Code on your host does not know how to drive `jailbee` |
+
+Every step is idempotent, so re-run `jailbee setup` after upgrading JailBee.
+`--yes` installs everything without asking, `--only <step>` picks one, and
+`--shell bash|zsh|fish` overrides shell detection (repeatable). zsh is the
+one shell that needs a line in `~/.zshrc`; `jailbee setup` offers to add it
+and prints it for you to copy if you decline.
+
+The timer is a *user* timer, so it only runs while you have a login session
+unless linger is enabled — `jailbee setup` prints the one-liner
+(`sudo loginctl enable-linger $USER`) when it is not.
+
+`jailbee doctor` reports each of these steps afterwards, so a missed one
+does not stay invisible.
+
+### 5. You're done with host setup
 
 Confirm the CLI is on your `PATH`:
 

@@ -377,6 +377,11 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
 
+    # 10b. Post-install steps `jailbee setup` owns. Plain file checks, so they
+    # sit outside the `incus_available` gate — and a missing one is silent
+    # otherwise: the first-run hint fires once and then never again.
+    results.extend(_check_user_setup(cfg))
+
     # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
     # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
     # console script, the /etc/hosts sentinel, the data symlink — was removed
@@ -636,7 +641,7 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
             detail=(
                 timer_state
                 if timer_state == "active"
-                else f"{timer_state} — run `jailbee init` to install/enable"
+                else f"{timer_state} — run `jb setup` to install/enable"
             ),
         )
     )
@@ -680,6 +685,50 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
             detail=f"{len(pool_rows)} IPs across {len(hostnames)} hostnames",
         )
     )
+    return results
+
+
+def _check_user_setup(cfg: Config) -> list[CheckResult]:
+    """Report the `jailbee setup` steps missing on this machine.
+
+    The refresh timer is deliberately absent: `_check_egress_pool` already
+    reports it, and it can say more (whether it is *running*, and whether its
+    `ExecStart` still points at this `jailbee`) than a file check could.
+    """
+    from jailbee.setup_command import completions_status, detect_shell, skills_status
+
+    results: list[CheckResult] = []
+
+    shell = detect_shell()
+    if shell is None:
+        results.append(
+            CheckResult(
+                name="shell completions",
+                ok=True,
+                detail="shell not detected — skipped (`jb setup --shell ...` to force)",
+            )
+        )
+    else:
+        status = completions_status([shell])
+        results.append(
+            CheckResult(
+                name="shell completions",
+                ok=status.installed,
+                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
+            )
+        )
+
+    # Only the host's own Claude reads these, so with the integration off
+    # their absence is a preference, not a fault.
+    if cfg.claude.enabled:
+        status = skills_status()
+        results.append(
+            CheckResult(
+                name="claude skills (host)",
+                ok=status.installed,
+                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
+            )
+        )
     return results
 
 

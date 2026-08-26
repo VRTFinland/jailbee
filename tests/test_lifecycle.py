@@ -970,6 +970,7 @@ def test_switch_network_does_not_touch_loose_labels(make_cfg, tmp_path, mocker):
     incus.list_containers.return_value = [_container(name="myrepo-feat-x")]
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
 
     switch_network(cfg, incus, "myrepo-feat-x", "strict")
 
@@ -4024,7 +4025,7 @@ def test_destroy_container_stopped_skips_stopping_phase(make_cfg, tmp_path, mock
 # ---- switch_network ----
 
 
-def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path):
+def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -4036,6 +4037,7 @@ def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path):
             "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
         }
     ]
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     switch_network(cfg, incus, "myrepo-feat-foo", "loose")
     incus.profile_assign.assert_called_once_with(
         "myrepo-feat-foo",
@@ -4085,6 +4087,7 @@ def test_switch_network_calls_apply_hosts_when_switching_to_strict(
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
     clear = mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -4110,6 +4113,7 @@ def test_switch_network_forwards_mirror_endpoint_when_switching_to_strict(
     repo.mkdir()
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -4133,6 +4137,7 @@ def test_switch_network_calls_clear_hosts_when_switching_to_loose(
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
     clear = mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -6628,3 +6633,95 @@ def test_new_container_warns_and_continues_when_port_attach_fails(tmp_path, mock
     warn_plain.assert_called_once()
     msg = warn_plain.call_args.args[0]
     assert "jailbee apply" in msg
+
+
+def test_switch_network_to_loose_removes_the_local_eth0_override(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import switch_network
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Running",
+            "profiles": ["myrepo-base", "myrepo-net-strict"],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    apply_acl = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    mocker.patch("jailbee.hosts.clear_hosts")
+
+    switch_network(cfg, incus, "myrepo-feat", "loose")
+
+    assert apply_acl.call_args.kwargs["mode"] == "loose"
+
+
+def test_switch_network_to_strict_rematerialises_the_override(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import switch_network
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Running",
+            "profiles": ["myrepo-base", "myrepo-net-loose"],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    apply_acl = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    mocker.patch("jailbee.hosts.apply_hosts")
+
+    switch_network(cfg, incus, "myrepo-feat", "strict")
+
+    assert apply_acl.call_args.kwargs["mode"] == "strict"
+
+
+def test_destroy_container_deletes_the_extra_acl_after_the_instance(make_cfg, tmp_path, mocker):
+    """Order matters: Incus refuses to delete an ACL still applied to a NIC."""
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    calls: list[str] = []
+    incus.delete.side_effect = lambda *a, **k: calls.append("delete")
+    mocker.patch(
+        "jailbee.egress_scope.drop_container_acl",
+        side_effect=lambda *a, **k: calls.append("drop_acl"),
+    )
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    assert calls == ["delete", "drop_acl"]
+
+
+def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mocker):
+    """The container is already gone by the time the ACL is dropped, so a
+    failure there must not turn a successful destroy into a raised error —
+    `apply._sweep_orphan_extra_acls` is the safety net that reclaims it."""
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    mocker.patch(
+        "jailbee.egress_scope.drop_container_acl",
+        side_effect=IncusError("network acl delete failed"),
+    )
+    warn = mocker.patch("jailbee.lifecycle.warn")
+
+    # Must not raise.
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    incus.delete.assert_called_once()
+    warn.assert_called_once()

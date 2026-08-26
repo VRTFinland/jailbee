@@ -171,6 +171,9 @@ Limitations: IPv6 unsupported (`:` clash). UDP egress beyond DNS to the bridge i
 
 `loose` network mode ignores this list (everything reachable).
 
+For a host-local, uncommitted addition instead of editing this list, see
+`jailbee net egress add` in the jailbee-usage skill.
+
 ## Network modes
 
 Two hardcoded modes, not user-extendable:

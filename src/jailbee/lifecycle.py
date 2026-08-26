@@ -1549,6 +1549,21 @@ def destroy_container(
     _phase("deleting")
     incus.delete(name, force=force)
 
+    # After the instance is gone, never before: Incus refuses to delete an
+    # ACL still referenced by an instance NIC. The label died with the
+    # container; this is the ACL it left behind.
+    #
+    # Best-effort: the container is already gone at this point, so an ACL
+    # deletion failure must not turn a successful destroy into a reported
+    # failure. `apply._sweep_orphan_extra_acls` is the safety net that
+    # reclaims it later.
+    from jailbee import egress_scope
+
+    try:
+        egress_scope.drop_container_acl(incus, name)
+    except IncusError as e:
+        warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
+
     # Drop any background job tracking row so `jailbee ls` stops showing it.
     # Best-effort: a DB hiccup must not turn a successful destroy into a
     # failure.
@@ -1625,6 +1640,15 @@ def switch_network(
         raise ValueError(f"Container '{name}' has no network profile attached — cannot switch.")
 
     incus.profile_assign(name, new_profiles)
+
+    # Re-materialise the container's own egress ACL for the new mode. This
+    # MUST run on every switch: `apply_container_acl` owns the local `eth0`
+    # override, and a local device shadows whichever net profile was just
+    # assigned — leaving a strict override in place would pin a "loose"
+    # container to incusbr0 with the allowlist still enforced.
+    from jailbee import egress_scope
+
+    egress_scope.apply_container_acl(cfg, incus, name, mode=mode)
 
     # Keep /etc/hosts in sync with the new profile. Strict mode pins
     # allowlisted hostnames so the container sees the same IPs the ACL

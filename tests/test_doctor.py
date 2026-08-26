@@ -1479,3 +1479,130 @@ def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
 
     names = {r.name for r in results}
     assert "upgrade actions" in names
+
+
+# ---- post-install user setup checks (`jailbee setup`) ----
+
+
+def _step(installed: bool, detail: str):
+    from jailbee.setup_command import StepStatus
+
+    return StepStatus(
+        key="completions", title="shell completions", installed=installed, detail=detail
+    )
+
+
+def test_doctor_flags_missing_shell_completions(tmp_path: Path, mocker) -> None:
+    """The step exists precisely because nothing else tells the user."""
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch(
+        "jailbee.setup_command.completions_status",
+        return_value=_step(False, "missing: /home/u/.local/share/bash-completion/completions/jb"),
+    )
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is False
+    assert "jb setup" in check.detail
+    assert "/home/u/.local/share/bash-completion/completions/jb" in check.detail
+
+
+def test_doctor_passes_installed_shell_completions(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="zsh")
+    mocker.patch(
+        "jailbee.setup_command.completions_status",
+        return_value=_step(True, "2 scripts in /home/u/.zfunc"),
+    )
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is True
+    assert "jb setup" not in check.detail
+
+
+def test_doctor_does_not_fail_completions_on_an_unknown_shell(tmp_path: Path, mocker) -> None:
+    """An exotic shell is not a misconfiguration; jailbee simply cannot help."""
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value=None)
+    status = mocker.patch("jailbee.setup_command.completions_status")
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is True
+    assert "not detected" in check.detail
+    status.assert_not_called()
+
+
+def test_doctor_flags_missing_host_claude_skills(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    mocker.patch(
+        "jailbee.setup_command.skills_status",
+        return_value=_step(False, "missing in /home/u/.claude/skills: jailbee-usage"),
+    )
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "claude skills (host)")
+    assert check.ok is False
+    assert "jb setup" in check.detail
+
+
+def test_doctor_skips_host_skills_when_claude_is_disabled(tmp_path: Path, mocker) -> None:
+    """Nothing on the host would read them, so their absence is not a fault."""
+    from jailbee.doctor import _check_user_setup
+
+    # `Config.claude` is a property, so `model_copy(update={"claude": ...})`
+    # is silently ignored — `with_agent` is the only working route.
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=False)
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    skills = mocker.patch("jailbee.setup_command.skills_status")
+
+    results = _check_user_setup(cfg)
+
+    assert [r.name for r in results] == ["shell completions"]
+    skills.assert_not_called()
+
+
+def test_run_checks_includes_the_user_setup_checks(tmp_path: Path, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "ok"))
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    names = [r.name for r in results]
+    assert "shell completions" in names
+    assert "claude skills (host)" in names
+
+
+def test_doctor_points_at_jb_setup_for_an_inactive_timer(tmp_path: Path, mocker) -> None:
+    """`jailbee init` also installs it, but it is per repo and refuses to
+    re-run; `jb setup` is the command that exists for exactly this."""
+    from jailbee.doctor import _check_egress_pool
+
+    _pool_session(mocker)
+    _systemctl(mocker, active="inactive")
+
+    with _jailbee_on_path("/usr/local/bin/jailbee"):
+        results = _check_egress_pool(_cfg(tmp_path))
+
+    timer = next(r for r in results if r.name == "net refresh timer")
+    assert "jb setup" in timer.detail
