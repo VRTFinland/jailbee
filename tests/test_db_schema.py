@@ -140,6 +140,109 @@ def test_schema_mismatch_drops_and_recreates(
     assert meta.version == 6
 
 
+def _register(engine, prefix: str = "alpha") -> None:
+    from jailbee.db.models import RegisteredRepo
+
+    with Session(engine) as s:
+        s.add(
+            RegisteredRepo(
+                container_prefix=prefix,
+                repo_root=f"/home/u/{prefix}",
+                registered_at=datetime(2026, 5, 19, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+
+def _set_version(engine, version: int) -> None:
+    from jailbee.db.models import SchemaMeta
+
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        assert meta is not None
+        meta.version = version
+        s.add(meta)
+        s.commit()
+
+
+def test_a_newer_schema_is_used_as_is_never_wiped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Running an older jailbee against a newer DB must not destroy state.
+
+    This is the everyday case for anyone who switches branches or rolls a
+    release back, and the registry it used to drop is not regenerable: the
+    dashboard then files every repo but the current directory's under a
+    view-only "(orphan)" group, and the refresh timer stops refreshing them,
+    with nothing said. Migrations are additive, so a newer schema is a
+    superset this version can read and write.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    from jailbee.db import CURRENT_SCHEMA_VERSION, _ensure_schema, get_engine
+    from jailbee.db.models import RegisteredRepo, SchemaMeta
+
+    engine = get_engine()
+    _register(engine)
+    _set_version(engine, CURRENT_SCHEMA_VERSION + 1)
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        assert [r.container_prefix for r in s.exec(select(RegisteredRepo)).all()] == ["alpha"]
+        meta = s.get(SchemaMeta, 1)
+    assert meta is not None
+    assert meta.version == CURRENT_SCHEMA_VERSION + 1, "the newer version must not be walked back"
+
+
+def test_unreachable_version_keeps_a_backup_of_the_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reset stays for a version no migration chain can reach, but it may
+    not be the end of the data: a copy is kept next to the database."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    from jailbee.db import _ensure_schema, get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    engine = get_engine()
+    _register(engine)
+    _set_version(engine, 0)  # below the first migration step: unreachable
+
+    _ensure_schema(engine)
+
+    with Session(engine) as s:
+        assert s.exec(select(RegisteredRepo)).all() == []
+
+    (backup,) = list((tmp_path / "jailbee").glob("state.sqlite.bak-v*"))
+    saved = create_engine(f"sqlite:///{backup}")
+    with Session(saved) as s:
+        assert [r.container_prefix for r in s.exec(select(RegisteredRepo)).all()] == ["alpha"]
+
+
+def test_a_second_reset_does_not_clobber_the_first_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    from jailbee.db import _ensure_schema, get_engine
+
+    engine = get_engine()
+    _register(engine, "alpha")
+    _set_version(engine, 0)
+    _ensure_schema(engine)
+
+    _register(engine, "beta")
+    _set_version(engine, 0)
+    _ensure_schema(engine)
+
+    backups = sorted((tmp_path / "jailbee").glob("state.sqlite.bak-v*"))
+    assert len(backups) == 2, f"expected both backups kept, got {backups}"
+
+
 def test_state_dir_respects_xdg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,14 +1,19 @@
 """SQLite-backed runtime state for jailbee (pool, registered repos, refresh log).
 
 The database lives at `${XDG_STATE_HOME:-~/.local/state}/jailbee/state.sqlite`.
-Schema is bootstrapped on first connection. Forward migrations are applied
-in place (non-destructive); an unreachable version falls back to a destructive
-drop-and-recreate (pool data is regenerable from DNS).
+Schema is bootstrapped on first connection. Forward migrations are applied in
+place (non-destructive). A *newer* database than this version knows about is
+used as-is — migrations are additive, so it is a superset — because the
+alternative, resetting it, silently destroys state that cannot be rebuilt (see
+`_ensure_schema`). Only a version no migration chain can reach still falls back
+to a drop-and-recreate, and that one keeps a copy of the database first.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,6 +21,8 @@ from sqlalchemy.engine import Connection, Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from jailbee.db.models import SchemaMeta
+
+log = logging.getLogger(__name__)
 
 CURRENT_SCHEMA_VERSION = 6
 
@@ -117,14 +124,65 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
 }
 
 
+def _backup_database(engine: Engine, from_version: int) -> Path | None:
+    """Copy the database next to itself, returning the copy (None if in-memory).
+
+    Uses SQLite's own backup API rather than `shutil.copy` because the
+    database runs in WAL mode: copying the `.sqlite` file alone can leave
+    committed rows behind in the `-wal` sidecar.
+
+    Never overwrites an existing backup — a second reset from the same
+    version would otherwise replace the copy holding the original data with
+    a copy of the already-emptied one.
+    """
+    raw = engine.url.database
+    if not raw or raw == ":memory:":
+        return None
+    src = Path(raw)
+    if not src.exists():
+        return None
+    dest = src.with_name(f"{src.name}.bak-v{from_version}")
+    n = 1
+    while dest.exists():
+        dest = src.with_name(f"{src.name}.bak-v{from_version}.{n}")
+        n += 1
+    source = sqlite3.connect(src)
+    try:
+        target = sqlite3.connect(dest)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    return dest
+
+
 def _ensure_schema(engine: Engine) -> None:
     """Create missing tables; run forward migrations; reset only as a fallback.
 
     Fresh DBs get every table (with all current columns) from
-    ``create_all``. An existing DB at an older version is migrated in
-    place via ``_MIGRATIONS`` (non-destructive). A version we cannot
-    reach with the registered steps (downgrade, or a gap in the chain)
-    falls back to the historical destructive drop-and-recreate.
+    ``create_all``. An existing DB at an older version is migrated in place
+    via ``_MIGRATIONS`` (non-destructive).
+
+    A **newer** database is used exactly as it is. Every migration is
+    additive, so a newer schema is a superset this version can read and
+    write, and the version is deliberately left alone — walking it back
+    would make the next newer jailbee re-run migrations over data that has
+    already seen them. Resetting here used to be the behaviour, on the
+    grounds that "pool data is regenerable from DNS"; that reasoning does
+    not survive contact with the rest of the tables. `registered_repo` in
+    particular is the dashboard's only way to map a container back to its
+    repo and the refresh timer's only work list, and nothing rebuilds it:
+    the loss shows up as every repo but the current directory's rendering
+    as a view-only "(orphan)" group and as pools that quietly stop being
+    refreshed, with no error anywhere. Downgrades are routine — a rollback,
+    or a maintainer moving between branches — so this path must not be
+    destructive.
+
+    A version no chain of registered steps can reach (a gap) still falls
+    back to the historical drop-and-recreate, but keeps a copy of the
+    database first and says where it went.
     """
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
@@ -136,6 +194,15 @@ def _ensure_schema(engine: Engine) -> None:
         current = meta.version
 
     if current == CURRENT_SCHEMA_VERSION:
+        return
+
+    if current > CURRENT_SCHEMA_VERSION:
+        log.warning(
+            "db: %s is at schema v%d, newer than this jailbee (v%d) — using it as-is",
+            engine.url.database,
+            current,
+            CURRENT_SCHEMA_VERSION,
+        )
         return
 
     if current < CURRENT_SCHEMA_VERSION and all(
@@ -155,8 +222,15 @@ def _ensure_schema(engine: Engine) -> None:
             s.commit()
         return
 
-    # Unreachable by forward migration (downgrade / missing step): the
-    # historical destructive reset. Pool data is regenerable from DNS.
+    # Unreachable by forward migration (a gap in the chain): the historical
+    # destructive reset, but not before a copy is put aside.
+    backup = _backup_database(engine, current)
+    log.warning(
+        "db: schema v%d cannot be migrated to v%d — resetting the database%s",
+        current,
+        CURRENT_SCHEMA_VERSION,
+        f"; previous contents saved to {backup}" if backup is not None else "",
+    )
     SQLModel.metadata.drop_all(engine)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
