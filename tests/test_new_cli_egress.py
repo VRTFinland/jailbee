@@ -42,9 +42,11 @@ def test_cli_new_registers_and_refreshes_before_new_container(
     new_container_mock = mocker.patch("jailbee.lifecycle.new_container", return_value="X-test")
     mocker.patch("jailbee.db.get_engine")
     # Unrelated to this test's concern (register_repo/refresh_pool wiring):
-    # without this, `_advise_upgrade`'s Session runs real queries against the
-    # bare-mocked engine above and SQLAlchemy emits a spurious SAWarning.
+    # without these, the two advisory helpers' Sessions run real queries
+    # against the bare-mocked engine above and SQLAlchemy emits a spurious
+    # SAWarning.
     mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    mocker.patch("jailbee.setup_command.consume_hint", return_value=[])
 
     # Use mount mode so we don't need a real .git dir at cfg.repo_root.
     runner = CliRunner()

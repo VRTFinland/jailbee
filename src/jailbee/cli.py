@@ -96,6 +96,48 @@ def _advise_upgrade(cfg: "Config") -> None:
         return
 
 
+def _advise_setup() -> None:
+    """Print the one-shot post-install hint, if it has anything left to say.
+
+    Same contract as `_advise_upgrade`: stderr, non-interactive, and wrapped
+    broadly because a courtesy must never take down the command the user
+    actually ran. `consume_hint` is what makes this fire at most once — the
+    probes it runs are `stat`s, so this costs nothing on the commands it
+    decorates.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.setup_command import consume_hint, detect_shell
+    from jailbee.tui import hint
+
+    try:
+        shell = detect_shell()
+        with Session(get_engine()) as session:
+            lines = consume_hint(session, shells=[shell] if shell else [], now=_now())
+        hint(lines)
+    except Exception:  # the hint is a courtesy; must never fail the command
+        return
+
+
+def _record_setup_run() -> None:
+    """Record that `jailbee setup` ran, silencing the hint for good.
+
+    Recorded even when every step was declined: the user has seen the state
+    and decided, and re-asking on the next `jailbee ls` would be nagging.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.setup_command import record_setup
+
+    try:
+        with Session(get_engine()) as session:
+            record_setup(session, __version__, now=_now())
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -321,18 +363,83 @@ def init(config: ConfigOption = None) -> None:
 
     # Linger keeps the timer firing when no user session is open.
     # Inform but don't enforce — needs root.
-    import os
-    import subprocess
+    from jailbee.setup_command import linger_tip
 
-    proc = subprocess.run(
-        ["loginctl", "show-user", os.getenv("USER", ""), "-p", "Linger"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if "Linger=yes" not in proc.stdout:
-        info("Tip: `sudo loginctl enable-linger $USER` keeps the timer")
-        info("     running when no user session is open.")
+    linger_tip()
+
+
+@app.command()
+def setup(
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Install every selected step without asking"),
+    ] = False,
+    only: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--only",
+            help="Limit to these steps (repeatable): completions, timer, skills",
+            autocompletion=completion.complete_choices("completions", "timer", "skills"),
+        ),
+    ] = None,
+    shell: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--shell",
+            help="Shells to install completions for (repeatable); default: the detected one",
+            autocompletion=completion.complete_choices("bash", "zsh", "fish"),
+        ),
+    ] = None,
+) -> None:
+    """Set up this machine: shell completions, the refresh timer, Claude skills.
+
+    The machine-level counterpart to `jailbee init`, which sets up a repo.
+    These are the steps a `uv tool install jailbee` cannot perform for you:
+    completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user
+    timer (egress pool refresh and `jailbee net loose` TTL expiry), and
+    jailbee's Claude Code skills in `~/.claude/skills`.
+
+    Interactive by default and idempotent, so re-run it after upgrading
+    jailbee. `--yes` installs everything without asking, which is what
+    `make install` runs.
+
+    Host prerequisites — Incus, the firewall, UID delegation — are not done
+    here: run `jailbee doctor` and follow docs/installation.md.
+    """
+    from jailbee import setup_command as sc
+
+    if only:
+        unknown = [key for key in only if key not in sc.STEP_KEYS]
+        if unknown:
+            error(f"Unknown step: {', '.join(unknown)} (known: {', '.join(sc.STEP_KEYS)})")
+            raise typer.Exit(2)
+    keys = [key for key in sc.STEP_KEYS if not only or key in only]
+
+    if shell:
+        unsupported = [name for name in shell if name not in sc.SUPPORTED_SHELLS]
+        if unsupported:
+            error(
+                f"Unsupported shell: {', '.join(unsupported)} "
+                f"(supported: {', '.join(sc.SUPPORTED_SHELLS)})"
+            )
+            raise typer.Exit(2)
+        shells = list(shell)
+    else:
+        detected = sc.detect_shell()
+        shells = [detected] if detected is not None else []
+
+    def ask(question: str, default: bool) -> bool:
+        return typer.confirm(question, default=default)
+
+    ran = sc.run_setup(keys=keys, shells=shells, confirm=None if yes else ask)
+
+    if "timer" in ran:
+        sc.linger_tip()
+    _record_setup_run()
+
+    info("")
+    info("Next: `jb doctor` checks the host — Incus, firewall, UID delegation.")
+    info(f"      Host setup end to end: docs/installation.md ({sc.DOCS_URL})")
 
 
 @app.command()
@@ -453,6 +560,7 @@ def list_cmd(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_setup()
     show_submodules = submodules and repo_has_submodules(cfg)
 
     containers = list_containers(
@@ -679,6 +787,7 @@ def new_cmd(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_setup()
 
     # --tmux/--shell are shorthands for `--attach <mode>` that additionally
     # force foreground creation. All four attach flags are mutually
@@ -1390,6 +1499,7 @@ def shell(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_setup()
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")
     raise typer.Exit(_attach_shell(cfg, incus, name, user))
 

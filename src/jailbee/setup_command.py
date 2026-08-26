@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.tui import info, success, warn
+from jailbee.tui import info, success_plain, warn_plain
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -233,7 +233,7 @@ def _ensure_zshrc_line(confirm: Callable[[str, bool], bool] | None) -> None:
         if existing and not existing.endswith("\n"):
             existing += "\n"
         rc.write_text(f"{existing}{ZSHRC_LINE}\n")
-        success(f"Added the compinit line to {rc}")
+        success_plain(f"Added the compinit line to {rc}")
         return
     info(f"zsh needs this line in {rc} for completions to load:")
     info(f"    {ZSHRC_LINE}")
@@ -318,7 +318,7 @@ def _install(
 ) -> None:
     if key == "completions":
         written = install_completions(shells)
-        success(f"Installed {len(written)} completion scripts")
+        success_plain(f"Installed {len(written)} completion scripts")
         for path in written:
             info(f"    {path}")
         if "zsh" in shells:
@@ -333,7 +333,7 @@ def _install(
     from jailbee.claude_skills import host_skills_dir, install_host_skills
 
     written = install_host_skills()
-    success(f"Installed {len(written)} skills in {host_skills_dir()}")
+    success_plain(f"Installed {len(written)} skills in {host_skills_dir()}")
 
 
 def run_setup(
@@ -354,10 +354,18 @@ def run_setup(
         if key not in keys:
             continue
         status = status_for(key, shells)
+        if key == "completions" and not shells:
+            # Nothing can be written, so nothing may be claimed: skip the
+            # step outright rather than "installing" an empty set. Always
+            # said out loud — it is the reason nothing happened.
+            warn_plain(f"{status.title}: {status.detail}")
+            continue
         if status.installed:
-            success(f"{status.title}: installed ({status.detail})")
-        else:
-            warn(f"{status.title}: {status.detail}")
+            success_plain(f"{status.title}: installed ({status.detail})")
+        elif confirm is not None:
+            # What is missing is context for the question that follows. With
+            # nothing to answer, the installer's own output says it better.
+            warn_plain(f"{status.title}: {status.detail}")
         if confirm is not None:
             verb = "Refresh" if status.installed else "Install"
             if not confirm(f"{verb} {status.title}?", not status.installed):
@@ -365,6 +373,31 @@ def run_setup(
         _install(key, shells, confirm)
         ran.append(key)
     return ran
+
+
+def linger_tip() -> None:
+    """Print the `enable-linger` tip unless linger is already on.
+
+    A user timer only fires while that user has a login session, or while
+    linger is enabled for them. Enabling it needs root, so jailbee informs
+    rather than acts — and stays quiet on a host with no `loginctl` at all,
+    since this is advice, not a step.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["loginctl", "show-user", os.getenv("USER", ""), "-p", "Linger"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    if "Linger=yes" in proc.stdout:
+        return
+    info("Tip: `sudo loginctl enable-linger $USER` keeps the timer")
+    info("     running when no user session is open.")
 
 
 # --------------------------------------------------------------------------

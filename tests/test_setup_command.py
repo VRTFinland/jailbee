@@ -415,3 +415,69 @@ def test_record_setup_stores_the_version_it_ran_at(home: Path) -> None:
     assert row is not None
     assert row.setup_version == "1.2.0"
     assert row.setup_at == _NOW
+
+
+# --------------------------------------------------------------------------
+# the linger tip
+# --------------------------------------------------------------------------
+
+
+def test_run_setup_skips_completions_when_no_shell_is_known(
+    home: Path, capsys, mocker: MockerFixture
+) -> None:
+    """Nothing was installed, so nothing may be reported as installed."""
+    mocker.patch("jailbee.init_command.install_systemd_units")
+
+    from jailbee.setup_command import run_setup
+
+    ran = run_setup(keys=["completions"], shells=[], confirm=None)
+
+    assert ran == []
+    assert not (home / ".local" / "share" / "bash-completion").exists()
+    assert "--shell" in capsys.readouterr().out
+
+
+def test_linger_tip_names_the_command_when_linger_is_off(
+    home: Path, capsys, mocker: MockerFixture
+) -> None:
+    _ = home
+    from subprocess import CompletedProcess
+
+    from jailbee.setup_command import linger_tip
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="Linger=no\n", stderr=""),
+    )
+
+    linger_tip()
+
+    assert "enable-linger" in capsys.readouterr().out
+
+
+def test_linger_tip_is_silent_when_linger_is_on(home: Path, capsys, mocker: MockerFixture) -> None:
+    _ = home
+    from subprocess import CompletedProcess
+
+    from jailbee.setup_command import linger_tip
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="Linger=yes\n", stderr=""),
+    )
+
+    linger_tip()
+
+    assert capsys.readouterr().out == ""
+
+
+def test_linger_tip_survives_a_missing_loginctl(home: Path, capsys, mocker: MockerFixture) -> None:
+    """A non-systemd host has no `loginctl`; the tip is advice, not a step."""
+    _ = home
+    from jailbee.setup_command import linger_tip
+
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError("loginctl"))
+
+    linger_tip()
+
+    assert capsys.readouterr().out == ""
