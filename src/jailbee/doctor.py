@@ -146,13 +146,25 @@ def _check_claude_pool(cfg: Config) -> list[CheckResult]:
         results.append(CheckResult("claude pool ledger", True, f"state could not be read ({e})"))
         return results
     for row in stale:
+        # The ref is the email, not `row.slot`: slot is display-only and goes
+        # stale after `cswap move`, while `jailbee claude release` resolves its
+        # ref against the *current* listing — so a renumbered slot would
+        # release a different account's holding and leave this one behind.
+        #
+        # Recovery order matters too. A killed `use` may have died *after* the
+        # switch completed, in which case the credential is live in that repo
+        # and releasing hands a live grant away; re-running `use` there
+        # reclaims the row instead.
         results.append(
             CheckResult(
                 "claude pool ledger",
                 False,
                 f"account {row.slot} ({row.email}) is stuck mid-claim by "
-                f"`{row.container_prefix}` — a `jailbee claude use` died. "
-                f"Clear it:  jailbee claude release {row.slot}",
+                f"`{row.container_prefix}` — a `jailbee claude use` died.\n"
+                f"If that repo is now on this account (the switch may have "
+                f"completed), reclaim the row there:  "
+                f"jailbee claude use {row.email}\n"
+                f"If it is not, clear the row:  jailbee claude release {row.email}",
             )
         )
     return results

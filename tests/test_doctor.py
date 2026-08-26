@@ -1680,7 +1680,14 @@ def test_a_leftover_claiming_row_is_a_failure_naming_the_fix(tmp_path, mocker):
     stale = [r for r in results if not r.ok]
     assert len(stale) == 1
     assert "me@example.com" in stale[0].detail
-    assert "jailbee claude release 2" in stale[0].detail
+    # The ref is the EMAIL, not the slot: `slot` is display-only and stale
+    # after `cswap move`, while `release` resolves its ref against the current
+    # listing — so `release 2` could free a different account's holding.
+    assert "jailbee claude release me@example.com" in stale[0].detail
+    assert "jailbee claude release 2" not in stale[0].detail
+    # A killed `use` may have died after the switch landed, in which case the
+    # credential is live in that repo and releasing hands it away.
+    assert "jailbee claude use me@example.com" in stale[0].detail
 
 
 def test_a_clean_ledger_adds_no_stale_claim_result(tmp_path, mocker):
