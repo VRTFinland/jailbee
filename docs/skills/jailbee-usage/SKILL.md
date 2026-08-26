@@ -337,7 +337,7 @@ jailbee claude use 2              # switch THIS repo to slot 2 — no browser lo
 jailbee claude use personal       # ... by alias, or by email
 jailbee claude add --alias work   # capture the current login into the pool
 jailbee claude allow work ci      # restrict this repo to a subset (replaces the list)
-jailbee claude release            # give up this repo's holding
+jailbee claude release            # give up this repo's holding (bookkeeping only)
 jailbee claude rm personal        # remove an account from the pool entirely
 ```
 
@@ -346,11 +346,36 @@ to run `jailbee claude ls` on the host to see which account still has quota,
 then `jailbee claude use <n>`. The switch is a credential-file replacement —
 Claude Code picks it up on its next message, no container restart needed.
 
+**`jailbee claude ls` is not a free read.** Fetching the quota column asks
+Anthropic about every pooled account, and doing so **refreshes the stored
+token** of each account that isn't live in this repo — which, under jailbee,
+can mean an account another repo is live on. Every verb that resolves a
+slot/alias/email reference pays the same cost. Suggest it when the user needs
+the answer; don't suggest polling it.
+
+**What the ledger tracks, and what it doesn't.** It records which repo was
+handed which *stored* account — not which credential is live on disk, and
+three ordinary actions move one without the other: `jailbee claude release`
+frees the row but leaves that repo logged in and still rotating the
+credential; `jailbee claude ls` refreshes stored tokens as just described;
+and a `cswap switch` run by hand outside jailbee moves a credential with no
+row at all. So the ledger stops the pool from *handing out* the same stored
+grant twice — it cannot stop a grant already handed out from being rotated
+under someone. `jailbee claude ls` flags the case it can see, as a NOTE:
+`live here, unclaimed`.
+
 Refusals worth explaining if the user hits them:
 
 - **"held by repo X"** — one stored account may be live in one place at a
-  time. The refusal names the repo and prints the exact fix to run there:
-  `cd <that repo> && jailbee claude release`.
+  time. The refusal names the repo and prints two runnable fixes: switching
+  that repo to another account (`cd <that repo> && jailbee claude use
+  <other>`), which is the clean handover because a switch checks the rotated
+  credential back in, or releasing it there if that repo is done with the
+  account.
+- **"is held by repo X" from `jailbee claude add`** — the account being
+  captured is already in the pool and another repo holds the stored copy.
+  Re-capturing would overwrite that copy with this repo's credential
+  lineage, so it is refused before anything is written.
 - **"current login is not in the pool"** — this container's login was never
   captured with `jailbee claude add` (just a plain `/login`). `cswap`
   stashes the credential before switching, but recovering from a stash is a

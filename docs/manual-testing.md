@@ -1749,11 +1749,13 @@ jailbee destroy --all --force
 
 ## Claude account pool (`jailbee claude`) smoke test
 
-Needs a real Incus daemon, a real Claude Code, **two** Anthropic accounts,
-and `uv tool install claude-swap`. Four of the claims below rest on reading
-`cswap`'s (and Claude Code's) own source rather than on observation, and
-none of the four can be checked from inside a container — they gate the
-feature, so run all of them before relying on it.
+Needs a real Incus daemon, a real Claude Code, **two** Anthropic accounts
+(three for step 6), and `uv tool install claude-swap`. Steps 1–4 rest on
+reading `cswap`'s (and Claude Code's) own source rather than on observation,
+and none of them can be checked from inside a container. Steps 5–7 cover the
+states that can strand a user — a crash mid-claim, an uncaptured live login,
+and the one refresh the ledger cannot police. All seven gate the feature, so
+run them before relying on it.
 
 1. **A swapped credential is picked up without a restart.**
 
@@ -1823,16 +1825,23 @@ feature, so run all of them before relying on it.
    the mechanism at fault either way: it only stops two repos from holding
    the same identity's row at once, it isn't what raises this refusal.
 
-   One line above is still a claim, not an observation: jailbee itself does
-   no pre-check or creation of `<shared_dir>/claude` before handing control
-   to `cswap` (`claude_accounts.use()` goes straight to `cswap.status()`/
-   `cswap.switch()`), so whether `cswap` tolerates a missing or empty
-   config home — in case the `jailbee apply` prerequisite above was skipped
-   — is third-party behaviour this recipe cannot verify from a container;
-   `cswap` has not been run anywhere in this piece of work. If the retry
-   fails with a `cswap` error rather than switching, check for a missing
-   `<shared_dir>/claude` first, and correct this line with what you
-   actually observe.
+   The `jailbee apply` prerequisite in the paragraph above is now enforced
+   rather than assumed: `_claude_ctx` pre-flights `<shared_dir>/claude` and
+   exits 1 with "Run `jailbee apply` in this repo first" when it is absent,
+   so a skipped `apply` is a jailbee error rather than unobserved `cswap`
+   behaviour. Worth triggering once on purpose, in a third repo that has
+   never applied:
+
+   ```bash
+   cd ../SomeRepoThatNeverApplied
+   jailbee claude ls
+   # expect: exit 1, naming <shared_dir>/claude and `jailbee apply`
+   ```
+
+   What is still unobserved is how `cswap` behaves against a config home
+   that exists but is *empty* (created by `apply`, never logged in): `cswap`
+   has not been run anywhere in this piece of work. If a switch fails with a
+   `cswap` error in that state, record what it said here.
 
 3. **The primary lock suffices when the legacy lock is a different file.**
 
@@ -1861,6 +1870,76 @@ feature, so run all of them before relying on it.
    session, `jailbee claude use` needs a "container is busy" guard before
    this feature ships more broadly.
 
+5. **The `claiming` crash path, and its recovery.** This is the feature's
+   only self-repair story and nothing has ever executed it. `jailbee claude
+   use` commits a `claiming` row, then runs a network-bound subprocess with a
+   120 s budget — so dying in that window is likely in practice, not exotic.
+
+   ```bash
+   jailbee claude use one
+   # ^C as soon as the spinner appears, before it reports success
+   jailbee doctor
+   # expect: a FAILING "claude pool ledger" line naming the account by EMAIL,
+   #         offering `jailbee claude use <email>` first (in case the switch
+   #         actually completed) and `jailbee claude release <email>` second
+   jailbee claude ls
+   # expect: HOLDER shows "<repo> (claiming)"; if the switch did land, the
+   #         NOTE column also flags the live account
+   jailbee claude release           # this repo's own row, no ref needed
+   jailbee doctor                   # expect: the ledger line is gone
+   ```
+
+   Then repeat the interrupt and clear it the *other* way — `jailbee claude
+   use one` again — and confirm the row goes from `claiming` to `held`
+   without a second interrupt. Finally, with `cswap` removed from `PATH`,
+   check that a bare `jailbee claude release` still clears a `claiming` row
+   (that path deliberately skips the `cswap` gate; the `<ref>` form does
+   not).
+
+6. **The unsaved-live-login refusal.** Step 1 calls `add` twice, so `add` is
+   covered — but the refusal that guards a *real* uncaptured credential is
+   never triggered there, because both logins end up in the pool. Get a
+   third, uncaptured login (`/login` as a third account, or `cswap remove`
+   one of the two and don't re-add it):
+
+   ```bash
+   jailbee shell feat-claude-swap-a
+   # inside: /login as a third account, send a message
+   exit
+   jailbee claude use one
+   # expect: exit 1, naming the third account's email and
+   #         `jailbee claude add --alias <name>` as the fix
+   jailbee claude use one --force
+   # expect: a warning naming that email, a [y/N] prompt; answer n -> exit 1,
+   #         nothing switched; re-run and answer y -> it switches
+   ```
+
+   Also worth one run: with an account held by another repo, `jailbee claude
+   use <that account> --force` must refuse **without** ever prompting — the
+   ledger refusals come first.
+
+7. **Cross-repo token refresh (the gap the ledger cannot close).** `cswap
+   list --json` fetches usage for every account, refreshing the stored token
+   of any account not live *in this config home* — and under jailbee that can
+   be an account another repo is live on. This is the cheapest host item to
+   run and the one remaining way this feature can cause the very harm it
+   prevents.
+
+   ```bash
+   # repo B holds account two and has a live claude session working in it:
+   cd ../SampleApp2 && jailbee claude use two
+   jailbee shell <a SampleApp2 container>   # inside: start a long agentic task
+   # meanwhile, from repo A, several times over a few minutes:
+   cd ../SampleApp && for i in 1 2 3 4 5; do jailbee claude ls; sleep 30; done
+   ```
+
+   Expected (unverified): repo B's session keeps working — cswap refreshes a
+   *stored* token, and Claude Code owns the live one. If B is logged out or
+   starts failing on auth, that is a real finding: it means a plain `ls` in
+   one repo can log another out, and the docs' "not a free read" warning has
+   to become a hard restriction (a `--no-usage` path, or a refusal while any
+   other repo holds an account).
+
 Also verify the unhappy paths:
 
 ```bash
@@ -1879,9 +1958,11 @@ jailbee doctor
 jailbee destroy feat-claude-swap-a --force
 ```
 
-`SampleApp2` (step 2) has no container to destroy — it was only ever used
-for `jailbee claude` commands. `jailbee claude rm one` / `jailbee claude rm
-two` from either repo resets the pool afterwards, if desired.
+`SampleApp2` (step 2) needs a container only for step 7, which wants a live
+claude session there; destroy that one too if you created it. Reset the pool
+afterwards, if desired, with `jailbee claude rm one` / `jailbee claude rm
+two` from either repo — and `jailbee claude release` in each repo that still
+holds a row, since `rm` only drops the rows of the account it removes.
 
 ## GUI dashboard (`jailbee gui`)
 
