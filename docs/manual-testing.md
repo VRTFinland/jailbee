@@ -2367,8 +2367,8 @@ a real Claude Code. Only a real login proves the *actual CLI* writes to the
 new path. This is the gate; there is no other verification of that claim.
 
 Requires `claude.enabled: true`, a real Incus daemon, and network access for
-`jailbee base build` + Claude Code's own login flow. Run the six checks in
-order and write down each command's real output next to it — a plausible
+`jailbee base build` + Claude Code's own login flow. Run the checks in order
+and write down each command's real output next to it — a plausible
 sounding "should work" is not evidence, and several of these steps look
 identical whether they passed or silently no-opped.
 
@@ -2405,6 +2405,39 @@ sha256sum <shared_dir>/claude/.claude.json
 
 incus profile show <prefix>-binds | grep -c claude-json
 # expect: 0 — the file-level device is gone from the profile
+```
+
+### 1b. Upgrade path with `jailbee new` *before* `jailbee apply`
+
+The migration also runs from `jailbee new`, for a repo whose profiles are
+still the pre-upgrade ones — otherwise the fresh container onboards into
+`<shared_dir>/claude/.claude.json` and the real pre-move file is orphaned for
+good. `jailbee new` therefore retires the `shared-claude-json` device from
+`<prefix>-binds` before moving the file: without that the profile would keep
+pointing at a source that no longer exists, and Incus refuses every
+subsequent `start` / `profile assign` for the repo (nothing on this path
+rewrites the profile again, so it would not self-heal).
+
+Same starting point as Step 1 — a repo with a real `<shared_dir>/claude.json`
+and profiles written by the previous release — but **skip `jailbee apply`**:
+
+```bash
+sha256sum <shared_dir>/claude.json
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 1 — the pre-upgrade profile still declares the device
+
+jailbee base build
+jailbee new upgrade-probe        # no `jailbee apply` in between
+
+sha256sum <shared_dir>/claude/.claude.json
+# expect: identical hash to the one above — moved, not re-seeded
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 0 — retired by `jailbee new`
+
+# The point of the fix: a start after the move must still work.
+jailbee stop upgrade-probe
+jailbee start upgrade-probe
+# expect: starts, not `Missing source path ... for disk "shared-claude-json"`
 ```
 
 ### 2. Fresh repo
