@@ -1197,6 +1197,79 @@ def test_new_container_leaves_the_binds_profile_alone_with_nothing_to_migrate(tm
     incus.profile_set_yaml.assert_not_called()
 
 
+def _opts_for_new() -> NewContainerOptions:
+    return NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+
+def test_new_container_sets_claude_config_dir_on_a_stale_base_profile(tmp_path, mocker):
+    """The relocation has two halves and only one of them is on this path.
+
+    `jailbee new` retires the `shared-claude-json` device unconditionally, so a
+    repo that has not been re-`apply`ed loses the only thing that made
+    `.claude.json` shared. `CLAUDE_CONFIG_DIR` is its replacement, and on an
+    un-rebuilt image `<prefix>-base` is the only carrier — without it Claude
+    Code resolves the container-local `$HOME/.claude.json`, finds nothing and
+    onboards from scratch in every container jailbee creates.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_called_once_with(
+        "repo-base", "environment.CLAUDE_CONFIG_DIR", "/home/dev/.claude"
+    )
+
+
+def test_new_container_leaves_an_existing_claude_config_dir_alone(tmp_path, mocker):
+    """An existing value is authoritative — it is either what `apply` rendered
+    or a `container.env` override, and `jailbee new` must not second-guess
+    either."""
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/custom/claude"
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_new_container_skips_claude_config_dir_when_claude_is_disabled(tmp_path, mocker):
+    """No `~/.claude` mount, nothing to point Claude Code at."""
+    cfg = with_agent(_cfg_for_new(tmp_path), "claude", enabled=False)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_not_called()
+
+
 def test_new_container_adds_dev_to_host_device_groups(tmp_path, mocker):
     """A host_devices entry's group is provisioned: dev is added to it inside
     the container so it can open the (static_node-reset) device node."""

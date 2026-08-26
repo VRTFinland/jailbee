@@ -12,6 +12,7 @@ from jailbee.network import acl_name, allowlist_acl_yaml
 from jailbee.profiles import (
     base_profile_yaml,
     binds_profile_yaml,
+    claude_config_dir_env,
     net_profile_yaml,
     profile_names,
 )
@@ -191,6 +192,44 @@ def migrate_claude_json(cfg: Config, incus: Incus) -> None:
     if incus.profile_exists(names.binds):
         incus.profile_set_yaml(names.binds, binds_profile_yaml(cfg))
     _relocate_claude_json(cfg)
+
+
+def ensure_claude_config_dir(cfg: Config, incus: Incus) -> None:
+    """Put `CLAUDE_CONFIG_DIR` on `<prefix>-base` when nothing declares it yet.
+
+    The relocation has two halves, and only one of them is on the
+    `jailbee new` path. `migrate_claude_json` retires the
+    `shared-claude-json` device for the whole repo — which is what used to
+    make `.claude.json` shared — while the replacement, Claude Code being
+    pointed at the shared `~/.claude` mount, is written only by
+    `jailbee apply` (this profile key) and `jailbee base build`
+    (`/etc/profile.d/jailbee-env.sh`). A user who upgrades jailbee and just
+    keeps running `jailbee new` therefore ends up with neither: Claude Code
+    resolves the container-local `$HOME/.claude.json`, finds nothing, and
+    onboards from scratch in every new container — and in the repo's
+    existing ones too, since the device left their expanded config with the
+    profile rewrite. The upgrade hint is advice, not a gate, so nothing else
+    stops that.
+
+    The profile key alone is enough to restore the old experience: Incus
+    injects `environment.*` into every `incus exec` whatever the image holds
+    (see `docs/manual-testing.md`), so no rebuild is needed. `base build`
+    stays the belt-and-suspenders half, for shells jailbee does not spawn.
+
+    Surgical on purpose — one key, not a `base_profile_yaml` rewrite:
+    `jailbee new` has no business applying the rest of a config the user has
+    not `apply`ed. An already-present value is left untouched, so a
+    `container.env` override stays authoritative and a later `apply` is
+    still the thing that renders the profile.
+    """
+    names = profile_names(cfg)
+    if not incus.profile_exists(names.base):
+        return
+    key, value = claude_config_dir_env(cfg)
+    if incus.profile_config_get(names.base, key) is not None:
+        return
+    incus.profile_config_set(names.base, key, value)
+    success(f"Set {key}={value} on '{names.base}' — Claude Code's global config is shared again")
 
 
 def _seed_claude_json(cfg: Config) -> None:
