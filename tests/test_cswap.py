@@ -162,6 +162,40 @@ def test_a_row_missing_email_is_a_cswap_error(tmp_path, mocker):
     assert "email" in str(exc.value)
 
 
+def test_a_row_with_a_null_email_is_a_cswap_error(tmp_path, mocker):
+    """The absent-key guard exists for exactly this reason, but a present-but-
+    null email would pass it and then stringify to the literal "None" — the
+    same garbage ledger identity by another route."""
+    payload = {"accounts": [{"number": 1, "email": None, "organizationUuid": "org-abc"}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "email" in str(exc.value)
+    assert "no usable" in str(exc.value)
+
+
+def test_a_row_with_a_blank_email_is_a_cswap_error(tmp_path, mocker):
+    payload = {"accounts": [{"number": 1, "email": "   "}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "email" in str(exc.value)
+
+
+def test_a_row_with_a_null_number_is_a_cswap_error(tmp_path, mocker):
+    payload = {"accounts": [{"number": None, "email": "me@example.com"}]}
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
+
+    with pytest.raises(CswapError) as exc:
+        _cswap(tmp_path).list_accounts()
+
+    assert "number" in str(exc.value)
+
+
 def test_a_row_with_no_organization_and_no_alias_still_parses(tmp_path, mocker):
     """Guard against over-correction: an empty organizationUuid is a
     legitimate personal account, not a malformed row."""
