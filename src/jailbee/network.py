@@ -27,6 +27,31 @@ from jailbee.egress import EgressEntry
 ALLOWLIST_DESC_PREFIX = "allowlisted: "
 
 
+def _allow_rules(entries: list[EgressEntry]) -> list[dict[str, str]]:
+    """The `allow` egress rules for `entries`, shared by both ACL renderers.
+
+    `allowlist_acl_yaml` (the repo ACL) and `extra_acl_yaml` (a container's
+    own extra ACL) used to duplicate this loop verbatim. Drift between the
+    two copies would silently break `entries_from_acl_yaml`'s round-trip —
+    which `/etc/hosts` pinning depends on for both ACL kinds — since it
+    parses both back with the same rule shape.
+    """
+    rules: list[dict[str, str]] = []
+    for entry in entries:
+        for dest in entry.destinations:
+            rule: dict[str, str] = {
+                "action": "allow",
+                "destination": dest,
+                "description": f"{ALLOWLIST_DESC_PREFIX}{entry.description}",
+                "state": "enabled",
+            }
+            if entry.port is not None:
+                rule["protocol"] = "tcp"
+                rule["destination_port"] = str(entry.port)
+            rules.append(rule)
+    return rules
+
+
 def acl_name(cfg: Config) -> str:
     """Per-repo ACL name."""
     return f"{cfg.container_prefix}-allowlist"
@@ -112,18 +137,7 @@ def allowlist_acl_yaml(
         )
 
     # Allowlist rules from config.
-    for entry in entries:
-        for dest in entry.destinations:
-            rule: dict[str, str] = {
-                "action": "allow",
-                "destination": dest,
-                "description": f"{ALLOWLIST_DESC_PREFIX}{entry.description}",
-                "state": "enabled",
-            }
-            if entry.port is not None:
-                rule["protocol"] = "tcp"
-                rule["destination_port"] = str(entry.port)
-            egress.append(rule)
+    egress.extend(_allow_rules(entries))
 
     # No explicit default-reject rule: Incus prioritises by action type
     # so it would be evaluated before allow rules. The NIC's implicit
@@ -211,24 +225,10 @@ def extra_acl_yaml(name: str, entries: list[EgressEntry]) -> str:
     `entries_from_acl_yaml` reads this ACL back unchanged and `/etc/hosts`
     pinning works identically for both.
     """
-    egress: list[dict[str, str]] = []
-    for entry in entries:
-        for dest in entry.destinations:
-            rule: dict[str, str] = {
-                "action": "allow",
-                "destination": dest,
-                "description": f"{ALLOWLIST_DESC_PREFIX}{entry.description}",
-                "state": "enabled",
-            }
-            if entry.port is not None:
-                rule["protocol"] = "tcp"
-                rule["destination_port"] = str(entry.port)
-            egress.append(rule)
-
     acl = {
         "name": name,
         "description": "jailbee per-container egress additions",
-        "egress": egress,
+        "egress": _allow_rules(entries),
         "ingress": [],
     }
     return yaml.safe_dump(acl, sort_keys=False)

@@ -300,6 +300,15 @@ def run_apply(
                 )
                 ports_changed.append(ci.name)
 
+        # Re-materialise from the label so a profile change cannot leave a
+        # stale local `eth0` behind. Unconditional — for every container,
+        # not just running ones: `incus config device override`/`set` work
+        # on a stopped instance too, and skipping it here left a stopped
+        # container's NIC frozen on whatever ACL/bridge was current the
+        # last time it happened to be running, forever. Only the
+        # `/etc/hosts` step below genuinely needs the container up.
+        egress_scope.apply_container_acl(cfg, incus, ci.name, mode=ci.network or "strict")
+
         if ci.state != "Running":
             continue
         running_names.append(ci.name)
@@ -311,9 +320,6 @@ def run_apply(
             from jailbee.device_groups import ensure_device_groups
 
             ensure_device_groups(cfg, incus, ci.name)
-        # Re-materialise from the label so a profile change cannot leave a
-        # stale local `eth0` behind.
-        egress_scope.apply_container_acl(cfg, incus, ci.name, mode=ci.network or "strict")
         if ci.network == "strict":
             info(f"  Re-pinning /etc/hosts on {short}...")
             from jailbee.hosts import apply_hosts

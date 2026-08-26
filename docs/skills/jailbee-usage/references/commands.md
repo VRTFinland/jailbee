@@ -690,6 +690,13 @@ for the security posture: an override widens a boundary that never passes
 code review, and no container can reach these commands to grant itself
 egress (no `jailbee` binary, no Incus socket inside a container).
 
+`--repo` add/rm only store or remove the override row — they never touch a
+container's ACL or `/etc/hosts` themselves. `jailbee apply`, or the next
+`jailbee net refresh` timer tick, is what actually materialises a `--repo`
+change. Container-scope add/rm are the opposite: they materialise
+immediately (against the container's current network mode, per the table
+above), with no separate apply step needed.
+
 ## GUI
 
 | Command | Notes |

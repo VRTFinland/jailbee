@@ -778,7 +778,7 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
     assert commit.call_count == 1
 
 
-# ---- Task 8: repo overrides in the ACL, container extras, and pruning ----
+# ---- Repo overrides in the ACL, container extras, and pool pruning ----
 
 
 def test_refresh_pool_includes_repo_overrides_in_the_acl(
@@ -850,6 +850,47 @@ def test_refresh_pool_writes_a_container_extra_acl(
 
     written = [c[0][0] for c in incus.network_acl_set_yaml.call_args_list]
     assert "myrepo-feat-extra" in written
+
+
+def test_refresh_pool_skips_extra_acl_churn_for_a_loose_container(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    """M2: `apply_container_acl(mode="loose")` deletes a container's extra
+    ACL on the mode switch. Without a mode filter here, this loop would
+    recreate it every 60s tick right after — permanent, pointless churn the
+    orphan sweep never reclaims because the ACL keeps coming back."""
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    container_extras = mocker.patch(
+        "jailbee.egress_scope.container_extras", return_value=["nexus.corp"]
+    )
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat",
+                state="Running",
+                network="loose",
+                ip="10.0.0.5",
+                memory_limit=None,
+            )
+        ],
+    )
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    written = [c[0][0] for c in incus.network_acl_set_yaml.call_args_list]
+    assert "myrepo-feat-extra" not in written
+    container_extras.assert_not_called()
 
 
 def test_prune_container_pools_drops_rows_for_a_vanished_container(
@@ -1046,3 +1087,63 @@ def test_refresh_pool_one_container_extras_failure_does_not_block_the_next(
     written = [c[0][0] for c in incus.network_acl_set_yaml.call_args_list]
     assert "myrepo-a-extra" not in written
     assert "myrepo-b-extra" in written
+
+
+def test_refresh_pool_pins_container_extras_on_first_tick(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    """I5: a container's own extras must reach `/etc/hosts` on the SAME
+    refresh cycle they are first resolved, not the one after.
+
+    Before this fix, `_update_strict_container_hosts` ran BEFORE
+    `_refresh_container_extras` and built its `ct_entries` from the `ct:`
+    pool key phase B had not populated yet. So the cycle where a fresh
+    `jailbee net egress add` host is first resolved would still pin
+    `/etc/hosts` without it — dropping (or, on a real host, overwriting the
+    CLI's own correct immediate pin with) the wrong content for one extra
+    cycle. With no pre-existing `ct:` pool row here, the entry can only
+    appear in this call's `apply_hosts` if phase B ran first.
+    """
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        side_effect=[
+            ({"github.com": ["1.1.1.1"]}, {}),  # phase A: repo
+            ({"nexus.corp": ["10.0.5.7"]}, {}),  # phase B: the container's fresh extra
+        ],
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["nexus.corp"])
+    incus = mocker.MagicMock()
+    # `_prune_container_pools` runs (unmocked) as part of the same phase-B
+    # try block and would otherwise delete the freshly-written `ct:` row
+    # right back out again: a bare `MagicMock()` iterates as empty, so
+    # `live` would be empty and every `ct:` row looks orphaned.
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Running", "profiles": [], "config": {}, "devices": {}}
+    ]
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat",
+                state="Running",
+                network="strict",
+                ip="10.0.0.5",
+                memory_limit=None,
+            )
+        ],
+    )
+    apply_hosts_mock = mocker.patch("jailbee.hosts.apply_hosts")
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    apply_hosts_mock.assert_called_once()
+    entries = apply_hosts_mock.call_args.kwargs["entries"]
+    assert {e.description for e in entries} == {"github.com", "nexus.corp"}
+    nexus_entry = next(e for e in entries if e.description == "nexus.corp")
+    assert nexus_entry.destinations == ["10.0.5.7"]

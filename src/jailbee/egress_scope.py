@@ -50,8 +50,9 @@ An assumption, not a verified fact: this environment has no running Incus
 daemon, so the plan's host-verification checklist (create a 63-char and a
 64-char ACL name against a real daemon) has NOT been run. Treat this value as
 pending maintainer verification — if it turns out wrong, update it and
-re-run Task 2's tests. `derive_container_name` imposes no length cap of its
-own, so a long branch name can leave no room for the suffix.
+re-run the ACL-naming tests in `tests/test_egress_scope.py`.
+`derive_container_name` imposes no length cap of its own, so a long branch
+name can leave no room for the suffix.
 """
 
 _ACL_SUFFIX = "-extra"
@@ -219,14 +220,15 @@ def classify_sources(
     """
     config_entries = cfg.effective_egress_allow()
     config_set = set(config_entries)
+    repo_override_entries = repo_extras(session, cfg.container_prefix)
 
     rows = [EntryRow(entry=e, source=CONFIG_SOURCE) for e in config_entries]
     rows += [
         EntryRow(entry=e, source=REPO_SOURCE, redundant=e in config_set)
-        for e in repo_extras(session, cfg.container_prefix)
+        for e in repo_override_entries
     ]
     if container is not None:
-        repo_set = config_set | set(repo_extras(session, cfg.container_prefix))
+        repo_set = config_set | set(repo_override_entries)
         rows += [
             EntryRow(entry=e, source=CONTAINER_SOURCE, redundant=e in repo_set)
             for e in container_extras(incus, container)
@@ -282,13 +284,60 @@ def render_config_block(
 def resolve_entries(entries: list[str]) -> list[EgressEntry]:
     """Resolve raw entries to `EgressEntry`. Factored out for test seams.
 
-    Public (no leading underscore): a later task calls this from `cli.py`
-    for a fail-fast check before touching the container, so it is part of
-    this module's contract, not a private helper.
+    Public (no leading underscore): `cli.py` calls this for a fail-fast
+    check before touching the container — an unresolvable host in a brand
+    new `jailbee net egress add` is almost always the user's typo, and they
+    can fix it on the spot — so it is part of this module's contract, not a
+    private helper. Raises on the first bad host, unlike
+    `_resolve_entries_tolerant` below, which `apply_container_acl` uses:
+    materialising an *existing* label must not abort over one host that
+    went briefly unresolvable.
     """
     from jailbee.egress import build_egress_entries
 
     return build_egress_entries(entries)
+
+
+def _resolve_entries_tolerant(name: str, entries: list[str]) -> list[EgressEntry]:
+    """Resolve raw entries to `EgressEntry`, tolerating a per-host DNS failure.
+
+    Unlike `resolve_entries` above, a container's own extra ACL must not
+    fail closed — or abort the caller — because ONE host is momentarily
+    unresolvable (VPN down, a corp DNS blip). A hostname that fails to
+    resolve is dropped and named in a `warn`, never silently: `entries` is
+    built from whatever DID resolve. Mirrors
+    `egress_pool._refresh_container_extras`, which resolves this same field
+    tolerantly on the refresh timer — this closes the gap where
+    `apply_container_acl` used to be the one place that instead aborted the
+    whole container (and, via `jailbee apply`'s per-container loop, every
+    later container in the repo) on the first failing host.
+    """
+    from jailbee.egress import EgressEntry, parse_egress_entry, resolve_with_status
+    from jailbee.tui import warn
+
+    specs = [parse_egress_entry(raw) for raw in entries]
+    hostnames = sorted({s.target for s in specs if not s.is_literal})
+    resolved, failed = resolve_with_status(hostnames)
+
+    if failed:
+        warn(
+            f"'{name}': could not resolve for its egress override(s), "
+            f"skipping — will retry next refresh: "
+            f"{', '.join(f'{n} ({e})' for n, e in sorted(failed.items()))}"
+        )
+
+    out: list[EgressEntry] = []
+    for raw, spec in zip(entries, specs, strict=True):
+        destinations: list[str]
+        if spec.is_literal:
+            destinations = [spec.target]
+        else:
+            found = resolved.get(spec.target)
+            if not found:
+                continue
+            destinations = found
+        out.append(EgressEntry(destinations=destinations, port=spec.port, description=raw))
+    return out
 
 
 def _local_eth0(incus: Incus, name: str) -> dict[str, str] | None:
@@ -340,6 +389,19 @@ def apply_container_acl(
     ``eth0`` shadows whatever profile is assigned afterwards — leaving it in
     place would pin a "loose" container to `incusbr0` with the strict ACL
     still enforced, while `jailbee ls` reported loose.
+
+    Resolution is tolerant (`_resolve_entries_tolerant`): a host that fails
+    to resolve is dropped (with a warning naming it), not fatal to the whole
+    call. This matters beyond this function — every caller either aborts a
+    wider operation on an exception (`jailbee apply`'s per-container loop,
+    `jailbee net strict`/`loose`'s `switch_network`) or retries forever
+    without ever clearing the failing state (`loose_revert`'s TTL check), so
+    one momentarily-unresolvable extra host must never raise here. If
+    NOTHING resolves, the container's existing extra ACL (if any) is left
+    completely untouched rather than pushed empty — that would cut off
+    access the container already has — but the NIC/device sync below still
+    runs against whatever ACL already exists, so `security.acls` stays
+    correct for `mode` either way.
     """
     from jailbee.network import acl_name, extra_acl_yaml
 
@@ -348,13 +410,27 @@ def apply_container_acl(
 
     if mode != "strict" or not extras:
         incus.config_device_remove(name, "eth0", missing_ok=True)
-        drop_container_acl(cfg, incus, name)
+        drop_container_acl(incus, name)
+        _warn_if_local_eth0_survived(incus, name)
         return
 
-    entries = resolve_entries(extras)
-    if not incus.network_acl_exists(extra_name):
-        incus.network_acl_create(extra_name)
-    incus.network_acl_set_yaml(extra_name, extra_acl_yaml(extra_name, entries))
+    entries = _resolve_entries_tolerant(name, extras)
+    acl_already_exists = incus.network_acl_exists(extra_name)
+    if entries:
+        if not acl_already_exists:
+            incus.network_acl_create(extra_name)
+        incus.network_acl_set_yaml(extra_name, extra_acl_yaml(extra_name, entries))
+    elif not acl_already_exists:
+        # Nothing has ever resolved for this container: there is no ACL to
+        # reference on the NIC yet, and creating an empty stub just to wire
+        # it in buys nothing over leaving `eth0` alone for now. The next
+        # refresh that resolves something creates the ACL and wires the NIC
+        # in one pass.
+        return
+    # else: extras exist but nothing resolved THIS time, and a previous,
+    # possibly-stale ACL is still in place — left untouched above. Fall
+    # through to the NIC/device sync, which only depends on the ACL NAME,
+    # not its content.
 
     desired = _desired_eth0(cfg, [acl_name(cfg), extra_name])
     existing = _local_eth0(incus, name)
@@ -368,13 +444,36 @@ def apply_container_acl(
         incus.config_device_set(name, "eth0", desired)
 
 
-def drop_container_acl(cfg: Config, incus: Incus, name: str) -> None:
+def _warn_if_local_eth0_survived(incus: Incus, name: str) -> None:
+    """Warn when the ``eth0`` teardown above did not actually take.
+
+    `config_device_remove(..., missing_ok=True)` swallows every
+    `IncusError` — exhausted ETag retries, an unreachable daemon, "instance
+    is busy" — not just "no such local device". Matching Incus's error text
+    to narrow that swallow can't be verified without a live daemon in this
+    environment, so instead: re-read the container's local `eth0` after the
+    removal, and if it is still there, say so. A silently-failed teardown
+    leaves a container pinned to `incusbr0` with the strict ACL enforced
+    while it sits on the loose profile — `jailbee ls` would report loose
+    with no hint that the wire says otherwise.
+    """
+    from jailbee.tui import warn
+
+    if _local_eth0(incus, name) is not None:
+        warn(
+            f"'{name}' still has a local eth0 device after teardown — its "
+            f"reported network mode may not match what is enforced. Try "
+            f"`jailbee apply` again, or inspect with "
+            f"`incus config device show {name}`."
+        )
+
+
+def drop_container_acl(incus: Incus, name: str) -> None:
     """Delete one container's extra ACL if it exists.
 
     Call only after the referencing NIC is gone — Incus refuses to delete an
     ACL still applied to an instance.
     """
-    del cfg  # signature parity with apply_container_acl
     extra_name = extra_acl_name(name)
     if incus.network_acl_exists(extra_name):
         incus.network_acl_delete(extra_name)

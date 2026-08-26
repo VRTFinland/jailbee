@@ -371,13 +371,17 @@ def test_run_apply_repins_hosts_on_running_strict_only(
     assert apply_hosts.call_args[0][2] == "a"
 
 
-def test_run_apply_re_materialises_container_acl_for_running_containers(
+def test_run_apply_re_materialises_container_acl_for_every_container(
     make_cfg, tmp_path: Path, mocker: MockerFixture, _no_container_acl_apply: MagicMock
 ) -> None:
     """`run_apply` must call `egress_scope.apply_container_acl(cfg, incus,
-    ci.name, mode=ci.network or "strict")` for every *running* container,
-    including the `mode` fallback when `ci.network` is None, and must not
-    call it for a stopped container.
+    ci.name, mode=ci.network or "strict")` for EVERY container of the repo —
+    running or stopped — including the `mode` fallback when `ci.network` is
+    None. `incus config device override`/`set` (which `apply_container_acl`
+    owns) work on a stopped instance too; only `/etc/hosts` pinning needs
+    the container running. Skipping stopped containers here left one
+    frozen on a stale NIC/ACL forever, contradicting `jailbee apply`'s job
+    as the drift-killer for every container of the repo.
 
     The autouse `_no_container_acl_apply` fixture no-ops the call for the
     ~40 other `run_apply` tests in this module (their `incus` mocks don't
@@ -434,6 +438,7 @@ def test_run_apply_re_materialises_container_acl_for_running_containers(
     assert _no_container_acl_apply.call_args_list == [
         mocker.call(cfg, incus, "a", mode="strict"),
         mocker.call(cfg, incus, "b", mode="strict"),  # None falls back to "strict"
+        mocker.call(cfg, incus, "c", mode="strict"),  # stopped — still re-materialised
     ]
 
 
@@ -981,11 +986,11 @@ def test_run_apply_continues_when_the_mirror_endpoint_cannot_be_resolved(
     _no_mirror_lookup: Any,
     _no_egress_refresh: Any,
 ) -> None:
-    """Replaces the old abort test: Task 5 deliberately removed the abort
-    on a mirror-endpoint failure, so `apply` must now degrade to a warning
-    (via `_mirror_endpoint_or_warn`) and continue to its normal work rather
-    than raise. This exercises the real `_mirror_endpoint_or_warn`, not a
-    mock standing in for it, so it fails if that catch is ever removed."""
+    """A mirror-endpoint failure must not abort `apply`: it degrades to a
+    warning (via `_mirror_endpoint_or_warn`) and `apply` continues to its
+    normal work rather than raising. This exercises the real
+    `_mirror_endpoint_or_warn`, not a mock standing in for it, so it fails
+    if that catch is ever removed."""
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
 

@@ -124,11 +124,13 @@ the repo on this machine).
 
 The mitigation is visibility, not a prompt: `jailbee net egress ls` shows
 every applicable entry and where it came from (`config`, `repo-override`,
-`container`), and `jailbee net status` lists every override on the host —
-both host-local sections that never leave the machine, so they can only be
-read by someone who already has a shell there. `--repo` is the wider of the
-two scopes; the flag itself is the confirmation that the change is repo-wide
-rather than one container.
+`container`), and `jailbee net status` lists the overrides for **the repo
+whose checkout you run it from** — both host-local sections that never leave
+the machine, so they can only be read by someone who already has a shell
+there. `jailbee net status` (like its other sections) is cwd-scoped, not a
+host-wide audit: to see another repo's overrides, run it from that repo's
+checkout. `--repo` is the wider of the two scopes; the flag itself is the
+confirmation that the change is repo-wide rather than one container.
 
 Overrides are **additive only**. Neither scope can revoke what
 `config.yaml` grants — `jailbee net egress rm` refuses an entry that exists

@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 
 from jailbee.config import load_config
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
-from jailbee.egress import NetworkResolveError, resolve_hostnames
+from jailbee.egress import resolve_with_status
 from jailbee.loose_revert import check_and_revert_loose
 from jailbee.paths import repo_config_path
 
@@ -166,35 +166,6 @@ def evict_expired(
     return removed
 
 
-def resolve_with_status(
-    hostnames: list[str],
-) -> tuple[dict[str, list[str]], dict[str, str]]:
-    """Resolve hostnames, splitting successes from failures.
-
-    Strategy: try the whole batch first (fast path). If it fails, fall
-    back to per-name resolution to identify which names actually broke.
-    Returns ``(resolved, failed)`` where ``failed[name]`` is the error message.
-    """
-    if not hostnames:
-        return {}, {}
-
-    try:
-        return resolve_hostnames(hostnames), {}
-    except NetworkResolveError:
-        pass
-
-    resolved: dict[str, list[str]] = {}
-    failed: dict[str, str] = {}
-    for name in hostnames:
-        try:
-            single = resolve_hostnames([name])
-        except NetworkResolveError as e:
-            failed[name] = str(e)
-            continue
-        resolved.update(single)
-    return resolved, failed
-
-
 def refresh_pool(
     cfg: Config,
     gcfg: GlobalConfig,
@@ -214,19 +185,29 @@ def refresh_pool(
       3. merge resolved IPs (bumps last_seen)
       4. evict_expired (only for resolved hostnames; honours TTL + cap)
       5. record RefreshState (status, timestamp, error msg) and commit
-      6. IF anything resolved: compute mirror_endpoint, write ACL, update
-         /etc/hosts
-      7. phase B (unconditional — see below): refresh each container's own
+      6. phase B (unconditional — see below): refresh each container's own
          extra ACL, then prune pool rows for containers that no longer exist
+      7. IF anything resolved: compute mirror_endpoint, write ACL, update
+         /etc/hosts
 
     Errors writing ACL or /etc/hosts do not roll back the DB transaction —
     state already reflects what we resolved. Phase B always runs, even when
-    step 6 is skipped because the repo's own resolve was empty (a
+    step 7 is skipped because the repo's own resolve was empty (a
     literals-only ``egress_allow`` has no hostnames to resolve at all, which
     is not the same thing as a DNS failure) — otherwise a repo with no
     hostname entries would never refresh its containers' extras or prune
     their pool rows. Phase B is independently guarded: a failure there must
-    not undo or overshadow what was already written above it.
+    not undo or overshadow what was already written (or about to be written)
+    around it.
+
+    Phase B runs BEFORE step 7's `_update_strict_container_hosts`, not
+    after: that helper reads each container's extras back out of the same
+    `ct:` pool key phase B just populated, to fold them into the
+    `/etc/hosts` pin. Running phase B later left a freshly-added
+    `jailbee net egress add` host missing from `/etc/hosts` for one whole
+    extra refresh cycle after the CLI had already written it correctly —
+    the next tick would then overwrite the CLI's correct pin with a stale
+    one, for up to two cycles.
     """
     from jailbee.egress import parse_egress_entry
     from jailbee.egress_scope import effective_repo_entries
@@ -265,12 +246,23 @@ def refresh_pool(
     _record_state(session, prefix, now, status, error_msg)
     session.commit()  # state durable BEFORE side effects
 
+    # Phase B (unconditional, and BEFORE step 7 below — see the ordering
+    # note in the docstring): refresh each container's own extra ACL, then
+    # prune pool rows for containers that no longer exist. A failure here
+    # must NOT invalidate the repo-scope work already committed above, or
+    # block step 7 from running below.
+    try:
+        _refresh_container_extras(cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host)
+        _prune_container_pools(incus, session)
+    except Exception as e:
+        log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
+
     if resolved:
         # Only when something resolved: don't push an ACL/hosts derived from
         # an empty resolve — what's already in Incus stays; the next
         # successful cycle will refresh it. A literals-only allowlist (no
         # hostnames at all) and a total DNS failure both leave `resolved`
-        # empty, so both skip this block — but phase B below still runs for
+        # empty, so both skip this block — but phase B above still ran for
         # both, since it has no dependency on the repo's own resolve.
         mirror_endpoint = _compute_mirror_endpoint(cfg, incus, gcfg)
 
@@ -294,13 +286,6 @@ def refresh_pool(
             incus,
             mirror_endpoint=mirror_endpoint,
         )
-
-    try:
-        _refresh_container_extras(cfg, incus, session, now=now, ttl=ttl, max_per_host=max_per_host)
-        _prune_container_pools(incus, session)
-    except Exception as e:
-        # invalidate the repo-scope work already committed above.
-        log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
 
     return RefreshResult(
         container_prefix=prefix,
@@ -458,12 +443,20 @@ def _refresh_container_extras(
 
     A failure for one container is logged and skipped: it must not cost the
     other containers, nor the repo ACL that was already written.
+
+    Skips a container whose current mode is not ``strict``:
+    `apply_container_acl(mode="loose")` deletes the extra ACL on every mode
+    switch, and this loop would otherwise recreate it every tick right
+    after — permanent, harmless-but-pointless churn the orphan sweep in
+    `apply.py` never reclaims because the ACL keeps getting rebuilt.
     """
     from jailbee import egress_scope
     from jailbee.egress import parse_egress_entry
     from jailbee.network import extra_acl_yaml
 
     for container in _list_containers(cfg, incus):
+        if container.network != "strict":
+            continue
         try:
             extras = egress_scope.container_extras(incus, container.name)
             if not extras:

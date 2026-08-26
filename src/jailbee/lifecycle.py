@@ -1555,7 +1555,7 @@ def destroy_container(
     from jailbee import egress_scope
 
     try:
-        egress_scope.drop_container_acl(cfg, incus, name)
+        egress_scope.drop_container_acl(incus, name)
     except IncusError as e:
         warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
 

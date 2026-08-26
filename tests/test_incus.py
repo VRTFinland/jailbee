@@ -772,6 +772,36 @@ def test_config_device_override_passes_key_values(mocker):
     assert args[1:] == ["config", "device", "override", "ct", "eth0", "security.acls=a,b"]
 
 
+def test_config_device_set_passes_key_values(mocker):
+    """`config_device_set` is the in-place update path for a RUNNING
+    container's NIC — the hot path of every `jailbee apply` re-materialising
+    a container's egress ACL against an existing local `eth0` device — but
+    had no dedicated test in a fully-mocked suite, which is exactly where an
+    argv typo would otherwise go uncaught."""
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_set("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "set", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_remove_missing_ok_false_raises(mocker):
+    """The six pre-existing `missing_ok=False` (the default) callers depend
+    on a genuine removal failure raising — unlike `missing_ok=True`, which
+    deliberately swallows it."""
+    from jailbee.incus import Incus, IncusError
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    with pytest.raises(IncusError):
+        Incus().config_device_remove("ct", "eth0")
+
+
 def test_config_device_remove_missing_ok_swallows_failure(mocker):
     from jailbee.incus import Incus
 

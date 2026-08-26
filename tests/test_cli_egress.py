@@ -98,28 +98,24 @@ def test_add_of_a_config_entry_is_a_no_op(tmp_path, mocker):
 
 
 def test_add_to_a_loose_container_stores_the_label_without_a_local_eth0(tmp_path, mocker):
-    """Correction 2: `apply_container_acl` must materialise under the
-    container's CURRENT mode, not a hardcoded "strict" — else adding an
-    override to a loose container would silently create a container-local
-    `eth0` device (which shadows the assigned network profile), pinning it
-    back to `incusbr0` with the strict allowlist enforced while `jailbee ls`
-    still reports it loose. `apply_container_acl` is NOT mocked here (unlike
-    `_repo()`'s default setup) so its own tear-down branch is what's under
-    test.
+    """`apply_container_acl` must materialise under the container's CURRENT
+    mode, not a hardcoded "strict" — else adding an override to a loose
+    container would silently create a container-local `eth0` device (which
+    shadows the assigned network profile), pinning it back to `incusbr0`
+    with the strict allowlist enforced while `jailbee ls` still reports it
+    loose. `apply_container_acl` is NOT mocked here (unlike `_repo()`'s
+    default setup) so its own tear-down branch is what's under test.
 
-    Fix round 1 (C1): the container's *existing* override label is non-empty
-    (`nexus.corp:443`) and a *different* entry is being added
-    (`other.corp:443`). With an EMPTY label, `apply_container_acl`'s own
-    `if mode != "strict" or not extras:` guard takes the teardown branch
-    regardless of `mode` — so the original version of this test (empty
-    label) passed under the exact hardcoded-`mode="strict"` mutation it
-    exists to catch. A non-empty label makes the branch depend solely on
-    `mode`. `config_device_remove` being called (not just
-    `config_device_override`/`config_device_set` NOT being called) proves
-    the teardown branch actually ran, rather than nothing happening at all.
-
-    Verified by temporarily hardcoding `mode="strict"` in both call sites in
-    `cli.py` and confirming this test fails (see fix-round-1 report)."""
+    The container's *existing* override label is deliberately non-empty
+    (`nexus.corp:443`) while a *different* entry is being added
+    (`other.corp:443`): with an EMPTY label, `apply_container_acl`'s own
+    `if mode != "strict" or not extras:` guard would take the teardown
+    branch regardless of `mode`, so a hardcoded `mode="strict"` bug could
+    hide behind an empty-label test. A non-empty label makes the branch
+    depend solely on `mode`. Asserting `config_device_remove` was called
+    (not just that `config_device_override`/`config_device_set` were NOT
+    called) proves the teardown branch actually ran, rather than nothing
+    happening at all."""
     from tests.conftest import make_config
 
     repo_root = tmp_path / "myrepo"
