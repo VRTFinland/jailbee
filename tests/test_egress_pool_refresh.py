@@ -337,6 +337,74 @@ def test_hosts_update_failure_is_nonfatal(
     assert apply_hosts_mock.call_count == 2
 
 
+def test_hosts_merges_container_extras_with_repo_entries(
+    db_session: Session,
+    cfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    """The entries= kwarg handed to apply_hosts must be the REPO pool entries
+    PLUS that specific container's own extras — not one or the other. This is
+    the whole point of the change: a container with its own extras must keep
+    seeing the repo's pinned hosts too, and a container with no extras must
+    not pick up a sibling's.
+    """
+    from jailbee import egress_pool
+
+    # Repo-scope pool row, as if a prior resolve had already populated it.
+    db_session.add(
+        PoolIP(
+            container_prefix="X",
+            hostname="github.com",
+            ip="1.1.1.1",
+            first_seen=frozen_now,
+            last_seen=frozen_now,
+        )
+    )
+    # Container-scope pool row for X-foo's own extra host only.
+    db_session.add(
+        PoolIP(
+            container_prefix="ct:X-foo",
+            hostname="nexus.corp",
+            ip="10.0.5.7",
+            first_seen=frozen_now,
+            last_seen=frozen_now,
+        )
+    )
+    db_session.commit()
+
+    foo = mocker.Mock(state="Running", network="strict")
+    foo.name = "X-foo"
+    bar = mocker.Mock(state="Running", network="strict")
+    bar.name = "X-bar"
+    mocker.patch("jailbee.egress_pool._list_containers", return_value=[foo, bar])
+
+    def _config_get(name: str, key: str) -> str | None:
+        del key
+        if name == "X-foo":
+            return '["nexus.corp:443"]'
+        return None
+
+    incus.config_get.side_effect = _config_get
+
+    apply_hosts_mock = mocker.patch("jailbee.hosts.apply_hosts")
+
+    egress_pool._update_strict_container_hosts(cfg, db_session, incus, mirror_endpoint=None)
+
+    assert apply_hosts_mock.call_count == 2
+    calls = {c.args[2]: c.kwargs["entries"] for c in apply_hosts_mock.call_args_list}
+
+    foo_entries = calls["X-foo"]
+    assert {e.description for e in foo_entries} == {"github.com:443", "nexus.corp:443"}
+    assert {ip for e in foo_entries for ip in e.destinations} == {"1.1.1.1", "10.0.5.7"}
+
+    bar_entries = calls["X-bar"]
+    assert {e.description for e in bar_entries} == {"github.com:443"}
+    assert {ip for e in bar_entries for ip in e.destinations} == {"1.1.1.1"}
+
+
+
 def test_refresh_all_iterates_registered_repos(
     db_session: Session,
     gcfg: Any,
