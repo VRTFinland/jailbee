@@ -100,9 +100,7 @@ def test_securestorage_override_is_removed_from_the_child_env(tmp_path, mocker, 
 
 
 def test_list_accounts_parses_identity_alias_and_quota(tmp_path, mocker):
-    mocker.patch(
-        "jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(_LIST_PAYLOAD))
-    )
+    mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(_LIST_PAYLOAD)))
 
     accounts = _cswap(tmp_path).list_accounts()
 
@@ -260,9 +258,7 @@ def test_switch_always_passes_an_explicit_target(tmp_path, mocker):
         "message": "Switched to Account-2 (me@example.com)",
         "warnings": [],
     }
-    run = mocker.patch(
-        "jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload))
-    )
+    run = mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed(json.dumps(payload)))
 
     message = _cswap(tmp_path).switch("2")
 
@@ -394,9 +390,7 @@ def test_the_conftest_fixture_hides_a_real_cswap_on_path(tmp_path, monkeypatch):
 
 def test_version_returns_stripped_stdout(tmp_path, mocker):
     home = tmp_path / "shared" / "claude"
-    run = mocker.patch(
-        "jailbee.cswap.subprocess.run", return_value=_completed("cswap 0.26.0b1\n")
-    )
+    run = mocker.patch("jailbee.cswap.subprocess.run", return_value=_completed("cswap 0.26.0b1\n"))
 
     version = Cswap(config_home=home).version()
 

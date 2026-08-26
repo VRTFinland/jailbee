@@ -404,9 +404,7 @@ def release_repo(session: Session, prefix: str) -> ClaudeAccountHolding | None:
     side both mean "this repo is holding an account it should not be".
     """
     row = session.exec(
-        select(ClaudeAccountHolding).where(
-            ClaudeAccountHolding.container_prefix == prefix
-        )
+        select(ClaudeAccountHolding).where(ClaudeAccountHolding.container_prefix == prefix)
     ).first()
     if row is None:
         return None
@@ -415,9 +413,7 @@ def release_repo(session: Session, prefix: str) -> ClaudeAccountHolding | None:
     return row
 
 
-def release_identity(
-    session: Session, identity: Identity
-) -> ClaudeAccountHolding | None:
+def release_identity(session: Session, identity: Identity) -> ClaudeAccountHolding | None:
     """Free one account's holding wherever it is held.
 
     The escape hatch: a repo whose checkout is gone can no longer run
@@ -464,8 +460,6 @@ def stale_claims(session: Session) -> list[ClaudeAccountHolding]:
     """
     return list(
         session.exec(
-            select(ClaudeAccountHolding).where(
-                ClaudeAccountHolding.state == CLAIMING
-            )
+            select(ClaudeAccountHolding).where(ClaudeAccountHolding.state == CLAIMING)
         ).all()
     )

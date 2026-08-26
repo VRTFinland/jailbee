@@ -618,9 +618,7 @@ def pick_claude_account(rows: Sequence[Any]) -> str | None:
     return str(result)
 
 
-def pick_claude_accounts_multi(
-    rows: Sequence[Any], *, checked: set[str]
-) -> list[str] | None:
+def pick_claude_accounts_multi(rows: Sequence[Any], *, checked: set[str]) -> list[str] | None:
     """Checkbox picker over pooled Claude accounts, pre-checked from `checked`.
 
     ``default_to_pointed=False`` is load-bearing: this picker's empty result
