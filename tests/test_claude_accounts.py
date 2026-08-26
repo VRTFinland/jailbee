@@ -1100,7 +1100,11 @@ def test_release_repo_frees_every_row_left_by_a_crash_mid_claim(db_session):
 def test_release_repo_also_clears_a_stale_claiming_row(db_session):
     _hold(db_session, WORK, "gisgro", state=ca.CLAIMING)
 
-    assert ca.release_repo(db_session, "gisgro") is not None
+    freed = ca.release_repo(db_session, "gisgro")
+
+    # `is not None` was meaningful against the old `Holding | None` return; a
+    # list is always not-None, so it asserted nothing. Assert the contract.
+    assert [(r.email, r.state) for r in freed] == [(WORK.email, ca.CLAIMING)]
     assert db_session.get(ClaudeAccountHolding, WORK.identity) is None
 
 
