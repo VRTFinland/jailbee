@@ -1772,7 +1772,10 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.background import ClearOutcome
+    from jailbee.claude_accounts import AccountRow as AccountRowType
     from jailbee.config import Config, LooseAutoRevert
+    from jailbee.cswap import Account as AccountType
+    from jailbee.cswap import Cswap as CswapType
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
@@ -7204,6 +7207,188 @@ def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
     cfg = _load_or_exit(config)
     deleted = chrome_pool.prune(cfg, Incus())
     success(f"Pruned {deleted} free slots")
+
+
+# ---- Claude account pool commands ----
+
+
+claude_app = typer.Typer(
+    name="claude",
+    help=(
+        "Claude account pool: switch this repo's Claude Code login between "
+        "stored accounts without a browser login.\n\n"
+        "Accounts live in a host-global pool managed by `cswap` (claude-swap), "
+        "an optional host dependency. One stored account is held by one repo "
+        "at a time — that is what keeps a shared credential from being "
+        "refreshed in two places and silently logging one of them out."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(claude_app)
+
+
+def _claude_ctx(config: Path | None) -> tuple["Config", "CswapType"]:
+    """Load the repo config and a `Cswap` bound to its shared Claude dir.
+
+    Exits 1 with the install hint when `cswap` is not on PATH: the whole
+    command group is unusable without it, and every command would otherwise
+    fail one subprocess later with a worse message.
+    """
+    from jailbee.cswap import INSTALL_HINT, Cswap, config_home
+
+    cfg = _load_or_exit(config)
+    if not cfg.claude.enabled:
+        error(
+            "`agents.claude` is disabled for this repo, so there is no shared "
+            "Claude directory to switch. Enable it and run `jailbee apply`."
+        )
+        raise typer.Exit(1)
+    cswap = Cswap(config_home=config_home(cfg))
+    if not cswap.available():
+        error_plain(INSTALL_HINT)
+        raise typer.Exit(1)
+    return cfg, cswap
+
+
+def _claude_rows(
+    cfg: "Config", cswap: "CswapType"
+) -> tuple[list["AccountRowType"], list["AccountType"]]:
+    """Fetch the pool and join it against the ledger. Exits 1 on failure."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+    from jailbee.tui import status_with_elapsed
+
+    try:
+        with status_with_elapsed("Reading the Claude account pool"):
+            accounts = cswap.list_accounts()
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    with Session(get_engine()) as session:
+        rows = claude_accounts.account_rows(session, accounts, prefix=cfg.container_prefix)
+    return rows, accounts
+
+
+@claude_app.command("ls")
+def claude_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    config: ConfigOption = None,
+) -> None:
+    """List pooled Claude accounts, their quota, and which repo holds each."""
+    from jailbee import claude_accounts
+    from jailbee.tui import console
+
+    cfg, cswap = _claude_ctx(config)
+    rows, accounts = _claude_rows(cfg, cswap)
+
+    type Row = claude_accounts.AccountRow
+
+    def pct(value: float | None) -> str:
+        return "-" if value is None else f"{value:.0f}%"
+
+    def note(row: Row) -> str:
+        if row.account.disabled:
+            return "held out of rotation (cswap disable)"
+        if row.account.usage_status == "relogin_required":
+            return "re-login needed"
+        if row.account.usage_status not in ("ok", "api_key"):
+            return row.account.usage_status.replace("_", " ")
+        if not row.allowed:
+            return "not allowed for this repo"
+        return ""
+
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="slot",
+            header="SLOT",
+            cell=lambda r: str(r.account.number),
+            json=lambda r: r.account.number,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="alias",
+            header="ALIAS",
+            cell=lambda r: r.account.alias or "-",
+            json=lambda r: r.account.alias or None,
+        ),
+        table_format.FieldSpec(
+            name="email",
+            header="EMAIL",
+            cell=lambda r: r.account.email,
+            json=lambda r: r.account.email,
+        ),
+        table_format.FieldSpec(
+            name="five_hour_pct",
+            header="5H",
+            cell=lambda r: pct(r.account.five_hour_pct),
+            json=lambda r: r.account.five_hour_pct,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="seven_day_pct",
+            header="7D",
+            cell=lambda r: pct(r.account.seven_day_pct),
+            json=lambda r: r.account.seven_day_pct,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="holder",
+            header="HOLDER",
+            cell=lambda r: r.holder_cell,
+            json=lambda r: r.holder.container_prefix if r.holder else None,
+        ),
+        table_format.FieldSpec(
+            name="note",
+            header="NOTE",
+            cell=note,
+            json=note,
+            # Only worth a column when some row has something to say.
+            show_if=lambda rs: any(note(r) for r in rs),
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=None,
+        console=console,
+        title=f"Claude accounts for {cfg.container_prefix}" if fmt == "table" else None,
+        empty_message=(
+            "No accounts in the pool yet. Log in to Claude Code in a container, "
+            "then run `jailbee claude add`."
+        ),
+    )
+    if fmt != "table":
+        return
+    # stderr, not stdout: `--format json` is piped and parsed.
+    from jailbee.tui import hint
+
+    lines: list[str] = []
+    live = claude_accounts.current_account(accounts)
+    if live is not None:
+        lines.append(f"{cfg.container_prefix} is on account {live.number} ({live.label}).")
+    elif accounts:
+        lines.append(
+            f"{cfg.container_prefix}'s current login is not in the pool — "
+            f"`jailbee claude add` stores it."
+        )
+    allowed = [r.account.label for r in rows if r.allowed]
+    if len(allowed) != len(rows):
+        lines.append(f"Allowed: {', '.join(allowed) or '(none)'}")
+    if lines:
+        hint(lines)
 
 
 @app.command("exec")
