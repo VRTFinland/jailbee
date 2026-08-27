@@ -372,11 +372,14 @@ layout.
 |---|---|
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
 | `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job |
-| `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive |
+| `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
 
 A `failed` job is a database record, not a container state: the container
 (if one was created) is left running untouched. `jailbee job clear` is how you
-acknowledge it — nothing else drops the record short of `jailbee destroy`.
+acknowledge it; besides `jailbee destroy`, the only other thing that drops a
+record is a `jailbee start`/`jailbee restart` that completes, which clears the
+leftover *boot* record it supersedes (a failed create's record survives — the
+container's setup never finished, and a reboot doesn't finish it).
 
 ### `jailbee disk-usage` / `jailbee prune`
 

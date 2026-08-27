@@ -572,6 +572,9 @@ A `failed` job is a database record, not a container state — the container
 (if one exists) is left running untouched. `jailbee job ls` shows the recorded
 error and worker log path; `jailbee job clear <name>` is how the record is
 acknowledged (the dashboards expose the same action as "Clear failed job").
+A failed *boot* record clears itself: the next `jailbee start`/`jailbee restart`
+that completes supersedes that boot and drops the row. A failed create's record
+does not — the container's setup never finished, so it stays until acknowledged.
 
 ## Reviewing a pull request
 
