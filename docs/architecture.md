@@ -143,8 +143,9 @@ independent of overall repo size. `jailbee git fetch/checkout/pull` pull a
 container's commits back to the host over an `ext::incus exec ... git
 upload-pack` transport, landing them under `refs/jailbee/<container>/<branch>`
 without ever touching GitHub. `jailbee git push` is the inverse: it transports a
-host branch into the container under `refs/jailbee/host/<branch>` and can then
-merge or rebase it inside the container. `jailbee pr` fetches a container's
+host branch into the container under `refs/jailbee/host/<branch>`, fast-forwards
+the container's own `refs/heads/<branch>` to match where it safely can, and can
+then merge or rebase the pushed ref inside the container. `jailbee pr` fetches a container's
 branch to the host and opens or updates a GitHub PR from it via `gh`. None of
 this requires network egress from the container beyond what the operator
 explicitly allows.
