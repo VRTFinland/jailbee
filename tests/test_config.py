@@ -2757,6 +2757,38 @@ def test_destroy_background_can_be_enabled(tmp_path, mocker):
     assert cfg.destroy.background is True
 
 
+# ---------- BootConfig
+
+
+def test_boot_background_defaults_to_false(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path = _make_config(tmp_path, "{}\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.boot.background is False
+
+
+def test_boot_background_can_be_enabled(tmp_path, mocker):
+    """One key covers both boot commands: `jailbee start` and
+    `jailbee restart` run the same slow autostart afterwards."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path = _make_config(tmp_path, "boot:\n  background: true\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.boot.background is True
+
+
+def test_boot_config_rejects_unknown_keys():
+    from pydantic import ValidationError
+
+    from jailbee.config import BootConfig
+
+    with pytest.raises(ValidationError):
+        BootConfig.model_validate({"background": True, "restart": True})
+
+
 def test_claude_ai_pr_description_defaults_true_and_round_trips():
     from jailbee.config import ClaudeAgentConfig
 

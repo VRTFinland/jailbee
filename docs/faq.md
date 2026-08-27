@@ -141,6 +141,10 @@ container intact for inspection; clear the record with `jailbee job clear`
 once you've fixed it, and read the worker log with `jailbee job log`. Set
 `new.background: true` to make it the default.
 
+`jailbee start` and `jailbee restart` take the same flag — there the wait is
+the `on_start` autostart run, not the boot — with `boot.background: true` as
+the config default for both.
+
 → [Background creation](git-bridge.md#background-creation)
 
 ### How do I get into a container?

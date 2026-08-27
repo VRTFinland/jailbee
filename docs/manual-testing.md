@@ -342,6 +342,46 @@ jailbee destroy feat-delfg --force --no-background   # forces foreground
 #  drop only the record: `jailbee job clear <name>`.)
 ```
 
+## `jailbee restart --background` smoke test
+
+> Host-only. Verifies the detached boot worker + `jailbee ls` JOB tracking.
+> State is in the SQLite `background_op` table (`op_kind='boot'`). Use a
+> container whose `on_start` steps take long enough to observe.
+
+```bash
+jailbee new feat/bootsmoke
+jailbee restart feat-bootsmoke --background
+# expect: "🔁 'feat-bootsmoke' is restarting in the background (pid N) ..."
+jailbee ls          # JOB column: starting, then autostart, then clears
+jailbee job ls      # KIND column shows `boot` while it runs
+
+# The attach wait ends at `autostart`, not at completion:
+jailbee restart feat-bootsmoke --background
+jailbee tmux feat-bootsmoke   # returns as soon as the container is back up
+
+# Second boot over a live one is refused (run both within the same run):
+jailbee restart feat-bootsmoke --background
+jailbee restart feat-bootsmoke --background 2>&1 | grep -i "already has a background job"
+
+# `start` reuses the same worker without the reboot:
+jailbee stop feat-bootsmoke
+jailbee start feat-bootsmoke --background
+# expect: "🔁 'feat-bootsmoke' is starting in the background (pid N) ..."
+
+# Config default + override:
+printf 'boot:\n  background: true\n' >> .jailbee/config.yaml
+jailbee restart feat-bootsmoke                  # backgrounds without the flag
+jailbee restart feat-bootsmoke --no-background  # forces foreground
+# remove the boot: block from .jailbee/config.yaml afterwards
+
+# Failure path: break an on_start step, then
+jailbee restart feat-bootsmoke --background
+jailbee ls          # JOB=failed; the container itself is up
+jailbee job ls      # error message + worker log path
+jailbee shell feat-bootsmoke   # warns about the failed job, offers to attach anyway
+jailbee job clear feat-bootsmoke
+```
+
 ## `jailbee tmux`/`shell` wait-for-background smoke test
 
 > Host-only. Verifies attach commands block until a backgrounded

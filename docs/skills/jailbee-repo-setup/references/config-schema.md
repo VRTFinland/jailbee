@@ -367,6 +367,17 @@ destroy:
 
 `jailbee destroy --no-background` forces foreground for one run.
 
+## `boot`
+
+```yaml
+boot:
+  background: false     # detached start/restart by default (like always passing -b)
+```
+
+One key for both `jailbee start` and `jailbee restart`: what takes the time in
+either is the autostart run that follows the boot. `--no-background` forces
+foreground for one run.
+
 ## `ls` / `dashboard`
 
 Which columns `jailbee ls` shows by default. The dashboards (`jailbee

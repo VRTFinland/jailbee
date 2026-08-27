@@ -1090,7 +1090,7 @@ def test_restart_one_runs_autostart_on_start(
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     apply_hosts = mocker.patch("jailbee.hosts.apply_hosts")
@@ -1117,7 +1117,7 @@ def test_restart_one_pins_hosts_in_strict_mode(
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     apply_hosts = mocker.patch("jailbee.hosts.apply_hosts")
@@ -1144,7 +1144,7 @@ def test_restart_one_does_not_launch_gui_apps(
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.autostart.run_autostart")

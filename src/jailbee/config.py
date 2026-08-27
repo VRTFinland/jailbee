@@ -1164,6 +1164,20 @@ class DestroyConfig(BaseModel):
     per-invocation with `--background` / `--no-background`."""
 
 
+class BootConfig(BaseModel):
+    """Policy for `jailbee start` and `jailbee restart`.
+
+    One key for both: what makes either slow is the autostart run that
+    follows the boot, and it is the same run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    background: bool = False
+    """Run `jailbee start` / `jailbee restart` detached in the background by
+    default. Overridable per-invocation with `--background` /
+    `--no-background`."""
+
+
 class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     memory: str = "16GiB"
@@ -1815,6 +1829,7 @@ class Config(BaseModel):
     push: PushConfig = PushConfig()
     new: NewConfig = NewConfig()
     destroy: DestroyConfig = DestroyConfig()
+    boot: BootConfig = BootConfig()
     container_prefix: str = ""
     after_new: Literal["shell", "tmux", "none"] = Field(
         default="none",

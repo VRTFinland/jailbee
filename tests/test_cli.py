@@ -1528,6 +1528,43 @@ def test_resolve_attachable_keyboard_interrupt_offers_the_running_container(mock
     confirm.assert_called_once()
 
 
+def test_resolve_attachable_keyboard_interrupt_names_a_create(mocker):
+    """The wording tells the user what they walked away from."""
+    from jailbee import cli
+    from jailbee.db.models import JOB_CREATE
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=KeyboardInterrupt,
+        row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_CREATE),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert "still being created" in warn.call_args[0][0]
+
+
+def test_resolve_attachable_keyboard_interrupt_names_a_boot(mocker):
+    """A background `jailbee restart` is not a creation — an interrupted wait
+    over one must not tell the user their container is being built."""
+    from jailbee import cli
+    from jailbee.db.models import JOB_BOOT
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=KeyboardInterrupt,
+        row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_BOOT),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert "still booting" in warn.call_args[0][0]
+
+
 def test_resolve_attachable_keyboard_interrupt_declined_exits(mocker):
     import typer
 
