@@ -954,6 +954,75 @@ def test_ensure_claude_config_dir_skips_a_repo_without_a_base_profile(tmp_path):
     incus.profile_config_set.assert_not_called()
 
 
+def test_ensure_claude_credentials_env_sets_the_key_when_absent(tmp_path):
+    """`jailbee new` renders no profile, so without this repair a container
+    created after joining a group quietly uses the repo's own credential."""
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR",
+        "/home/dev/.claude-creds",
+    )
+
+
+def test_ensure_claude_credentials_env_is_a_noop_for_a_non_group_repo(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    incus = MagicMock()
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_exists.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_leaves_an_existing_value_alone(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/somewhere/else"
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_skips_a_repo_without_a_base_profile(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = False
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
 def test_relocate_claude_json_never_overwrites_the_destination(tmp_path):
     """Both files present: the destination is live state, the source is a
     leftover. Never overwrite, and never delete the user's copy either."""

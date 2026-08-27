@@ -14,6 +14,7 @@ from jailbee.profiles import (
     base_profile_yaml,
     binds_profile_yaml,
     claude_config_dir_env,
+    claude_securestorage_dir_env,
     net_profile_yaml,
     profile_names,
 )
@@ -231,6 +232,35 @@ def ensure_claude_config_dir(cfg: Config, incus: Incus) -> None:
         return
     incus.profile_config_set(names.base, key, value)
     success(f"Set {key}={value} on '{names.base}' — Claude Code's global config is shared again")
+
+
+def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
+    """Put `CLAUDE_SECURESTORAGE_CONFIG_DIR` on `<prefix>-base` when absent.
+
+    The `jailbee new` twin of `ensure_claude_config_dir`, and needed for the
+    same reason: `new` renders no profile, so a container created after this
+    repo joined a credential group would quietly keep using the repo's own
+    credential — logged in as a different account than every other member.
+
+    Surgical on purpose — one key, not a `base_profile_yaml` rewrite. An
+    already-present value is left untouched, so a `container.env` override
+    stays authoritative.
+
+    Only ever *adds* the key. Leaving a group removes it on the next
+    `jailbee apply`, which rewrites the whole profile; `new` is not the place
+    to undo configuration.
+    """
+    env = claude_securestorage_dir_env(cfg)
+    if env is None:
+        return
+    names = profile_names(cfg)
+    if not incus.profile_exists(names.base):
+        return
+    key, value = env
+    if incus.profile_config_get(names.base, key) is not None:
+        return
+    incus.profile_config_set(names.base, key, value)
+    success(f"Set {key}={value} on '{names.base}' — this repo shares a Claude credential")
 
 
 def _seed_claude_json(cfg: Config) -> None:
