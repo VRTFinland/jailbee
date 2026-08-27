@@ -170,6 +170,65 @@ def _check_claude_pool(cfg: Config) -> list[CheckResult]:
     return results
 
 
+def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report the shared Claude credential directory, if this repo uses one.
+
+    Silent for a repo that shares nothing — the default, and reporting an
+    absent optional feature on every `doctor` run is noise.
+
+    The one failure it can report is a half-finished join: the group directory
+    holds no credential while this repo's config home still does, which means
+    `jailbee apply` has not run since `claude_credentials` was configured.
+    Until it does, the container mounts an empty directory and Claude Code
+    answers "Not logged in".
+
+    Member repos come from the registry: the mapping is one host-local object,
+    so no other repo's config needs loading to resolve it.
+    """
+    group_dir = cfg.claude_credentials_dir
+    if group_dir is None:
+        return []
+
+    assert cfg.shared_dir is not None  # set by load_config
+    group = group_dir.name
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
+        return [
+            CheckResult(
+                "claude shared credential",
+                False,
+                f"group `{group}` at {group_dir} holds no credential, but this "
+                f"repo still has one at {repo_cred} — run `jailbee apply` to "
+                f"move it in.",
+            )
+        ]
+
+    members = _credential_group_members(gcfg, group)
+    detail = f"group `{group}` at {group_dir}"
+    if members:
+        detail += f" — shared with: {', '.join(members)}"
+    return [CheckResult("claude shared credential", True, detail)]
+
+
+def _credential_group_members(gcfg: GlobalConfig, group: str) -> list[str]:
+    """Registered repos resolving to `group`, sorted. Empty if state is unreadable.
+
+    A bookkeeping read, not a diagnosis (see `_check_upgrade_advice`): an
+    unreadable registry says nothing about whether the credential join
+    itself is healthy, so it degrades this check's "shared with" listing
+    to empty rather than failing the check.
+    """
+    from jailbee.db.models import RegisteredRepo
+
+    creds = gcfg.claude_credentials
+    try:
+        with Session(get_engine()) as session:
+            prefixes = list(session.exec(select(RegisteredRepo.container_prefix)))
+    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        return []
+    return sorted(p for p in prefixes if (creds.dir_for(p) or Path()).name == group)
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -221,6 +280,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_pool(cfg))
+    results.extend(_check_claude_credentials(cfg, gcfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():

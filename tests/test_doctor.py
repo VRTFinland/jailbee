@@ -1725,3 +1725,51 @@ def test_a_version_probe_failure_does_not_break_doctor(tmp_path, mocker):
 
     assert results[0].ok is False
     assert "boom" in results[0].detail
+
+
+def test_doctor_is_silent_for_a_non_group_repo(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+
+    assert _check_claude_credentials(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_a_shared_credential(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    (creds / ".credentials.json").write_text("{}")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert len(results) == 1
+    assert results[0].ok
+    assert "work" in results[0].detail
+
+
+def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg):
+    """Group dir with no credential while the repo's config home still has one
+    means `jailbee apply` has not run since the group was configured."""
+    from jailbee.doctor import _check_claude_credentials
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".credentials.json").write_text("{}")
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        claude={"enabled": True},
+        claude_credentials_dir=creds,
+    )
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert not results[0].ok
+    assert "jailbee apply" in results[0].detail
