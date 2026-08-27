@@ -252,6 +252,24 @@ def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
         container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
     )
     assert claude_securestorage_dir_env(cfg) is None
+    # The helper returning None is not enough on its own: base_profile_yaml
+    # also runs an unconditional `container.env` passthrough loop that could
+    # re-write the same key to "". Assert on the actual rendered profile.
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_container_env_overrides_securestorage_dir(make_cfg, tmp_path):
+    """A non-empty `container.env` override must still win over the default
+    — same pattern as CLAUDE_CONFIG_DIR."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/custom/creds"}},
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == "/custom/creds"
 
 
 def test_binds_profile_mounts_the_group_credential_dir(make_cfg, tmp_path):

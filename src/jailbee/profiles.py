@@ -208,6 +208,18 @@ def base_profile_yaml(cfg: Config) -> str:
     for key, value in cfg.container.env.items():
         profile_config[f"environment.{key}"] = value
 
+    # CLAUDE_SECURESTORAGE_CONFIG_DIR is special-cased: unlike DISPLAY or
+    # SSH_AUTH_SOCK, an empty value here is NOT equivalent to unset — Claude
+    # Code falls back to `~/.claude` for it, silently sending credential
+    # lookup back into the per-repo config home. The loop above can (re-)set
+    # it to "" via a `container.env` override even when
+    # `claude_securestorage_dir_env` already decided to omit the key, so drop
+    # it here if it ended up empty. Scoped to this one key on purpose: other
+    # env vars keep their existing "repo override always wins, even empty"
+    # behaviour.
+    if not profile_config.get("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"):
+        profile_config.pop("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", None)
+
     profile = {
         "name": profile_names(cfg).base,
         "description": "GPU, security flags, env vars for jailbee containers",
