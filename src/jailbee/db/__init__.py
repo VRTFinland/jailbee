@@ -163,11 +163,17 @@ def _migrate_to_v8(conn: Connection) -> None:
 
 
 def _migrate_to_v9(conn: Connection) -> None:
-    """v8 -> v9: add the claude_account_holding and claude_account_allow
-    tables. ``create_all`` (run before the migration loop in
-    ``_ensure_schema``) already creates both, so this step is an idempotent
-    no-op guard whose job is to let the version bump to 9 — the same shape as
-    ``_migrate_to_v8``."""
+    """v8 -> v9: added the claude_account_holding and claude_account_allow
+    tables. Still a no-op guard whose only job is to let the version bump to 9.
+
+    Both models were **removed** again before any release (the Claude account
+    pool depended on `cswap` resolving its credential store the way Claude Code
+    does, which it does not on the switch path — see
+    `.local/superpowers/specs/2026-08-27-claude-shared-credentials-design.md`
+    §9). ``create_all`` therefore no longer creates them, and a database that
+    already has them keeps them as unused tables — the same choice
+    ``_migrate_to_v6`` made for ``gui_state.collapsed_repos``. Dropping them
+    would buy nothing and would have to be undone when the pool returns."""
     return None
 
 

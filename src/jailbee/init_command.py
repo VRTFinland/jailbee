@@ -350,8 +350,10 @@ def _ensure_claude_credentials_dir(
       — or having no TTY to ask on — raises the original `ConfigError`, which
       still names the `claude_credentials.repos` opt-out for a user who wants
       neither shared login. Deleting a credential is safe here precisely
-      because the two are *independent* grants (see `claude_accounts`): the
-      survivor's refresh-token lineage is untouched.
+      because the two are *independent* grants: two `/login`s to one account
+      each mint their own refresh-token lineage, so deleting one leaves the
+      survivor's untouched. (Copying a credential blob to two places is the
+      operation that logs one side out; deleting one of two grants is not.)
     * only the group holds one → nothing to do; the mount does the rest.
     * neither → nothing to do; the first `/login` in any member lands here.
 
