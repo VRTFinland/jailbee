@@ -250,6 +250,19 @@
 
 ### Fixed
 
+- **A successful `jb start`/`jb restart` clears the failed boot record it
+  supersedes.** A background boot that failed leaves a `failed` job row
+  behind, and only `jb job clear` used to remove it: a foreground
+  `jb restart` brought the container back up, ran autostart, and left
+  `jb ls` still flagging the container while the attach guards kept
+  pointing at `jb job clear`. A foreground boot that completes (autostart
+  included) now clears that row itself. Only *boot* records: a failed
+  `jb new` means the container's setup — clone, credential wiring, first
+  autostart — never finished, which a reboot does not complete, so its
+  record survives to keep saying so, and `jb job clear` stays the way to
+  acknowledge it. A live job's record is left alone too, since its worker
+  is still writing to the container. Background boots already behaved
+  this way; the row is overwritten on spawn and deleted on success.
 - **`jb doctor` reports when the refresh timer runs a different jailbee.**
   `install_systemd_units` bakes `which("jailbee")` into
   `jailbee-net-refresh.service` at install time and rewrites the unit only

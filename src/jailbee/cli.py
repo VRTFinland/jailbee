@@ -2123,6 +2123,46 @@ def _post_start_actions(
                 open_chrome(cfg, incus, name, cfg.chrome.url)
 
 
+def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
+    """Drop a leftover boot job row after a successful foreground boot.
+
+    A `failed` (or worker-gone) row describes a boot that the one just
+    completed supersedes. Without this, `jailbee ls` keeps flagging the
+    container and the attach guards keep pointing at `jailbee job clear` even
+    though it came up seconds ago. The background path needs nothing:
+    `start_job` overwrites the row on spawn and the worker deletes it on
+    success.
+
+    Two rows are deliberately left alone:
+
+    - Anything that isn't a *boot*. A failed create means the container's
+      setup (clone, credential wiring, first autostart) never finished, which
+      a reboot doesn't complete, so its row must survive to keep saying so; a
+      destroy job is not this command's business either.
+    - A *live* row, which belongs to a worker still writing to the container.
+      Hence the guarded `clear_job` — also the reason this is safe to reach
+      from `_boot_worker`'s own `_post_start_actions` path.
+    """
+    from jailbee import background as bg
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import short_name
+
+    cleared: list[str] = []
+
+    def work(session: "Session") -> None:
+        row = bg.get_job(session, full_name)
+        if row is None or row.op_kind != JOB_BOOT:
+            return
+        outcome = bg.clear_job(session, full_name)
+        if outcome.cleared:
+            cleared.append(outcome.reason)
+
+    _track_job(_job_engine(), work, "clear the superseded boot job row")
+    if cleared:
+        label = "failed" if cleared[0] == "failed" else "stale"
+        info(f"Cleared the {label} boot job record for '{short_name(cfg, full_name)}'.")
+
+
 def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: bool) -> bool:
     """Three-way resolution of the boot commands' background mode.
 
@@ -2284,6 +2324,7 @@ def start(
     success(f"Started: {short_name(cfg, name)}")
 
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _clear_superseded_boot_job(cfg, name)
 
 
 @app.command()
@@ -2356,6 +2397,7 @@ def restart(
     boot_container(cfg, incus, name, restart=True)
     success(f"Restarted: {short_name(cfg, name)}")
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _clear_superseded_boot_job(cfg, name)
 
 
 def _destroy_batch(cfg: "Config", incus: "IncusType", names: list[str]) -> None:

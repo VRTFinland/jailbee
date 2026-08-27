@@ -143,7 +143,11 @@ once you've fixed it, and read the worker log with `jailbee job log`. Set
 
 `jailbee start` and `jailbee restart` take the same flag — there the wait is
 the `on_start` autostart run, not the boot — with `boot.background: true` as
-the config default for both.
+the config default for both. A failed *boot* record needs no acknowledging:
+the next `jailbee start`/`jailbee restart` that completes clears it, since
+that boot supersedes the one that failed. A failed `jailbee new` record does
+not clear itself — the container's setup never finished, and a reboot doesn't
+finish it.
 
 → [Background creation](git-bridge.md#background-creation)
 
