@@ -322,10 +322,7 @@ def test_claude_credentials_dir_resolves_from_the_global_layer(repo_and_global):
 
     cfg = load_config(repo_path)
 
-    assert (
-        cfg.claude_credentials_dir
-        == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
-    )
+    assert cfg.claude_credentials_dir == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
 
 
 def test_claude_credentials_dir_is_none_without_the_block(repo_and_global):
@@ -356,7 +353,7 @@ def test_claude_credentials_in_a_repo_config_is_refused(repo_and_global):
     _, repo_path, _ = repo_and_global
     _write(repo_path, {"claude_credentials": {"group": "work"}})
 
-    with pytest.raises(ConfigError, match="global.yaml"):
+    with pytest.raises(ConfigError, match=r"global\.yaml"):
         load_config(repo_path)
 
 
@@ -366,7 +363,7 @@ def test_claude_credentials_dir_in_a_repo_config_is_refused(repo_and_global):
     _, repo_path, _ = repo_and_global
     _write(repo_path, {"claude_credentials_dir": "/tmp/x"})
 
-    with pytest.raises(ConfigError, match="global.yaml"):
+    with pytest.raises(ConfigError, match=r"global\.yaml"):
         load_config(repo_path)
 
 

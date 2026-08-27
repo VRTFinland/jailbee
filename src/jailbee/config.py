@@ -829,9 +829,7 @@ def _validated_group(value: str | None) -> str | None:
     if value is None:
         return None
     if not _CREDENTIAL_GROUP_RE.match(value):
-        raise ValueError(
-            f"invalid credential group name {value!r}: must match [a-z0-9][a-z0-9-]*"
-        )
+        raise ValueError(f"invalid credential group name {value!r}: must match [a-z0-9][a-z0-9-]*")
     return value
 
 

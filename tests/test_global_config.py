@@ -283,11 +283,7 @@ def test_global_config_parses_claude_credentials(tmp_path):
 
     path = tmp_path / "global.yaml"
     path.write_text(
-        "claude_credentials:\n"
-        "  group: work\n"
-        "  repos:\n"
-        "    side: personal\n"
-        "    solo: null\n"
+        "claude_credentials:\n  group: work\n  repos:\n    side: personal\n    solo: null\n"
     )
 
     gcfg, warnings = load_global_config(path)

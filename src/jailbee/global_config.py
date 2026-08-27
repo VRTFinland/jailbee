@@ -19,8 +19,8 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationEr
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
-    ColumnConfig,
     ClaudeCredentials,
+    ColumnConfig,
     ConfigError,
     LooseAutoRevert,
     _columns_already_sanitized,
