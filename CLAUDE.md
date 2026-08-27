@@ -173,12 +173,20 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
   `.local/superpowers/specs/`, implementation plans in
   `.local/superpowers/plans/`, named `YYYY-MM-DD-<topic>-design.md` /
   `-plan.md`. `.local/` is gitignored (it also holds scratch scripts,
-  probe output and working notes), so the artifacts are kept on disk but
-  never committed — they are working notes for one change, not project
+  probe output and working notes), so the artifacts never reach *this*
+  repo — they are working notes for one change, not project
   documentation, so never `git add -f` them. This overrides the planning
   skills' own default of `docs/superpowers/` (that path is gitignored
   too, but `.local/` is where this repo keeps such notes). Anything worth
   keeping goes into `docs/` proper, the CHANGELOG, or a GitHub issue.
+- **`.local/superpowers/` is its own git repository**, local-only and
+  with no remote — nested inside the ignored `.local/`, so it is
+  invisible here. **Commit there after each meaningful edit to a spec or
+  plan.** These documents are amended in place over long sessions (a
+  merged commit invalidates a section, a self-review finds a
+  contradiction), and without history a scripted edit that truncates one
+  is unrecoverable — which has happened. Commit from inside the
+  directory, and never add a remote or push it.
 - **Conversation language is Finnish; code and written artifacts are
   English.** The user prefers chatting in Finnish (explanations,
   questions, brainstorming dialogue), while all code, comments, commit
