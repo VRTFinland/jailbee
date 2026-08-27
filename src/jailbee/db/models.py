@@ -85,59 +85,6 @@ class EgressOverride(SQLModel, table=True):
     added_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
 
 
-class ClaudeAccountHolding(SQLModel, table=True):
-    """Which repo currently holds one pooled Claude account.
-
-    Keyed by the account's identity, not by its cswap slot or alias: slots
-    move (`cswap move`) and aliases change (`cswap alias`), while
-    `(email, organizationUuid)` is exactly how cswap itself identifies an
-    account. `slot` is stored for display and refreshed on read; it is never
-    a lookup key.
-
-    The composite primary key is what enforces the invariant: one stored
-    grant may be live in one place at a time. Two `/login`s to the same
-    Anthropic account are independent and both stay logged in — it is
-    *copying one credential blob to two places* that silently logs one out,
-    which is what this table prevents.
-
-    `state` is `"claiming"` for the window between reserving the account and
-    the `cswap switch` returning, and `"held"` afterwards. A `claiming` row
-    that outlives its command is a crash artifact: `jailbee doctor` reports
-    it and `jailbee claude release <ref>` clears it.
-
-    No secrets: jailbee never reads a token. `email` exists so messages can
-    name the account.
-    """
-
-    __tablename__ = "claude_account_holding"
-
-    email: str = Field(primary_key=True)
-    org_uuid: str = Field(primary_key=True)
-    container_prefix: str = Field(index=True)
-    slot: str
-    state: str  # "claiming" | "held"
-    since: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
-
-
-class ClaudeAccountAllow(SQLModel, table=True):
-    """One account a repo is allowed to switch to.
-
-    Absence of any row for a `container_prefix` means "all pooled accounts
-    are allowed" — the default. This is machine-written user preference, so
-    it lives here rather than in config.yaml, for the reason `GuiState`
-    already states: it must stay out of the user's hand-edited (and
-    version-controlled) config. A config key would additionally hit
-    `deep_merge`'s list rule, which *appends*, so a global allowlist would
-    union with a repo's instead of narrowing it.
-    """
-
-    __tablename__ = "claude_account_allow"
-
-    container_prefix: str = Field(primary_key=True)
-    email: str = Field(primary_key=True)
-    org_uuid: str = Field(primary_key=True)
-
-
 class RefreshState(SQLModel, table=True):
     """Per-repo bookkeeping: when did we last refresh and how did it go."""
 

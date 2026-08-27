@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
 # unless the environment already chose one. Harmless for non-Qt tests.
@@ -19,7 +18,6 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
 from jailbee.config import Config, resolve_agents_raw
-from jailbee.cswap import CSWAP_BINARY
 from jailbee.db import _ENGINES, _ensure_schema
 
 
@@ -295,35 +293,6 @@ def _neutralize_kitty_autodetect(request, mocker):
         "jailbee.config._kitty_terminfo_candidates",
         return_value=[Path("/nonexistent/kitty-terminfo-sentinel")],
     )
-
-
-@pytest.fixture(autouse=True)
-def _neutralize_cswap_autodetect(mocker):
-    """Force `cswap` / `claude-swap` to look absent from PATH by default.
-
-    `Cswap.available()` (and, through it, `jailbee.doctor._check_claude_pool`)
-    calls the real `shutil.which`. Left alone, every unmocked
-    `run_checks(...)` call in tests/test_doctor.py would probe a real binary
-    — on a machine that actually has `cswap` installed (increasingly likely,
-    since the pool feature asks people to install it), `Cswap.version()`
-    would then run a real `cswap --version` subprocess with a 30s timeout,
-    turning a broken install into a hang instead of a clean failure. Tests
-    that exercise a real or fabricated `cswap` re-patch `shutil.which` (or
-    `jailbee.cswap.Cswap` wholesale) themselves, which supersedes this
-    default.
-
-    Delegates to the real `shutil.which` for every other name, so probes for
-    `incus`, `docker`, `systemctl`, `gh`, etc. are unaffected — this is not a
-    blanket stub, only a cswap-shaped hole in the real one.
-    """
-    real_which = shutil.which
-
-    def which_stub(cmd: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
-        if cmd in (CSWAP_BINARY, "claude-swap"):
-            return None
-        return real_which(cmd, mode, path)
-
-    mocker.patch("shutil.which", side_effect=which_stub)
 
 
 @pytest.fixture

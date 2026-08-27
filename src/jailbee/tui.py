@@ -707,36 +707,6 @@ def pick_claude_account(rows: Sequence[Any]) -> str | None:
     return str(result)
 
 
-def pick_claude_accounts_multi(rows: Sequence[Any], *, checked: set[str]) -> list[str] | None:
-    """Checkbox picker over pooled Claude accounts, pre-checked from `checked`.
-
-    ``default_to_pointed=False`` is load-bearing: this picker's empty result
-    means "no restriction — allow every account", and the default fallback
-    would turn an intentional clear-everything into a one-account allowlist.
-
-    Returns the chosen slot numbers (possibly empty), or None on cancel.
-    Caller is responsible for the TTY check.
-    """
-    import questionary
-
-    choices = [
-        questionary.Choice(
-            title=_claude_choice_title(row),
-            value=str(row.account.number),
-            checked=str(row.account.number) in checked,
-        )
-        for row in rows
-    ]
-    result = checkbox(
-        "Accounts this repo may use (none checked = all):",
-        choices=choices,
-        default_to_pointed=False,
-    )
-    if result is None:
-        return None
-    return [str(v) for v in result]
-
-
 _PLAN_HEADINGS = {
     "push": "Push  host ──▶ container",
     "pull": "Pull  container ──▶ host",
