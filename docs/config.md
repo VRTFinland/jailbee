@@ -1177,6 +1177,17 @@ Errors:
 |---|---|---|---|
 | `background` | bool | `false` | Run `jailbee destroy` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. |
 
+### `boot`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `background` | bool | `false` | Run `jailbee start` and `jailbee restart` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. |
+
+One key covers both commands: what makes either slow is the autostart run that
+follows the boot, and it is the same run. A detached boot is refused while
+another background job for that container is still live — two of them would
+interleave their autostart steps.
+
 ### `after_new`
 
 | Key | Type | Default | Description |

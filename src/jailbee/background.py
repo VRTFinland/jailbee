@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from sqlmodel import Session, select
 
+from jailbee.db.models import JOB_BOOT as JOB_BOOT
 from jailbee.db.models import JOB_CREATE as JOB_CREATE
 from jailbee.db.models import JOB_DESTROY as JOB_DESTROY
 from jailbee.db.models import BackgroundJob
@@ -32,12 +33,18 @@ PHASE_FAILED = "failed"
 
 TERMINAL_PHASES = frozenset({PHASE_FAILED})
 
-# Phases at which a create op's container is already `incus start`ed and can be
-# attached to (shell/tmux) without waiting for the whole op to finish. The
-# container is started before the clone, so by the autostart phase it's running
-# and its repo is in place; autostart steps run as tmux windows the user may
-# actually want to watch appear live.
+# Phases at which the container is already `incus start`ed and can be attached
+# to (shell/tmux) without waiting for the whole op to finish. A create starts
+# the container before the clone, so by the autostart phase it's running and
+# its repo is in place; a boot reaches this phase once the container is back
+# up. Either way the autostart steps run as tmux windows the user may actually
+# want to watch appear live.
 ATTACHABLE_CREATE_PHASES = frozenset({PHASE_AUTOSTART})
+
+# Op kinds whose container survives the op, so the phases above mean
+# "attachable". A destroy is the exception: waiting it out is all a caller can
+# do.
+ATTACHABLE_OP_KINDS = frozenset({JOB_CREATE, JOB_BOOT})
 
 
 @dataclass(frozen=True)

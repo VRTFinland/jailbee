@@ -429,6 +429,14 @@ asking to attach means asking for the foreground. `--attach none` /
 Passing `--background` together with `--attach shell`/`--attach tmux`,
 `--tmux`, or `--shell` is a usage error.
 
+`jailbee start` and `jailbee restart` take the same `--background` / `-b` /
+`--no-background` flags, tracked the same way (phases `starting` →
+`autostart`). There the slow part is the `on_start` autostart run, not the
+boot, and one config key — `boot.background: true` — makes both detach by
+default. A detached boot is refused while another background job for that
+container is still live, since two of them would interleave their autostart
+steps.
+
 ## Mount mode vs clone mode
 
 `jailbee new <name>` is **clone mode**: the host repo is `git clone --shared`'d

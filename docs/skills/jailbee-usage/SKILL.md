@@ -477,7 +477,9 @@ otherwise fight over.
   (one-off, e.g. `jailbee exec feat-foo -- pnpm test`). If `<name>` is omitted where a
   TTY exists, you get a picker.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
-  autostart. `jailbee destroy <name> --force`, or `jailbee destroy --all` (whole repo,
+  autostart, and both take `--background`/`-b` to detach that run (see
+  [Background operations](#background-operations)). `jailbee destroy <name>
+  --force`, or `jailbee destroy --all` (whole repo,
   one confirmation), or `jailbee destroy` with no args for an interactive checkbox.
   Add `--background`/`-b` to detach. Before the usual confirmation, JailBee
   assesses what destroying would discard — a dirty working tree, a changed
@@ -534,19 +536,28 @@ offers nothing rather than erroring.
 
 ## Background operations
 
-`jailbee new` and `jailbee destroy` block until done (minutes for `new`). Add
-`--background`/`-b` to detach and get the shell back immediately:
+`jailbee new`, `jailbee destroy`, `jailbee start` and `jailbee restart` block
+until done (minutes for `new`; for the boot commands it is the autostart run
+afterwards that takes the time). Add `--background`/`-b` to detach and get the
+shell back immediately:
 
 ```bash
 jailbee new feat/foo --background      # returns at once; track with `jailbee ls`
+jailbee restart feat-foo -b            # reboot + autostart, detached
 ```
 
 `jailbee ls` shows a **JOB** column with the live phase (`creating` → `cloning` →
-`autostart`, or `destroying` / `failed`); it clears when the container is ready.
+`autostart`, or `starting` → `autostart` for a boot, or `destroying` / `failed`);
+it clears when the container is ready.
 A failed background job leaves the container intact for inspection (`jailbee shell`,
 then destroy). `jailbee shell`/`tmux` on an in-flight container **wait** for it to
-finish, then attach. Make it the default with `new.background: true` /
-`destroy.background: true` in config; `--no-background` forces one-off foreground.
+finish, then attach — for a create and a boot alike, the wait ends early at
+`autostart`, when the container is up and the steps are visible in tmux. Make it
+the default with `new.background: true` / `destroy.background: true` /
+`boot.background: true` (one key for both `start` and `restart`) in config;
+`--no-background` forces one-off foreground.
+A background boot refuses to start while another job for that container is
+still live: two workers would interleave their autostart steps.
 `--attach shell`/`--attach tmux`, `--tmux`, `--shell` force foreground
 (overriding `new.background`) and conflict with an explicit `--background`;
 `--attach none` / `--no-attach` don't force foreground and combine fine with it.

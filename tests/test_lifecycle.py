@@ -10,6 +10,7 @@ from jailbee.config import CONTAINER_USERNAME, NewConfig, load_config
 from jailbee.lifecycle import (
     NewContainerOptions,
     ResolvedContainer,
+    boot_container,
     derive_container_name,
     destroy_container,
     list_containers,
@@ -17,7 +18,6 @@ from jailbee.lifecycle import (
     resolve_container_for_interactive,
     resolve_container_for_interactive_detailed,
     resolve_container_name,
-    restart_container,
     switch_network,
 )
 from tests.conftest import with_agent
@@ -3695,46 +3695,11 @@ def test_list_containers_reads_mode_from_user_gie_mode(make_cfg, tmp_path):
     assert by_name["myrepo-b"].mode == "clone"
 
 
-# ---- restart_container ----
+# ---- boot_container ----
 
 
-def test_restart_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
-    """Detach must happen *before* `incus restart` so the four
-    socket devices don't race with logind on the next boot. attach must
-    happen *after* restart returns so logind has provisioned
-    /run/user/<uid>.
-    """
-    cfg = _cfg_for_new(tmp_path)
-    incus = MagicMock()
-    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
-
-    events: list[str] = []
-    incus.restart.side_effect = lambda _n: events.append("restart")
-    detach = mocker.patch(
-        "jailbee.runtime_mounts.detach_runtime_devices",
-        side_effect=lambda *a, **kw: events.append("detach"),
-    )
-    attach = mocker.patch(
-        "jailbee.runtime_mounts.attach_runtime_devices",
-        side_effect=lambda *a, **kw: events.append("attach") or True,
-    )
-
-    restart_container(cfg, incus, "feat-x")
-
-    detach.assert_called_once()
-    attach.assert_called_once()
-    assert events == ["detach", "restart", "attach"]
-
-
-def test_restart_container_starts_when_already_stopped(tmp_path, mocker):
-    """If the container is already stopped, `incus restart` would error out
-    ("The instance is already stopped"). Fall back to `incus start` so the
-    user-facing `gie restart` works as "ensure running + run autostart".
-    """
-    cfg = _cfg_for_new(tmp_path)
-    incus = MagicMock()
-    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
-
+def _boot_events(mocker, incus):
+    """Record the detach/boot/attach order of one `boot_container` call."""
     events: list[str] = []
     incus.restart.side_effect = lambda _n: events.append("restart")
     incus.start.side_effect = lambda _n: events.append("start")
@@ -3746,12 +3711,71 @@ def test_restart_container_starts_when_already_stopped(tmp_path, mocker):
         "jailbee.runtime_mounts.attach_runtime_devices",
         side_effect=lambda *a, **kw: events.append("attach") or True,
     )
+    return events
 
-    restart_container(cfg, incus, "feat-x")
+
+def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
+    """Detach must happen *before* `incus restart` so the four
+    socket devices don't race with logind on the next boot. attach must
+    happen *after* restart returns so logind has provisioned
+    /run/user/<uid>.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
+
+    assert events == ["detach", "restart", "attach"]
+
+
+def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
+    """If the container is already stopped, `incus restart` would error out
+    ("The instance is already stopped"). Fall back to `incus start` so the
+    user-facing `jailbee restart` works as "ensure running + run autostart".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
 
     incus.restart.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
     assert events == ["detach", "start", "attach"]
+
+
+def test_boot_container_start_mode_detaches_before_starting(tmp_path, mocker):
+    """`jailbee start` shares the reboot ordering: a stale device left over
+    from a previous boot is detached before the container comes up, not
+    after, so the attach that follows can't race the one it replaces.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    assert events == ["detach", "start", "attach"]
+
+
+def test_boot_container_start_mode_never_reboots_a_running_container(tmp_path, mocker):
+    """`restart=False` is `jailbee start`, which must not silently reboot a
+    container that is already up — `incus start` failing on it is the
+    intended, visible outcome.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    incus.restart.assert_not_called()
+    incus.start.assert_called_once_with("feat-x")
 
 
 # ---- destroy_container ----
@@ -5229,6 +5253,88 @@ def test_wait_for_background_ready_returns_early_at_autostart(make_cfg, tmp_path
     # Returned without waiting for deletion: the job row is still present.
     with Session(engine) as s:
         assert s.get(BackgroundJob, full) is not None
+
+
+def test_wait_for_background_ready_returns_early_at_autostart_for_a_boot(
+    make_cfg, tmp_path, monkeypatch
+):
+    """A background `jailbee restart` is attachable at autostart for the same
+    reason a create is: the container is up and the steps run in tmux windows
+    the user may want to watch."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-b"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT, BackgroundJob
+    from jailbee.lifecycle import wait_for_background_ready
+
+    engine = get_engine()
+    with Session(engine) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: True)
+
+    transitions = iter([background.PHASE_AUTOSTART])
+
+    def fake_sleep(_interval):
+        with Session(engine) as s:
+            background.set_phase(s, full, next(transitions), now=datetime.now(UTC))
+
+    seen: list[str] = []
+    wait_for_background_ready(cfg, full, sleep=fake_sleep, on_phase=seen.append)
+
+    assert seen == [background.PHASE_STARTING, background.PHASE_AUTOSTART]
+    with Session(engine) as s:
+        assert s.get(BackgroundJob, full) is not None
+
+
+def test_wait_for_background_ready_names_a_failed_boot(make_cfg, tmp_path, monkeypatch):
+    """The failure message says which op broke — 'boot', not 'creation'."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-c"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import wait_for_background_ready
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+        background.fail_job(s, full, "boom", now=datetime.now(UTC))
+
+    with pytest.raises(ValueError, match=r"background boot of .* failed: boom"):
+        wait_for_background_ready(cfg, full, sleep=MagicMock())
 
 
 def test_wait_for_background_ready_raises_on_failed(make_cfg, tmp_path, monkeypatch):

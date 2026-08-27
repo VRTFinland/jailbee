@@ -1497,6 +1497,70 @@ def _destroy_worker(
     )
 
 
+@app.command("_boot-worker", hidden=True)
+def _boot_worker(
+    name: Annotated[str, typer.Option("--name", help="Full container name to boot.")],
+    restart: Annotated[
+        bool,
+        typer.Option("--restart", help="Reboot a running container instead of starting it."),
+    ] = False,
+    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Internal: boot a container detached, tracking phase in SQLite.
+
+    Spawned by `start` / `restart` when background mode is active. Not for
+    direct use.
+    """
+    import traceback
+
+    from jailbee import background
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import boot_container
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    engine = _job_engine()
+
+    try:
+        boot_container(cfg, incus, name, restart=restart)
+        # Only once the container is up, and only when there is an autostart
+        # run to report: with --no-autostart the rest is a hosts pin and a
+        # token write, and `starting` stays the honest phase for those.
+        if not no_autostart:
+            _track_job(
+                engine,
+                lambda s: background.set_phase(s, name, background.PHASE_AUTOSTART, now=_now()),
+                f"record phase '{background.PHASE_AUTOSTART}'",
+            )
+        _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    except typer.Exit:
+        # `_post_start_actions` reports an autostart failure itself and exits.
+        # Its `str()` is the exit code, which would leave the row saying "1",
+        # so point at the log that does carry the detail.
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, "boot failed — see the worker log", now=_now()),
+            "mark the job failed",
+        )
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        msg = str(e)  # see `_new_worker`: `e` is unbound after the block
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, msg, now=_now()),
+            "mark the job failed",
+        )
+        raise typer.Exit(1) from e
+
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, name),
+        "clear the finished job row",
+    )
+
+
 def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev") -> int:
     """Open an interactive shell as ``user`` in the running container.
 
@@ -1889,6 +1953,7 @@ def _resolve_attachable(
     tearing this one down.
     """
     from jailbee import background
+    from jailbee.db.models import JOB_BOOT
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
         lookup_background_job,
@@ -1918,7 +1983,12 @@ def _resolve_attachable(
         if not incus.exists(resolved):
             warn(f"'{short}' is still building in the background; check `jailbee ls`.")
             raise typer.Exit(1) from None
-        warn(f"'{short}' is still being created in the background — its setup is unfinished.")
+        # A boot job's container was already there; only its post-boot setup
+        # is unfinished. Saying "created" about one would be a lie the user
+        # could act on (e.g. by destroying it).
+        row = lookup_background_job(cfg, resolved)
+        doing = "booting" if row is not None and row.op_kind == JOB_BOOT else "being created"
+        warn(f"'{short}' is still {doing} in the background — its setup is unfinished.")
         # Ctrl-C is an explicit cancel, so neither `force` nor a missing TTY
         # answers this one on the user's behalf: offer the unfinished
         # container only when someone is at the keyboard to accept it, and
@@ -2053,6 +2123,115 @@ def _post_start_actions(
                 open_chrome(cfg, incus, name, cfg.chrome.url)
 
 
+def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: bool) -> bool:
+    """Three-way resolution of the boot commands' background mode.
+
+    Explicit flags win over `boot.background`, and asking for both at once is
+    a usage error rather than a silent precedence rule.
+    """
+    if background and no_background:
+        error("--background and --no-background are mutually exclusive.")
+        raise typer.Exit(2)
+    if no_background:
+        return False
+    if background:
+        return True
+    return cfg.boot.background
+
+
+def _spawn_boot_worker(
+    cfg: "Config",
+    config_path: Path,
+    full_name: str,
+    *,
+    restart: bool,
+    no_autostart: bool,
+) -> None:
+    """Spawn a detached `_boot-worker` for one container and record its job row.
+
+    Mirrors the `jailbee destroy --background` spawn: the worker inherits a
+    log file as stdout/stderr and runs in its own session so it survives the
+    parent shell exiting.
+
+    Refuses while another job for this container is still live. Unlike a
+    create or a destroy, a boot is not the last thing to happen to the
+    container: two workers would race the same reboot and interleave their
+    autostart steps.
+    """
+    from datetime import datetime as _dt
+
+    from jailbee import background as bg
+    from jailbee.db import state_dir
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import lookup_background_job, short_name
+
+    short = short_name(cfg, full_name)
+    row = lookup_background_job(cfg, full_name)
+    if row is not None and not bg.clearable(row.phase, row.pid):
+        error(
+            f"'{short}' already has a background job in flight "
+            f"({bg.job_label(row.phase, row.pid, kind=row.op_kind)}, pid {row.pid})."
+        )
+        info("  Wait for it to finish (`jailbee ls`), or run without --background.")
+        raise typer.Exit(1)
+
+    log_dir = state_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"{full_name}-boot-{stamp}.log"
+
+    worker_argv = [
+        sys.executable,
+        "-m",
+        "jailbee",
+        "_boot-worker",
+        "--name",
+        full_name,
+        "--config",
+        str(config_path),
+    ]
+    if restart:
+        worker_argv.append("--restart")
+    if no_autostart:
+        worker_argv.append("--no-autostart")
+
+    # Deliberately not closed here: the handle is inherited by the
+    # detached child as its stdout/stderr; the parent returns immediately
+    # and the fd is released on exit.
+    log_fh = open(log_path, "w")
+    proc = subprocess.Popen(
+        worker_argv,
+        stdin=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        cwd=str(cfg.repo_root),
+    )
+
+    # Guarded like the other background spawns: the worker is already booting
+    # the container, so a failed row costs tracking, not the job.
+    _track_job(
+        _job_engine(),
+        lambda s: bg.start_job(
+            s,
+            container_name=full_name,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=proc.pid,
+            log_path=str(log_path),
+            now=_dt.now().astimezone(),
+            op_kind=JOB_BOOT,
+        ),
+        "record the new job row",
+    )
+
+    verb = "restarting" if restart else "starting"
+    success(
+        f"🔁 '{short}' is {verb} in the background (pid {proc.pid}). "
+        f"Track with: jailbee ls — log: {log_path}"
+    )
+
+
 @app.command()
 def start(
     name: Annotated[
@@ -2060,26 +2239,49 @@ def start(
         typer.Argument(autocompletion=completion.complete_container),
     ] = None,
     no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            "-b",
+            help=(
+                "Start the container detached in the background and return the "
+                "shell immediately. Track progress with `jailbee ls`. "
+                "Overrides the `boot.background` config setting."
+            ),
+        ),
+    ] = False,
+    no_background: Annotated[
+        bool,
+        typer.Option(
+            "--no-background",
+            help="Force a foreground start, overriding `boot.background`.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Start a stopped container, then run autostart."""
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
-    incus.start(name)
-    success(f"Started: {short_name(cfg, name)}")
-
-    # Re-attach /run/user/<uid>/* GUI sockets — see runtime_mounts.
-    # Detach first to avoid stale-device errors if the container had
-    # previously been attached.
-    from jailbee.runtime_mounts import (
-        attach_runtime_devices,
-        detach_runtime_devices,
+    run_in_background = _resolve_boot_background(
+        cfg, background=background, no_background=no_background
     )
-
-    detach_runtime_devices(cfg, incus, name)
-    attach_runtime_devices(cfg, incus, name)
+    incus, name = _resolve_existing(cfg, name)
+    if run_in_background:
+        _spawn_boot_worker(
+            cfg,
+            _resolve_config_path(config),
+            name,
+            restart=False,
+            no_autostart=no_autostart,
+        )
+        return
+    # boot_container also re-attaches the /run/user/<uid>/* GUI sockets,
+    # detaching first so a stale device from a previous boot can't error
+    # the attach out. See runtime_mounts.
+    boot_container(cfg, incus, name, restart=False)
+    success(f"Started: {short_name(cfg, name)}")
 
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
 
@@ -2113,14 +2315,45 @@ def restart(
         typer.Argument(autocompletion=completion.complete_container),
     ] = None,
     no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            "-b",
+            help=(
+                "Restart the container detached in the background and return "
+                "the shell immediately. Track progress with `jailbee ls`. "
+                "Overrides the `boot.background` config setting."
+            ),
+        ),
+    ] = False,
+    no_background: Annotated[
+        bool,
+        typer.Option(
+            "--no-background",
+            help="Force a foreground restart, overriding `boot.background`.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
-    from jailbee.lifecycle import restart_container, short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
+    run_in_background = _resolve_boot_background(
+        cfg, background=background, no_background=no_background
+    )
     incus, name = _resolve_existing(cfg, name)
-    restart_container(cfg, incus, name)
+    if run_in_background:
+        _spawn_boot_worker(
+            cfg,
+            _resolve_config_path(config),
+            name,
+            restart=True,
+            no_autostart=no_autostart,
+        )
+        return
+    boot_container(cfg, incus, name, restart=True)
     success(f"Restarted: {short_name(cfg, name)}")
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
 

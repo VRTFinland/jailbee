@@ -207,14 +207,19 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     because monkeypatch.setenv keeps the most recent value.
 
     Teardown disposes and clears `db._ENGINES`: `get_engine` caches one
-    SQLAlchemy engine (and its open SQLite fds) per database path for the
-    life of the process, and this fixture hands every test a fresh path —
-    so without this, the full suite accumulates one leaked engine per test.
-    Past ~1024 open fds, `select.select()` (used by prompt_toolkit's pipe
-    input in `test_tui.py`'s checkbox tests) starts raising, which
-    prompt_toolkit turns into an unbounded `PromptSession` allocation loop —
-    the suite OOMs around 96-97% with no summary and no per-test failure to
-    point at. See the `pytest-fd-cliff-oom` memory note for the full chain.
+    SQLAlchemy engine (and its open SQLite handles) per database path for the
+    life of the process — correct in production, where that is one path, but
+    here every test gets a fresh one, so the cache would grow an engine per
+    test and never drop one. Those handles are what push the process past
+    1024 open fds, at which point `select.select()` — which prompt_toolkit's
+    posix input calls with a bare fd — starts raising "filedescriptor out of
+    range". prompt_toolkit routes that into its event loop's exception
+    handler, which awaits a "Press ENTER to continue" prompt that nothing can
+    answer and allocates a fresh `PromptSession` per round: the checkbox
+    tests in `test_tui.py` then consume every byte of RAM the machine has,
+    and the suite OOMs around 96-97% with no summary and no per-test failure
+    to point at. Dispose per test and the cache never grows. See the
+    `pytest-fd-cliff-oom` memory note for the full chain.
     """
     iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
