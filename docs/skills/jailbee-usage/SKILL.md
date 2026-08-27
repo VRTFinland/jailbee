@@ -343,8 +343,15 @@ to run `jailbee doctor` on the host if it matters — it prints the resolved
 group and its member repos, and prints nothing at all when this repo shares
 none. For a repo in a group, the container reads its live credential from the
 shared group directory, not from this repo's own `.credentials.json` — the
-group join already moved that file out. `jailbee claude` splits on which
-commands touch it:
+group join already moved that file out. When *both* sides held a login at
+join time (the usual case on a host that adopted a group after logging in
+per-repo), the host's `jailbee apply` asked which one to keep — the group's,
+this repo's (which re-points every member repo), or cancel — and deleted the
+other; the two are independent grants, so nothing was corrupted either way.
+That prompt is host-side, so a user who mentions it is not describing
+anything a container can see or repair.
+
+`jailbee claude` splits on which commands touch this repo's own file:
 
 - **`use` and `add` refuse outright** (exit 1). Both would otherwise touch
   this repo's own `.credentials.json`, which nothing reads any more — `use`

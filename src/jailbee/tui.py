@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import string
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 import typer
 from rich.console import Console
@@ -198,6 +200,93 @@ def default_confirm(msg: str) -> bool:
         return Confirm.ask(msg, default=False)
     except EOFError:
         return False
+
+
+CredentialSide = Literal["group", "repo"]
+"""Which of two competing Claude logins the credential group keeps."""
+
+ChooseCredentialFn = Callable[[Path, Path, str], "CredentialSide | None"]
+"""Resolve the two-credential clash; ``None`` means the user cancelled."""
+
+
+def choose_shared_credential(
+    group_dir: Path,
+    repo_cred: Path,
+    container_prefix: str,
+) -> CredentialSide | None:
+    """Ask which login a credential group should keep; ``None`` to cancel.
+
+    Reached only from `init_command._ensure_claude_credentials_dir`, and only
+    in the one ambiguous case: the group directory and the joining repo both
+    already hold a `.credentials.json`. Exactly one can survive — the loser is
+    an independent grant that nothing would ever read again — and this is the
+    prompt that used to be a hard refusal. That refusal fired on every repo
+    but the first on any host that adopted a group after already logging in
+    per-repo, and it fired from the middle of `run_apply`, leaving the profiles
+    unwritten.
+
+    Returns ``None`` without rendering anything when stdin is not a TTY. The
+    caller turns that into the original refusal, so a piped or CI `jailbee
+    apply` still fails loudly instead of blocking on a prompt no one can
+    answer.
+
+    The printed note names the `claude_credentials.repos` opt-out, because
+    "keep this repo on its own login" is a *config* answer, not a runtime one:
+    it is not offered as a third choice (jailbee does not edit `global.yaml`),
+    so without the note a user who wants neither shared login sees no way out.
+    `container_prefix` is there only to make that note copy-pasteable — it is
+    the key `repos` is dictionaries by, and the one part of the block the user
+    cannot guess from the prompt.
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    import questionary
+
+    # warn_plain, not warn: the body is two filesystem paths, and `warn`
+    # would read any square bracket in one as a Rich style tag and silently
+    # delete it — leaving the user a path that does not exist.
+    warn_plain(
+        f"Both the credential group at {group_dir} and this repo "
+        f"({repo_cred}) hold a Claude login. Only one can be shared; the "
+        f"other becomes unused and is deleted."
+    )
+    hint(
+        [
+            "To keep this repo on its own login instead, cancel and add it "
+            "under `claude_credentials.repos` in "
+            "~/.config/jailbee/global.yaml:",
+            "  claude_credentials:",
+            "    repos:",
+            f"      {container_prefix}: null",
+            "then re-run `jailbee apply`.",
+        ]
+    )
+    choices = [
+        questionary.Choice(
+            title=f"the group's login ({group_dir.name}) — delete this repo's copy",
+            value="group",
+        ),
+        questionary.Choice(
+            title="this repo's login — replaces the group's for every member repo",
+            value="repo",
+        ),
+        # An explicit sentinel, not `value=None`: questionary falls back to
+        # the *title* when a Choice's value is None, so cancelling would
+        # return the label string and read as a valid answer.
+        questionary.Choice(title="cancel — change nothing", value="cancel"),
+    ]
+    result = questionary.select(
+        "Which login should the group keep?",
+        choices=choices,
+    ).ask()
+    # `None` is questionary's own Ctrl-C / ESC answer, which means the same.
+    if result is None or result == "cancel":
+        return None
+    # Spelled out rather than `return result`: `ask()` is typed `Any`, and
+    # narrowing here is what keeps the Literal return honest.
+    assert result in ("group", "repo"), f"unexpected picker answer: {result!r}"
+    return "group" if result == "group" else "repo"
 
 
 def confirm_destroy_risk(unknown: Sequence[str], summaries: Sequence[RiskSummary]) -> bool:
