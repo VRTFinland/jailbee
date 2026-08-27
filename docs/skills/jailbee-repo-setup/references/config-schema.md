@@ -264,7 +264,7 @@ the low-level escape hatch for anything `stacks` doesn't cover.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the `gpg-socket` runtime device, and set `SSH_AUTH_SOCK` in the base profile. `false` skips all three and the doctor `gpg-agent socket` check. |
+| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the `gpg-socket` runtime device (read-only), and set `SSH_AUTH_SOCK` in the base profile. `false` skips all three and the doctor `gpg-agent socket` check. |
 
 ## `ssh`
 

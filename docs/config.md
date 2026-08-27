@@ -746,13 +746,24 @@ typical developer setup, not a literal echo of the built-in defaults.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the host `/run/user/<uid>/gnupg` socket dir as the `gpg-socket` device, and set `SSH_AUTH_SOCK` in the base profile to the host gpg-agent's SSH socket. Disables the doctor `gpg-agent socket` check when `false`. |
+| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the host `/run/user/<uid>/gnupg` socket dir as the `gpg-socket` device (read-only), and set `SSH_AUTH_SOCK` in the base profile to the host gpg-agent's SSH socket. Disables the doctor `gpg-agent socket` check when `false`. |
 
 When `enabled: true`, the host gpg-agent provides SSH authentication
 inside the container (YubiKey / GPG-SSH keys work transparently). The
 auto-added bind-mount can be overridden by adding a manual entry to
 `host_mounts` with `container: /home/dev/.gnupg` — the manual entry
 wins.
+
+The `gpg-socket` device is mounted **read-only**, and so is `pulse-socket`.
+Both are directories inside the host's *own* `/run/user/<uid>`, and the
+container runs its own `systemd --user`: its `gpg-agent.socket`,
+`dirmngr.socket` and `pulseaudio.socket` listen on paths inside those mounts
+and unlink whatever file is already there before binding — which would take
+the host's agent down (`socket file has been removed - shutting down`) on
+every container boot. Read-only makes that unlink `EROFS` while leaving the
+socket fully usable, since a unix-socket client needs no writable filesystem,
+and the host stays free to re-create its own sockets. The golden image also
+masks those user units, so the container does not even try.
 
 With `enabled: false` nothing gpg-related reaches the container: no
 `~/.gnupg` mount, no `gpg-socket` device, and no `SSH_AUTH_SOCK`. The

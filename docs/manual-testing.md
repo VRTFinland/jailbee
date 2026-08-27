@@ -2954,3 +2954,50 @@ re-onboarding. Every mechanism that outcome depends on is verified above; only
 the end-to-end observation is missing. **Do not** copy a login into a rig
 container to fake it: two live copies of one credential rotate each other out,
 which is the failure that removed host-seeding in the first place.
+
+## Host gpg-agent survives a container boot smoke test
+
+Needs a host with `gpg.enabled: true` and a live agent — ideally a smartcard,
+since the failure mode is invisible without one. Before this fix, the *first*
+`jb restart` was enough to kill the host's agent for the rest of the session.
+
+```bash
+# Host baseline — note the agent PID and, with a card, the keys it offers.
+systemctl --user status gpg-agent.service | head -3
+pgrep -a gpg-agent
+ssh-add -l                            # cardno:... keys listed
+
+jb restart <container>
+
+# The device must be read-only. Without `readonly: "true"` here, the
+# container can still unlink the host's sockets.
+incus config device show <container> | grep -A4 'gpg-socket\|pulse-socket'
+
+# The host's agent must be the *same process* as before the restart, and
+# still offering the card's keys. A different PID (or none) means the
+# container's socket units clobbered the sockets again.
+pgrep -a gpg-agent
+ssh-add -l
+gpg-connect-agent 'SCD SERIALNO' /bye  # S SERIALNO D276...  OK
+
+# Nothing may be listening on the shared sockets from inside the container.
+incus exec <container> -- pgrep -a gpg-agent   # no output
+
+# Forwarding still works through the read-only mount (needs a card touch).
+jb exec <container> -- ssh -T git@github.com
+jb exec <container> -- git -C ~/<repo> commit -S --allow-empty -m 'signing smoke'
+```
+
+After a `jb base build`, also confirm the masking half landed — the units
+should report `masked`, and the container's user session should carry no
+failed units:
+
+```bash
+incus exec <container> -- systemctl --user --machine=dev@ is-enabled \
+    gpg-agent.socket dirmngr.socket pulseaudio.socket
+incus exec <container> -- systemctl --user --machine=dev@ --failed
+```
+
+Audio is the other half of the same fix: with `pulse-socket` read-only,
+`jb chrome` (or any GUI app) must still play sound from inside the container,
+and the host's own audio must survive the container's boot.

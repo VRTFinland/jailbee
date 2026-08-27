@@ -173,3 +173,37 @@ def test_snippet_does_not_overwrite_an_existing_claude_config_dir(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "/custom/profile"
+
+
+def test_install_sh_masks_the_user_socket_units_that_clobber_host_sockets():
+    """jailbee bind-mounts the host's own /run/user/<uid>/gnupg and
+    /run/user/<uid>/pulse into the container, and linger (enabled further down
+    this script) starts a `systemd --user` in there. Its gnupg and pulse socket
+    units listen on paths *inside those mounts* and unlink whatever file is
+    already there — so the host's gpg-agent sees "socket file has been removed"
+    and shuts down, and the container's own agent, which has no smartcard
+    access, answers in its place. A YubiKey silently disappears from
+    `ssh-add -l` on the host, mid-session, because a container rebooted.
+
+    `--global` because the units belong to the dev user's session, not the
+    system manager; masked rather than disabled so an apt upgrade of gnupg
+    inside the container cannot re-enable them.
+
+    The read-only mount in `runtime_mounts` is the actual guarantee (it also
+    covers gpg's own agent autostart, which never goes through systemd); this
+    keeps the container from even trying, so no failed units accumulate in the
+    user session.
+    """
+    script = _install_sh()
+    assert "systemctl --global mask" in script
+    for unit in (
+        "gpg-agent.socket",
+        "gpg-agent-ssh.socket",
+        "gpg-agent-extra.socket",
+        "gpg-agent-browser.socket",
+        "dirmngr.socket",
+        "keyboxd.socket",
+        "pulseaudio.socket",
+        "pipewire-pulse.socket",
+    ):
+        assert unit in script, f"{unit} is not masked by install.sh"
