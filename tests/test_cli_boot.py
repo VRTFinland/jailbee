@@ -1,9 +1,10 @@
 """CLI tests for background `jailbee start` / `jailbee restart`.
 
 The foreground behaviour of both commands lives in test_cli_restart.py and
-test_cli.py; this file covers only the detached path: flag resolution, the
+test_cli.py; this file covers the detached path — flag resolution, the
 spawned worker's argv and job row, the in-flight guard, and the worker
-command itself.
+command itself — plus what a *foreground* boot does to a job row left behind
+by an earlier background one.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ def _jobs():
         return background.list_jobs(s, "myrepo")
 
 
-def _insert_job(pid: int, phase: str):
+def _insert_job(pid: int, phase: str, kind: str | None = None):
     from jailbee import background
     from jailbee.db import get_engine
     from jailbee.db.models import JOB_BOOT
@@ -66,9 +67,12 @@ def _insert_job(pid: int, phase: str):
             pid=pid,
             log_path="/l",
             now=datetime.now(UTC),
-            op_kind=JOB_BOOT,
+            op_kind=kind or JOB_BOOT,
         )
         background.set_phase(s, "myrepo-feat-a", phase, now=datetime.now(UTC))
+
+
+DEAD_PID = 2**22 - 1  # above /proc/sys/kernel/pid_max: never a live process
 
 
 # ---- spawn side
@@ -192,13 +196,83 @@ def test_background_boot_replaces_a_dead_job(tmp_path, mocker):
     """A job whose worker is gone is a leftover, not a conflict."""
     _setup(tmp_path, mocker)
     popen = _patch_popen(mocker)
-    _insert_job(2**22 - 1, "failed")
+    _insert_job(DEAD_PID, "failed")
 
     result = runner.invoke(app, ["restart", "feat-a", "--background"])
 
     assert result.exit_code == 0, result.output
     popen.assert_called_once()
     assert _jobs()["myrepo-feat-a"].pid == 5555
+
+
+# ---- foreground side: what a successful boot does to a leftover row
+
+
+def test_foreground_restart_clears_a_failed_boot_job(tmp_path, mocker):
+    """A successful restart supersedes the failed boot the row describes, so
+    `jailbee ls` must stop flagging the container without a `job clear`."""
+    _setup(tmp_path, mocker)
+    _insert_job(DEAD_PID, "failed")
+
+    result = runner.invoke(app, ["restart", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert _jobs() == {}
+    assert "failed boot job" in result.output
+
+
+def test_foreground_start_clears_a_stale_boot_job(tmp_path, mocker):
+    """`start` shares the clearing, and a worker that vanished mid-phase is
+    just as much a leftover as an explicitly failed one."""
+    _setup(tmp_path, mocker)
+    _insert_job(DEAD_PID, "autostart")
+
+    result = runner.invoke(app, ["start", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert _jobs() == {}
+    assert "stale boot job" in result.output
+
+
+def test_foreground_restart_keeps_a_failed_create_job(tmp_path, mocker):
+    """A failed create means the container's setup (clone, credentials, first
+    autostart) never finished — a reboot doesn't complete it, so the row must
+    survive to keep saying so."""
+    from jailbee.db.models import JOB_CREATE
+
+    _setup(tmp_path, mocker)
+    _insert_job(DEAD_PID, "failed", JOB_CREATE)
+
+    result = runner.invoke(app, ["restart", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert _jobs()["myrepo-feat-a"].phase == "failed"
+
+
+def test_foreground_restart_leaves_a_live_boot_job_alone(tmp_path, mocker):
+    """A live worker is still writing to the container and would be orphaned
+    by a clear, so the guarded path leaves its row in place."""
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "autostart")
+
+    result = runner.invoke(app, ["restart", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert _jobs()["myrepo-feat-a"].pid == os.getpid()
+
+
+def test_foreground_restart_keeps_the_row_when_autostart_fails(tmp_path, mocker):
+    """Only a boot that got all the way through clears the flag."""
+    import typer
+
+    _setup(tmp_path, mocker)
+    mocker.patch("jailbee.cli._post_start_actions", side_effect=typer.Exit(1))
+    _insert_job(DEAD_PID, "failed")
+
+    result = runner.invoke(app, ["restart", "feat-a"])
+
+    assert result.exit_code == 1
+    assert _jobs()["myrepo-feat-a"].phase == "failed"
 
 
 # ---- worker side

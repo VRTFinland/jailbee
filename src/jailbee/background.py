@@ -107,6 +107,17 @@ def job_label_or_empty(phase: str | None, pid: int | None, *, kind: str | None =
     return job_label(phase, pid, kind=kind)
 
 
+def get_job(session: Session, container_name: str) -> BackgroundJob | None:
+    """The tracking row for one container, or None.
+
+    Read-only counterpart to the mutators below, for callers that must inspect
+    a row (its kind, its phase) before deciding what to do with it. Takes the
+    full container name — `lifecycle.lookup_background_job` is the variant
+    that resolves a user-typed short name.
+    """
+    return session.get(BackgroundJob, container_name)
+
+
 def start_job(
     session: Session,
     *,
