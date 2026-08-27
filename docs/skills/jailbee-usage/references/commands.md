@@ -132,6 +132,22 @@ See [Configuration](../../../config.md#where-does-the-autostart-config-come-from
 `start` and `restart` re-run autostart (`on_start` steps). `stop` halts. All
 accept a picker when `NAME` is omitted with a TTY.
 
+| Flag (`start` / `restart`) | Effect |
+|---|---|
+| `--no-autostart` | Boot only — no `on_start` steps. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
+
+The autostart run, not the boot itself, is what makes these slow, so
+`--background` is worth reaching for on a container with heavy `on_start`
+steps. The job appears in `jailbee ls` as `starting` → `autostart`, and
+`jailbee shell`/`tmux` on it waits until the container is up (the `autostart`
+phase) rather than until every step has finished. A second background boot of
+the same container is refused while the first is still live.
+
+`jailbee restart` reboots a running container and falls back to a plain start
+on a stopped one; `jailbee start` never reboots — on a running container it
+fails, rather than quietly restarting it.
+
 ### `jailbee destroy [NAME]`
 
 | Flag | Effect |
