@@ -5255,6 +5255,88 @@ def test_wait_for_background_ready_returns_early_at_autostart(make_cfg, tmp_path
         assert s.get(BackgroundJob, full) is not None
 
 
+def test_wait_for_background_ready_returns_early_at_autostart_for_a_boot(
+    make_cfg, tmp_path, monkeypatch
+):
+    """A background `jailbee restart` is attachable at autostart for the same
+    reason a create is: the container is up and the steps run in tmux windows
+    the user may want to watch."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-b"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT, BackgroundJob
+    from jailbee.lifecycle import wait_for_background_ready
+
+    engine = get_engine()
+    with Session(engine) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: True)
+
+    transitions = iter([background.PHASE_AUTOSTART])
+
+    def fake_sleep(_interval):
+        with Session(engine) as s:
+            background.set_phase(s, full, next(transitions), now=datetime.now(UTC))
+
+    seen: list[str] = []
+    wait_for_background_ready(cfg, full, sleep=fake_sleep, on_phase=seen.append)
+
+    assert seen == [background.PHASE_STARTING, background.PHASE_AUTOSTART]
+    with Session(engine) as s:
+        assert s.get(BackgroundJob, full) is not None
+
+
+def test_wait_for_background_ready_names_a_failed_boot(make_cfg, tmp_path, monkeypatch):
+    """The failure message says which op broke — 'boot', not 'creation'."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-c"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import wait_for_background_ready
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+        background.fail_job(s, full, "boom", now=datetime.now(UTC))
+
+    with pytest.raises(ValueError, match=r"background boot of .* failed: boom"):
+        wait_for_background_ready(cfg, full, sleep=MagicMock())
+
+
 def test_wait_for_background_ready_raises_on_failed(make_cfg, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     cfg = make_cfg(tmp_path / "myrepo")

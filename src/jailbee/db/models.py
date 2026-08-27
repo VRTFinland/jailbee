@@ -165,10 +165,13 @@ class RegisteredRepo(SQLModel, table=True):
 
 JOB_CREATE = "create"
 JOB_DESTROY = "destroy"
+# `jailbee start` and `jailbee restart` share one kind: both boot a container
+# and then run the same autostart, which is the part worth detaching.
+JOB_BOOT = "boot"
 
 
 class BackgroundJob(SQLModel, table=True):
-    """A detached `jailbee new` or `jailbee destroy` job in flight (or failed).
+    """A detached `jailbee new`, `jailbee destroy` or boot job in flight (or failed).
 
     Inserted by the foreground when it spawns the worker, updated by the
     worker as it progresses, and deleted on success. A row that outlives

@@ -439,7 +439,12 @@ def wait_for_background_ready(
         if row.op_kind == background.JOB_DESTROY and background.worker_alive(row.pid):
             raise ValueError(f"'{short}' is being destroyed")
         if row.phase in background.TERMINAL_PHASES:
-            verb = "destroy" if row.op_kind == background.JOB_DESTROY else "creation"
+            # An unknown kind (a row written by a newer jailbee) falls back to
+            # "creation", the kind that predates the column.
+            verb = {
+                background.JOB_DESTROY: "destroy",
+                background.JOB_BOOT: "boot",
+            }.get(row.op_kind, "creation")
             raise ValueError(
                 f"background {verb} of '{short}' failed: {row.error_msg or 'unknown error'}"
             )
@@ -449,7 +454,7 @@ def wait_for_background_ready(
             on_phase(row.phase)
             last_phase = row.phase
         if (
-            row.op_kind == background.JOB_CREATE
+            row.op_kind in background.ATTACHABLE_OP_KINDS
             and row.phase in background.ATTACHABLE_CREATE_PHASES
         ):
             return
