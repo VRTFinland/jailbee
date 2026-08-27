@@ -5,12 +5,15 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import yaml
+
 from jailbee.config import Config, ConfigError
 from jailbee.constants import SHARED_SUBDIRS
 from jailbee.egress import EgressEntry, build_egress_entries
 from jailbee.incus import Incus, IncusError
 from jailbee.network import acl_name, allowlist_acl_yaml
 from jailbee.profiles import (
+    CLAUDE_CREDS_DEVICE,
     base_profile_yaml,
     binds_profile_yaml,
     claude_config_dir_env,
@@ -234,6 +237,28 @@ def ensure_claude_config_dir(cfg: Config, incus: Incus) -> None:
     success(f"Set {key}={value} on '{names.base}' — Claude Code's global config is shared again")
 
 
+def _claude_creds_device_present(cfg: Config, incus: Incus) -> bool:
+    """True if `<prefix>-binds` already carries the `claude-creds` disk
+    device, i.e. a container created right now would actually find the
+    shared credential mounted at `~/.claude-creds`.
+
+    This, not the host group directory's existence, is the right gate for
+    `ensure_claude_credentials_env`: the group directory can already exist
+    because *another* member repo has run `jailbee apply`, while this repo's
+    own `<prefix>-binds` still lacks the device — the host directory check
+    would pass while the container it repairs still finds nothing. The
+    device is only ever attached by `jailbee apply` rendering
+    `binds_profile_yaml`, so its presence is the direct fact this function
+    needs.
+    """
+    names = profile_names(cfg)
+    if not incus.profile_exists(names.binds):
+        return False
+    parsed = yaml.safe_load(incus.profile_show(names.binds)) or {}
+    devices = parsed.get("devices") or {}
+    return CLAUDE_CREDS_DEVICE in devices
+
+
 def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
     """Put `CLAUDE_SECURESTORAGE_CONFIG_DIR` on `<prefix>-base` when absent.
 
@@ -242,9 +267,21 @@ def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
     repo joined a credential group would quietly keep using the repo's own
     credential — logged in as a different account than every other member.
 
-    Surgical on purpose — one key, not a `base_profile_yaml` rewrite. An
-    already-present value is left untouched, so a `container.env` override
-    stays authoritative.
+    Conservative on purpose (Finding 2 of the 2026-08-27 review): the repair
+    is skipped entirely until `<prefix>-binds` already carries the
+    `claude-creds` device (`_claude_creds_device_present`). The one
+    reachable case where the device is missing is the half-joined
+    state — `claude_credentials` configured in `global.yaml`, but `jailbee
+    apply` not yet run — and writing the env key there would point a `jb
+    new` container's Claude Code at a directory nothing mounts, logging out
+    *every* container in the repo, while the still-valid credential sits
+    untouched at `<shared_dir>/claude`. Skipping leaves that half-joined repo
+    behaving exactly as it did before sharing existed, and `jailbee doctor`'s
+    existing half-join check is what tells the user to run `jailbee apply`.
+
+    Surgical on purpose otherwise — one key, not a `base_profile_yaml`
+    rewrite. An already-present value is left untouched, so a
+    `container.env` override stays authoritative.
 
     Only ever *adds* the key. Leaving a group removes it on the next
     `jailbee apply`, which rewrites the whole profile; `new` is not the place
@@ -252,6 +289,8 @@ def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
     """
     env = claude_securestorage_dir_env(cfg)
     if env is None:
+        return
+    if not _claude_creds_device_present(cfg, incus):
         return
     names = profile_names(cfg)
     if not incus.profile_exists(names.base):

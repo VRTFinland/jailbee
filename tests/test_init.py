@@ -954,9 +954,15 @@ def test_ensure_claude_config_dir_skips_a_repo_without_a_base_profile(tmp_path):
     incus.profile_config_set.assert_not_called()
 
 
-def test_ensure_claude_credentials_env_sets_the_key_when_absent(tmp_path):
+def test_ensure_claude_credentials_env_sets_the_key_when_the_mount_is_in_place(tmp_path):
     """`jailbee new` renders no profile, so without this repair a container
-    created after joining a group quietly uses the repo's own credential."""
+    created after joining a group quietly uses the repo's own credential.
+
+    Deliberately updated pin (Finding 2): this used to assert the key was set
+    with no `claude-creds` device on the binds profile at all — the harmful
+    half-joined case where every container in the repo got logged out. Now
+    the repair only fires once the binds profile actually carries the
+    device, so the container it repairs will really find the mount."""
     from jailbee.init_command import ensure_claude_credentials_env
 
     cfg = make_cfg(
@@ -967,6 +973,7 @@ def test_ensure_claude_credentials_env_sets_the_key_when_absent(tmp_path):
     incus = MagicMock()
     incus.profile_exists.return_value = True
     incus.profile_config_get.return_value = None
+    incus.profile_show.return_value = "devices:\n  claude-creds:\n    type: disk\n"
 
     ensure_claude_credentials_env(cfg, incus)
 
@@ -975,6 +982,33 @@ def test_ensure_claude_credentials_env_sets_the_key_when_absent(tmp_path):
         "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR",
         "/home/dev/.claude-creds",
     )
+
+
+def test_ensure_claude_credentials_env_skips_when_the_binds_profile_lacks_the_device(
+    tmp_path,
+):
+    """Finding 2: the half-joined state — `claude_credentials` configured but
+    `jailbee apply` not yet run, so `<prefix>-binds` exists but has no
+    `claude-creds` device yet. Setting the env key here would point a `jb
+    new` container's Claude Code at a directory nothing mounts, logging out
+    every container in the repo (the credential is still safe at
+    `<shared_dir>/claude`, untouched). The repair must wait for `jailbee
+    apply` to attach the device first."""
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_show.return_value = "devices: {}\n"
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
 
 
 def test_ensure_claude_credentials_env_is_a_noop_for_a_non_group_repo(tmp_path):
@@ -1000,6 +1034,7 @@ def test_ensure_claude_credentials_env_leaves_an_existing_value_alone(tmp_path):
     incus = MagicMock()
     incus.profile_exists.return_value = True
     incus.profile_config_get.return_value = "/somewhere/else"
+    incus.profile_show.return_value = "devices:\n  claude-creds:\n    type: disk\n"
 
     ensure_claude_credentials_env(cfg, incus)
 

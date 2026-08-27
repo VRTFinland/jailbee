@@ -93,6 +93,13 @@ lock travels with the credential into this directory — which is what keeps
 containers of different repos mutually excluded.
 """
 
+CLAUDE_CREDS_DEVICE = "claude-creds"
+"""Name of the `<prefix>-binds` disk device that mounts the shared credential
+directory. Its presence on that profile is what `init_command`'s `jailbee
+new` repair checks before writing the env key — see
+`ensure_claude_credentials_env`.
+"""
+
 
 def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
     """The `(key, value)` that points Claude Code at a shared credential.
@@ -369,7 +376,7 @@ def binds_profile_yaml(cfg: Config) -> str:
     # the same reason, since that prefix means "derived from a SharedCache"
     # everywhere else in this profile.
     if cfg.claude.enabled and cfg.claude_credentials_dir is not None:
-        devices["claude-creds"] = {
+        devices[CLAUDE_CREDS_DEVICE] = {
             "type": "disk",
             "source": str(cfg.claude_credentials_dir),
             "path": f"{home}/{CLAUDE_CREDS_DIRNAME}",
