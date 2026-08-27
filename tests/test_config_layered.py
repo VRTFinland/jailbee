@@ -310,6 +310,66 @@ def test_full_global_config_with_github_loads_cleanly(repo_and_global):
     assert "api.github.com:443" in cfg.effective_egress_allow()
 
 
+# ---------- claude_credentials block placement / resolution
+
+
+def test_claude_credentials_dir_resolves_from_the_global_layer(repo_and_global):
+    from jailbee.paths import xdg_data_home
+
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"claude_credentials": {"group": "work"}})
+    _write(repo_path, {})
+
+    cfg = load_config(repo_path)
+
+    assert (
+        cfg.claude_credentials_dir
+        == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
+    )
+
+
+def test_claude_credentials_dir_is_none_without_the_block(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {})
+
+    cfg = load_config(repo_path)
+
+    assert cfg.claude_credentials_dir is None
+
+
+def test_claude_credentials_dir_honours_a_per_repo_opt_out(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(
+        global_path,
+        {"claude_credentials": {"group": "work", "repos": {"myrepo": None}}},
+    )
+    _write(repo_path, {})
+
+    cfg = load_config(repo_path)
+
+    assert cfg.claude_credentials_dir is None
+
+
+def test_claude_credentials_in_a_repo_config_is_refused(repo_and_global):
+    """Silently ignoring it is the wrong behaviour for a key whose whole point
+    is that it is host-only — the same reasoning as the `github` block's ban."""
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {"claude_credentials": {"group": "work"}})
+
+    with pytest.raises(ConfigError, match="global.yaml"):
+        load_config(repo_path)
+
+
+def test_claude_credentials_dir_in_a_repo_config_is_refused(repo_and_global):
+    """The computed attribute is a declared Config field, so YAML could set it
+    and be overwritten silently. Ban the name too."""
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {"claude_credentials_dir": "/tmp/x"})
+
+    with pytest.raises(ConfigError, match="global.yaml"):
+        load_config(repo_path)
+
+
 def test_new_background_from_global(repo_and_global):
     _, repo_path, global_path = repo_and_global
     _write(global_path, {"new": {"background": True}})
