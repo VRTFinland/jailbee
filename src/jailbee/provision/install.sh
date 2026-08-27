@@ -224,6 +224,32 @@ echo "==> Enabling systemd-logind linger for ${CONTAINER_USER}"
 mkdir -p /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/${CONTAINER_USER}"
 
+# Keep the user manager that linger just guaranteed away from the host's
+# sockets. jailbee bind-mounts the host's own /run/user/<uid>/gnupg and
+# /run/user/<uid>/pulse *directories* into the container, and these user
+# socket units listen on paths inside them — unlinking whatever file is
+# already there before they bind. Left alone, a container boot therefore
+# deletes the host's live agent sockets: the host gpg-agent logs "socket file
+# has been removed - shutting down", and the container's own agent, which has
+# no smartcard access, answers in its place. The host's YubiKey vanishes from
+# `ssh-add -l` mid-session because a container restarted.
+#
+# `--global` (i.e. /etc/systemd/user/) because these are per-user units and
+# the dev user's session is created at boot, not by this script. Masked rather
+# than disabled so an `apt-get install` of gnupg or pipewire inside the
+# container cannot quietly re-enable them.
+#
+# The read-only flag on those two devices (jailbee's runtime_mounts) is the
+# actual guarantee — it also covers gpg's own agent autostart, which never
+# goes through systemd. This half keeps the container from even trying, so no
+# failed units pile up in the user session.
+echo "==> Masking user socket units that would clobber the host's sockets"
+systemctl --global mask \
+    gpg-agent.socket gpg-agent-ssh.socket \
+    gpg-agent-extra.socket gpg-agent-browser.socket \
+    dirmngr.socket keyboxd.socket \
+    pulseaudio.socket pipewire-pulse.socket 2>/dev/null || true
+
 # Run user/repo install.d snippets (and after this task, the bundled
 # feature snippets too). Empty files are skipped — that's the same-name
 # shadow disable mechanism.

@@ -228,6 +228,29 @@
 
 ### Fixed
 
+- **A container boot no longer hijacks the host's gpg-agent and PulseAudio
+  sockets.** The `gpg-socket` and `pulse-socket` devices bind-mount the host's
+  own `/run/user/<uid>/gnupg` and `/run/user/<uid>/pulse` *directories* into
+  the container, and the golden image enables linger — so the container runs
+  its own `systemd --user`, whose `gpg-agent.socket`, `dirmngr.socket` and
+  `pulseaudio.socket` listen on paths *inside those mounts* and unlink
+  whatever file is already there before binding. Every container boot
+  therefore deleted the host's live sockets: the host gpg-agent logged
+  `socket file has been removed - shutting down` and the container's agent
+  answered in its place — with no smartcard access, so a YubiKey silently
+  disappeared from `ssh-add -l` on the *host*, mid-session, until the
+  container's agent was killed and the host's socket units restarted by hand.
+  Both devices are now mounted read-only, which turns that unlink into
+  `EROFS`; connecting to a unix socket needs no writable filesystem, so agent
+  forwarding and audio are unaffected, and the mount is read-only from the
+  container's side alone, leaving the host free to re-create its own sockets.
+  `install.sh` additionally masks those user socket units (`systemctl
+  --global`), so the container does not even try and no failed units
+  accumulate in its user session. The read-only flag is what covers gpg's own
+  agent autostart, which never goes through systemd. Existing containers pick
+  the flag up on their next `jb start`/`jb restart` (every boot path detaches
+  and re-attaches these devices); the masking needs a `jb base build`.
+
 - **A successful `jb start`/`jb restart` clears the failed boot record it
   supersedes.** A background boot that failed leaves a `failed` job row
   behind, and only `jb job clear` used to remove it: a foreground

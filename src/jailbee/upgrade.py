@@ -88,6 +88,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"base_build", "apply"}),
         reason="Claude Code's global config moves into the shared `~/.claude` mount",
     ),
+    UpgradeNote(
+        version=(1, 2, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "install.sh masks the user gnupg/pulse socket units that hijacked "
+            "the host's agent sockets on every container boot"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
