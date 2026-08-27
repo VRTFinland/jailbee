@@ -324,6 +324,54 @@ Three facts that matter when explaining this:
 Also available as the short root alias `jailbee egress add|rm|ls|export`.
 Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 
+## The Claude login is often shared between repos — `claude_credentials`
+
+Several repos on one host can share a **single Claude Code login**, and on a
+recently set-up host they usually do: a `global.yaml` written by
+`jailbee config init --global` ships `claude_credentials.group: default`, which
+puts every repo on that host in one group. Hosts whose `global.yaml` predates
+that key, or that set `group: null`, keep one login per repo.
+
+Only the *credential* is shared. Each repo keeps its own `~/.claude`, so
+project history, MCP config, sessions and skills never cross repos. Inside a
+container of a member repo:
+
+- `~/.claude` is this repo's own config home, as always
+- `~/.claude-creds` is the **shared** directory, holding `.credentials.json`
+  and the rotation lock, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` points at it
+- this repo's own `~/.claude/.credentials.json` does **not** exist — joining
+  the group moved it out
+
+You can tell from inside a container with `echo
+$CLAUDE_SECURESTORAGE_CONFIG_DIR`: set means this repo is in a group, empty
+means it keeps its own login.
+
+**To change which account the group uses: `/login` inside any member
+container.** That writes straight into the shared directory, and every other
+member picks the new account up on its next Claude Code start. There is no
+jailbee command for this — the `jailbee claude` account pool was removed
+because `cswap` cannot write to a shared credential directory (see
+`CHANGELOG.md`); do not suggest it.
+
+**"Why did my Claude account change?"** Almost always: someone ran `/login` in
+a container of *another* repo in the same group. Point the user at the host —
+`jailbee doctor` there names this repo's group and lists its other member
+repos, and prints nothing at all when the repo shares no credential.
+
+**Joining or leaving a group** is a host-side edit to `claude_credentials` in
+`~/.config/jailbee/global.yaml` followed by `jailbee apply` in each affected
+repo. Two things about that are worth warning a user about before they run it:
+
+- Joining **moves** this repo's credential into the group directory. If the
+  group already holds a login and this repo has one too, `apply` asks which to
+  keep and deletes the other — the two are independent grants, so the survivor
+  is unaffected, but the loser is gone and needs a fresh `/login` to come back.
+- Leaving does **not** restore anything. The join moved the credential out, so
+  a repo that leaves has no credential at all and needs one `/login`.
+
+Neither is reversible by jailbee, and neither can be run from inside a
+container — there is no `jb` binary there.
+
 ## Port forwarding — `jailbee port`
 
 A forward is an Incus proxy device wired directly into (or out of) the
