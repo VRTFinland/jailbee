@@ -20,7 +20,7 @@ from sqlmodel import Session, create_engine
 
 from jailbee.config import Config, resolve_agents_raw
 from jailbee.cswap import CSWAP_BINARY
-from jailbee.db import _ensure_schema
+from jailbee.db import _ENGINES, _ensure_schema
 
 
 def make_config(
@@ -205,9 +205,23 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     which creates the DB at XDG_STATE_HOME/jailbee/state.sqlite. Per-test
     monkeypatch.setenv("XDG_STATE_HOME", ...) calls supersede this default
     because monkeypatch.setenv keeps the most recent value.
+
+    Teardown disposes and clears `db._ENGINES`: `get_engine` caches one
+    SQLAlchemy engine (and its open SQLite fds) per database path for the
+    life of the process, and this fixture hands every test a fresh path —
+    so without this, the full suite accumulates one leaked engine per test.
+    Past ~1024 open fds, `select.select()` (used by prompt_toolkit's pipe
+    input in `test_tui.py`'s checkbox tests) starts raising, which
+    prompt_toolkit turns into an unbounded `PromptSession` allocation loop —
+    the suite OOMs around 96-97% with no summary and no per-test failure to
+    point at. See the `pytest-fd-cliff-oom` memory note for the full chain.
     """
     iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
+    yield
+    for engine in _ENGINES.values():
+        engine.dispose()
+    _ENGINES.clear()
 
 
 @pytest.fixture(autouse=True)
