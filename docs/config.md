@@ -1588,11 +1588,23 @@ claude_credentials:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `group` | `str \| None` | `None` (unset) | Default credential group for every repo on the host. Absent means no sharing — today's behaviour. |
+| `group` | `str \| None` | `None` (unset); `default` in a freshly generated `global.yaml` | Default credential group for every repo on the host. Absent means no sharing. |
 | `repos` | `dict[str, str \| None]` | `{}` | Per-repo override keyed by `container_prefix`. Wins over `group`, **including when the value is `null`** — that is the only way to keep one repo on its own credential while the rest of the host shares one. |
 
 A group name must match `[a-z0-9][a-z0-9-]*`: it becomes a directory name
 under `<xdg_data_home>/jailbee/claude-credentials/<group>/`.
+
+**New hosts share by default.** `jailbee config init --global` writes
+`claude_credentials: {group: default}` into the generated `global.yaml`, so
+every repo on a fresh host shares one login without any configuration: the
+first `/login` in any container lands in the group directory, and the next
+repo is already logged in. The *schema* default is still `None` — an
+existing `global.yaml` that predates the key keeps every repo on its own
+credential, and `write_global_template` refuses to overwrite an existing file
+without `--force`. That asymmetry is deliberate: turning sharing on for a
+host that already has several logged-in repos would hit the two-credential
+refusal below on the second `jailbee apply`, which is a migration, not a
+default. To opt a whole host out, set `group: null`.
 
 Only the *credential* is shared — each repo keeps its own `~/.claude`, so
 project history, MCP config, sessions and onboarding state never cross

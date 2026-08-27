@@ -341,6 +341,32 @@ agents:
 # Legacy: a top-level `claude:` block is still accepted and means the same as
 # `agents.claude`. Defining both is an error. Prefer `agents.claude`.
 
+# Shared Claude credential group. Every repo on this host with `agents.claude`
+# enabled shares ONE login, stored at
+# <XDG_DATA_HOME>/jailbee/claude-credentials/<group>/ and bind-mounted into
+# every container as ~/.claude-creds. Only the *credential* is shared: each
+# repo keeps its own ~/.claude, so project history, MCP config and sessions
+# never cross repos. On a fresh host the first `/login` in any container lands
+# in the group directory, and every other repo is logged in from then on.
+#
+# Host-level only — this key is rejected in a repo's .jailbee/config.yaml,
+# because a group name is a property of *this machine's* working set: committed
+# to a repo it would apply to every teammate and name a directory that exists
+# on one machine only.
+#
+# `repos:` overrides the group per container_prefix; an explicit `null` keeps
+# one repo on its own credential. Edits take effect on the next `jailbee apply`
+# in each affected repo, which MOVES that repo's existing credential into the
+# group directory — and refuses when both sides already hold one, since one of
+# the two logins would become unused and jailbee will not choose for you.
+# Set `group: null` to keep every repo on its own login (the behaviour of
+# hosts whose global.yaml predates this key). See docs/config.md#claude_credentials.
+claude_credentials:
+  group: default
+  # repos:
+  #   my-side-project: personal
+  #   experiment: null
+
 # GitHub CLI (gh) integration. When enabled, jailbee:
 #   - Auto-extends strict-mode egress_allow with api.github.com:443.
 #   - Writes /etc/profile.d/jailbee-github.sh inside the container at

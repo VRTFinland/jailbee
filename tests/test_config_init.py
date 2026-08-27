@@ -296,17 +296,24 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     """Rendered global template must parse cleanly (no retired keys)."""
     import yaml as yaml_mod
 
-    from jailbee.config import _build_config_from_dict, _check_retired_keys
+    from jailbee.config import _build_config_from_dict, _check_retired_keys, _split_host_keys
 
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     text = render_global_template()
     raw = yaml_mod.safe_load(text)
     _check_retired_keys(raw)  # must not raise
 
+    # Host-level keys (`claude_credentials`, `ls`, `dashboard`, ...) never
+    # reach the Config layer: `load_config` splits them off before merging,
+    # and `Config` forbids extras. Split them here the same way, or a live
+    # host-level block in the template fails validation that never runs in
+    # production.
+    _host_raw, config_raw = _split_host_keys(raw)
+
     repo_root = tmp_path / "myrepo"
     cfg_path = repo_root / ".gie" / "config.yaml"
     cfg_path.parent.mkdir(parents=True)
-    cfg = _build_config_from_dict(raw, cfg_path)
+    cfg = _build_config_from_dict(config_raw, cfg_path)
     assert cfg.gpg.enabled is True
     assert cfg.ssh.enabled is True
     assert cfg.jetbrains.ide == "idea"
@@ -375,6 +382,55 @@ def test_global_template_github_roundtrips_through_schema():
     parsed = yaml.safe_load(render_global_template())
     # Must not raise.
     GithubConfig.model_validate(parsed["github"])
+
+
+# --- claude_credentials block in _GLOBAL_TEMPLATE ----------------------------
+
+
+def test_global_template_ships_a_default_credential_group():
+    """New hosts share one Claude login out of the box.
+
+    Only a *new* global.yaml gets this: `write_global_template` refuses to
+    overwrite an existing file without --force, so no host that predates the
+    key is opted in behind the user's back. That matters because joining a
+    group MOVES a repo's credential and refuses when two repos each hold one
+    (`init_command._ensure_claude_credentials_dir`) — a migration this
+    template-only default deliberately avoids.
+    """
+    parsed = yaml.safe_load(render_global_template())
+    assert parsed["claude_credentials"]["group"] == "default"
+
+
+def test_global_template_credential_group_round_trips_through_global_config(tmp_path, monkeypatch):
+    """The rendered block must survive the real loader, not just yaml.safe_load.
+
+    `claude_credentials` is host-level, so it reaches `GlobalConfig` through
+    `_split_host_keys` and never through the Config layer.
+    """
+    from jailbee.global_config import load_global_config
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    target = tmp_path / "global.yaml"
+    target.write_text(render_global_template())
+
+    gcfg, warnings = load_global_config(target)
+
+    assert warnings == []
+    assert gcfg.claude_credentials.group == "default"
+    assert gcfg.claude_credentials.dir_for("sampleapp") == (
+        tmp_path / "data" / "jailbee" / "claude-credentials" / "default"
+    )
+    # Every repo resolves to the same directory — that is the sharing.
+    assert gcfg.claude_credentials.dir_for("other-repo") == gcfg.claude_credentials.dir_for(
+        "sampleapp"
+    )
+
+
+def test_repo_template_does_not_contain_claude_credentials(tmp_path):
+    """Placement constraint: the key is host-level and `load_config` rejects it
+    in a repo config, so seeding it there would render an unloadable repo."""
+    text = render_template(repo_root=tmp_path / "myrepo")
+    assert "claude_credentials" not in text
 
 
 def test_global_template_writes_autostart_false_by_default():
