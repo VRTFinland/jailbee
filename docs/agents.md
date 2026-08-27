@@ -336,11 +336,12 @@ for the `global.yaml` block, the join/leave flow, and `jailbee doctor`'s
 report. This section documents the mechanism the feature rests on.
 
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
-on a member repo's `<prefix>-base` profile (rendered by
-`profiles.claude_securestorage_dir_env`); the container path is
-`~/.claude-creds`, bind-mounted from the group's host directory as the
-`claude-creds` disk device. The facts below were measured against **Claude
-Code 2.1.247** by observing its behavior — none of them are documented by
+on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`
+computes the `(key, value)` pair, and `profiles.base_profile_yaml` is what
+renders it into the profile. The container path is `~/.claude-creds`,
+bind-mounted from the group's host directory as the `claude-creds` disk
+device. The facts below were measured against **Claude Code 2.1.247** by
+observing its behavior — none of them are documented by
 Anthropic:
 
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves **both** `.credentials.json`

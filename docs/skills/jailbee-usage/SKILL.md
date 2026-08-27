@@ -331,17 +331,25 @@ tell the user to run these on the host. Requires the optional `cswap`
 (claude-swap) host binary; without it, `jailbee claude *` prints an install
 hint and exits, and nothing else about JailBee is affected.
 
-**If this account was shared from another repo, none of the above applies.**
-Several repos on this host can be configured to share one Claude Code
-login — a `/login` done inside *any* member repo's container logs in
-every other member too, because they all point at the same credential
-directory. This is what to say when asked "why did my account change" and
-no `jailbee claude` command was run: it may not have been this repo at
-all. Sharing is configured host-side, in `~/.config/jailbee/global.yaml`'s
-`claude_credentials` block, by whoever administers the host — it cannot be
-set, changed, or inspected from inside a container. Point the user at the
-host: `jailbee doctor` there names the group this repo belongs to and
-lists its other member repos.
+**Everything below assumes this repo's account is not shared. Check that
+first, because it changes what every command below actually does.** Several
+repos on this host can be configured to share one Claude Code login
+(`claude_credentials` in `~/.config/jailbee/global.yaml`, host-side and
+invisible from inside a container). For a repo in such a group, the
+*entire* `jailbee claude` command set — `ls`, `use`, `add`, `allow`,
+`release`, `rm` — reads and writes this repo's own, no-longer-used
+`.credentials.json`; the container instead reads its live credential from
+the shared group directory. So `jailbee claude use <n>` on a grouped repo
+does not fail — it silently rewrites a file nobody reads, and the user's
+account does not change. If asked "why did my account change" and no
+`jailbee claude` command was run, the cause may be elsewhere in the group:
+a `/login` done inside *any* member repo's container logs in every member,
+because they all point at the same credential directory. The fix for a
+grouped repo is host-side and outside `jailbee claude` entirely: change the
+group's shared credential (log in from any member's container), or leave
+the group by editing `global.yaml` and re-running `jailbee apply`. Point
+the user at the host either way: `jailbee doctor` there names the group
+this repo belongs to and lists its other members.
 
 ```bash
 jailbee claude ls                 # accounts, 5h/7d quota, which repo holds each
@@ -353,10 +361,13 @@ jailbee claude release            # give up this repo's holding (bookkeeping onl
 jailbee claude rm personal        # remove an account from the pool entirely
 ```
 
-**When you hit a rate limit, this is the fix worth suggesting**: ask the user
-to run `jailbee claude ls` on the host to see which account still has quota,
-then `jailbee claude use <n>`. The switch is a credential-file replacement —
-Claude Code picks it up on its next message, no container restart needed.
+**When you hit a rate limit, this is the fix worth suggesting** — *unless
+this repo shares a credential group (see above), in which case skip
+straight to the host-side fix there; `jailbee claude use` will not do
+anything the user can observe*: ask the user to run `jailbee claude ls` on
+the host to see which account still has quota, then `jailbee claude use
+<n>`. The switch is a credential-file replacement — Claude Code picks it up
+on its next message, no container restart needed.
 
 **`jailbee claude ls` is not a free read.** Fetching the quota column asks
 Anthropic about every pooled account, and doing so **refreshes the stored

@@ -1592,9 +1592,14 @@ Joining a group requires `jailbee apply`: it creates the group directory
 (mode `0700`) and **moves** this repo's `.credentials.json` into it. If
 both the group directory and this repo already hold a credential, `apply`
 refuses and changes nothing — one of the two logins is about to become
-unused, and jailbee will not choose which. Leaving a group (remove the key,
-re-run `apply`) falls back to the repo's own now-superseded credential
-file, whose refresh token is already dead, so the outcome is one `/login`.
+unused, and jailbee will not choose which. Every *successful* join leaves
+this repo's own config home with no `.credentials.json` of its own — either
+it had none to begin with, or the move took it. There is no restore-on-leave:
+leaving a group (remove the key, re-run `apply`) unmounts the shared
+directory and the repo's config home is still empty, so the container finds
+no credential and needs one `/login`. This is deliberate — moving a
+credential back on leave would have to guess which of several repos that
+have been sharing it should get it, and a `/login` is cheap.
 `jailbee doctor` names the group, its directory, and the other member
 repos.
 
