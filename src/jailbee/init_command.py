@@ -371,9 +371,7 @@ def _ensure_claude_credentials_dir(
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
 
     if group_cred.exists() and repo_cred.exists():
-        keep = (choose_fn or choose_shared_credential)(
-            group_dir, repo_cred, cfg.container_prefix
-        )
+        keep = (choose_fn or choose_shared_credential)(group_dir, repo_cred, cfg.container_prefix)
         if keep is None:
             raise ConfigError(
                 f"{group_dir} already holds a credential, and so does this repo "

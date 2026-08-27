@@ -613,4 +613,6 @@ def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answe
     select = mocker.patch("questionary.select")
     select.return_value.ask.return_value = answer
 
-    assert choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
+    assert (
+        choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
+    )
