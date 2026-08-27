@@ -7276,7 +7276,12 @@ claude_app = typer.Typer(
 app.add_typer(claude_app)
 
 
-def _claude_ctx(config: Path | None, *, require_cswap: bool = True) -> tuple["Config", "CswapType"]:
+def _claude_ctx(
+    config: Path | None,
+    *,
+    require_cswap: bool = True,
+    group_guard: Literal["none", "warn", "refuse"] = "none",
+) -> tuple["Config", "CswapType"]:
     """Load the repo config and a `Cswap` bound to its shared Claude dir.
 
     Exits 1 with the install hint when `cswap` is not on PATH: the whole
@@ -7289,6 +7294,20 @@ def _claude_ctx(config: Path | None, *, require_cswap: bool = True) -> tuple["Co
     who tried the feature, was left a stale `claiming` row by a crash and then
     uninstalled `cswap` would keep a red `jailbee doctor` forever with no CLI
     way out.
+
+    `group_guard` is the Finding-1 fix from the 2026-08-27 shared-credentials
+    review. `Cswap._env()` always pins `CLAUDE_CONFIG_DIR` to this repo's own
+    config home, but a repo whose `cfg.claude_credentials_dir` is set has had
+    its own `.credentials.json` moved out by joining the group — nothing
+    reads that file any more. `"refuse"` (for `use`/`add`, which write or
+    capture a credential there) exits 1 with a message naming the group
+    directory and the way out. `"warn"` (for `ls`, whose ACTIVE-account
+    column is read from that same stale config home but whose account/quota
+    columns are still accurate) prints a non-blocking stderr notice and lets
+    the command continue. `"none"` (the default, for `allow`/`release`/`rm`,
+    which are DB ledger / pool-store bookkeeping and never touch this repo's
+    own credential file) does nothing — those commands are unaffected by
+    group membership.
     """
     from jailbee.cswap import INSTALL_HINT, Cswap, config_home
 
@@ -7299,6 +7318,32 @@ def _claude_ctx(config: Path | None, *, require_cswap: bool = True) -> tuple["Co
             "Claude directory to switch. Enable it and run `jailbee apply`."
         )
         raise typer.Exit(1)
+    if group_guard != "none" and cfg.claude_credentials_dir is not None:
+        if group_guard == "refuse":
+            error(
+                f"This repo shares a Claude credential group at "
+                f"{cfg.claude_credentials_dir} — `jailbee claude` operates on "
+                f"this repo's own `.credentials.json`, which the group join "
+                f"already moved out and nothing reads any more. To change "
+                f"the group's account, log in to Claude Code inside any "
+                f"container of a member repo. To use a different account "
+                f"for just this repo, leave the group first: edit "
+                f"`claude_credentials` in ~/.config/jailbee/global.yaml, "
+                f"then run `jailbee apply`."
+            )
+            raise typer.Exit(1)
+        from jailbee.tui import hint
+
+        hint(
+            [
+                f"This repo shares a Claude credential group at "
+                f"{cfg.claude_credentials_dir} — the ACTIVE marker and "
+                f"'live here, unclaimed' note above are read from this "
+                f"repo's own config home, which a group join leaves stale "
+                f"or empty. The account and quota columns are still "
+                f"accurate."
+            ]
+        )
     home = config_home(cfg)
     cswap = Cswap(config_home=home)
     if not require_cswap:
@@ -7357,7 +7402,7 @@ def claude_ls_cmd(
     from jailbee import claude_accounts
     from jailbee.tui import console
 
-    cfg, cswap = _claude_ctx(config)
+    cfg, cswap = _claude_ctx(config, group_guard="warn")
     rows, accounts = _claude_rows(cfg, cswap)
 
     type Row = claude_accounts.AccountRow
@@ -7517,7 +7562,7 @@ def claude_use_cmd(
     from jailbee.cswap import CswapError
     from jailbee.db import get_engine
 
-    cfg, cswap = _claude_ctx(config)
+    cfg, cswap = _claude_ctx(config, group_guard="refuse")
     rows, accounts = _claude_rows(cfg, cswap)
     if ref is None:
         ref = _claude_pick_ref(rows, verb="use", allow_blocked=False)
@@ -7585,7 +7630,7 @@ def claude_add_cmd(
     from jailbee.cswap import CswapError
     from jailbee.db import get_engine
 
-    cfg, cswap = _claude_ctx(config)
+    cfg, cswap = _claude_ctx(config, group_guard="refuse")
     try:
         live = cswap.status()
     except CswapError as e:
