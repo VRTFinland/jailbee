@@ -145,6 +145,36 @@ class CleanupResult:
     skipped_reason: str | None
 
 
+FfStatus = Literal[
+    "created",
+    "fast-forwarded",
+    "up-to-date",
+    "checked-out",
+    "diverged",
+    "failed",
+]
+"""Outcome of advancing a container's own ``refs/heads/<source>``.
+
+``"checked-out"`` and ``"up-to-date"`` are both no-ops the user need not hear
+about; ``"diverged"`` and ``"failed"`` are worth a warning.
+"""
+
+
+@dataclass(frozen=True)
+class LocalBranchUpdate:
+    """What `ff_container_branch` did to the container's `refs/heads/<branch>`.
+
+    ``old_oid`` is the branch's value before the update, and None whenever it
+    was never read: the branch did not exist (``"created"``), it is HEAD's own
+    branch (``"checked-out"``), or the read itself failed.
+    """
+
+    branch: str
+    status: FfStatus
+    old_oid: str | None
+    new_oid: str
+
+
 @dataclass(frozen=True)
 class PushResult:
     """Outcome of `push_to_container` — transport only.
@@ -163,6 +193,11 @@ class PushResult:
     best-effort fetch failed, and `local_only_commits` counts commits on
     `refs/heads/<source>` that the pushed remote-tracking ref does not
     contain (0 whenever the local ref is itself what got pushed).
+
+    `local_branch` reports what happened to the *container's* own
+    `refs/heads/<source>` — see `ff_container_branch`. Never None in
+    practice; the default keeps the field optional for the many test
+    constructors that predate it.
     """
 
     source: str
@@ -173,6 +208,7 @@ class PushResult:
     fetched: bool = False
     fetch_error: str | None = None
     local_only_commits: int = 0
+    local_branch: LocalBranchUpdate | None = None
 
 
 @dataclass(frozen=True)
@@ -1621,6 +1657,72 @@ def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_br
     return True
 
 
+def ff_container_branch(
+    incus: Incus,
+    full_name: str,
+    repo_dir: str,
+    *,
+    branch: str,
+    new_oid: str,
+    uid: int,
+) -> LocalBranchUpdate:
+    """Fast-forward the container's own ``refs/heads/<branch>`` to ``new_oid``.
+
+    The transport writes only the ``refs/jailbee/*`` namespace, so without this
+    a container's local ``dev`` sits at whatever ``git clone`` gave it — and an
+    in-container ``git rebase dev`` silently uses a stale base. Nor can the
+    container fix that itself: its ``origin`` is the real upstream URL, so a
+    ``git fetch`` there needs network and credentials. The objects are already
+    present, pushed as ``refs/jailbee/host/<branch>`` by the caller.
+
+    A ref write rather than a refspec, deliberately. A rejected refspec makes
+    the whole ``git push`` exit non-zero (`git.push_url`), which would fail a
+    push whose load-bearing refs all landed, and git's inherited output would
+    print a multi-line rejection at the user.
+
+    Strictly fast-forward, and never HEAD's own branch:
+
+    * HEAD's branch is skipped (``"checked-out"``). Moving it would leave the
+      index and worktree describing a commit the branch no longer points at —
+      and ``receive.denyCurrentBranch`` refuses a push into it for the same
+      reason. `push_and_merge` already advances that branch with its
+      ``--ff-only`` merge. A detached HEAD collides with nothing, so it
+      proceeds.
+    * An absent branch is created; an already-equal one is left alone.
+    * A branch that is not an ancestor of ``new_oid`` is reported
+      (``"diverged"``) and left untouched — container-only commits are never
+      discarded here.
+    * The write uses ``update-ref``'s compare-and-swap form, so a commit made
+      in the container between the read and the write loses the race rather
+      than the commit.
+
+    Best-effort, like `refresh_container_base`: never raises, and reports a
+    transport or git failure as ``"failed"``.
+    """
+    run = submodules._container_runner(incus, full_name, uid=uid)
+    ref = f"refs/heads/{branch}"
+
+    # Non-zero here means detached HEAD: no checked-out branch to collide
+    # with. A dead container also lands here, and is caught by the write below.
+    on_branch, head = run(repo_dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    if on_branch and head.strip() == branch:
+        return LocalBranchUpdate(branch, "checked-out", None, new_oid)
+
+    old_oid = _container_ref_oid(incus, full_name, repo_dir, ref, uid=uid)
+    if old_oid is None:
+        created, _ = run(repo_dir, ["update-ref", ref, new_oid])
+        return LocalBranchUpdate(branch, "created" if created else "failed", None, new_oid)
+    if old_oid == new_oid:
+        return LocalBranchUpdate(branch, "up-to-date", old_oid, new_oid)
+
+    is_ancestor, _ = run(repo_dir, ["merge-base", "--is-ancestor", old_oid, new_oid])
+    if not is_ancestor:
+        return LocalBranchUpdate(branch, "diverged", old_oid, new_oid)
+
+    moved, _ = run(repo_dir, ["update-ref", ref, new_oid, old_oid])
+    return LocalBranchUpdate(branch, "fast-forwarded" if moved else "failed", old_oid, new_oid)
+
+
 def retarget_container(
     cfg: Config,
     incus: Incus,
@@ -1807,6 +1909,16 @@ def push_to_container(
         fetched=fetched,
         fetch_error=fetch_error,
         local_only_commits=local_only,
+        # After the transport, so the objects `new_oid` names are already in
+        # the container. Best-effort by contract — it never raises.
+        local_branch=ff_container_branch(
+            incus,
+            full_name,
+            repo_dir,
+            branch=resolved_source,
+            new_oid=new_oid,
+            uid=cfg.container_user.uid,
+        ),
     )
 
 

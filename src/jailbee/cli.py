@@ -1791,7 +1791,14 @@ if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pr_flow import PrState
     from jailbee.submodule_pr import SubCandidate
-    from jailbee.sync import BridgePlan, FetchResult, PublishResult, PushResult, SourcePref
+    from jailbee.sync import (
+        BridgePlan,
+        FetchResult,
+        LocalBranchUpdate,
+        PublishResult,
+        PushResult,
+        SourcePref,
+    )
 
 
 def _resolve_existing(
@@ -3026,6 +3033,36 @@ app.command(
 )(retarget)
 
 
+def _print_local_branch_update(short: str, upd: "LocalBranchUpdate") -> None:
+    """Report what the push did to the container's own `refs/heads/<source>`.
+
+    Silent for the two benign no-ops, which are also the common ones: a branch
+    already at the pushed tip, and HEAD's own branch — which `--merge` /
+    `--rebase` advance themselves and `ff_container_branch` never touches.
+    """
+    if upd.status in ("up-to-date", "checked-out"):
+        return
+    old = upd.old_oid[:7] if upd.old_oid is not None else "?"
+    if upd.status == "created":
+        info(f"Container's local '{upd.branch}' created at {upd.new_oid[:7]}.")
+    elif upd.status == "fast-forwarded":
+        info(f"Container's local '{upd.branch}' fast-forwarded {old} -> {upd.new_oid[:7]}.")
+    elif upd.status == "diverged":
+        warn(
+            f"⚠ container's local '{upd.branch}' ({old}) has diverged from the "
+            f"pushed ref and was left alone — no container commit is discarded "
+            f"here. Reconcile it in 'jailbee shell {short}', or compare against "
+            f"refs/jailbee/host/{upd.branch}."
+        )
+    else:  # "failed"
+        warn(
+            f"⚠ could not advance the container's local '{upd.branch}'; it is "
+            f"stale, so an in-container 'git rebase {upd.branch}' would use the "
+            f"wrong base. Use refs/jailbee/host/{upd.branch} instead, or retry "
+            f"the push."
+        )
+
+
 def _print_push_summary(short: str, result: "PushResult") -> None:
     if result.old_oid is None:
         delta = "new ref"
@@ -3058,6 +3095,8 @@ def _print_push_summary(short: str, result: "PushResult") -> None:
             f"commit{plural} not in {result.source_ref}; those were not pushed. "
             f"Use --from-local to send the local branch instead."
         )
+    if result.local_branch is not None:
+        _print_local_branch_update(short, result.local_branch)
 
 
 def _print_bridge_direction(src: str, src_side: str, dst: str, dst_side: str) -> None:

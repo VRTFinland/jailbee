@@ -6760,6 +6760,122 @@ def test_cli_push_silent_when_fetch_failure_did_not_matter(mocker):
     assert "couldn't find remote ref" not in result.output
 
 
+def _push_result_with_local_branch(status, *, old_oid="old1234567", branch="main"):
+    """A plain PushResult carrying one `ff_container_branch` outcome."""
+    from jailbee.sync import LocalBranchUpdate, PushResult
+
+    return PushResult(
+        source=branch,
+        source_ref=f"refs/heads/{branch}",
+        container_ref=f"refs/jailbee/host/{branch}",
+        old_oid=None,
+        new_oid="new7654321",
+        local_branch=LocalBranchUpdate(
+            branch=branch,
+            status=status,
+            old_oid=old_oid,
+            new_oid="new7654321",
+        ),
+    )
+
+
+def test_cli_push_reports_a_fast_forwarded_container_branch(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("fast-forwarded"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "old1234" in result.output
+    assert "new7654" in result.output
+
+
+def test_cli_push_reports_a_created_container_branch(mocker):
+    """A clone of a host whose HEAD was `main` has no local `dev` until now."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("created", old_oid=None, branch="dev"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "dev" in result.output
+    assert "new7654" in result.output
+
+
+def test_cli_push_warns_about_a_diverged_container_branch(mocker):
+    """Container-only commits on the pushed branch are kept — and said out loud."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("diverged"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "diverged" in result.output
+    assert "old1234" in result.output
+
+
+def test_cli_push_warns_when_the_container_branch_update_failed(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("failed"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "stale" in result.output
+
+
+@pytest.mark.parametrize("status", ["up-to-date", "checked-out"])
+def test_cli_push_stays_silent_about_a_benign_container_branch(status, mocker):
+    """Nothing to do is nothing to say — these two are the common case."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch(status),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "local 'main'" not in result.output
+
+
 def test_cli_push_pr_and_from_are_mutex(mocker):
     from typer.testing import CliRunner
 
