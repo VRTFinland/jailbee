@@ -276,3 +276,34 @@ def test_mirror_enabled_rejects_other_strings(tmp_path):
     path.write_text("docker_registry_mirror:\n  enabled: sometimes\n")
     with pytest.raises(ConfigError):
         load_global_config(path)
+
+
+def test_global_config_parses_claude_credentials(tmp_path):
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text(
+        "claude_credentials:\n"
+        "  group: work\n"
+        "  repos:\n"
+        "    side: personal\n"
+        "    solo: null\n"
+    )
+
+    gcfg, warnings = load_global_config(path)
+
+    assert warnings == []
+    assert gcfg.claude_credentials.group == "work"
+    assert gcfg.claude_credentials.repos == {"side": "personal", "solo": None}
+
+
+def test_claude_credentials_is_a_host_level_key():
+    """It must never reach the Config layer's `deep_merge`: `Config` has
+    `extra='forbid'` and no such field, so an unsplit key would make every
+    load fail for anyone who sets it."""
+    from jailbee.config import _HOST_LEVEL_KEYS, _split_host_keys
+
+    assert "claude_credentials" in _HOST_LEVEL_KEYS
+    host, config_level = _split_host_keys({"claude_credentials": {"group": "work"}, "gpg": {}})
+    assert "claude_credentials" in host
+    assert "claude_credentials" not in config_level
