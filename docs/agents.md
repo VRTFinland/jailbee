@@ -365,6 +365,16 @@ Anthropic:
   repo with a fresh `~/.claude` populates its own `oauthAccount` in
   `.claude.json` the first time Claude Code runs, without jailbee writing
   anything.
+- Deleting the `oauthAccount` block from an **established** `.claude.json`
+  — one whose onboarding is already complete — is repaired silently at the
+  next start. Interactive `claude` (not just `claude -p`) repopulates the
+  block from the credential before the first user turn: no login prompt, no
+  onboarding flow, and `accountUuid` / `emailAddress` / `organizationUuid`
+  come back identical. The repair reads the credential without rotating it
+  — `.credentials.json` kept its mtime and size, and no
+  `.oauth_refresh.lock` was created — so it cannot disturb the other
+  members of a credential group. This is what makes deleting the block a
+  safe way to point a member repo at a changed group account.
 - A **stale** `oauthAccount` in `.claude.json` does not break
   authentication, and jailbee does not correct it — only the credential
   in `CLAUDE_SECURESTORAGE_CONFIG_DIR` authenticates.
