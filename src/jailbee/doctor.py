@@ -203,15 +203,19 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
             )
         ]
 
-    members = _credential_group_members(gcfg, group)
+    members = _credential_group_members(gcfg, group, exclude=cfg.container_prefix)
     detail = f"group `{group}` at {group_dir}"
     if members:
         detail += f" — shared with: {', '.join(members)}"
     return [CheckResult("claude shared credential", True, detail)]
 
 
-def _credential_group_members(gcfg: GlobalConfig, group: str) -> list[str]:
-    """Registered repos resolving to `group`, sorted. Empty if state is unreadable.
+def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -> list[str]:
+    """Registered repos resolving to `group`, sorted, excluding `exclude`.
+
+    `exclude` is the calling repo's own `container_prefix` — telling a repo
+    it shares the group with itself would be wrong, not just noisy. Empty if
+    state is unreadable.
 
     A bookkeeping read, not a diagnosis (see `_check_upgrade_advice`): an
     unreadable registry says nothing about whether the credential join
@@ -226,7 +230,9 @@ def _credential_group_members(gcfg: GlobalConfig, group: str) -> list[str]:
             prefixes = list(session.exec(select(RegisteredRepo.container_prefix)))
     except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
         return []
-    return sorted(p for p in prefixes if (creds.dir_for(p) or Path()).name == group)
+    return sorted(
+        p for p in prefixes if p != exclude and (creds.dir_for(p) or Path()).name == group
+    )
 
 
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:

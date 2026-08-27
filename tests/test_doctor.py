@@ -1773,3 +1773,60 @@ def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg):
 
     assert not results[0].ok
     assert "jailbee apply" in results[0].detail
+
+
+def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, make_cfg):
+    """`_credential_group_members` must exclude the calling repo itself and
+    any repo resolving to a different group (or to none), and include a
+    genuine other member of the same group.
+
+    Rows are inserted into the real, autouse-isolated state DB
+    (`_isolate_state_dir` in tests/conftest.py) rather than mocking
+    `get_engine` — that fixture is what makes the query honest.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.doctor import _credential_group_members
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate(
+        {"claude_credentials": {"group": "work", "repos": {"solo-repo": None}}}
+    )
+    when = datetime(2026, 8, 27, tzinfo=UTC)
+
+    with Session(get_engine()) as s:
+        # The calling repo itself — must never appear in its own listing.
+        s.add(
+            RegisteredRepo(
+                container_prefix=cfg.container_prefix,
+                repo_root=str(tmp_path),
+                registered_at=when,
+            )
+        )
+        # A genuine other member of the same group (default group "work").
+        s.add(
+            RegisteredRepo(
+                container_prefix="other-repo",
+                repo_root="/repos/other-repo",
+                registered_at=when,
+            )
+        )
+        # Opted out of the group entirely — resolves to no group.
+        s.add(
+            RegisteredRepo(
+                container_prefix="solo-repo",
+                repo_root="/repos/solo-repo",
+                registered_at=when,
+            )
+        )
+        s.commit()
+
+    members = _credential_group_members(gcfg, "work", exclude=cfg.container_prefix)
+
+    assert members == ["other-repo"]
