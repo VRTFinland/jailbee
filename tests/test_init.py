@@ -1026,3 +1026,105 @@ def test_legacy_claude_json_survives_seeding(tmp_path):
     # Pins move-not-copy: a copy-instead-of-move implementation would still
     # pass the assertion above but leave the legacy file behind.
     assert not (shared / "claude.json").exists()
+
+
+# ---- Shared Claude credentials directory ----
+
+
+def _grouped_cfg(tmp_path):
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    return make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+
+
+def test_credentials_dir_is_created_when_a_repo_joins_a_group(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert cfg.claude_credentials_dir.is_dir()
+    assert cfg.claude_credentials_dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_joining_a_group_moves_the_repos_credential_in(tmp_path):
+    """Moved, never copied: two copies of one grant means two refreshers, and
+    the first rotation logs one side out."""
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text('{"token": "sentinel"}')
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert not repo_cred.exists()
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == (
+        '{"token": "sentinel"}'
+    )
+
+
+def test_two_credentials_is_refused_and_changes_nothing(tmp_path):
+    import pytest
+
+    from jailbee.config import ConfigError
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    cfg.claude_credentials_dir.mkdir(parents=True)
+    group_cred = cfg.claude_credentials_dir / ".credentials.json"
+    group_cred.write_text("group")
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _ensure_claude_credentials_dir(cfg)
+
+    assert group_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_an_existing_group_credential_is_left_alone(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    cfg.claude_credentials_dir.mkdir(parents=True)
+    (cfg.claude_credentials_dir / ".credentials.json").write_text("group")
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "group"
+
+
+def test_nothing_happens_for_a_non_group_repo(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, claude={"enabled": True})
+    repo_cred = shared / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert repo_cred.read_text() == "repo"
+    assert not (tmp_path / "creds").exists()
+
+
+def test_integration_shared_dirs_creates_the_group_dir(tmp_path):
+    """The seeding must run from the helper `init` and `apply` share, or one of
+    them renders a profile whose disk source does not exist and Incus rejects
+    every later `profile edit`."""
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    cfg = _grouped_cfg(tmp_path)
+
+    _ensure_integration_shared_dirs(cfg)
+
+    assert cfg.claude_credentials_dir.is_dir()
