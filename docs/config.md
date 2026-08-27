@@ -1602,9 +1602,9 @@ repo is already logged in. The *schema* default is still `None` — an
 existing `global.yaml` that predates the key keeps every repo on its own
 credential, and `write_global_template` refuses to overwrite an existing file
 without `--force`. That asymmetry is deliberate: turning sharing on for a
-host that already has several logged-in repos would hit the two-credential
-refusal below on the second `jailbee apply`, which is a migration, not a
-default. To opt a whole host out, set `group: null`.
+host that already has several logged-in repos means answering the
+two-credential prompt below on every repo but the first, which is a
+migration, not a default. To opt a whole host out, set `group: null`.
 
 Only the *credential* is shared — each repo keeps its own `~/.claude`, so
 project history, MCP config, sessions and onboarding state never cross
@@ -1612,10 +1612,28 @@ repos. See [Shared credential groups](agents.md#shared-credential-groups-claude_
 in `agents.md` for the mechanism.
 
 Joining a group requires `jailbee apply`: it creates the group directory
-(mode `0700`) and **moves** this repo's `.credentials.json` into it. If
-both the group directory and this repo already hold a credential, `apply`
-refuses and changes nothing — one of the two logins is about to become
-unused, and jailbee will not choose which. Every *successful* join leaves
+(mode `0700`) and **moves** this repo's `.credentials.json` into it.
+
+If both the group directory and this repo already hold a credential, only
+one of the two logins can be shared and the other becomes unused, so
+`apply` asks which to keep:
+
+* **the group's login** — this repo's copy is deleted; the repo adopts the
+  account every other member already uses. This is the usual answer.
+* **this repo's login** — the group's copy is deleted and this repo's is
+  moved in, which re-points *every* member repo at this account.
+* **cancel** — nothing changes and `apply` aborts. To keep this repo on
+  its own login instead, add it under `repos:` as `null` (the prompt prints
+  the exact block) and re-run `apply`.
+
+The losing credential is deleted, not archived. The two are *independent*
+grants — two `/login`s to one account each mint their own refresh-token
+lineage — so removing one never disturbs the survivor, and a stale
+credential left in the shared tree is read by nothing. Restoring it means
+one `/login`. Without a TTY to ask on (a piped or CI `apply`), the prompt
+is skipped and `apply` refuses instead, changing nothing.
+
+Every *successful* join leaves
 this repo's own config home with no `.credentials.json` of its own — either
 it had none to begin with, or the move took it. There is no restore-on-leave:
 leaving a group (remove the key, re-run `apply`) unmounts the shared

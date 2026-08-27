@@ -357,8 +357,8 @@ agents:
 # `repos:` overrides the group per container_prefix; an explicit `null` keeps
 # one repo on its own credential. Edits take effect on the next `jailbee apply`
 # in each affected repo, which MOVES that repo's existing credential into the
-# group directory — and refuses when both sides already hold one, since one of
-# the two logins would become unused and jailbee will not choose for you.
+# group directory — and asks which login to keep when both sides already hold
+# one, since only one can be shared and the other becomes unused.
 # Set `group: null` to keep every repo on its own login (the behaviour of
 # hosts whose global.yaml predates this key). See docs/config.md#claude_credentials.
 claude_credentials:

@@ -13,8 +13,12 @@
   repo's committed `.jailbee/config.yaml` is rejected, since a group name is
   a property of this one machine. `jailbee apply` does the work: it creates
   `<xdg_data_home>/jailbee/claude-credentials/<group>/` and **moves** this
-  repo's stored credential into it, refusing outright if both the repo and
-  the group already hold one rather than silently discarding a login. Only
+  repo's stored credential into it. When the repo *and* the group already
+  hold one, only one login can be shared and the other becomes unused, so
+  `apply` asks which to keep — the group's, this repo's (which re-points
+  every member repo), or cancel — and deletes the loser; the two are
+  independent grants, so nothing the survivor depends on is touched. Without
+  a TTY to ask on, it refuses rather than silently discarding a login. Only
   the credential is shared — each repo keeps its own `~/.claude`, so
   project history, MCP config and sessions stay per-repo — and no golden
   image rebuild is needed: the mount and the
@@ -26,8 +30,8 @@
   shares one login with no configuration at all; an existing `global.yaml` is
   never rewritten, so hosts that predate the key keep every repo on its own
   credential until they opt in. Turning sharing on for a host whose repos are
-  already logged in is a migration — the second `jailbee apply` hits the
-  two-credential refusal — which is exactly why the default lives in the
+  already logged in is a migration — every `jailbee apply` after the first
+  asks which login to keep — which is exactly why the default lives in the
   template rather than in the schema.
 - **`jb setup` installs the post-install steps a package install cannot.**
   Shell completions for both console scripts, the `jailbee-net-refresh` user
@@ -246,6 +250,19 @@
 
 ### Fixed
 
+- **A successful `jb start`/`jb restart` clears the failed boot record it
+  supersedes.** A background boot that failed leaves a `failed` job row
+  behind, and only `jb job clear` used to remove it: a foreground
+  `jb restart` brought the container back up, ran autostart, and left
+  `jb ls` still flagging the container while the attach guards kept
+  pointing at `jb job clear`. A foreground boot that completes (autostart
+  included) now clears that row itself. Only *boot* records: a failed
+  `jb new` means the container's setup — clone, credential wiring, first
+  autostart — never finished, which a reboot does not complete, so its
+  record survives to keep saying so, and `jb job clear` stays the way to
+  acknowledge it. A live job's record is left alone too, since its worker
+  is still writing to the container. Background boots already behaved
+  this way; the row is overwritten on spawn and deleted on success.
 - **`jb doctor` reports when the refresh timer runs a different jailbee.**
   `install_systemd_units` bakes `which("jailbee")` into
   `jailbee-net-refresh.service` at install time and rewrites the unit only

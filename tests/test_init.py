@@ -1174,24 +1174,86 @@ def test_joining_a_group_moves_the_repos_credential_in(tmp_path):
     )
 
 
-def test_two_credentials_is_refused_and_changes_nothing(tmp_path):
-    import pytest
-
-    from jailbee.config import ConfigError
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
+def _two_credentials(tmp_path):
+    """A repo joining a group where both sides already hold a login."""
     cfg = _grouped_cfg(tmp_path)
     cfg.claude_credentials_dir.mkdir(parents=True)
     group_cred = cfg.claude_credentials_dir / ".credentials.json"
     group_cred.write_text("group")
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
     repo_cred.write_text("repo")
+    return cfg, group_cred, repo_cred
+
+
+def test_two_credentials_adopting_the_group_deletes_the_repos_copy(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "group")
+
+    assert group_cred.read_text() == "group"
+    assert not repo_cred.exists()
+
+
+def test_two_credentials_promoting_this_repo_replaces_the_groups_copy(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "repo")
+
+    assert group_cred.read_text() == "repo"
+    assert not repo_cred.exists()
+
+
+def test_two_credentials_cancelled_is_refused_and_changes_nothing(tmp_path):
+    import pytest
+
+    from jailbee.config import ConfigError
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: None)
+
+    assert group_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_two_credentials_without_a_tty_is_refused_and_changes_nothing(tmp_path, mocker):
+    """The default chooser must not block a piped/CI `jailbee apply` on stdin."""
+    import pytest
+
+    from jailbee.config import ConfigError
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    select = mocker.patch("questionary.select")
 
     with pytest.raises(ConfigError, match="already holds a credential"):
         _ensure_claude_credentials_dir(cfg)
 
+    select.assert_not_called()
     assert group_cred.read_text() == "group"
     assert repo_cred.read_text() == "repo"
+
+
+def test_the_chooser_is_never_asked_when_only_one_side_holds_a_credential(tmp_path, mocker):
+    """The prompt exists for the ambiguous case only — a plain join stays silent."""
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+    choose_fn = mocker.MagicMock()
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=choose_fn)
+
+    choose_fn.assert_not_called()
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "repo"
 
 
 def test_an_existing_group_credential_is_left_alone(tmp_path):
