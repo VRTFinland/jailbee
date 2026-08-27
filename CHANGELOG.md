@@ -109,6 +109,25 @@
   Repo headers are now cursor stops.
 - GUI dashboard: **View ▸ Columns**. The two front-ends keep independent
   settings.
+- **`jailbee claude ls|use|add|allow|release|rm`** switches a repo's Claude
+  Code login between accounts held in a host-global pool, driven by the
+  optional `cswap` (claude-swap) host binary (`uv tool install
+  claude-swap`) — nothing about jailbee changes when it isn't installed.
+  `ls` lists slot, alias, email, 5h/7d quota and which repo holds each
+  account; `use REF` switches with no browser login and no container
+  restart (`REF` is a slot number, alias, or email); `add` captures the
+  current live login into the pool **and records this repo as its holder**;
+  `allow` restricts a repo to a subset of accounts; `release` gives up a
+  holding (bookkeeping only — this repo stays logged in as that account, so
+  switching away is the clean handover); `rm` removes an account from the
+  pool entirely. `ls` is not a free read: fetching the quota column refreshes
+  the stored token of every account not live in this repo. One stored account
+  is held by one repo at a time — the
+  ledger's composite primary key plus the refusals in `claude_accounts.py`
+  are what stop two repos from independently refreshing the same grant and
+  silently logging one of them out. `jailbee doctor` gained a
+  `claude account pool` check (informational when `cswap` isn't installed)
+  and a `claude pool ledger` check for a holding stuck mid-switch.
 
 ### Changed
 

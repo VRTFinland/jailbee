@@ -1606,3 +1606,122 @@ def test_doctor_points_at_jb_setup_for_an_inactive_timer(tmp_path: Path, mocker)
 
     timer = next(r for r in results if r.name == "net refresh timer")
     assert "jb setup" in timer.detail
+
+
+def test_a_missing_cswap_is_reported_as_information_not_a_failure(tmp_path, mocker):
+    """The account pool is optional; its absence must not fail `doctor`."""
+    from jailbee.doctor import _check_claude_pool
+    from tests.conftest import make_config
+
+    repo = tmp_path / "gisgro"
+    repo.mkdir()
+    cfg = make_config(repo, shared_dir=tmp_path / "shared")
+    fake = mocker.MagicMock()
+    fake.available.return_value = False
+    mocker.patch("jailbee.cswap.Cswap", return_value=fake)
+
+    results = _check_claude_pool(cfg)
+
+    assert [r.ok for r in results] == [True]
+    assert "not installed" in results[0].detail
+    fake.version.assert_not_called()
+
+
+def test_an_installed_cswap_reports_its_version(tmp_path, mocker):
+    from jailbee.doctor import _check_claude_pool
+    from tests.conftest import make_config
+
+    repo = tmp_path / "gisgro"
+    repo.mkdir()
+    cfg = make_config(repo, shared_dir=tmp_path / "shared")
+    fake = mocker.MagicMock()
+    fake.available.return_value = True
+    fake.version.return_value = "cswap 0.26.0b1"
+    mocker.patch("jailbee.cswap.Cswap", return_value=fake)
+
+    results = _check_claude_pool(cfg)
+
+    assert results[0].ok is True
+    assert "0.26.0b1" in results[0].detail
+
+
+def test_a_leftover_claiming_row_is_a_failure_naming_the_fix(tmp_path, mocker):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import ClaudeAccountHolding
+    from jailbee.doctor import _check_claude_pool
+    from tests.conftest import make_config
+
+    repo = tmp_path / "gisgro"
+    repo.mkdir()
+    cfg = make_config(repo, shared_dir=tmp_path / "shared")
+    fake = mocker.MagicMock()
+    fake.available.return_value = True
+    fake.version.return_value = "cswap 0.26.0b1"
+    mocker.patch("jailbee.cswap.Cswap", return_value=fake)
+    with Session(get_engine()) as s:
+        s.add(
+            ClaudeAccountHolding(
+                email="me@example.com",
+                org_uuid="",
+                container_prefix="gisgro",
+                slot="2",
+                state="claiming",
+                since=datetime(2026, 8, 26, tzinfo=UTC),
+            )
+        )
+        s.commit()
+
+    results = _check_claude_pool(cfg)
+
+    stale = [r for r in results if not r.ok]
+    assert len(stale) == 1
+    assert "me@example.com" in stale[0].detail
+    # The ref is the EMAIL, not the slot: `slot` is display-only and stale
+    # after `cswap move`, while `release` resolves its ref against the current
+    # listing — so `release 2` could free a different account's holding.
+    assert "jailbee claude release me@example.com" in stale[0].detail
+    assert "jailbee claude release 2" not in stale[0].detail
+    # A killed `use` may have died after the switch landed, in which case the
+    # credential is live in that repo and releasing hands it away.
+    assert "jailbee claude use me@example.com" in stale[0].detail
+
+
+def test_a_clean_ledger_adds_no_stale_claim_result(tmp_path, mocker):
+    from jailbee.doctor import _check_claude_pool
+    from tests.conftest import make_config
+
+    repo = tmp_path / "gisgro"
+    repo.mkdir()
+    cfg = make_config(repo, shared_dir=tmp_path / "shared")
+    fake = mocker.MagicMock()
+    fake.available.return_value = True
+    fake.version.return_value = "cswap 0.26.0b1"
+    mocker.patch("jailbee.cswap.Cswap", return_value=fake)
+
+    results = _check_claude_pool(cfg)
+
+    assert all(r.ok for r in results)
+    assert len(results) == 1
+
+
+def test_a_version_probe_failure_does_not_break_doctor(tmp_path, mocker):
+    from jailbee.cswap import CswapError
+    from jailbee.doctor import _check_claude_pool
+    from tests.conftest import make_config
+
+    repo = tmp_path / "gisgro"
+    repo.mkdir()
+    cfg = make_config(repo, shared_dir=tmp_path / "shared")
+    fake = mocker.MagicMock()
+    fake.available.return_value = True
+    fake.version.side_effect = CswapError("boom")
+    mocker.patch("jailbee.cswap.Cswap", return_value=fake)
+
+    results = _check_claude_pool(cfg)
+
+    assert results[0].ok is False
+    assert "boom" in results[0].detail

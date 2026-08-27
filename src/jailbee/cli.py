@@ -61,6 +61,15 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _is_tty() -> bool:
+    """Whether stdin is a terminal, factored for test mocking.
+
+    `CliRunner` replaces `sys.stdin` inside `invoke()`, so a test cannot patch
+    `sys.stdin.isatty` and have it reach the command — hence the indirection.
+    """
+    return sys.stdin.isatty()
+
+
 def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
     """Record that `action` just ran successfully in this repo.
 
@@ -1772,7 +1781,11 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.background import ClearOutcome
+    from jailbee.claude_accounts import AccountRow as AccountRowType
     from jailbee.config import Config, LooseAutoRevert
+    from jailbee.cswap import Account as AccountType
+    from jailbee.cswap import Cswap as CswapType
+    from jailbee.cswap import LiveAccount as LiveAccountType
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
@@ -7204,6 +7217,567 @@ def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
     cfg = _load_or_exit(config)
     deleted = chrome_pool.prune(cfg, Incus())
     success(f"Pruned {deleted} free slots")
+
+
+# ---- Claude account pool commands ----
+
+
+claude_app = typer.Typer(
+    name="claude",
+    help=(
+        "Claude account pool: switch this repo's Claude Code login between "
+        "stored accounts without a browser login.\n\n"
+        "Accounts live in a host-global pool managed by `cswap` (claude-swap), "
+        "an optional host dependency. One stored account is held by one repo "
+        "at a time — that is what keeps a shared credential from being "
+        "refreshed in two places and silently logging one of them out."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(claude_app)
+
+
+def _claude_ctx(config: Path | None, *, require_cswap: bool = True) -> tuple["Config", "CswapType"]:
+    """Load the repo config and a `Cswap` bound to its shared Claude dir.
+
+    Exits 1 with the install hint when `cswap` is not on PATH: the whole
+    command group is unusable without it, and every command would otherwise
+    fail one subprocess later with a worse message.
+
+    `require_cswap=False` skips that gate (and the config-home pre-flight) for
+    the one path that touches neither: releasing **this repo's** holding is
+    pure bookkeeping in jailbee's own database. Without the exception, a user
+    who tried the feature, was left a stale `claiming` row by a crash and then
+    uninstalled `cswap` would keep a red `jailbee doctor` forever with no CLI
+    way out.
+    """
+    from jailbee.cswap import INSTALL_HINT, Cswap, config_home
+
+    cfg = _load_or_exit(config)
+    if not cfg.claude.enabled:
+        error(
+            "`agents.claude` is disabled for this repo, so there is no shared "
+            "Claude directory to switch. Enable it and run `jailbee apply`."
+        )
+        raise typer.Exit(1)
+    home = config_home(cfg)
+    cswap = Cswap(config_home=home)
+    if not require_cswap:
+        return cfg, cswap
+    if not cswap.available():
+        error_plain(INSTALL_HINT)
+        raise typer.Exit(1)
+    if not home.is_dir():
+        # `cswap` is handed this directory as CLAUDE_CONFIG_DIR; it is created
+        # by `jailbee init` / `apply` / `new`, never by loading a config file,
+        # so a repo that has never applied has nothing there to switch.
+        error(
+            f"{home} does not exist yet — this repo has no shared Claude "
+            f"directory. Run `jailbee apply` in this repo first."
+        )
+        raise typer.Exit(1)
+    return cfg, cswap
+
+
+def _claude_rows(
+    cfg: "Config", cswap: "CswapType"
+) -> tuple[list["AccountRowType"], list["AccountType"]]:
+    """Fetch the pool and join it against the ledger. Exits 1 on failure."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+    from jailbee.tui import status_with_elapsed
+
+    try:
+        with status_with_elapsed("Reading the Claude account pool"):
+            accounts = cswap.list_accounts()
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    with Session(get_engine()) as session:
+        rows = claude_accounts.account_rows(session, accounts, prefix=cfg.container_prefix)
+    return rows, accounts
+
+
+@claude_app.command("ls")
+def claude_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    config: ConfigOption = None,
+) -> None:
+    """List pooled Claude accounts, their quota, and which repo holds each."""
+    from jailbee import claude_accounts
+    from jailbee.tui import console
+
+    cfg, cswap = _claude_ctx(config)
+    rows, accounts = _claude_rows(cfg, cswap)
+
+    type Row = claude_accounts.AccountRow
+
+    def pct(value: float | None) -> str:
+        return "-" if value is None else f"{value:.0f}%"
+
+    def note(row: Row) -> str:
+        # The reconcile comes first: an account cswap reports as live in *this*
+        # config home with no holding row is the one thing on this table that
+        # says the invariant is currently unenforced. Any path that leaves a
+        # live account unclaimed lands here — a bare `cswap switch` the user
+        # ran themselves, a pre-ledger capture, a mismatched switch.
+        if row.account.active and row.holder is None:
+            return "live here, unclaimed — `jailbee claude use` claims it"
+        if row.account.active and row.holder is not None and not row.mine:
+            return f"live here, but held by {row.holder.container_prefix}"
+        if row.account.disabled:
+            return "held out of rotation (cswap disable)"
+        if row.account.usage_status == "relogin_required":
+            return "re-login needed"
+        if row.account.usage_status not in ("ok", "api_key"):
+            return row.account.usage_status.replace("_", " ")
+        if not row.allowed:
+            return "not allowed for this repo"
+        return ""
+
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="slot",
+            header="SLOT",
+            cell=lambda r: str(r.account.number),
+            json=lambda r: r.account.number,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="alias",
+            header="ALIAS",
+            cell=lambda r: r.account.alias or "-",
+            json=lambda r: r.account.alias or None,
+        ),
+        table_format.FieldSpec(
+            name="email",
+            header="EMAIL",
+            cell=lambda r: r.account.email,
+            json=lambda r: r.account.email,
+        ),
+        table_format.FieldSpec(
+            name="five_hour_pct",
+            header="5H",
+            cell=lambda r: pct(r.account.five_hour_pct),
+            json=lambda r: r.account.five_hour_pct,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="seven_day_pct",
+            header="7D",
+            cell=lambda r: pct(r.account.seven_day_pct),
+            json=lambda r: r.account.seven_day_pct,
+            justify="right",
+        ),
+        table_format.FieldSpec(
+            name="holder",
+            header="HOLDER",
+            cell=lambda r: r.holder_cell,
+            json=lambda r: r.holder.container_prefix if r.holder else None,
+        ),
+        table_format.FieldSpec(
+            name="note",
+            header="NOTE",
+            cell=note,
+            json=note,
+            # Only worth a column when some row has something to say.
+            show_if=lambda rs: any(note(r) for r in rs),
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=None,
+        console=console,
+        title=f"Claude accounts for {cfg.container_prefix}" if fmt == "table" else None,
+        empty_message=(
+            "No accounts in the pool yet. Log in to Claude Code in a container, "
+            "then run `jailbee claude add`."
+        ),
+    )
+    if fmt != "table":
+        return
+    # stderr, not stdout: `--format json` is piped and parsed.
+    from jailbee.tui import hint
+
+    lines: list[str] = []
+    live = claude_accounts.current_account(accounts)
+    if live is not None:
+        lines.append(f"{cfg.container_prefix} is on account {live.number} ({live.label}).")
+    elif accounts:
+        lines.append(
+            f"{cfg.container_prefix}'s current login is not in the pool — "
+            f"`jailbee claude add` stores it."
+        )
+    allowed = [r.account.label for r in rows if r.allowed]
+    if len(allowed) != len(rows):
+        lines.append(f"Allowed: {', '.join(allowed) or '(none)'}")
+    if lines:
+        hint(lines)
+
+
+def _claude_pick_ref(rows: list["AccountRowType"], *, verb: str, allow_blocked: bool) -> str | None:
+    """Resolve an omitted account argument interactively.
+
+    Raises Exit(2) — a missing-argument error, not a hang — when stdin is not
+    a TTY. The picker itself never checks; callers do, which is the existing
+    convention (`pick_container`'s docstring states it).
+    """
+    if not _is_tty():
+        error(
+            f"Missing account argument. Pass a slot number, alias or email "
+            f"(`jailbee claude {verb} <ref>`) — the interactive picker needs a "
+            f"terminal."
+        )
+        raise typer.Exit(2)
+    from jailbee import claude_accounts
+    from jailbee.tui import pick_claude_account
+
+    if allow_blocked:
+        # `rm` takes an account out of the pool entirely; another repo holding
+        # it is a reason to warn, not to grey it out of the list.
+        rows = [
+            claude_accounts.AccountRow(account=r.account, holder=None, allowed=True, mine=r.mine)
+            for r in rows
+        ]
+    return pick_claude_account(rows)
+
+
+@claude_app.command("use")
+def claude_use_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(help="Slot number, alias or email. Omit for a picker."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Switch even when this repo's current login is not in the pool.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Switch this repo's Claude account. No browser login, no restart."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+
+    cfg, cswap = _claude_ctx(config)
+    rows, accounts = _claude_rows(cfg, cswap)
+    if ref is None:
+        ref = _claude_pick_ref(rows, verb="use", allow_blocked=False)
+        if ref is None:
+            info("Cancelled — nothing was switched.")
+            return
+
+    def confirm_unsaved(live: "LiveAccountType") -> bool:
+        """The `--force` prompt, called by `use()` *after* its refusals.
+
+        Passed as a callback rather than run here so the ledger refusals come
+        first: being asked to accept a risk on a command that then declines is
+        worse than either outcome. It also keeps `cswap.status()` to one call.
+        """
+        from jailbee.tui import default_confirm
+
+        warn_plain(
+            f"This repo's current login ({live.email}) is not in the pool. "
+            f"Switching replaces it; cswap keeps a stash, but recovering "
+            f"from one is a manual job."
+        )
+        return default_confirm("Switch anyway?")
+
+    try:
+        with Session(get_engine()) as session:
+            message = claude_accounts.use(
+                session,
+                cswap,
+                accounts,
+                prefix=cfg.container_prefix,
+                ref=ref,
+                now=_now(),
+                force=force,
+                confirm=confirm_unsaved if force else None,
+            )
+    except claude_accounts.PoolCancelledError as e:
+        info(str(e))
+        raise typer.Exit(1) from e
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    success_plain(message)
+    info("Claude Code picks the new credential up on its next message.")
+
+
+@claude_app.command("add")
+def claude_add_cmd(
+    alias: Annotated[
+        str | None,
+        typer.Option("--alias", help="Short name for this account. Prompted if omitted."),
+    ] = None,
+    slot: Annotated[
+        int | None,
+        typer.Option("--slot", help="Store in this slot instead of the next free one."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Capture this repo's current Claude login into the pool."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+
+    cfg, cswap = _claude_ctx(config)
+    try:
+        live = cswap.status()
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    if live.email is None:
+        error(
+            "This repo's shared Claude directory is not logged in — there is "
+            "nothing to capture. Run `/login` in a container first."
+        )
+        raise typer.Exit(1)
+    identity = (live.email, live.org_uuid)
+
+    # Refuse before capturing, not after: overwriting the stored blob another
+    # repo holds cannot be undone by a ledger row. Its own session, closed
+    # before the interactive `cswap add` below — no transaction may be open
+    # across a subprocess that can block at a `[y/N]` prompt.
+    try:
+        with Session(get_engine()) as session:
+            claude_accounts.ensure_capture_allowed(session, identity, prefix=cfg.container_prefix)
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    if live.managed and alias is None and slot is None:
+        info(
+            f"{live.email} is already in the pool (slot {live.number}). "
+            f"Re-running refreshes its stored credential."
+        )
+
+    if alias is None:
+        if not _is_tty():
+            error(
+                "Missing --alias. Pass one (`jailbee claude add --alias <name>`) "
+                "— the prompt needs a terminal."
+            )
+            raise typer.Exit(2)
+        default = live.email.split("@", 1)[0]
+        info(f"About to capture: {live.email}")
+        alias = typer.prompt("Alias", default=default)
+
+    try:
+        cswap.add(alias=alias, slot=slot)
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    # The pool now holds a copy of THIS repo's live credential, so the ledger
+    # has to say so. Skipping this left the invariant unenforced in every repo
+    # until its first `use`. A refusal here means the capture landed but the
+    # holding did not — its message says so, and is the whole report.
+    try:
+        with Session(get_engine()) as session:
+            record = claude_accounts.claim_captured(
+                session,
+                cswap,
+                identity,
+                prefix=cfg.container_prefix,
+                slot=slot,
+                now=_now(),
+            )
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    where = f" in slot {record.slot}" if record.slot else ""
+    success(f"Captured {live.email} as '{alias}'{where}; `{cfg.container_prefix}` holds it.")
+    if record.taken_from is not None:
+        warn_plain(
+            f"`{record.taken_from}` held the stored copy of this account, and "
+            f"this capture replaced it — that repo's copy is now a different "
+            f"credential lineage. Tell it to run `jailbee claude use "
+            f"<another account>` before it next relies on this one."
+        )
+
+
+@claude_app.command("allow")
+def claude_allow_cmd(
+    refs: Annotated[
+        list[str] | None,
+        typer.Argument(help="Slot numbers, aliases or emails. Omit for a picker."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Restrict this repo to a subset of accounts. Empty means all.
+
+    Arguments **replace** the list; they do not append. With no arguments a
+    checkbox picker opens, pre-checked with the current list — unchecking
+    everything is how the restriction is cleared, so there is no `--clear`.
+    """
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.db import get_engine
+
+    cfg, cswap = _claude_ctx(config)
+    rows, accounts = _claude_rows(cfg, cswap)
+
+    if refs:
+        try:
+            chosen = [claude_accounts.resolve_ref(accounts, r) for r in refs]
+        except claude_accounts.PoolError as e:
+            # Nothing is written: a list with one typo in it is not a list the
+            # user meant, and half-applying it would silently lock them out of
+            # the account they fat-fingered.
+            error_plain(f"{e}\nNothing was changed.")
+            raise typer.Exit(1) from e
+        identities = {a.identity for a in chosen}
+    else:
+        if not _is_tty():
+            error(
+                "Missing account arguments. Pass slot numbers, aliases or "
+                "emails — the interactive picker needs a terminal."
+            )
+            raise typer.Exit(2)
+        from jailbee.tui import pick_claude_accounts_multi
+
+        with Session(get_engine()) as session:
+            current = claude_accounts.allowed_identities(session, cfg.container_prefix)
+        checked = {str(a.number) for a in accounts if a.identity in current}
+        picked = pick_claude_accounts_multi(rows, checked=checked)
+        if picked is None:
+            info("Cancelled — the allowlist is unchanged.")
+            return
+        identities = {a.identity for a in accounts if str(a.number) in set(picked)}
+
+    with Session(get_engine()) as session:
+        claude_accounts.set_allowed(session, cfg.container_prefix, identities)
+    if not identities:
+        success(f"`{cfg.container_prefix}` may now use every account in the pool.")
+        return
+    labels = ", ".join(sorted(a.label for a in accounts if a.identity in identities))
+    success(f"`{cfg.container_prefix}` may now use: {labels}")
+
+
+@claude_app.command("release")
+def claude_release_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Release this account's holding wherever it is. Omit to release this repo's own."
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Give up a holding so another repo can take the account."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.db import get_engine
+
+    # The no-ref form touches nothing but jailbee's own ledger, so it must keep
+    # working with `cswap` uninstalled — otherwise a stale `claiming` row left
+    # by a crash has no CLI recovery at all.
+    cfg, cswap = _claude_ctx(config, require_cswap=ref is not None)
+
+    if ref is None:
+        with Session(get_engine()) as session:
+            freed = claude_accounts.release_repo(session, cfg.container_prefix)
+            # Rendered inside the session: the rows are detached once it closes.
+            listed = ", ".join(f"{r.email} (slot {r.slot or '?'}, {r.state})" for r in freed)
+        if not freed:
+            info(f"`{cfg.container_prefix}` holds no account — nothing to release.")
+            return
+        success(f"Released {listed} from `{cfg.container_prefix}`.")
+        warn_plain(
+            "Releasing is bookkeeping only: this repo stays logged in as that "
+            "account and keeps refreshing its credential. If another repo "
+            "takes it now, one of you gets logged out. The clean handover is "
+            "`jailbee claude use <other>` here first — a switch checks this "
+            "repo's rotated credential back in."
+        )
+        return
+
+    _, accounts = _claude_rows(cfg, cswap)
+    try:
+        account = claude_accounts.resolve_ref(accounts, ref)
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    with Session(get_engine()) as session:
+        released = claude_accounts.release_identity(session, account.identity)
+        was_held_by = None if released is None else released.container_prefix
+    if was_held_by is None:
+        info(f"Account {account.number} ({account.label}) is not held by any repo.")
+        return
+    success(f"Released account {account.number} ({account.label}) from `{was_held_by}`.")
+
+
+@claude_app.command("rm")
+def claude_rm_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(help="Slot number, alias or email. Omit for a picker."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Remove an account from the pool entirely (cswap prompts to confirm)."""
+    from sqlmodel import Session
+
+    from jailbee import claude_accounts
+    from jailbee.cswap import CswapError
+    from jailbee.db import get_engine
+
+    cfg, cswap = _claude_ctx(config)
+    rows, accounts = _claude_rows(cfg, cswap)
+    if ref is None:
+        ref = _claude_pick_ref(rows, verb="rm", allow_blocked=True)
+        if ref is None:
+            info("Cancelled — nothing was removed.")
+            return
+    try:
+        account = claude_accounts.resolve_ref(accounts, ref)
+    except claude_accounts.PoolError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    holder = next((r.holder for r in rows if r.account.identity == account.identity), None)
+    if holder is not None and holder.container_prefix != cfg.container_prefix:
+        warn(
+            f"Account {account.number} ({account.label}) is held by "
+            f"`{holder.container_prefix}`. Removing it there leaves that repo "
+            f"logged in but with no stored copy."
+        )
+    try:
+        with Session(get_engine()) as session:
+            claude_accounts.remove(session, cswap, account)
+    except CswapError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    success(f"Removed account {account.number} ({account.label}) from the pool.")
 
 
 @app.command("exec")

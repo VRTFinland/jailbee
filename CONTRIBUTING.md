@@ -68,8 +68,8 @@ follow them in any change:
   GUI app outlives the CLI process.) Shelling out to *other* host binaries
   is fine and stays in one module per concern: `git.py` (`git`), `pr.py`
   (`git`, `gh`), `doctor.py` (`docker`, `systemctl`),
-  `init_command.py`/`migrate.py` (`systemctl`), `maintenance.py` (`du`),
-  `chrome_pool.py` (`rsync`), `macos.py` (`sh`).
+  `init_command.py` (`systemctl`), `maintenance.py` (`du`),
+  `chrome_pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`).
 - **`config.py` is read-only after load.** No module mutates the loaded
   `Config` object once `load_config()` has returned it.
 - **`cli.py` stays thin.** It only parses arguments and delegates; business
@@ -87,7 +87,7 @@ flowchart TB
     MOD["command modules: lifecycle, sync, apply, ports, golden, ...<br>plain functions taking Config and Incus as arguments"]
     CFG["config.py<br>read-only once load_config has returned"]
     INC["incus.py<br>the only module that runs the incus CLI"]
-    OTH["one module per other host binary<br>git.py, pr.py, doctor.py, init_command.py,<br>migrate.py, maintenance.py, chrome_pool.py, macos.py"]
+    OTH["one module per other host binary<br>git.py, pr.py, doctor.py, init_command.py,<br>maintenance.py, chrome_pool.py, macos.py, cswap.py"]
     GUI["gui.py<br>detached incus exec via Popen"]
     SP["subprocess"]
 

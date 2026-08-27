@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def state_dir() -> Path:
@@ -162,6 +162,15 @@ def _migrate_to_v8(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v9(conn: Connection) -> None:
+    """v8 -> v9: add the claude_account_holding and claude_account_allow
+    tables. ``create_all`` (run before the migration loop in
+    ``_ensure_schema``) already creates both, so this step is an idempotent
+    no-op guard whose job is to let the version bump to 9 — the same shape as
+    ``_migrate_to_v8``."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -171,6 +180,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
 }
 
 

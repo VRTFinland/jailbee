@@ -324,6 +324,73 @@ Three facts that matter when explaining this:
 Also available as the short root alias `jailbee egress add|rm|ls|export`.
 Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 
+## Switching Claude account — `jailbee claude`
+
+Host-side commands — there is no `jb` binary inside a JailBee container, so
+tell the user to run these on the host. Requires the optional `cswap`
+(claude-swap) host binary; without it, `jailbee claude *` prints an install
+hint and exits, and nothing else about JailBee is affected.
+
+```bash
+jailbee claude ls                 # accounts, 5h/7d quota, which repo holds each
+jailbee claude use 2              # switch THIS repo to slot 2 — no browser login
+jailbee claude use personal       # ... by alias, or by email
+jailbee claude add --alias work   # capture the current login into the pool
+jailbee claude allow work ci      # restrict this repo to a subset (replaces the list)
+jailbee claude release            # give up this repo's holding (bookkeeping only)
+jailbee claude rm personal        # remove an account from the pool entirely
+```
+
+**When you hit a rate limit, this is the fix worth suggesting**: ask the user
+to run `jailbee claude ls` on the host to see which account still has quota,
+then `jailbee claude use <n>`. The switch is a credential-file replacement —
+Claude Code picks it up on its next message, no container restart needed.
+
+**`jailbee claude ls` is not a free read.** Fetching the quota column asks
+Anthropic about every pooled account, and doing so **refreshes the stored
+token** of each account that isn't live in this repo — which, under jailbee,
+can mean an account another repo is live on. Every verb that resolves a
+slot/alias/email reference pays the same cost. Suggest it when the user needs
+the answer; don't suggest polling it.
+
+**What the ledger tracks, and what it doesn't.** It records which repo was
+handed which *stored* account — not which credential is live on disk, and
+three ordinary actions move one without the other: `jailbee claude release`
+frees the row but leaves that repo logged in and still rotating the
+credential; `jailbee claude ls` refreshes stored tokens as just described;
+and a `cswap switch` run by hand outside jailbee moves a credential with no
+row at all. So the ledger stops the pool from *handing out* the same stored
+grant twice — it cannot stop a grant already handed out from being rotated
+under someone. `jailbee claude ls` flags the case it can see, as a NOTE:
+`live here, unclaimed`.
+
+Refusals worth explaining if the user hits them:
+
+- **"held by repo X"** — one stored account may be live in one place at a
+  time. The refusal names the repo and prints two runnable fixes: switching
+  that repo to another account (`cd <that repo> && jailbee claude use
+  <other>`), which is the clean handover because a switch checks the rotated
+  credential back in, or releasing it there if that repo is done with the
+  account.
+- **"is held by repo X" from `jailbee claude add`** — the account being
+  captured is already in the pool and another repo holds the stored copy.
+  Re-capturing would overwrite that copy with this repo's credential
+  lineage, so it is refused before anything is written.
+- **"current login is not in the pool"** — this container's login was never
+  captured with `jailbee claude add` (just a plain `/login`). `cswap`
+  stashes the credential before switching, but recovering from a stash is a
+  manual job, not something `jailbee claude` automates — the supported path
+  is capturing it first: `jailbee claude add --alias <name>`. `--force`
+  switches anyway if the user accepts that.
+- **no match for `<n>`/alias/email** — a typo in the reference is refused,
+  not silently ignored; re-run `jailbee claude ls` for the exact slot,
+  alias, or email to pass.
+
+Never suggest `/logout` to change accounts. Current Claude Code may revoke
+the refresh token of the account being left, which kills any stored copy of
+that same grant. Switching is always a credential-file replacement in
+place, which is what these commands do.
+
 ## Port forwarding — `jailbee port`
 
 A forward is an Incus proxy device wired directly into (or out of) the
