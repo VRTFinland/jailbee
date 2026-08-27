@@ -48,7 +48,16 @@ PERSONAL = Account(
 )
 
 
-def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None, config_home=True):
+def _repo(
+    tmp_path,
+    mocker,
+    *,
+    available=True,
+    accounts=None,
+    live=None,
+    config_home=True,
+    claude_credentials_dir=None,
+):
     """Wire a repo config and a fake Cswap. Returns (cfg, fake_cswap).
 
     `agents={"claude": {"enabled": True}}` is required: with no override the
@@ -59,6 +68,10 @@ def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None, config_
     `cswap` is handed it as `CLAUDE_CONFIG_DIR`, and it is created by
     `jailbee init`/`apply`/`new`, never by loading a config. Pass
     `config_home=False` to test that pre-flight.
+
+    `claude_credentials_dir` makes this a credential-group repo, exercising
+    `_claude_ctx`'s `group_guard` — the Finding-1 guard from the 2026-08-27
+    review.
     """
     from jailbee.cswap import LiveAccount, SwitchResult
     from tests.conftest import make_config
@@ -69,7 +82,10 @@ def _repo(tmp_path, mocker, *, available=True, accounts=None, live=None, config_
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text(yaml.safe_dump({}))
     cfg = make_config(
-        repo_root, shared_dir=tmp_path / "shared", agents={"claude": {"enabled": True}}
+        repo_root,
+        shared_dir=tmp_path / "shared",
+        agents={"claude": {"enabled": True}},
+        claude_credentials_dir=claude_credentials_dir,
     )
     if config_home:
         (tmp_path / "shared" / "claude").mkdir(parents=True)
@@ -1109,4 +1125,119 @@ def test_rm_without_an_argument_opens_the_picker_on_a_tty(tmp_path, mocker):
     result = runner.invoke(app, ["claude", "rm"])
 
     assert result.exit_code == 0
+    fake.remove.assert_called_once_with("2")
+
+
+# --- credential-group guard (Finding 1, 2026-08-27 review) -----------------
+#
+# `Cswap._env()` always points `CLAUDE_CONFIG_DIR` at this repo's own config
+# home, so in a group repo `use`/`add` would write/read a `.credentials.json`
+# the group join already moved out and Claude Code no longer resolves —
+# corrupting state (`use`) or silently no-op'ing (`add`) without an error.
+# `ls`'s ACTIVE/holder columns are unreliable there too (same stale config
+# home) but not wrong enough to block. `allow`/`release`/`rm` never touch
+# this repo's own credential file, so they are unaffected.
+
+
+def test_use_refuses_in_a_group_repo(tmp_path, mocker):
+    _, fake = _repo(tmp_path, mocker, claude_credentials_dir=tmp_path / "creds" / "work")
+
+    result = runner.invoke(app, ["claude", "use", "2"])
+
+    assert result.exit_code == 1
+    flat = _flat(result.output)
+    assert "shares a Claude credential group" in flat
+    assert str(tmp_path / "creds" / "work") in flat
+    assert "claude_credentials" in flat
+    fake.switch.assert_not_called()
+
+
+def test_use_does_not_refuse_in_a_non_group_repo(tmp_path, mocker):
+    """The central promise: a repo that shares nothing behaves exactly as it
+    did before this guard existed."""
+    _repo(tmp_path, mocker)
+
+    result = runner.invoke(app, ["claude", "use", "2"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
+
+
+def test_add_refuses_in_a_group_repo(tmp_path, mocker):
+    _, fake = _repo(tmp_path, mocker, claude_credentials_dir=tmp_path / "creds" / "work")
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 1
+    flat = _flat(result.output)
+    assert "shares a Claude credential group" in flat
+    assert str(tmp_path / "creds" / "work") in flat
+    fake.add.assert_not_called()
+
+
+def test_add_does_not_refuse_in_a_non_group_repo(tmp_path, mocker):
+    _repo(tmp_path, mocker)
+
+    result = runner.invoke(app, ["claude", "add", "--alias", "work"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
+
+
+def test_ls_warns_in_a_group_repo(tmp_path, mocker):
+    _repo(tmp_path, mocker, claude_credentials_dir=tmp_path / "creds" / "work")
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert result.exit_code == 0
+    flat = _flat(result.output)
+    assert "shares a Claude credential group" in flat
+    assert str(tmp_path / "creds" / "work") in flat
+
+
+def test_ls_does_not_warn_in_a_non_group_repo(tmp_path, mocker):
+    _repo(tmp_path, mocker)
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
+
+
+def test_allow_is_unaffected_in_a_group_repo(tmp_path, mocker):
+    _repo(tmp_path, mocker, claude_credentials_dir=tmp_path / "creds" / "work")
+
+    result = runner.invoke(app, ["claude", "allow", "1"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
+
+
+def test_release_is_unaffected_in_a_group_repo(tmp_path, mocker):
+    """Includes the no-ref form, which must keep working with `cswap`
+    uninstalled — an existing, documented guarantee this guard must not
+    break."""
+    _repo(
+        tmp_path,
+        mocker,
+        available=False,
+        config_home=False,
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+
+    result = runner.invoke(app, ["claude", "release"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
+
+
+def test_rm_is_unaffected_in_a_group_repo(tmp_path, mocker):
+    _, fake = _repo(tmp_path, mocker, claude_credentials_dir=tmp_path / "creds" / "work")
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_claude_account", return_value="2")
+
+    result = runner.invoke(app, ["claude", "rm"])
+
+    assert result.exit_code == 0
+    assert "shares a Claude credential group" not in _flat(result.output)
     fake.remove.assert_called_once_with("2")

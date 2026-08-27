@@ -1725,3 +1725,108 @@ def test_a_version_probe_failure_does_not_break_doctor(tmp_path, mocker):
 
     assert results[0].ok is False
     assert "boom" in results[0].detail
+
+
+def test_doctor_is_silent_for_a_non_group_repo(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+
+    assert _check_claude_credentials(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_a_shared_credential(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    (creds / ".credentials.json").write_text("{}")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert len(results) == 1
+    assert results[0].ok
+    assert "work" in results[0].detail
+
+
+def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg):
+    """Group dir with no credential while the repo's config home still has one
+    means `jailbee apply` has not run since the group was configured."""
+    from jailbee.doctor import _check_claude_credentials
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".credentials.json").write_text("{}")
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        claude={"enabled": True},
+        claude_credentials_dir=creds,
+    )
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert not results[0].ok
+    assert "jailbee apply" in results[0].detail
+
+
+def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, make_cfg):
+    """`_credential_group_members` must exclude the calling repo itself and
+    any repo resolving to a different group (or to none), and include a
+    genuine other member of the same group.
+
+    Rows are inserted into the real, autouse-isolated state DB
+    (`_isolate_state_dir` in tests/conftest.py) rather than mocking
+    `get_engine` — that fixture is what makes the query honest.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.doctor import _credential_group_members
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate(
+        {"claude_credentials": {"group": "work", "repos": {"solo-repo": None}}}
+    )
+    when = datetime(2026, 8, 27, tzinfo=UTC)
+
+    with Session(get_engine()) as s:
+        # The calling repo itself — must never appear in its own listing.
+        s.add(
+            RegisteredRepo(
+                container_prefix=cfg.container_prefix,
+                repo_root=str(tmp_path),
+                registered_at=when,
+            )
+        )
+        # A genuine other member of the same group (default group "work").
+        s.add(
+            RegisteredRepo(
+                container_prefix="other-repo",
+                repo_root="/repos/other-repo",
+                registered_at=when,
+            )
+        )
+        # Opted out of the group entirely — resolves to no group.
+        s.add(
+            RegisteredRepo(
+                container_prefix="solo-repo",
+                repo_root="/repos/solo-repo",
+                registered_at=when,
+            )
+        )
+        s.commit()
+
+    members = _credential_group_members(gcfg, "work", exclude=cfg.container_prefix)
+
+    assert members == ["other-repo"]

@@ -2,8 +2,8 @@
 
 Stored at $XDG_CONFIG_HOME/jailbee/global.yaml (default
 ~/.config/jailbee/global.yaml). Optional file — if absent, defaults are used.
-Carries `docker_registry_mirror`, `loose_auto_revert`, and the `ls` /
-`dashboard` column preferences.
+Carries `docker_registry_mirror`, `loose_auto_revert`, `claude_credentials`,
+and the `ls` / `dashboard` column preferences.
 
 Per-repo configuration lives in <repo>/.jailbee/config.yaml — see config.py.
 """
@@ -19,6 +19,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationEr
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
+    ClaudeCredentials,
     ColumnConfig,
     ConfigError,
     LooseAutoRevert,
@@ -78,6 +79,9 @@ class GlobalConfig(BaseModel):
     ls: ColumnConfig = Field(default_factory=ColumnConfig)
     dashboard: ColumnConfig = Field(
         default_factory=lambda: ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE)),
+    )
+    claude_credentials: ClaudeCredentials = Field(
+        default_factory=ClaudeCredentials,
     )
 
 

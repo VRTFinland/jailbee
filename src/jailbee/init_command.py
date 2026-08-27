@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
+import yaml
 
 from jailbee.config import Config, ConfigError
 from jailbee.constants import SHARED_SUBDIRS
@@ -10,9 +13,11 @@ from jailbee.egress import EgressEntry, build_egress_entries
 from jailbee.incus import Incus, IncusError
 from jailbee.network import acl_name, allowlist_acl_yaml
 from jailbee.profiles import (
+    CLAUDE_CREDS_DEVICE,
     base_profile_yaml,
     binds_profile_yaml,
     claude_config_dir_env,
+    claude_securestorage_dir_env,
     net_profile_yaml,
     profile_names,
 )
@@ -232,6 +237,71 @@ def ensure_claude_config_dir(cfg: Config, incus: Incus) -> None:
     success(f"Set {key}={value} on '{names.base}' — Claude Code's global config is shared again")
 
 
+def _claude_creds_device_present(cfg: Config, incus: Incus) -> bool:
+    """True if `<prefix>-binds` already carries the `claude-creds` disk
+    device, i.e. a container created right now would actually find the
+    shared credential mounted at `~/.claude-creds`.
+
+    This, not the host group directory's existence, is the right gate for
+    `ensure_claude_credentials_env`: the group directory can already exist
+    because *another* member repo has run `jailbee apply`, while this repo's
+    own `<prefix>-binds` still lacks the device — the host directory check
+    would pass while the container it repairs still finds nothing. The
+    device is only ever attached by `jailbee apply` rendering
+    `binds_profile_yaml`, so its presence is the direct fact this function
+    needs.
+    """
+    names = profile_names(cfg)
+    if not incus.profile_exists(names.binds):
+        return False
+    parsed = yaml.safe_load(incus.profile_show(names.binds)) or {}
+    devices = parsed.get("devices") or {}
+    return CLAUDE_CREDS_DEVICE in devices
+
+
+def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
+    """Put `CLAUDE_SECURESTORAGE_CONFIG_DIR` on `<prefix>-base` when absent.
+
+    The `jailbee new` twin of `ensure_claude_config_dir`, and needed for the
+    same reason: `new` renders no profile, so a container created after this
+    repo joined a credential group would quietly keep using the repo's own
+    credential — logged in as a different account than every other member.
+
+    Conservative on purpose (Finding 2 of the 2026-08-27 review): the repair
+    is skipped entirely until `<prefix>-binds` already carries the
+    `claude-creds` device (`_claude_creds_device_present`). The one
+    reachable case where the device is missing is the half-joined
+    state — `claude_credentials` configured in `global.yaml`, but `jailbee
+    apply` not yet run — and writing the env key there would point a `jb
+    new` container's Claude Code at a directory nothing mounts, logging out
+    *every* container in the repo, while the still-valid credential sits
+    untouched at `<shared_dir>/claude`. Skipping leaves that half-joined repo
+    behaving exactly as it did before sharing existed, and `jailbee doctor`'s
+    existing half-join check is what tells the user to run `jailbee apply`.
+
+    Surgical on purpose otherwise — one key, not a `base_profile_yaml`
+    rewrite. An already-present value is left untouched, so a
+    `container.env` override stays authoritative.
+
+    Only ever *adds* the key. Leaving a group removes it on the next
+    `jailbee apply`, which rewrites the whole profile; `new` is not the place
+    to undo configuration.
+    """
+    env = claude_securestorage_dir_env(cfg)
+    if env is None:
+        return
+    if not _claude_creds_device_present(cfg, incus):
+        return
+    names = profile_names(cfg)
+    if not incus.profile_exists(names.base):
+        return
+    key, value = env
+    if incus.profile_config_get(names.base, key) is not None:
+        return
+    incus.profile_config_set(names.base, key, value)
+    success(f"Set {key}={value} on '{names.base}' — this repo shares a Claude credential")
+
+
 def _seed_claude_json(cfg: Config) -> None:
     """Write `<shared_dir>/claude/.claude.json` as `{}` when absent.
 
@@ -247,6 +317,59 @@ def _seed_claude_json(cfg: Config) -> None:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{}\n")
+
+
+def _ensure_claude_credentials_dir(cfg: Config) -> None:
+    """Create the shared credential directory and seed it once.
+
+    Runs on both `jailbee init` and `jailbee apply` via
+    `_ensure_integration_shared_dirs`, for the reason stated there: the binds
+    profile names this directory as a disk source, and Incus rejects every
+    `profile edit`/`profile assign` when a source path is missing.
+
+    Four cases, and the refusal is the important one:
+
+    * group directory empty, repo has a credential → **move** it in. A copy
+      would give one refresh-token lineage two refreshers, and the first
+      rotation silently logs one side out.
+    * both hold one → refuse. One of the two logins is about to become
+      unused and jailbee must not pick which.
+    * only the group holds one → nothing to do; the mount does the rest.
+    * neither → nothing to do; the first `/login` in any member lands here.
+
+    Mode 0700: unlike the rest of the shared tree this directory holds a live
+    credential, and it lives outside every repo. The container's dev user is
+    idmapped to the host user, so 0700 is still readable inside.
+
+    No `.owner` stamp (see `_ensure_shared_owner`): being shared by several
+    repos is the entire point here.
+    """
+    group_dir = cfg.claude_credentials_dir
+    if group_dir is None:
+        return
+    assert cfg.shared_dir is not None  # set by load_config
+
+    group_cred = group_dir / ".credentials.json"
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+
+    if group_cred.exists() and repo_cred.exists():
+        raise ConfigError(
+            f"{group_dir} already holds a credential, and so does this repo "
+            f"({repo_cred}). Sharing one account means one of the two logins "
+            f"becomes unused, and jailbee will not choose for you. Either "
+            f"delete this repo's copy to adopt the group's login, or point "
+            f"this repo at another group (or `null`) under "
+            f"`claude_credentials.repos` in ~/.config/jailbee/global.yaml."
+        )
+
+    group_dir.mkdir(parents=True, exist_ok=True)
+    group_dir.chmod(0o700)
+
+    if not group_cred.exists() and repo_cred.exists():
+        # shutil.move, not Path.rename: `shared_dir` can be overridden to
+        # another filesystem, where rename fails with EXDEV.
+        shutil.move(str(repo_cred), str(group_cred))
+        success(f"Moved this repo's Claude credential into the shared group dir: {group_dir}")
 
 
 def _ensure_integration_shared_dirs(cfg: Config) -> None:
@@ -293,6 +416,7 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
         # existing target, and a real pre-move `.claude.json` is orphaned.
         _relocate_claude_json(cfg)
         _seed_claude_json(cfg)
+        _ensure_claude_credentials_dir(cfg)
     if cfg.jetbrains.enabled:
         (cfg.shared_dir / "jetbrains-config").mkdir(parents=True, exist_ok=True)
         (cfg.shared_dir / "jetbrains-data").mkdir(parents=True, exist_ok=True)

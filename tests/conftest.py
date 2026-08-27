@@ -20,7 +20,7 @@ from sqlmodel import Session, create_engine
 
 from jailbee.config import Config, resolve_agents_raw
 from jailbee.cswap import CSWAP_BINARY
-from jailbee.db import _ensure_schema
+from jailbee.db import _ENGINES, _ensure_schema
 
 
 def make_config(
@@ -205,23 +205,25 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     which creates the DB at XDG_STATE_HOME/jailbee/state.sqlite. Per-test
     monkeypatch.setenv("XDG_STATE_HOME", ...) calls supersede this default
     because monkeypatch.setenv keeps the most recent value.
+
+    Teardown disposes and clears `db._ENGINES`: `get_engine` caches one
+    SQLAlchemy engine (and its open SQLite handles) per database path for the
+    life of the process — correct in production, where that is one path, but
+    here every test gets a fresh one, so the cache would grow an engine per
+    test and never drop one. Those handles are what push the process past
+    1024 open fds, at which point `select.select()` — which prompt_toolkit's
+    posix input calls with a bare fd — starts raising "filedescriptor out of
+    range". prompt_toolkit routes that into its event loop's exception
+    handler, which awaits a "Press ENTER to continue" prompt that nothing can
+    answer and allocates a fresh `PromptSession` per round: the checkbox
+    tests in `test_tui.py` then consume every byte of RAM the machine has,
+    and the suite OOMs around 96-97% with no summary and no per-test failure
+    to point at. Dispose per test and the cache never grows. See the
+    `pytest-fd-cliff-oom` memory note for the full chain.
     """
     iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
     yield
-    # `db.get_engine` caches one engine per database path for the life of the
-    # process — correct in production, where that is one path, but here every
-    # test gets a fresh one, so the cache would grow an engine (and its open
-    # SQLite handles) per test and never drop one. Those handles are what push
-    # the process past 1024 open fds, at which point `select.select()` — which
-    # prompt_toolkit's posix input calls with a bare fd — starts raising
-    # "filedescriptor out of range". prompt_toolkit routes that into its event
-    # loop's exception handler, which awaits a "Press ENTER to continue"
-    # prompt that nothing can answer and allocates a fresh PromptSession per
-    # round: the checkbox tests in test_tui.py then consume every byte of RAM
-    # the machine has. Dispose per test and the cache never grows.
-    from jailbee.db import _ENGINES
-
     for engine in _ENGINES.values():
         engine.dispose()
     _ENGINES.clear()

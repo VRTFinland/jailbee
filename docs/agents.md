@@ -326,3 +326,48 @@ Full field-by-field descriptions for these live in the
 [`claude` section of Configuration reference](config.md#claude) — that
 section stays the authoritative reference for the Claude-only fields; this
 page covers the generic `agents:` mechanism they sit on top of.
+
+### Shared credential groups (`claude_credentials`)
+
+Several repos on one host can share a single Claude Code login instead of
+each holding its own. Configuration is host-level only — see
+[`claude_credentials` in the Configuration reference](config.md#claude_credentials)
+for the `global.yaml` block, the join/leave flow, and `jailbee doctor`'s
+report. This section documents the mechanism the feature rests on.
+
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
+on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`
+computes the `(key, value)` pair, and `profiles.base_profile_yaml` is what
+renders it into the profile. The container path is `~/.claude-creds`,
+bind-mounted from the group's host directory as the `claude-creds` disk
+device. The facts below were measured against **Claude Code 2.1.247** by
+observing its behavior — none of them are documented by
+Anthropic:
+
+- `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves **both** `.credentials.json`
+  and the rotation lock `.oauth_refresh.lock`, independently of
+  `CLAUDE_CONFIG_DIR` (which still points at the per-repo `~/.claude`).
+  Because the lock travels with the credential, containers of different
+  repos rotating the same token stay mutually excluded instead of racing.
+- The mount is a **directory**, never a file. Claude Code rewrites
+  `.credentials.json` atomically (write new inode, rename over the old),
+  so a file-level bind would leave the container holding a handle to the
+  old, now-unlinked inode after the first rotation. This is the same
+  fragility the earlier `.claude.json` relocation to a directory mount
+  removed for the config file.
+- An **empty** `CLAUDE_SECURESTORAGE_CONFIG_DIR` is not equivalent to an
+  unset one — Claude Code falls back to `~/.claude` for it. jailbee treats
+  this as a hard rule: `claude_securestorage_dir_env` returns `None`
+  rather than an empty string, and `profiles.base_profile_yaml` drops the
+  key outright if a `container.env` override would otherwise render it
+  empty.
+- Account identity comes from the credential, not from seeding: a member
+  repo with a fresh `~/.claude` populates its own `oauthAccount` in
+  `.claude.json` the first time Claude Code runs, without jailbee writing
+  anything.
+- A **stale** `oauthAccount` in `.claude.json` does not break
+  authentication, and jailbee does not correct it — only the credential
+  in `CLAUDE_SECURESTORAGE_CONFIG_DIR` authenticates.
+- Only the credential is shared. Each repo keeps its own `~/.claude`, so
+  project history, MCP config, sessions and onboarding state never cross
+  repos.

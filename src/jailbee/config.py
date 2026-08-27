@@ -44,6 +44,12 @@ if TYPE_CHECKING:
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# A credential-group name becomes one directory name under
+# `<xdg_data_home>/jailbee/claude-credentials/`. Restricting it to a single
+# lowercase path segment is what stops `../` from escaping that root — the
+# directory holds a live Claude credential.
+_CREDENTIAL_GROUP_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
 # An agent name becomes a tmux window name and a `jailbee doctor` label —
 # kept to the safest common subset of what both accept. It does *not* reach
 # any Incus device name: those derive from each `shared[].subpath` via
@@ -122,7 +128,14 @@ _DEFAULT_NODE_MAJOR = 24
 # Its one list-valued field, `egress_allow`, *wants* the append behaviour: a
 # repo adding a single host to a global agent is the intended use. Don't
 # "fix" the apparent asymmetry with `ls`/`dashboard` by adding it here.
-_HOST_LEVEL_KEYS: frozenset[str] = frozenset({"docker_registry_mirror", "ls", "dashboard"})
+#
+# `claude_credentials` is host-level because it must never reach the Config
+# layer: a group name in a committed `.jailbee/config.yaml` would apply to
+# every teammate. It is resolved to `Config.claude_credentials_dir` on the
+# load path (Task 2) instead of being merged.
+_HOST_LEVEL_KEYS: frozenset[str] = frozenset(
+    {"docker_registry_mirror", "ls", "dashboard", "claude_credentials"}
+)
 
 
 def _split_host_keys(
@@ -132,6 +145,30 @@ def _split_host_keys(
     host = {k: v for k, v in raw.items() if k in _HOST_LEVEL_KEYS}
     config = {k: v for k, v in raw.items() if k not in _HOST_LEVEL_KEYS}
     return host, config
+
+
+def _claude_credentials_from_host_raw(
+    host_raw: dict[str, object],
+    origin: Path,
+) -> ClaudeCredentials:
+    """Validate the host layer's `claude_credentials` block.
+
+    A second validation site for the same model class — `GlobalConfig` also
+    carries it, so `jailbee config validate` and `doctor` see it through
+    `load_global_config`. Only the error wrapper differs; the shape cannot
+    drift because both validate `ClaudeCredentials`.
+
+    Resolution happens here rather than in `_build_config_from_dict` because
+    it needs `container_prefix`, which that function derives, and because
+    `_build_config_from_dict` has callers that never see the host layer.
+    """
+    block = host_raw.get("claude_credentials")
+    if block is None:
+        return ClaudeCredentials()
+    try:
+        return ClaudeCredentials.model_validate(block)
+    except ValidationError as e:
+        raise ConfigError(f"Invalid `claude_credentials` in {origin}:\n{e}") from e
 
 
 def _read_yaml_or_empty(path: Path) -> dict[str, object]:
@@ -786,6 +823,63 @@ class LooseAutoRevert(BaseModel):
 # the effective default still comes from `LooseAutoRevert.after`, and any
 # value `LooseAutoRevert.duration()` accepts can be typed instead.
 LOOSE_TTL_PRESETS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "2h", "4h", "8h")
+
+
+def _validated_group(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not _CREDENTIAL_GROUP_RE.match(value):
+        raise ValueError(f"invalid credential group name {value!r}: must match [a-z0-9][a-z0-9-]*")
+    return value
+
+
+class ClaudeCredentials(BaseModel):
+    """Which repos on this host share one Claude credential directory.
+
+    Host-level only (`_HOST_LEVEL_KEYS`), read from
+    `~/.config/jailbee/global.yaml`. A group name is a property of *this*
+    machine's working set: committed to a repo's config it would apply to
+    every teammate and name a group that exists on one machine only.
+
+    `group` is the default for every repo on the host; `repos` overrides it per
+    `container_prefix`, and an explicit `null` there opts one repo out. Absent
+    block, or no resolved group, means the repo keeps its own credential inside
+    its config home — today's behaviour.
+
+    Only the *credential* is shared. Each repo keeps its own `~/.claude`, so
+    project history, MCP config and sessions never cross repos. Claude Code
+    resolves `.credentials.json` and `.oauth_refresh.lock` from
+    `CLAUDE_SECURESTORAGE_CONFIG_DIR`, independently of `CLAUDE_CONFIG_DIR`,
+    which is what makes the split possible at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    group: str | None = None
+    repos: dict[str, str | None] = {}
+
+    @field_validator("group")
+    @classmethod
+    def _check_group(cls, value: str | None) -> str | None:
+        return _validated_group(value)
+
+    @field_validator("repos")
+    @classmethod
+    def _check_repos(cls, value: dict[str, str | None]) -> dict[str, str | None]:
+        for group in value.values():
+            _validated_group(group)
+        return value
+
+    def dir_for(self, container_prefix: str) -> Path | None:
+        """The credential directory for one repo, or None when it shares none.
+
+        A `repos` entry wins over `group` *including when it is `null`* —
+        opting one repo out is the only way to keep it on its own credential
+        while the rest of the host shares one.
+        """
+        group = self.repos[container_prefix] if container_prefix in self.repos else self.group
+        if not group:
+            return None
+        return xdg_data_home() / "jailbee" / "claude-credentials" / group
 
 
 def parse_loose_ttl(raw: str) -> timedelta | None:
@@ -1788,6 +1882,12 @@ class Config(BaseModel):
     container_user: ContainerUser = ContainerUser()
     container: ContainerConfig = ContainerConfig()
     shared_dir: PathExpanded | None = None
+    # Computed on the load path from the host-level `claude_credentials`
+    # block, like repo_root / default_branch / container_prefix. Never a YAML
+    # key on either layer: `load_config_from_text` refuses both this name and
+    # `claude_credentials` in a repo config. None = this repo keeps its own
+    # credential inside its config home.
+    claude_credentials_dir: Path | None = None
     host_mounts: list[HostMount] = []
     host_devices: list[HostDevice] = []
     host_ports: list[HostPort] = []
@@ -2478,7 +2578,7 @@ def load_config_from_text(text: str, path: Path) -> Config:
 
     global_raw = _read_yaml_or_empty(default_global_config_path())
     _check_retired_keys(global_raw)
-    _, global_for_merge = _split_host_keys(global_raw)
+    host_raw, global_for_merge = _split_host_keys(global_raw)
     repo_raw = _parse_yaml_text(text, str(path))
     _check_retired_keys(repo_raw)
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
@@ -2493,8 +2593,24 @@ def load_config_from_text(text: str, path: Path) -> Config:
             "git commit if placed here."
         )
 
+    # Host-only, for the same reason as `github`: a repo config is typically
+    # committed, and a credential-group name applies to whoever holds the
+    # checkout. `claude_credentials_dir` is banned alongside it because it is a
+    # declared Config field, so YAML could set it and be overwritten silently.
+    for banned in ("claude_credentials", "claude_credentials_dir"):
+        if banned in repo_raw:
+            raise ConfigError(
+                f"`{banned}` is not allowed in repo .jailbee/config.yaml — "
+                f"move it to ~/.config/jailbee/global.yaml. A credential group "
+                f"is host-local: committed here it would apply to every "
+                f"teammate and name a group that exists on one machine only."
+            )
+
     merged = deep_merge(global_for_merge, repo_raw)
     cfg = _build_config_from_dict(merged, path)
+
+    creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
+    object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))
 
     # Token security: global.yaml must be 0600 when it carries github.api_tokens.
     if cfg.github.api_tokens:
