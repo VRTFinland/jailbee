@@ -1454,13 +1454,23 @@ def _wire_origin_and_tracking(
     )
 
 
-def restart_container(cfg: Config, incus: Incus, name: str) -> None:
-    """Restart a container, re-attaching GUI sockets in the right order.
+def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> None:
+    """Bring a container up, re-attaching GUI sockets in the right order.
 
-    Detach happens *before* the reboot so the four /run/user/<uid>/*
-    socket devices don't race with logind's tmpfs creation on next boot.
-    Attach happens after restart returns, by which time PID 1 + logind
-    are running. See the runtime_mounts module docstring.
+    The single boot path behind `jailbee start` (``restart=False``) and
+    `jailbee restart` (``restart=True``), foreground and background alike,
+    so all four share one ordering.
+
+    Detach happens *before* the boot so the four /run/user/<uid>/* socket
+    devices don't race with logind's tmpfs creation on next boot. Attach
+    happens after the boot returns, by which time PID 1 + logind are
+    running. See the runtime_mounts module docstring.
+
+    ``restart=True`` falls back to `incus start` on a stopped container,
+    where `incus restart` would error out ("The instance is already
+    stopped"): `jailbee restart` means "ensure running, then run autostart".
+    ``restart=False`` never reboots — a running container reaching
+    `incus start` fails, which is what `jailbee start` should report.
     """
     from jailbee.runtime_mounts import (
         attach_runtime_devices,
@@ -1474,7 +1484,7 @@ def restart_container(cfg: Config, incus: Incus, name: str) -> None:
             break
 
     detach_runtime_devices(cfg, incus, name)
-    if state == "Running":
+    if restart and state == "Running":
         incus.restart(name)
     else:
         incus.start(name)

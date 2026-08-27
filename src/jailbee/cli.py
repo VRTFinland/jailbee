@@ -2063,23 +2063,15 @@ def start(
     config: ConfigOption = None,
 ) -> None:
     """Start a stopped container, then run autostart."""
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    incus.start(name)
+    # boot_container also re-attaches the /run/user/<uid>/* GUI sockets,
+    # detaching first so a stale device from a previous boot can't error
+    # the attach out. See runtime_mounts.
+    boot_container(cfg, incus, name, restart=False)
     success(f"Started: {short_name(cfg, name)}")
-
-    # Re-attach /run/user/<uid>/* GUI sockets — see runtime_mounts.
-    # Detach first to avoid stale-device errors if the container had
-    # previously been attached.
-    from jailbee.runtime_mounts import (
-        attach_runtime_devices,
-        detach_runtime_devices,
-    )
-
-    detach_runtime_devices(cfg, incus, name)
-    attach_runtime_devices(cfg, incus, name)
 
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
 
@@ -2116,11 +2108,11 @@ def restart(
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
-    from jailbee.lifecycle import restart_container, short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    restart_container(cfg, incus, name)
+    boot_container(cfg, incus, name, restart=True)
     success(f"Restarted: {short_name(cfg, name)}")
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
 

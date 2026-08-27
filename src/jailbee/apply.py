@@ -494,12 +494,12 @@ def _restart_one(
     )
     from jailbee.hosts import apply_hosts
     from jailbee.lifecycle import (
+        boot_container,
         container_repo_dir,
         current_network_mode,
-        restart_container,
     )
 
-    restart_container(cfg, incus, name)
+    boot_container(cfg, incus, name, restart=True)
     if current_network_mode(cfg, incus, name) == "strict":
         apply_hosts(cfg, incus, name, mirror_endpoint=mirror_endpoint)
     repo_dir = container_repo_dir(cfg, incus, name)
