@@ -2208,6 +2208,45 @@ claude_credentials:
    exit
    ```
 
+7. **Two credentials: the prompt, all three answers.** The case every host
+   that adopts a group after already logging in per-repo hits on the second
+   `jailbee apply` — this used to be a hard refusal thrown from the middle of
+   `run_apply`, leaving the profiles unwritten. Needs two *different* logins
+   to be worth running: the point is watching which account each container
+   reports afterwards, and two `/login`s to the same account are
+   indistinguishable here.
+
+   ```bash
+   # SampleApp is grouped and applied (its login is now the group's).
+   # Give SampleApp2 its own, different login, then point it at the group:
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json               # exists
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json  # exists
+   cd SampleApp2
+   jailbee apply
+   ```
+
+   Expected: a warning naming both paths, a hint printing the runnable
+   `claude_credentials.repos` block, then a three-row picker.
+
+   * **cancel** (or Ctrl-C) → exit 1 with the original refusal text; both
+     files still present and byte-identical. Verify with `md5sum` on both
+     before and after — "changes nothing" is the claim most worth checking.
+   * **the group's login** → `<shared_dir(SampleApp2)>/claude/.credentials.json`
+     is gone, the group's file is unchanged (same `md5sum` as before), and a
+     `jailbee shell` in a SampleApp2 container reports the *group's* account.
+   * **this repo's login** → the group file now has SampleApp2's old
+     `md5sum`, SampleApp2's copy is gone, and a container in **SampleApp**
+     (the other member) reports SampleApp2's account after a restart. That
+     re-points every member repo, which is the answer worth being sure about.
+
+   Finally, the no-TTY path, which must refuse rather than block:
+
+   ```bash
+   # restore a credential on both sides first, then:
+   jailbee apply < /dev/null
+   # expect: exit 1 with the refusal, no prompt rendered, both files intact
+   ```
+
 Afterwards, clean up: `jailbee destroy` the containers created above, remove
 `claude_credentials` from `global.yaml` if it was added only for this test,
 `jailbee apply` in each affected repo, and (if step 4's group directory was a

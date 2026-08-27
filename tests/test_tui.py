@@ -558,3 +558,61 @@ def test_status_with_elapsed_stops_its_ticker_on_exit(mocker):
         handle.update("still working")
 
     assert threading.active_count() == before
+
+
+def test_choose_shared_credential_returns_none_without_a_tty(mocker):
+    """`jailbee apply` in CI or under a pipe must refuse, not hang on stdin."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    select = mocker.patch("questionary.select")
+
+    assert choose_shared_credential(Path("/creds/work"), Path("/shared/claude"), "app") is None
+    select.assert_not_called()
+
+
+def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(mocker, capsys):
+    """The two credential choices plus the `repos:` route out of the group —
+    without the hint, a user who wants neither has no visible third option."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "group"
+
+    result = choose_shared_credential(
+        Path("/creds/work"), Path("/shared/claude/.credentials.json"), "SampleApp"
+    )
+
+    assert result == "group"
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert values == ["group", "repo", "cancel"]
+    out = capsys.readouterr()
+    combined = out.out + out.err
+    assert "claude_credentials" in combined
+    assert "global.yaml" in combined
+    # The block must be copy-pasteable: `repos` is keyed by container_prefix,
+    # and a placeholder there is the one part the user cannot fill in from
+    # the prompt alone.
+    assert "SampleApp: null" in combined
+
+
+@pytest.mark.parametrize("answer", [None, "cancel"])
+def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answer):
+    """questionary returns None on Ctrl-C and the sentinel on the `cancel`
+    row; a `value=None` Choice would instead hand back its own title."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = answer
+
+    assert (
+        choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
+    )

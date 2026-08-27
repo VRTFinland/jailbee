@@ -13,8 +13,12 @@
   repo's committed `.jailbee/config.yaml` is rejected, since a group name is
   a property of this one machine. `jailbee apply` does the work: it creates
   `<xdg_data_home>/jailbee/claude-credentials/<group>/` and **moves** this
-  repo's stored credential into it, refusing outright if both the repo and
-  the group already hold one rather than silently discarding a login. Only
+  repo's stored credential into it. When the repo *and* the group already
+  hold one, only one login can be shared and the other becomes unused, so
+  `apply` asks which to keep — the group's, this repo's (which re-points
+  every member repo), or cancel — and deletes the loser; the two are
+  independent grants, so nothing the survivor depends on is touched. Without
+  a TTY to ask on, it refuses rather than silently discarding a login. Only
   the credential is shared — each repo keeps its own `~/.claude`, so
   project history, MCP config and sessions stay per-repo — and no golden
   image rebuild is needed: the mount and the
@@ -26,8 +30,8 @@
   shares one login with no configuration at all; an existing `global.yaml` is
   never rewritten, so hosts that predate the key keep every repo on its own
   credential until they opt in. Turning sharing on for a host whose repos are
-  already logged in is a migration — the second `jailbee apply` hits the
-  two-credential refusal — which is exactly why the default lives in the
+  already logged in is a migration — every `jailbee apply` after the first
+  asks which login to keep — which is exactly why the default lives in the
   template rather than in the schema.
 - **`jb setup` installs the post-install steps a package install cannot.**
   Shell completions for both console scripts, the `jailbee-net-refresh` user

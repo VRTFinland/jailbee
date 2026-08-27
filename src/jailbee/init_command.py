@@ -22,7 +22,13 @@ from jailbee.profiles import (
     profile_names,
 )
 from jailbee.ssh_seed import seed_ssh_dir
-from jailbee.tui import info, success, warn
+from jailbee.tui import (
+    ChooseCredentialFn,
+    choose_shared_credential,
+    info,
+    success,
+    warn,
+)
 
 BRIDGE_NETWORK = "incusbr0"
 LOOSE_BRIDGE = "jailbee-loose"
@@ -319,7 +325,11 @@ def _seed_claude_json(cfg: Config) -> None:
     target.write_text("{}\n")
 
 
-def _ensure_claude_credentials_dir(cfg: Config) -> None:
+def _ensure_claude_credentials_dir(
+    cfg: Config,
+    *,
+    choose_fn: ChooseCredentialFn | None = None,
+) -> None:
     """Create the shared credential directory and seed it once.
 
     Runs on both `jailbee init` and `jailbee apply` via
@@ -327,13 +337,21 @@ def _ensure_claude_credentials_dir(cfg: Config) -> None:
     profile names this directory as a disk source, and Incus rejects every
     `profile edit`/`profile assign` when a source path is missing.
 
-    Four cases, and the refusal is the important one:
+    Four cases, and the two-credential one is the interesting one:
 
     * group directory empty, repo has a credential → **move** it in. A copy
       would give one refresh-token lineage two refreshers, and the first
       rotation silently logs one side out.
-    * both hold one → refuse. One of the two logins is about to become
-      unused and jailbee must not pick which.
+    * both hold one → **ask** (`choose_fn`, default
+      `tui.choose_shared_credential`). Exactly one login can be shared and
+      the other becomes unused, so the answer is the user's; the loser is
+      deleted rather than kept, since nothing would ever read it again and a
+      stale grant left in the shared tree only invites confusion. Cancelling
+      — or having no TTY to ask on — raises the original `ConfigError`, which
+      still names the `claude_credentials.repos` opt-out for a user who wants
+      neither shared login. Deleting a credential is safe here precisely
+      because the two are *independent* grants (see `claude_accounts`): the
+      survivor's refresh-token lineage is untouched.
     * only the group holds one → nothing to do; the mount does the rest.
     * neither → nothing to do; the first `/login` in any member lands here.
 
@@ -353,14 +371,22 @@ def _ensure_claude_credentials_dir(cfg: Config) -> None:
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
 
     if group_cred.exists() and repo_cred.exists():
-        raise ConfigError(
-            f"{group_dir} already holds a credential, and so does this repo "
-            f"({repo_cred}). Sharing one account means one of the two logins "
-            f"becomes unused, and jailbee will not choose for you. Either "
-            f"delete this repo's copy to adopt the group's login, or point "
-            f"this repo at another group (or `null`) under "
-            f"`claude_credentials.repos` in ~/.config/jailbee/global.yaml."
-        )
+        keep = (choose_fn or choose_shared_credential)(group_dir, repo_cred, cfg.container_prefix)
+        if keep is None:
+            raise ConfigError(
+                f"{group_dir} already holds a credential, and so does this repo "
+                f"({repo_cred}). Sharing one account means one of the two logins "
+                f"becomes unused, and jailbee will not choose for you. Either "
+                f"delete this repo's copy to adopt the group's login, or point "
+                f"this repo at another group (or `null`) under "
+                f"`claude_credentials.repos` in ~/.config/jailbee/global.yaml."
+            )
+        if keep == "group":
+            repo_cred.unlink()
+            success(f"Adopted the group's Claude login; deleted this repo's copy: {repo_cred}")
+        else:
+            group_cred.unlink()
+            success(f"Replaced the group's Claude login with this repo's: {group_dir}")
 
     group_dir.mkdir(parents=True, exist_ok=True)
     group_dir.chmod(0o700)
@@ -372,7 +398,11 @@ def _ensure_claude_credentials_dir(cfg: Config) -> None:
         success(f"Moved this repo's Claude credential into the shared group dir: {group_dir}")
 
 
-def _ensure_integration_shared_dirs(cfg: Config) -> None:
+def _ensure_integration_shared_dirs(
+    cfg: Config,
+    *,
+    choose_fn: ChooseCredentialFn | None = None,
+) -> None:
     """Create the shared subdirs/files each enabled agent bind-mounts, plus
     JetBrains' subdirs.
 
@@ -416,7 +446,7 @@ def _ensure_integration_shared_dirs(cfg: Config) -> None:
         # existing target, and a real pre-move `.claude.json` is orphaned.
         _relocate_claude_json(cfg)
         _seed_claude_json(cfg)
-        _ensure_claude_credentials_dir(cfg)
+        _ensure_claude_credentials_dir(cfg, choose_fn=choose_fn)
     if cfg.jetbrains.enabled:
         (cfg.shared_dir / "jetbrains-config").mkdir(parents=True, exist_ok=True)
         (cfg.shared_dir / "jetbrains-data").mkdir(parents=True, exist_ok=True)
