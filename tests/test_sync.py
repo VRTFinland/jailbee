@@ -2212,7 +2212,9 @@ def test_ff_container_branch_creates_the_branch_when_absent(mocker):
         {"symbolic-ref": "feat/foo\n", "rev-parse": _FAILED}
     )
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "created"
     assert result.old_oid is None
@@ -2229,7 +2231,9 @@ def test_ff_container_branch_fast_forwards_with_a_compare_and_swap(mocker):
         {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n"}
     )
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "fast-forwarded"
     assert result.old_oid == "old1"
@@ -2245,7 +2249,9 @@ def test_ff_container_branch_reports_up_to_date_without_writing(mocker):
         {"symbolic-ref": "feat/foo\n", "rev-parse": "new1\n"}
     )
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "up-to-date"
     assert not [c for c in _git_calls(incus) if c[0] == "update-ref"]
@@ -2263,7 +2269,9 @@ def test_ff_container_branch_skips_the_checked_out_branch(mocker):
     incus = mocker.MagicMock()
     incus.exec.side_effect = _container_git_stub({"symbolic-ref": "dev\n"})
 
-    result = ff_container_branch(incus, "p-dev", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-dev", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "checked-out"
     assert _git_calls(incus) == [["symbolic-ref", "--quiet", "--short", "HEAD"]]
@@ -2277,7 +2285,9 @@ def test_ff_container_branch_refuses_to_rewind_a_diverged_branch(mocker):
         {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "merge-base": _FAILED}
     )
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "diverged"
     assert result.old_oid == "old1"
@@ -2293,7 +2303,9 @@ def test_ff_container_branch_reports_a_failed_update_ref(mocker):
         {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "update-ref": _FAILED}
     )
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "failed"
 
@@ -2306,7 +2318,9 @@ def test_ff_container_branch_survives_a_dead_container(mocker):
     incus = mocker.MagicMock()
     incus.exec.side_effect = IncusError("container is not running")
 
-    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
 
     assert result.status == "failed"
 
