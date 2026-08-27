@@ -472,6 +472,29 @@ always resolves locally; `--pr` sidesteps the question by pushing
 `refs/jailbee/pr/<N>/head` verbatim. If the origin ref is pushed while the local
 branch has commits it lacks, JailBee prints the count and points at `--from-local`.
 
+**What lands in the container.** Always `refs/jailbee/host/<source>`
+(force-updated). Plus `refs/jailbee/base/<base>` when the pushed source *is* the
+container's base branch. Plus the container's own `refs/heads/<source>`, when it
+can be fast-forwarded — otherwise an in-container `git rebase <base>` would use
+a stale base, and the container can't refresh it itself (its `origin` is the
+real upstream URL, so `git fetch` there needs network and credentials). That
+last update is strictly fast-forward, never fails the push, and:
+
+- **skips HEAD's own branch** — moving it would desync the index and working
+  tree, and `receive.denyCurrentBranch` refuses a push into it anyway. Applies
+  to a container forked from the base branch itself and to every `--pr` push (a
+  PR container is checked out on the head ref); `--merge`/`--rebase` advance
+  that branch themselves.
+- **creates the branch when absent** — `git clone` gives the container only the
+  host's HEAD branch, so a container created off `dev` from a host on `main`
+  has no local `dev` until the first push.
+- **reports a diverged branch and leaves it alone** — container commits on that
+  branch are never discarded. Reconcile in `jailbee shell`, or compare against
+  `refs/jailbee/host/<source>`.
+
+The summary prints one line for created/fast-forwarded, a warning for
+diverged/failed, and nothing when the branch was already current or is HEAD's.
+
 ### `jailbee git diff [NAME]`
 
 Default: the commits `jailbee git pull` would bring (3-dot diff vs the base branch).

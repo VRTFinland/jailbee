@@ -133,6 +133,43 @@ silently. Configure the defaults with `push.push_from` / `push.autofetch`
 > `--from-origin` / `--from-local` and the `push_from: origin` value keep the
 > word regardless of what your remote is called.
 
+### What the push writes inside the container
+
+A push updates up to three refs in the container:
+
+| Ref | When |
+|---|---|
+| `refs/jailbee/host/<source>` | always — the transport's landing ref, force-updated |
+| `refs/jailbee/base/<base>` | when the pushed source *is* the container's base branch, so `jailbee ls` AHEAD measures against the fresh base |
+| `refs/heads/<source>` | when it can be fast-forwarded (see below) |
+
+That last one exists because the `refs/jailbee/*` namespace is invisible to
+everyday git: a container whose local `dev` never moved makes an in-container
+`git rebase dev` silently use a stale base, and the container cannot fix that
+itself — its `origin` is the real upstream URL, so `git fetch` there needs
+network and credentials that strict mode does not grant.
+
+The update is strictly fast-forward and never fails a push:
+
+- **HEAD's own branch is skipped.** Moving it would leave the index and working
+  tree describing a commit the branch no longer points at, and
+  `receive.denyCurrentBranch` refuses a push into it for the same reason. This
+  is the case for a container forked from the base branch itself, and for every
+  `--pr` push (a PR container is checked out on the head ref). `--merge` and
+  `--rebase` advance that branch themselves.
+- **An absent branch is created.** `git clone` gives the container only the
+  host's HEAD branch, so a container created off `dev` from a host sitting on
+  `main` has no local `dev` at all until the first push.
+- **A diverged branch is reported and left alone** — a commit made in the
+  container on that branch is never discarded here. Reconcile it by hand in
+  `jailbee shell`, or compare against `refs/jailbee/host/<source>`.
+- The write uses `git update-ref`'s compare-and-swap form, so a commit made in
+  the container mid-push loses the race rather than the commit.
+
+The push summary prints one line when the branch was created or fast-forwarded,
+a warning when it diverged or the update failed, and nothing in the two benign
+cases (already current, or HEAD's own branch).
+
 Both `jailbee git push` and `jailbee git pull` print a one-line
 `<source> (…) ──▶ <target> (…)` banner before the detailed summary, so the
 direction of the sync is always unambiguous at a glance.
