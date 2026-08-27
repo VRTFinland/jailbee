@@ -2165,6 +2165,231 @@ def test_push_to_container_no_base_refspec_when_source_not_base(mocker, make_cfg
 
 
 # ----------------------------------------------------------------------
+# Fast-forwarding the container's own refs/heads/<source>
+#
+# The transport writes only the refs/jailbee/* namespace, so a container's
+# local `dev` stayed at whatever the clone had — making an in-container
+# `git rebase dev` silently use a stale base. `ff_container_branch` advances
+# it, strictly fast-forward and best-effort.
+# ----------------------------------------------------------------------
+
+_FAILED = object()
+"""Sentinel for `_container_git_stub`: this git subcommand exits non-zero."""
+
+
+def _container_git_stub(outputs):
+    """Build an `incus.exec` side_effect dispatching on the git subcommand.
+
+    Keys are the first git argument after `git -C <dir>` (e.g. "rev-parse").
+    A string value is that command's stdout; `_FAILED` makes it exit
+    non-zero, which the real `Incus.exec` surfaces as `IncusError`.
+    Unlisted subcommands return empty stdout.
+    """
+    from jailbee.incus import IncusError
+
+    def side_effect(container, cmd, **kwargs):
+        sub = cmd[3] if len(cmd) > 3 else ""
+        out = outputs.get(sub, "")
+        if out is _FAILED:
+            raise IncusError(f"git {sub} exited non-zero")
+        return out
+
+    return side_effect
+
+
+def _git_calls(incus_mock):
+    """The git argv of every incus.exec call, minus the leading `git -C <dir>`."""
+    return [call.args[1][3:] for call in incus_mock.exec.call_args_list]
+
+
+def test_ff_container_branch_creates_the_branch_when_absent(mocker):
+    """A clone of a host whose HEAD was `main` has no local `dev` at all."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    # `rev-parse --verify --quiet` exits non-zero on a ref that doesn't resolve.
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": _FAILED}
+    )
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "created"
+    assert result.old_oid is None
+    assert result.new_oid == "new1"
+    assert ["update-ref", "refs/heads/dev", "new1"] in _git_calls(incus)
+
+
+def test_ff_container_branch_fast_forwards_with_a_compare_and_swap(mocker):
+    """The 3-arg update-ref form: a concurrent container-side commit can't be clobbered."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n"}
+    )
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "fast-forwarded"
+    assert result.old_oid == "old1"
+    assert ["merge-base", "--is-ancestor", "old1", "new1"] in _git_calls(incus)
+    assert ["update-ref", "refs/heads/dev", "new1", "old1"] in _git_calls(incus)
+
+
+def test_ff_container_branch_reports_up_to_date_without_writing(mocker):
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "new1\n"}
+    )
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "up-to-date"
+    assert not [c for c in _git_calls(incus) if c[0] == "update-ref"]
+
+
+def test_ff_container_branch_skips_the_checked_out_branch(mocker):
+    """`receive.denyCurrentBranch` aside, moving HEAD's branch would desync the worktree.
+
+    This is the dev-basella-oleva-dev-kontti case and the `jb push --pr` case
+    (a PR container's branch *is* the head ref, cli.py:1016). `--merge`
+    already handles both with its --ff-only merge.
+    """
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub({"symbolic-ref": "dev\n"})
+
+    result = ff_container_branch(incus, "p-dev", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "checked-out"
+    assert _git_calls(incus) == [["symbolic-ref", "--quiet", "--short", "HEAD"]]
+
+
+def test_ff_container_branch_refuses_to_rewind_a_diverged_branch(mocker):
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "merge-base": _FAILED}
+    )
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "diverged"
+    assert result.old_oid == "old1"
+    assert not [c for c in _git_calls(incus) if c[0] == "update-ref"]
+
+
+def test_ff_container_branch_reports_a_failed_update_ref(mocker):
+    """A lost CAS race (someone committed on dev mid-push) must not read as success."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "update-ref": _FAILED}
+    )
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "failed"
+
+
+def test_ff_container_branch_survives_a_dead_container(mocker):
+    """Never raises: a refresh problem must not fail the surrounding push."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("container is not running")
+
+    result = ff_container_branch(incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000)
+
+    assert result.status == "failed"
+
+
+def test_push_to_container_fast_forwards_the_pushed_local_branch(mocker, make_cfg, tmp_path):
+    """Wiring: the transport reports what happened to the container's own branch."""
+    from jailbee.sync import push_to_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    def container_git(container, cmd, **kwargs):
+        args = cmd[3:]
+        if args[0] == "symbolic-ref":
+            return "feat/foo\n"
+        if args[0] == "rev-parse":
+            return {
+                "refs/jailbee/host/main": "prior-host-oid\n",
+                "refs/heads/main": "container-main\n",
+            }.get(args[3], "")
+        return ""
+
+    incus.exec.side_effect = container_git
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
+    mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: "host-oid" if ref == "refs/heads/main" else None,
+    )
+    mocker.patch("jailbee.sync.git.push_url")
+
+    result = push_to_container(cfg, incus, "feat-foo")
+
+    assert result.local_branch is not None
+    assert result.local_branch.branch == "main"
+    assert result.local_branch.status == "fast-forwarded"
+    assert result.local_branch.old_oid == "container-main"
+    assert result.local_branch.new_oid == "host-oid"
+
+
+def test_push_to_container_survives_a_failed_local_branch_update(mocker, make_cfg, tmp_path):
+    """The ref bookkeeping is best-effort — a failure must not fail the push."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_to_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    def container_git(container, cmd, **kwargs):
+        if cmd[3] == "update-ref":
+            raise IncusError("update-ref: cannot lock ref")
+        return ""
+
+    incus.exec.side_effect = container_git
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
+    mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="host-oid")
+    mocker.patch("jailbee.sync.git.push_url")
+
+    result = push_to_container(cfg, incus, "feat-foo")
+
+    assert result.new_oid == "host-oid"
+    assert result.local_branch is not None
+    assert result.local_branch.status == "failed"
+
+
+# ----------------------------------------------------------------------
 # Source-ref preference: origin/<source> vs refs/heads/<source>
 #
 # A host `refs/heads/<base>` only moves on `git pull`; `git fetch` updates
@@ -2381,7 +2606,13 @@ def _exec_dispatcher(responses):
     """Build an incus.exec side_effect from a {key: value-or-callable-or-exc} dict.
 
     Keys: status, merge_head, rebase_merge, rebase_apply, head_branch,
-    rev_parse_gie, rev_parse_head, rev_list_count, merge, rebase, reset.
+    rev_parse_gie, rev_parse_local, rev_parse_head, rev_list_count,
+    merge_base, update_ref, merge, rebase, reset.
+
+    The rev_parse_local / merge_base / update_ref trio belongs to
+    `ff_container_branch`; their defaults ("" = success, empty stdout) make it
+    read the container's `refs/heads/<source>` as absent and create it.
+
     Values may be:
     - a string (returned as stdout),
     - an Exception (raised),
@@ -2403,8 +2634,14 @@ def _exec_dispatcher(responses):
             key = "head_branch"
         elif "rev-list" in joined:
             key = "rev_list_count"
+        elif "update-ref" in cmd:
+            key = "update_ref"
+        elif "merge-base" in cmd:
+            key = "merge_base"
         elif "rev-parse" in joined and "refs/jailbee/host" in joined:
             key = "rev_parse_gie"
+        elif "rev-parse" in joined and "refs/heads/" in joined:
+            key = "rev_parse_local"
         elif "rev-parse" in joined and "HEAD" in joined:
             key = "rev_parse_head"
         elif "ls-files" in cmd:
