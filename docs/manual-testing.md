@@ -1980,6 +1980,200 @@ afterwards, if desired, with `jailbee claude rm one` / `jailbee claude rm
 two` from either repo — and `jailbee claude release` in each repo that still
 holds a row, since `rm` only drops the rows of the account it removes.
 
+## Shared Claude credential groups (`claude_credentials`) smoke test
+
+Several repos on one host can share one Claude Code login by pointing
+`claude_credentials` in `~/.config/jailbee/global.yaml` at the same group
+name — see `.local/superpowers/specs/2026-08-27-claude-shared-credentials-design.md`
+for the design. The mechanism rests entirely on **undocumented observations
+of Claude Code 2.1.247**: that `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves the
+credential directory independently of `CLAUDE_CONFIG_DIR`, and that the OAuth
+refresh lock (`.oauth_refresh.lock`) is created inside that same directory.
+Nothing here is read from public documentation, and none of it is guaranteed
+to survive a future Claude Code release. The checks below are what stand in
+for a contract until it breaks.
+
+Needs a real Incus daemon, real Claude Code logins, and (for step 2)
+`uv tool install claude-swap`. Run them **in this order** — the happy path
+(step 4) looks identical whether or not step 1's repair actually worked, so
+running it first would mask the one finding most likely to regress silently.
+
+Two repos, `SampleApp` and `SampleApp2` (see the account-pool smoke test
+above for how to get a second `container_prefix` on this host), both with
+`agents.claude.enabled: true`. Point both at the same group in
+`~/.config/jailbee/global.yaml`:
+
+```yaml
+claude_credentials:
+  group: worktest
+```
+
+1. **`jailbee new` before `jailbee apply` does not log the container out.**
+   This is Finding 2 of the 2026-08-27 review: the `jailbee new` repair for
+   `CLAUDE_SECURESTORAGE_CONFIG_DIR` used to fire unconditionally once the key
+   was absent, which — in a repo that had `claude_credentials` added but never
+   `apply`ed — wrote the env key to `<prefix>-base` while `<prefix>-binds`
+   still had no `claude-creds` device, so Claude Code resolved an unmounted
+   directory and reported "Not logged in" in every container of the repo. The
+   fix makes the repair wait for the device.
+
+   Starting from a repo that has **never** run `jailbee apply` since
+   `claude_credentials` was set (a fresh `jailbee init` followed by editing
+   `global.yaml`, or reuse a repo that predates this feature and add the key
+   now):
+
+   ```bash
+   cd SampleApp
+   incus profile show SampleApp-binds | grep -c claude-creds
+   # expect: 0 — apply has not run yet
+   jailbee new feat/creds-before-apply
+   jailbee shell feat-creds-before-apply
+   # inside: claude -p "hi"
+   ```
+
+   Expected: whatever this container's login state was before (logged in, or
+   asking for `/login`) — **not** a "Not logged in" for a container that was
+   previously authenticated via `<shared_dir>/claude`. That mount is
+   unaffected either way; only the new `.claude-creds` mount is missing.
+
+   ```bash
+   exit
+   jailbee apply
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: the device, now present
+   jailbee shell feat-creds-before-apply
+   # inside: claude -p "hi"
+   # expect: logged in as the group's account (or /login if the group has
+   #         no credential yet — see step 4)
+   exit
+   ```
+
+2. **`jailbee claude use`/`add` refuse in a group repo; `release` still
+   works.** Finding 1 of the same review: `Cswap._env()` always points
+   `CLAUDE_CONFIG_DIR` at this repo's own config home, which a group join has
+   emptied — so without a guard, `use` would write a credential nothing reads
+   and `add` would capture nothing, both silently. `jailbee claude` now
+   refuses `use`/`add` outright in a group repo.
+
+   ```bash
+   cd SampleApp   # already `apply`ed and grouped, from step 1
+   jailbee claude use one
+   # expect: exit 1, naming the group directory
+   #         (<xdg_data_home>/jailbee/claude-credentials/worktest)
+   #         and `claude_credentials` in global.yaml as the way out
+   jailbee claude add --alias whatever
+   # expect: the same refusal
+   jailbee claude ls
+   # expect: exit 0, but a stderr notice that ACTIVE/holder are unreliable here
+   jailbee claude release
+   # expect: works normally — pure ledger bookkeeping, unaffected by the group
+   ```
+
+3. **Concurrent rotation from two different repos is mutually excluded.**
+   The one check that could invalidate the whole design. The primary lock
+   (`.oauth_refresh.lock`) lives inside the shared group directory and is
+   taken by every container that mounts it; the *legacy* sibling lock
+   (`${realpath(dir)}.lock`) is a sibling path outside the shared directory
+   and is therefore per-container, not shared. Exclusion depends entirely on
+   both sides taking the primary lock.
+
+   ```bash
+   jailbee shell <a SampleApp container>
+   # inside: start a long-running agentic prompt, don't wait for it to finish
+   # from another terminal, while it's still running:
+   jailbee shell <a SampleApp2 container>
+   # inside, concurrently: another long-running agentic prompt
+   ```
+
+   Watch `<xdg_data_home>/jailbee/claude-credentials/worktest/` on the host
+   for `.oauth_refresh.lock` and `.credentials.json` while both are running
+   (`watch -n1 'ls -la ...; stat .credentials.json'`). Expected: no corrupted
+   `.credentials.json` (valid JSON throughout, no truncation), and neither
+   container gets logged out. A torn write, or one side rotating the other's
+   token out from under it, is a real finding — it means the primary-lock
+   assumption is wrong and the design needs re-examining, not a workaround.
+
+4. **The happy path, both directions.**
+
+   Join with an existing login — the credential should *move*, not be
+   copied, and the container should stay authenticated:
+
+   ```bash
+   # before joining: SampleApp2 has its own login, group dir is empty
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json    # exists
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/ # empty or absent
+   # add claude_credentials to global.yaml for SampleApp2, then:
+   jailbee apply
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json    # gone
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json
+   # expect: present — the file moved, not copied
+   jailbee shell <a SampleApp2 container>
+   # inside: claude -p "hi" — expect still logged in, no re-auth
+   exit
+   ```
+
+   Leave, by removing the repo from `claude_credentials` (or setting it to
+   `null` under `repos:`) and re-running `jailbee apply`:
+
+   ```bash
+   jailbee apply
+   incus profile show SampleApp2-binds | grep -c claude-creds
+   # expect: 0 — device gone
+   incus profile show SampleApp2-base | grep -c CLAUDE_SECURESTORAGE_CONFIG_DIR
+   # expect: 0 — env key gone
+   jailbee shell <a SampleApp2 container>
+   # inside: claude -p "hi"
+   # expect: "Not logged in" — there is nothing to fall back to (see spec §8);
+   #         one /login here re-establishes this repo's own credential
+   exit
+   ```
+
+5. **A group rename only takes effect on `jailbee apply`.** The
+   container-side path (`~/.claude-creds`) is a constant; only the *source*
+   of the mount changes when the group name changes, and only `jailbee apply`
+   rewrites that source.
+
+   ```bash
+   # rename the group in global.yaml, e.g. worktest -> worktest2, but do NOT
+   # run `jailbee apply` yet
+   jailbee new feat/creds-after-rename
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: source still names the OLD group directory (.../worktest/)
+   jailbee doctor
+   # expect: reports the NEW group name (worktest2) as this repo's resolved
+   #         group — doctor and the actual mount disagree until `apply` runs
+   jailbee apply
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: source now names .../worktest2/
+   jailbee destroy feat-creds-after-rename --force
+   ```
+
+6. **The container's dev user can read the host `0700` group directory.**
+   Unlike every other shared-mount subdirectory, the group directory lives
+   outside `shared_dir` and is created `0700` on the host (deliberately: it
+   holds a live credential). This is reasoned from the existing `raw.idmap
+   uid<->uid` mapping on `<prefix>-base` — the same mechanism every other
+   host mount relies on — but has never been measured for a directory outside
+   `shared_dir` specifically.
+
+   ```bash
+   ls -la <xdg_data_home>/jailbee/claude-credentials/worktest/
+   # note the host owner/mode (0700, host user)
+   jailbee shell <a SampleApp container>
+   # inside:
+   ls -la ~/.claude-creds/
+   cat ~/.claude-creds/.credentials.json > /dev/null && echo "readable"
+   # expect: readable and writable as the container's dev user, same as any
+   #         other idmapped mount — no permission denied
+   exit
+   ```
+
+Afterwards, clean up: `jailbee destroy` the containers created above, remove
+`claude_credentials` from `global.yaml` if it was added only for this test,
+`jailbee apply` in each affected repo, and (if step 4's group directory was a
+throwaway) delete `<xdg_data_home>/jailbee/claude-credentials/worktest*/` by
+hand — jailbee never deletes a group directory automatically.
+
 ## GUI dashboard (`jailbee gui`)
 
 Requires a real Incus daemon, at least one JailBee container, and PySide6
