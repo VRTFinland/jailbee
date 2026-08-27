@@ -4,6 +4,24 @@
 
 ### Added
 
+- **Several repos on one host can now share a single Claude Code login.**
+  `claude_credentials` in `~/.config/jailbee/global.yaml` names a `group`
+  every repo on the host defaults into, with a per-repo `repos:` map
+  (keyed by `container_prefix`) to override it — an explicit `null` there
+  opts one repo out while the rest of the host still shares. The block is
+  host-level only; setting it (or the derived `claude_credentials_dir`) in a
+  repo's committed `.jailbee/config.yaml` is rejected, since a group name is
+  a property of this one machine. `jailbee apply` does the work: it creates
+  `<xdg_data_home>/jailbee/claude-credentials/<group>/` and **moves** this
+  repo's stored credential into it, refusing outright if both the repo and
+  the group already hold one rather than silently discarding a login. Only
+  the credential is shared — each repo keeps its own `~/.claude`, so
+  project history, MCP config and sessions stay per-repo — and no golden
+  image rebuild is needed: the mount and the
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` env var reach existing containers on the
+  next `jailbee apply`. `jailbee doctor` reports the group, its directory,
+  and the other member repos, and catches the one broken state (group
+  configured but `apply` not yet run).
 - **`jb setup` installs the post-install steps a package install cannot.**
   Shell completions for both console scripts, the `jailbee-net-refresh` user
   timer, and jailbee's Claude Code skills in `~/.claude/skills` used to be

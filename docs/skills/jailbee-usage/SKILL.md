@@ -331,6 +331,18 @@ tell the user to run these on the host. Requires the optional `cswap`
 (claude-swap) host binary; without it, `jailbee claude *` prints an install
 hint and exits, and nothing else about JailBee is affected.
 
+**If this account was shared from another repo, none of the above applies.**
+Several repos on this host can be configured to share one Claude Code
+login — a `/login` done inside *any* member repo's container logs in
+every other member too, because they all point at the same credential
+directory. This is what to say when asked "why did my account change" and
+no `jailbee claude` command was run: it may not have been this repo at
+all. Sharing is configured host-side, in `~/.config/jailbee/global.yaml`'s
+`claude_credentials` block, by whoever administers the host — it cannot be
+set, changed, or inspected from inside a container. Point the user at the
+host: `jailbee doctor` there names the group this repo belongs to and
+lists its other member repos.
+
 ```bash
 jailbee claude ls                 # accounts, 5h/7d quota, which repo holds each
 jailbee claude use 2              # switch THIS repo to slot 2 — no browser login

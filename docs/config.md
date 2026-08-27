@@ -74,14 +74,18 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Three top-level keys are read from `~/.config/jailbee/global.yaml` into
+Four top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
-`docker_registry_mirror` (see above), `ls` and `dashboard`. `ls`'s column
-block is merged field-by-field instead (repo block over global block) —
-the generic pipeline would *append* its `fields`/`hide` lists and
-concatenate the two layers' column lists rather than let one replace the
-other. `dashboard` is deprecated and is never merged this way — see
+`docker_registry_mirror` (see above), `ls`, `dashboard` and
+`claude_credentials`. `ls`'s column block is merged field-by-field instead
+(repo block over global block) — the generic pipeline would *append* its
+`fields`/`hide` lists and concatenate the two layers' column lists rather
+than let one replace the other. `dashboard` is deprecated and is never
+merged this way — see
 [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
+`claude_credentials` is resolved to the single computed field
+`Config.claude_credentials_dir` instead of being merged at all — see
+[`claude_credentials`](#claude_credentials) below.
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
 `dashboard:` values it shows come from the repo file only. Use `jailbee config
@@ -1511,7 +1515,8 @@ opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `agents`).
 `agents:` is valid at both layers, though — see [`agents`](#agents) above —
 and a repo entry merges over a global one, so a team default set globally
 can still be adjusted per repo.
-The keys unique to this file are the Docker registry mirror overrides:
+Two blocks are unique to this file: the Docker registry mirror overrides,
+and `claude_credentials` (below).
 
 ```yaml
 docker_registry_mirror:
@@ -1553,6 +1558,45 @@ by it — start it and run `jailbee apply` again.
 
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).
+
+### `claude_credentials`
+
+Lets several repos on this host share one Claude Code login. Host-level
+only, like `docker_registry_mirror`: setting `claude_credentials` or the
+computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is
+rejected at load time, because a repo config is typically committed and a
+group name is a property of this one machine, not the team.
+
+```yaml
+claude_credentials:
+  group: work                    # default for every repo on this host
+  repos:                         # exceptions, keyed by container_prefix
+    my-side-project: personal
+    solo: null                   # opt this one repo out — keep its own credential
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `group` | `str \| None` | `None` (unset) | Default credential group for every repo on the host. Absent means no sharing — today's behaviour. |
+| `repos` | `dict[str, str \| None]` | `{}` | Per-repo override keyed by `container_prefix`. Wins over `group`, **including when the value is `null`** — that is the only way to keep one repo on its own credential while the rest of the host shares one. |
+
+A group name must match `[a-z0-9][a-z0-9-]*`: it becomes a directory name
+under `<xdg_data_home>/jailbee/claude-credentials/<group>/`.
+
+Only the *credential* is shared — each repo keeps its own `~/.claude`, so
+project history, MCP config, sessions and onboarding state never cross
+repos. See [Shared credential groups](agents.md#shared-credential-groups-claude_credentials)
+in `agents.md` for the mechanism.
+
+Joining a group requires `jailbee apply`: it creates the group directory
+(mode `0700`) and **moves** this repo's `.credentials.json` into it. If
+both the group directory and this repo already hold a credential, `apply`
+refuses and changes nothing — one of the two logins is about to become
+unused, and jailbee will not choose which. Leaving a group (remove the key,
+re-run `apply`) falls back to the repo's own now-superseded credential
+file, whose refresh token is already dead, so the outcome is one `/login`.
+`jailbee doctor` names the group, its directory, and the other member
+repos.
 
 If the file is absent, defaults apply silently. Invalid YAML → error.
 
