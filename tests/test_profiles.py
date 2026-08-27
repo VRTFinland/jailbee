@@ -205,6 +205,89 @@ def test_base_profile_container_env_overrides_claude_config_dir(make_cfg, tmp_pa
     assert parsed["config"]["environment.CLAUDE_CONFIG_DIR"] == "/custom/path"
 
 
+def test_base_profile_sets_securestorage_dir_for_a_group_repo(make_cfg, tmp_path):
+    """The variable Claude Code resolves `.credentials.json` from. Reaching
+    every `incus exec` through the profile is what makes this work on existing
+    containers with no image rebuild."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        "/home/dev/.claude-creds"
+    )
+
+
+def test_base_profile_omits_securestorage_dir_for_a_non_group_repo(make_cfg, tmp_path):
+    """The promise this feature rests on: a repo that has not opted in renders
+    exactly as before."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_omits_securestorage_dir_when_claude_is_disabled(make_cfg, tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": False},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
+    """An empty value is NOT the same as an unset variable: Claude Code falls
+    back to `~/.claude` for it, silently pointing credential lookup back at the
+    config home. A `container.env` entry set to "" must therefore drop the key
+    rather than write it."""
+    from jailbee.profiles import claude_securestorage_dir_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
+    )
+    assert claude_securestorage_dir_env(cfg) is None
+
+
+def test_binds_profile_mounts_the_group_credential_dir(make_cfg, tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+    device = parsed["devices"]["claude-creds"]
+    assert device == {
+        "type": "disk",
+        "source": str(tmp_path / "creds" / "work"),
+        "path": "/home/dev/.claude-creds",
+    }
+
+
+def test_binds_profile_has_no_credential_device_for_a_non_group_repo(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "claude-creds" not in parsed["devices"]
+
+
+def test_group_repo_adds_exactly_one_device(make_cfg, tmp_path):
+    """Pin the blast radius: joining a group adds `claude-creds` and changes
+    nothing else about the Claude mounts."""
+    base = make_cfg(tmp_path, claude={"enabled": True})
+    grouped = base.model_copy(update={"claude_credentials_dir": tmp_path / "creds" / "work"})
+
+    before = set(yaml.safe_load(binds_profile_yaml(base))["devices"])
+    after = set(yaml.safe_load(binds_profile_yaml(grouped))["devices"])
+
+    assert after - before == {"claude-creds"}
+    assert before - after == set()
+
+
 def test_binds_profile_includes_host_mounts():
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
