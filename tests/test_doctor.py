@@ -1711,3 +1711,54 @@ def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, ma
     members = _credential_group_members(gcfg, "work", exclude=cfg.container_prefix)
 
     assert members == ["other-repo"]
+
+
+def test_doctor_is_silent_when_the_pool_is_empty(tmp_path, make_cfg, monkeypatch):
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    assert _check_claude_pool(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkeypatch):
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert "live@x.com" in results[0].detail
+    assert "1 parked" in results[0].detail
+
+
+def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatch):
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert "/login" in results[0].detail or "claude use" in results[0].detail

@@ -173,6 +173,45 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     return [p for p in prefixes if p != exclude]
 
 
+def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report the parked-login store and which account this holder is on.
+
+    Silent when the store is empty: the pool is optional, and reporting an
+    unused feature on every run is noise — the same rule
+    `_check_claude_credentials` follows for a repo that shares nothing.
+
+    The one failure it reports is a holder with parked logins and no live one,
+    which is what a `jailbee claude park` leaves behind until someone logs in
+    or switches. Not a broken state, but one worth naming, because the symptom
+    inside a container is "Not logged in" with no explanation.
+    """
+    from jailbee import claude_pool
+
+    parked = claude_pool.parked_slots()
+    if not parked:
+        return []
+
+    try:
+        found, _ = claude_pool.members(cfg, gcfg)
+        identity = claude_pool.live_identity(found, prefer=cfg.container_prefix)
+    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        identity = None
+
+    holder = claude_pool.holder_dir(cfg)
+    count = f"{len(parked)} parked"
+    if not (holder / ".credentials.json").exists():
+        return [
+            CheckResult(
+                "claude account pool",
+                False,
+                f"{count}, but {holder} holds no live login — run "
+                "`jailbee claude use <account>`, or `/login` in a container.",
+            )
+        ]
+    live = claude_pool.slug_for(identity) if identity is not None else "an unidentified account"
+    return [CheckResult("claude account pool", True, f"live: {live} ({count})")]
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -224,6 +263,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
+    results.extend(_check_claude_pool(cfg, gcfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
