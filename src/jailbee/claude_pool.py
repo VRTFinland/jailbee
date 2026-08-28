@@ -49,7 +49,7 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -431,6 +431,46 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         f"no stored account matches `{wanted}`."
         + (f" Known: {known}" if known else " The pool is empty.")
     )
+
+
+def resolve_interactively(
+    slots: Sequence[Slot],
+    ref: str | None,
+    *,
+    purpose: str,
+    picker: Callable[[Sequence[Slot]], str | None],
+    is_interactive: Callable[[], bool],
+) -> str | None:
+    """The reference a `claude use`/`claude rm` invocation should act on.
+
+    Returns a *reference* rather than a `Slot`, and both commands resolve it
+    again: `switch` re-lists under the credential locks, and a Slot picked out
+    here is a snapshot of a store another process may have changed since. One
+    resolution is authoritative — the one holding the lock — and this is only
+    how a user who typed no argument names their choice.
+
+    `None` means the user cancelled the picker, which is not an error: callers
+    abort quietly. The two genuine failures raise `PoolError` — nothing to
+    choose from, and no TTY to choose on. The latter names the candidates, so a
+    script's author learns the references from the failure itself.
+
+    **The live slot is never a candidate.** `switch` refuses it and `rm`
+    refuses it, so offering it would be offering a guaranteed error. That also
+    makes an empty candidate list meaningfully different from an empty pool:
+    a holder with one login and nothing parked has nothing to switch *to*.
+    """
+    if ref is not None:
+        return ref
+    parked = [s for s in slots if not s.live]
+    if not parked:
+        raise PoolError(
+            f"no stored login to {purpose}. `jailbee claude park` stores the one in "
+            "use, and the next `/login` in a container of this holder adds another."
+        )
+    if not is_interactive():
+        names = ", ".join(sorted(s.name for s in parked))
+        raise PoolError(f"specify <email|slot> explicitly (or run in a TTY): {names}")
+    return picker(parked)
 
 
 def resolve_removable(ref: str, slots: Sequence[Slot]) -> Slot:

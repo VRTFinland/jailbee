@@ -7459,6 +7459,36 @@ def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
     ]
 
 
+def _claude_ref_or_pick(
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    purpose: str,
+    message: str,
+) -> str | None:
+    """`ref`, or the account the user picks when they gave none.
+
+    The store is listed only on the picker path: a caller who named an account
+    should not pay a store read this command does not need, and `switch` /
+    `resolve_removable` list it again anyway.
+
+    `None` means cancelled — callers abort without an error line.
+    """
+    from jailbee import claude_pool
+    from jailbee.tui import pick_claude_account
+
+    if ref is not None:
+        return ref
+    return claude_pool.resolve_interactively(
+        claude_pool.list_slots(cfg, gcfg),
+        None,
+        purpose=purpose,
+        picker=lambda slots: pick_claude_account(slots, message=message),
+        is_interactive=_is_tty,
+    )
+
+
 def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str) -> None:
     """The parts of a pool change that are the same for `use` and `park`.
 
@@ -7547,22 +7577,33 @@ def claude_ls_cmd(
 @claude_app.command("use")
 def claude_use_cmd(
     ref: Annotated[
-        str, typer.Argument(help="Account email, or the full slot name for an exact match.")
-    ],
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name for an exact match. "
+            "Omit to pick from a menu.",
+            autocompletion=completion.complete_claude_account,
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Switch this repo's containers to a stored login.
 
-    The switch is holder-wide: every repo sharing this credential group moves
-    with it. A running Claude session picks the new credential up on its next
-    turn — no restart.
+    Omit the account to choose from a menu of the stored ones. The switch is
+    holder-wide: every repo sharing this credential group moves with it. A
+    running Claude session picks the new credential up on its next turn — no
+    restart.
     """
     from jailbee import claude_pool
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        change = claude_pool.switch(cfg, gcfg, ref)
+        target = _claude_ref_or_pick(
+            cfg, gcfg, ref, purpose="switch to", message="Switch this repo to:"
+        )
+        if target is None:
+            raise typer.Abort()
+        change = claude_pool.switch(cfg, gcfg, target)
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -7614,23 +7655,35 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
 
 @claude_app.command("rm")
 def claude_rm_cmd(
-    ref: Annotated[str, typer.Argument(help="Account email, or the full slot name.")],
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name. Omit to pick from a menu.",
+            autocompletion=completion.complete_claude_account,
+        ),
+    ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Delete a stored login permanently.
 
-    JailBee never contacts Anthropic, so a deleted login can only come back
-    through a browser `/login`.
+    Omit the account to choose from a menu of the stored ones. JailBee never
+    contacts Anthropic, so a deleted login can only come back through a
+    browser `/login`.
     """
     from jailbee import claude_pool
 
     cfg, gcfg = _claude_ctx(config)
     try:
+        target = _claude_ref_or_pick(
+            cfg, gcfg, ref, purpose="delete", message="Delete stored login:"
+        )
+        if target is None:
+            raise typer.Abort()
         # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
         # and a parked file is ambiguous for a switch but not for a deletion,
         # and `rm` is the command that clears that state.
-        slot = claude_pool.resolve_removable(ref, claude_pool.list_slots(cfg, gcfg))
+        slot = claude_pool.resolve_removable(target, claude_pool.list_slots(cfg, gcfg))
         if slot.live:
             # Pre-checked so the confirmation prompt is never shown for a
             # deletion that `remove_slot` would refuse anyway.

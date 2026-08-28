@@ -761,7 +761,7 @@ so don't reconstruct a reference from the table when a script can ask for JSON.
 The title names the credential group (or the repo, when it shares none) and the
 holder directory is printed under the table.
 
-### `jailbee claude use <email|slot>`
+### `jailbee claude use [<email|slot>]`
 
 Park the live login and activate a stored one. Holder-wide — every repo sharing
 the credential group moves with it. Pass the bare email unless two stored
@@ -770,16 +770,24 @@ accounts share it, in which case the error names the full slot names
 adopts the new credential on its next turn; only the account name in `/status`
 can lag until it restarts.
 
+**Omit the account entirely to pick from an arrow-key menu** of the stored
+logins — the same affordance `jailbee shell`/`jailbee tmux` offer for
+containers. The live login is never a candidate (`use` would refuse it), so a
+holder whose only login is the live one reports that there is nothing to switch
+to rather than opening an empty menu. Without a TTY the menu is impossible, so
+the error names the candidate references for a script to pass explicitly.
+
 ### `jailbee claude park`
 
 Store the live login and leave the holder empty, so the next `claude` in a
 container of this holder prompts `/login`. This is how a second account enters
 the pool — there is no `add`, because only a browser login creates a credential.
 
-### `jailbee claude rm <email|slot> [--yes]`
+### `jailbee claude rm [<email|slot>] [--yes]`
 
-Delete a stored login permanently; refuses the live one. JailBee never contacts
-Anthropic, so this cannot be undone except by logging in again.
+Delete a stored login permanently; refuses the live one. Omit the account to
+pick from the same menu `claude use` offers. JailBee never contacts Anthropic,
+so this cannot be undone except by logging in again.
 
 ## GUI
 

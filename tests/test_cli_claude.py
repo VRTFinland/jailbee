@@ -143,6 +143,93 @@ def test_ls_says_so_when_the_pool_is_empty(repo, mocker):
     assert "park" in result.output
 
 
+def test_use_without_an_account_picks_from_a_menu(repo, mocker):
+    """The gap the pickers on `jb tmux`/`jb shell` set the expectation for: a
+    bare `claude use` must offer the stored logins, not fail on a missing
+    argument."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[
+            Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
+            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    switch = mocker.patch(
+        "jailbee.claude_pool.switch",
+        return_value=PoolChange("live@corp.com", "parked@corp.com", [], [], []),
+    )
+    result = runner.invoke(app, ["claude", "use"])
+    assert result.exit_code == 0, result.output
+    # The live slot is not a candidate: `switch` would refuse it.
+    offered = [s.name for s in pick.call_args.args[0]]
+    assert offered == ["parked@corp.com"]
+    switch.assert_called_once()
+    assert switch.call_args.args[2] == "parked@corp.com"
+
+
+def test_use_without_an_account_aborts_when_the_menu_is_cancelled(repo, mocker):
+    """ESC must not switch anything, and must not print a failure either."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("parked@corp.com", Path("/s/parked.json"), live=False)],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_claude_account", return_value=None)
+    switch = mocker.patch("jailbee.claude_pool.switch")
+    result = runner.invoke(app, ["claude", "use"])
+    assert result.exit_code != 0
+    switch.assert_not_called()
+
+
+def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, mocker):
+    """A script gets the references it should have passed, not a picker."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[
+            Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
+            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    switch = mocker.patch("jailbee.claude_pool.switch")
+    result = runner.invoke(app, ["claude", "use"])
+    assert result.exit_code == 2
+    assert "parked@corp.com" in result.output
+    switch.assert_not_called()
+
+
+def test_use_with_an_account_does_not_read_the_store(repo, mocker):
+    """A named account must not pay for a store listing this path never uses —
+    `switch` lists it again under the credential locks anyway."""
+    slots = mocker.patch("jailbee.claude_pool.list_slots")
+    mocker.patch(
+        "jailbee.claude_pool.switch",
+        return_value=PoolChange(None, "new@corp.com", [], [], []),
+    )
+    result = runner.invoke(app, ["claude", "use", "new@corp.com"])
+    assert result.exit_code == 0, result.output
+    slots.assert_not_called()
+
+
+def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
+    """`rm` has the same signature as `use`, so it gets the same menu — and its
+    own confirmation still stands in front of the deletion."""
+    parked = Slot("parked@corp.com", Path("/s/parked.json"), live=False)
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("live@corp.com", Path("/h/c.json"), live=True), parked],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    remove = mocker.patch("jailbee.claude_pool.remove_slot")
+    result = runner.invoke(app, ["claude", "rm"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert [s.name for s in pick.call_args.args[0]] == ["parked@corp.com"]
+    remove.assert_called_once()
+
+
 def test_use_reports_both_sides_of_the_switch(repo, mocker):
     mocker.patch(
         "jailbee.claude_pool.switch",

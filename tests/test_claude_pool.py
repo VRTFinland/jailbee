@@ -910,6 +910,92 @@ def test_display_name_keeps_an_emailless_name_whole() -> None:
     assert unknown.display_name == f"unknown-{PARK_STAMP}"
 
 
+def _slots() -> list[Slot]:
+    return [
+        Slot(name="live@corp.com", path=Path("/h/.credentials.json"), live=True),
+        Slot(name="parked@corp.com", path=Path("/s/parked@corp.com.json"), live=False),
+        Slot(name="other@x.com", path=Path("/s/other@x.com.json"), live=False),
+    ]
+
+
+def test_resolve_interactively_passes_a_typed_ref_straight_through() -> None:
+    """A named account must not read the store or render a picker."""
+    calls: list[object] = []
+
+    def picker(slots):
+        calls.append(slots)
+        return "picked"
+
+    result = claude_pool.resolve_interactively(
+        _slots(),
+        "typed@corp.com",
+        purpose="switch to",
+        picker=picker,
+        is_interactive=lambda: True,
+    )
+    assert result == "typed@corp.com"
+    assert calls == []
+
+
+def test_resolve_interactively_never_offers_the_live_slot() -> None:
+    """`switch` and `rm` both refuse the live login, so offering it in a picker
+    would be offering a guaranteed error."""
+    seen: list[list[str]] = []
+
+    def picker(slots):
+        seen.append([s.name for s in slots])
+        return slots[0].name
+
+    result = claude_pool.resolve_interactively(
+        _slots(), None, purpose="switch to", picker=picker, is_interactive=lambda: True
+    )
+    assert seen == [["parked@corp.com", "other@x.com"]]
+    assert result == "parked@corp.com"
+
+
+def test_resolve_interactively_returns_none_when_the_picker_is_cancelled() -> None:
+    """ESC is not an error: the caller aborts without printing a failure."""
+    assert (
+        claude_pool.resolve_interactively(
+            _slots(), None, purpose="switch to", picker=lambda _: None, is_interactive=lambda: True
+        )
+        is None
+    )
+
+
+def test_resolve_interactively_rejects_a_holder_with_nothing_parked() -> None:
+    """One live login and nothing parked is not an empty pool — but there is
+    still nothing to switch *to*, and the message must say how to get one."""
+    only_live = [Slot(name="live@corp.com", path=Path("/h/c.json"), live=True)]
+    with pytest.raises(claude_pool.PoolError) as e:
+        claude_pool.resolve_interactively(
+            only_live,
+            None,
+            purpose="switch to",
+            picker=lambda _: "never",
+            is_interactive=lambda: True,
+        )
+    assert "no stored login to switch to" in str(e.value)
+    assert "park" in str(e.value)
+
+
+def test_resolve_interactively_names_the_candidates_without_a_tty() -> None:
+    """A script cannot answer a picker, so the failure has to teach it the
+    references it should have passed."""
+    with pytest.raises(claude_pool.PoolError) as e:
+        claude_pool.resolve_interactively(
+            _slots(),
+            None,
+            purpose="delete",
+            picker=lambda _: "never",
+            is_interactive=lambda: False,
+        )
+    message = str(e.value)
+    assert "run in a TTY" in message
+    assert "other@x.com" in message and "parked@corp.com" in message
+    assert "live@corp.com" not in message
+
+
 def test_group_name_is_the_directory_name_or_none(tmp_path: Path) -> None:
     assert claude_pool.group_name(_cfg(tmp_path, group="gisgro")) == "gisgro"
     assert claude_pool.group_name(_cfg(tmp_path)) is None

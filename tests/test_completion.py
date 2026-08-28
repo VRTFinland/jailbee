@@ -197,6 +197,48 @@ def test_complete_pool_names_empty_outside_a_repo(mocker):
     assert completion.complete_pool_names(_ctx(), "") == []
 
 
+# ---- claude accounts ------------------------------------------------------
+
+
+def test_complete_claude_account_offers_the_parked_slots_by_prefix(mocker):
+    """Full slot names, narrowed by prefix — a name is always an exact match
+    for `claude use`, while a bare email is ambiguous once one account has two
+    stored logins."""
+    from pathlib import Path
+
+    from jailbee.claude_pool import Slot
+
+    mocker.patch(
+        "jailbee.claude_pool.parked_slots",
+        return_value=[
+            Slot("me@corp.com#d38d520c", Path("/s/a.json"), live=False),
+            Slot("other@x.com", Path("/s/b.json"), live=False),
+        ],
+    )
+    assert completion.complete_claude_account(_ctx(), "me") == ["me@corp.com#d38d520c"]
+    assert completion.complete_claude_account(_ctx(), "") == [
+        "me@corp.com#d38d520c",
+        "other@x.com",
+    ]
+
+
+def test_complete_claude_account_needs_no_repo_config(mocker):
+    """The store is host-wide, so completion must not go through `_load()` —
+    a TAB press outside a repo still has accounts to offer, and `list_slots`
+    would load every registered repo's config to resolve holder members."""
+    load = mocker.patch("jailbee.completion._load")
+    mocker.patch("jailbee.claude_pool.parked_slots", return_value=[])
+    assert completion.complete_claude_account(_ctx(), "") == []
+    load.assert_not_called()
+
+
+def test_complete_claude_account_survives_an_unreadable_store(mocker):
+    """`_never_raises` is the contract for every completer: a TAB press must
+    never traceback."""
+    mocker.patch("jailbee.claude_pool.parked_slots", side_effect=OSError("boom"))
+    assert completion.complete_claude_account(_ctx(), "") == []
+
+
 # ---- snapshot tags --------------------------------------------------------
 
 

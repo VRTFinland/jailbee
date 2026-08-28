@@ -209,6 +209,23 @@ def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
     return [p.name for p in pool_mod.pools_for(cfg) if p.name.startswith(incomplete)]
 
 
+@_never_raises
+def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a stored Claude login for `jailbee claude use`/`rm`.
+
+    Only the *parked* slots, which is what both commands accept — each refuses
+    the live one. `parked_slots` also globs the store with no config to load
+    and no Incus call, unlike `list_slots`, which resolves the holder's members
+    by loading every registered repo's config: far too much for a TAB press.
+
+    Full slot names rather than bare emails: a name is always an exact match,
+    while an email is ambiguous once one account has two stored logins.
+    """
+    from jailbee.claude_pool import parked_slots
+
+    return [s.name for s in parked_slots() if s.name.startswith(incomplete)]
+
+
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:
     """Map a user-typed container name to its full Incus name, or None.
 
