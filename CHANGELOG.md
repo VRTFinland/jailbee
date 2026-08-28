@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A polluted cache pool root is now resolvable from the command line
+  instead of by hand.** When a pool root (e.g. `caches/gradle`) held both
+  `slots/` and loose cache content, every command that boots a container
+  refused with "Move or delete the loose entries by hand, then re-run" —
+  and there was no supported way to do it. `jailbee apply` and `jailbee
+  init` now offer to move the loose entries to a timestamped sibling
+  directory, which unblocks the pool without deleting anything: a pool root
+  is a cache directory, but `~/.gradle` also holds `gradle.properties` and
+  `init.d/`. `--yes` never moves anything.
+- **`jailbee apply` no longer offers a restart that cannot succeed.** With a
+  pool root still unresolved, every restart hit the same error once per
+  container, after the user had already been shown it. Apply now says so in
+  one line and skips the restarts.
+- **`jailbee new` fails before creating anything, not half-way through.** An
+  unresolved pool root surfaced from `allocate_startup`, by which point the
+  container existed with its GUI sockets and port forwards attached — and in
+  background mode it arrived as a traceback in a log file. `new`, `start`
+  and `restart` now check the pools up front, in the terminal the user is
+  still sitting at. `jailbee doctor`'s advice for this state is true again.
+- **A restart failure no longer leaves the upgrade hint nagging.** `jailbee
+  apply` recorded its watermark only when every restart and port forward had
+  also succeeded, so `jb ls` went on advising an `apply` that had in fact
+  written the profiles, ACL, `/etc/hosts` and dockerd proxy. Those failures
+  are still reported and still exit non-zero.
+
 ## 1.2.1 - 2026-08-28
 
 ### Fixed

@@ -841,11 +841,16 @@ def _check_pool_roots(cfg: Config) -> list[CheckResult]:
     if uncreated:
         problems.append(f"layout not created: {', '.join(uncreated)}")
     if problems:
+        # `jailbee apply` fixes both: it migrates a root whose `slots/slot-0`
+        # is free, and offers to move the loose entries aside when it is not.
+        # Before that offer existed this advice was a dead end for the second
+        # case — `apply` would warn and leave the root exactly as it found it.
         return [
             CheckResult(
                 "cache pool roots",
                 False,
-                f"{'; '.join(problems)} — run `jailbee apply`",
+                f"{'; '.join(problems)} — run `jailbee apply`, which migrates the "
+                f"cache or offers to move it aside",
             )
         ]
     return [
