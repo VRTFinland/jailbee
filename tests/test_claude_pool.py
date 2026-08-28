@@ -881,6 +881,40 @@ def test_slot_email_and_org_hint_look_past_a_disambiguator() -> None:
     assert unidentified.org_hint is None
 
 
+def test_display_name_drops_only_the_organization() -> None:
+    """`display_name` is the ACCOUNT column's cell, and the ORG column carries
+    the `#<org8>` half. It must drop exactly that half and nothing else — the
+    disambiguator especially, since it is what `resolve_ref` needs typed to
+    tell two grants of one account apart."""
+    both = Slot(name=f"me@corp.com#a1b2c3d4~{PARK_STAMP}", path=Path("/x"), live=False)
+    assert both.display_name == f"me@corp.com~{PARK_STAMP}"
+    assert both.disambiguator == PARK_STAMP
+
+    org_only = Slot(name="me@corp.com#a1b2c3d4", path=Path("/x"), live=True)
+    assert org_only.display_name == "me@corp.com"
+    assert org_only.disambiguator is None
+
+    plain = Slot(name="me@corp.com", path=Path("/x"), live=False)
+    assert plain.display_name == "me@corp.com"
+
+
+def test_display_name_keeps_an_emailless_name_whole() -> None:
+    """The two emailless shapes have no `#<org8>` to drop, and their
+    disambiguator is the only thing telling two of them apart — so the name
+    passes through untouched rather than being rebuilt from `email`."""
+    unidentified = Slot(name=f"{claude_pool.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
+    assert unidentified.display_name == f"{claude_pool.LIVE_UNIDENTIFIED}~live"
+    assert unidentified.disambiguator == "live"
+
+    unknown = Slot(name=f"unknown-{PARK_STAMP}", path=Path("/x"), live=False)
+    assert unknown.display_name == f"unknown-{PARK_STAMP}"
+
+
+def test_group_name_is_the_directory_name_or_none(tmp_path: Path) -> None:
+    assert claude_pool.group_name(_cfg(tmp_path, group="gisgro")) == "gisgro"
+    assert claude_pool.group_name(_cfg(tmp_path)) is None
+
+
 def test_park_stores_a_second_independent_grant_for_one_account(
     tmp_path: Path, monkeypatch
 ) -> None:

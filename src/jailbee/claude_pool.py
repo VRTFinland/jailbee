@@ -152,6 +152,37 @@ class Slot:
         _, sep, tail = self._derived.partition("#")
         return tail if sep else None
 
+    @property
+    def disambiguator(self) -> str | None:
+        """The `~<disambiguator>` part, or None when the name has none.
+
+        Unlike `email` and `org_hint` this is defined for the emailless shapes
+        too: an unidentified slot can collide with another just as an
+        identified one can, and the suffix is then the only thing telling the
+        two apart.
+        """
+        _, sep, tail = self.name.partition(DISAMBIGUATOR)
+        return tail if sep else None
+
+    @property
+    def display_name(self) -> str:
+        """The name minus the organization, for a table that has an ORG column.
+
+        `org_hint` is parsed back out of `name`, so rendering both in one row
+        repeats the same eight characters twice. This drops the `#<org8>` half
+        and keeps everything else — the `~<disambiguator>` included, because
+        that half is load-bearing: it is what distinguishes two grants of one
+        account, and `resolve_ref` needs it typed.
+
+        Not the reference to feed back to `jailbee claude use`: for an account
+        stored under two organizations that is `name`, and the ambiguity error
+        names it. This is display only, like `email` and `org_hint`.
+        """
+        if self.email is None:
+            return self.name
+        suffix = "" if self.disambiguator is None else f"{DISAMBIGUATOR}{self.disambiguator}"
+        return f"{self.email}{suffix}"
+
 
 def store_dir() -> Path:
     """The host-wide parked-credential store.
@@ -175,6 +206,17 @@ def config_home(cfg: Config) -> Path:
 def holder_dir(cfg: Config) -> Path:
     """The directory whose `.credentials.json` this repo's containers read."""
     return cfg.claude_credentials_dir or config_home(cfg)
+
+
+def group_name(cfg: Config) -> str | None:
+    """The credential group this repo resolves to, or None when it shares none.
+
+    The group name is the identity users think in — it is what they typed in
+    `claude_credentials`, while the directory is a path they never chose. One
+    definition so `members`, `doctor` and the CLI cannot disagree about which
+    half of `claude_credentials_dir` is the name.
+    """
+    return None if cfg.claude_credentials_dir is None else cfg.claude_credentials_dir.name
 
 
 def live_credential_path(cfg: Config) -> Path:
@@ -463,7 +505,8 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
     if cfg.claude_credentials_dir is None:
         return [me], []
 
-    group = cfg.claude_credentials_dir.name
+    group = group_name(cfg)
+    assert group is not None  # the None case returned above
     found = [me]
     unreachable: list[str] = []
     for prefix, repo_root in _registered_repos():

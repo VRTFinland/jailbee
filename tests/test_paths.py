@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from jailbee.config import ConfigNotFoundError
-from jailbee.paths import expand_path, find_repo_config, xdg_data_home
+from jailbee.paths import display_path, expand_path, find_repo_config, xdg_data_home
 
 
 def test_expand_path_resolves_home():
@@ -23,6 +23,31 @@ def test_expand_path_returns_absolute_for_relative(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = expand_path("relative/path")
     assert result.is_absolute()
+
+
+def test_display_path_contracts_the_home_directory():
+    """The inverse of `expand_path`'s tilde handling: round-tripping a path
+    under $HOME through both must give back the original."""
+    path = Path.home() / ".local" / "share" / "jailbee"
+    assert display_path(path) == "~/.local/share/jailbee"
+    assert expand_path(display_path(path)) == path
+
+
+def test_display_path_leaves_a_path_outside_home_absolute():
+    assert display_path(Path("/data/creds/gisgro")) == "/data/creds/gisgro"
+
+
+def test_display_path_renders_the_home_directory_itself_as_a_bare_tilde():
+    """`relative_to` yields "." for the home directory, and "~/." is not a
+    path anyone writes."""
+    assert display_path(Path.home()) == "~"
+
+
+def test_display_path_falls_back_when_home_cannot_be_resolved(mocker):
+    """`Path.home()` raises RuntimeError when it cannot be determined, and a
+    display helper must not turn that into a traceback."""
+    mocker.patch("jailbee.paths.Path.home", side_effect=RuntimeError("no home"))
+    assert display_path(Path("/data/x")) == "/data/x"
 
 
 def test_find_repo_config_returns_cwd_path(tmp_path, monkeypatch):

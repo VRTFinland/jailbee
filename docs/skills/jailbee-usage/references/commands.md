@@ -750,6 +750,17 @@ Every stored login on the host, the one live for this repo's holder first. The
 store is host-wide, not per group: a login parked from one credential group can
 be activated into another.
 
+The table's `ACCOUNT` column shows the **email** and `ORG` the truncated
+organization, because the org is parsed back out of the slot name and printing
+both repeated it in every row; `ORG` is hidden entirely when no stored account
+has an organization. A `~<disambiguator>` stays in `ACCOUNT` — it is what tells
+two grants of one account apart. **`-o json`'s `account` field carries the full
+slot name** (`<email>[#<org8>][~<disambiguator>]`), which is the reference to
+feed back to `claude use`/`claude rm`; the table splits it across two columns,
+so don't reconstruct a reference from the table when a script can ask for JSON.
+The title names the credential group (or the repo, when it shares none) and the
+holder directory is printed under the table.
+
 ### `jailbee claude use <email|slot>`
 
 Park the live login and activate a stored one. Holder-wide — every repo sharing

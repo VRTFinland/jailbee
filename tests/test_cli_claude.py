@@ -14,6 +14,18 @@ from jailbee.global_config import GlobalConfig
 runner = CliRunner()
 
 
+def _flat(output: str) -> str:
+    """`output` with every whitespace run collapsed to one space.
+
+    Rich wraps a table's title to the *table's* width, not the terminal's, so
+    pinning COLUMNS does not stop a title from wrapping above a narrow table —
+    and a wrapped title is still the right title. Assertions on title text go
+    through this; assertions on cell content do not need it, because COLUMNS
+    controls the columns.
+    """
+    return " ".join(output.split())
+
+
 @pytest.fixture
 def repo(tmp_path, mocker, make_cfg):
     """A loaded repo config with a tmp shared_dir, wired into the CLI."""
@@ -47,6 +59,81 @@ def test_ls_json_carries_the_fields(repo, mocker):
     assert json.loads(result.output) == [
         {"account": "me@corp.com#a1b2c3d4", "org": "a1b2c3d4", "state": "live"}
     ]
+
+
+def test_ls_does_not_print_the_organization_twice(repo, mocker):
+    """`Slot.org_hint` is parsed back out of `Slot.name`, so rendering the name
+    in ACCOUNT beside the org in ORG repeated the same eight characters in
+    every row. COLUMNS is pinned: Rich wraps a narrow table, and a wrapped
+    cell would satisfy the substring assertions by accident."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@corp.com#a1b2c3d4", Path("/h/.credentials.json"), live=True)],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert result.output.count("a1b2c3d4") == 1
+    assert "me@corp.com" in result.output
+    assert "me@corp.com#a1b2c3d4" not in result.output
+
+
+def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
+    """Dropping the org must not drop the `~` half: it is the only thing
+    telling two grants of one account apart, and `claude use` needs it."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[
+            Slot("me@corp.com#a1b2c3d4~live", Path("/h/.credentials.json"), live=True),
+            Slot("me@corp.com#a1b2c3d4~20260828-101500", Path("/s/x.json"), live=False),
+        ],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "me@corp.com~live" in result.output
+    assert "me@corp.com~20260828-101500" in result.output
+
+
+def test_ls_hides_the_org_column_when_no_account_has_one(repo, mocker):
+    """A store of personal accounts has no organization anywhere, and a column
+    of "-" earns no width."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@personal.com", Path("/h/.credentials.json"), live=True)],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "ORG" not in result.output
+    assert "ACCOUNT" in result.output
+
+
+def test_ls_titles_the_table_with_the_group_and_footers_the_path(repo, mocker):
+    """The holder path is three lines of wrapped title in a narrow terminal and
+    names something the user never chose. The group name goes in the title; the
+    path stays, once, under the table."""
+    cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "Claude logins for group `gisgro`" in _flat(result.output)
+    assert "Holder: /data/creds/gisgro" in result.output
+
+
+def test_ls_titles_the_table_with_the_repo_when_it_shares_no_group(repo, mocker):
+    """Without a group the holder is the repo's own config home, so calling it
+    a group would name something that does not exist."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    flat = _flat(result.output)
+    assert f"Claude logins for {repo.container_prefix} (no shared group)" in flat
+    assert "group `" not in flat
 
 
 def test_ls_says_so_when_the_pool_is_empty(repo, mocker):

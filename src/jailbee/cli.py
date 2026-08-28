@@ -7432,7 +7432,13 @@ def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
         table_format.FieldSpec(
             name="account",
             header="ACCOUNT",
-            cell=lambda s: f"[bold]{s.name}[/bold]" if s.live else s.name,
+            # `display_name`, not `name`: the ORG column already carries the
+            # `#<org8>` half, which `Slot.org_hint` parses back out of the
+            # name, so rendering both repeats the same eight characters in
+            # every row. JSON keeps the whole name — it is the reference a
+            # script feeds back to `claude use`/`claude rm`, and nothing there
+            # is reading a second column to reassemble it.
+            cell=lambda s: f"[bold]{s.display_name}[/bold]" if s.live else s.display_name,
             json=lambda s: s.name,
         ),
         table_format.FieldSpec(
@@ -7440,6 +7446,9 @@ def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
             header="ORG",
             cell=lambda s: s.org_hint or "-",
             json=lambda s: s.org_hint,
+            # A store of personal accounts has no organization anywhere, and a
+            # column of "-" earns no width. `--fields` overrides this.
+            show_if=lambda slots: any(s.org_hint for s in slots),
         ),
         table_format.FieldSpec(
             name="state",
@@ -7500,13 +7509,23 @@ def claude_ls_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
+    # The group name, not the holder path: it is what the user typed in
+    # `claude_credentials`, while the path is one they never chose — and long
+    # enough to wrap a narrow table's title across three lines. The path is
+    # still printed, once, under the table.
+    group = claude_pool.group_name(cfg)
+    title = (
+        f"Claude logins for group `{group}`"
+        if group is not None
+        else f"Claude logins for {cfg.container_prefix} (no shared group)"
+    )
     table_format.emit(
         slots,
         _claude_fields(),
         fmt=fmt,
         fields=fields,
         console=console,
-        title=f"Claude logins for {claude_pool.holder_dir(cfg)}",
+        title=title,
         empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
     )
     # A switch is holder-wide, so who else moves with it is part of reading
@@ -7514,6 +7533,9 @@ def claude_ls_cmd(
     # Table format only: the JSON payload is a row per slot, and a per-command
     # fact does not belong in it.
     if fmt == "table":
+        from jailbee.paths import display_path
+
+        info(f"Holder: {display_path(claude_pool.holder_dir(cfg))}")
         info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
         if unreachable:
             warn(

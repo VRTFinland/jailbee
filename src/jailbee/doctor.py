@@ -125,12 +125,15 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
     Member repos come from the registry: the mapping is one host-local object,
     so no other repo's config needs loading to resolve it.
     """
+    from jailbee import claude_pool
+
     group_dir = cfg.claude_credentials_dir
     if group_dir is None:
         return []
 
     assert cfg.shared_dir is not None  # set by load_config
-    group = group_dir.name
+    group = claude_pool.group_name(cfg)
+    assert group is not None  # group_dir is not None, so neither is this
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
     if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
         return [

@@ -19,6 +19,23 @@ def expand_path(path: str | Path) -> Path:
     return p.resolve() if not p.is_absolute() else p
 
 
+def display_path(path: Path) -> str:
+    """`path` with the user's home directory shown as `~`, for output.
+
+    The counterpart to `expand_path`'s tilde handling. A path under
+    `$XDG_DATA_HOME` is most of a terminal line, long enough that Rich folds it
+    mid-word under a narrow table — and the `~` form is both shorter and the
+    form the user would type back. Absolute either way when `path` is outside
+    the home directory, or when the home directory cannot be determined
+    (`Path.home()` raises `RuntimeError` when it cannot be resolved).
+    """
+    try:
+        relative = path.relative_to(Path.home())
+    except (ValueError, RuntimeError):
+        return str(path)
+    return "~" if str(relative) == "." else f"~/{relative}"
+
+
 def xdg_data_home() -> Path:
     """Return $XDG_DATA_HOME if set, else ~/.local/share (XDG Base Dir spec)."""
     xdg = os.environ.get("XDG_DATA_HOME")
