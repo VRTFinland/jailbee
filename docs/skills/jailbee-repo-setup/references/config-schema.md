@@ -178,7 +178,7 @@ pooled_caches:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pooled_caches` | dict of `name` → bool | `{}` | `true`/`false` overrides pooling for a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`). A key naming a cache with no builtin preset is a `ConfigError` unless that cache's own `shared_caches` entry carries an explicit `pool:` block. |
+| `pooled_caches` | dict of `name` → bool | `{}` | `true`/`false` overrides pooling for a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`). A key naming a cache with no builtin preset is a `ConfigError` unless that cache's own `shared_caches` entry carries an explicit `pool:` block. `chrome-profile: false` is also a `ConfigError`: its `host_subpath` *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Turn Chrome off with `chrome.enabled: false`. |
 
 Builtin presets and their `default_on` (absent keys follow this):
 
