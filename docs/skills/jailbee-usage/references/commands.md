@@ -758,8 +758,13 @@ two grants of one account apart. **`-o json`'s `account` field carries the full
 slot name** (`<email>[#<org8>][~<disambiguator>]`), which is the reference to
 feed back to `claude use`/`claude rm`; the table splits it across two columns,
 so don't reconstruct a reference from the table when a script can ask for JSON.
-The title names the credential group (or the repo, when it shares none) and the
-holder directory is printed under the table.
+**The table mixes two scopes, and reading it wrong is the documented trap.**
+Only the `live` row belongs to this repo's holder; every `parked` row comes from
+the host-wide store, so *the same parked rows appear under every group*. A
+parked login showing up in a group you never touched is therefore expected, not
+a login that leaked between groups. The title says "on this host" for that
+reason, and the group, the holder directory and the member repos are stated
+under the table, where they describe the live row.
 
 ### `jailbee claude use [<email|slot>]`
 

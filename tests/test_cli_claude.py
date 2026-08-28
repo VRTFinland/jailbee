@@ -106,23 +106,31 @@ def test_ls_hides_the_org_column_when_no_account_has_one(repo, mocker):
     assert "ACCOUNT" in result.output
 
 
-def test_ls_titles_the_table_with_the_group_and_footers_the_path(repo, mocker):
-    """The holder path is three lines of wrapped title in a narrow terminal and
-    names something the user never chose. The group name goes in the title; the
-    path stays, once, under the table."""
+def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
+    """The table mixes two scopes: only the `live` row belongs to this holder,
+    while every `parked` row comes from the host-wide store and so appears
+    under every group. A title naming one group read as a claim over all of it,
+    and a user asked why an account had "appeared in" a group they had never
+    touched. The group belongs where the holder is stated, under the table."""
     cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch(
         "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+        return_value=[
+            Slot("me@corp.com", Path("/h/.credentials.json"), live=True),
+            Slot("unknown-20260828-163305", Path("/s/u.json"), live=False),
+        ],
     )
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
-    assert "Claude logins for group `gisgro`" in _flat(result.output)
-    assert "Holder: /data/creds/gisgro" in result.output
+    flat = _flat(result.output)
+    assert "Claude logins on this host" in flat
+    assert "logins for group" not in flat
+    assert "Live in group `gisgro` → /data/creds/gisgro" in flat
+    assert "Parked logins are host-wide" in flat
 
 
-def test_ls_titles_the_table_with_the_repo_when_it_shares_no_group(repo, mocker):
+def test_ls_names_the_repo_when_it_shares_no_group(repo, mocker):
     """Without a group the holder is the repo's own config home, so calling it
     a group would name something that does not exist."""
     mocker.patch(
@@ -132,8 +140,20 @@ def test_ls_titles_the_table_with_the_repo_when_it_shares_no_group(repo, mocker)
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
-    assert f"Claude logins for {repo.container_prefix} (no shared group)" in flat
+    assert f"Live in {repo.container_prefix} (no group)" in flat
     assert "group `" not in flat
+
+
+def test_ls_omits_the_host_wide_note_when_nothing_is_parked(repo, mocker):
+    """One live login and an empty store: there is no second scope to explain,
+    and a line that fires on every listing stops being read."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+    )
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "host-wide" not in _flat(result.output)
 
 
 def test_ls_says_so_when_the_pool_is_empty(repo, mocker):
