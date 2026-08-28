@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -170,3 +170,76 @@ def unknown_slot_name(when: datetime) -> str:
     name.
     """
     return f"unknown-{when.strftime('%Y%m%d-%H%M%S')}"
+
+
+SHARED_CREDENTIAL_KEYS = frozenset(
+    {"mcpOAuth", "mcpOAuthClientConfig", "mcpXaaIdp", "mcpXaaIdpConfig", "pluginSecrets"}
+)
+"""Siblings of `claudeAiOauth` that belong to the machine, not to an account.
+
+They hold OAuth integrations that rotate independently of any login, so on
+activation the live copy is authoritative. The list is cswap's
+(claude-swap, MIT) `SHARED_CREDENTIAL_KEYS`.
+"""
+
+ACCOUNT_CREDENTIAL_KEYS = frozenset({"claudeAiOauth", "trustedDeviceToken"})
+"""Account-scoped siblings we know about, named so the probe below does not
+flag them. `trustedDeviceToken` is enrolled per (device, account) at login."""
+
+
+def _credential_object(raw: str | None) -> dict[str, Any] | None:
+    """Parse a credential file's text, or None when it is not a JSON object.
+
+    A managed `sk-ant-…` API key and any opaque legacy shape land here as
+    None, which every caller treats as "activate verbatim".
+    """
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def shared_fields(raw: str | None) -> dict[str, Any] | None:
+    """The machine-shared fields of a live credential.
+
+    A dict — including `{}` — is authoritative for every allowlisted key: one
+    absent here is absent from the machine's current state and must not be
+    resurrected from a slot's snapshot. None means there was no JSON credential
+    object to read.
+    """
+    data = _credential_object(raw)
+    if data is None:
+        return None
+    if "claudeAiOauth" in data:
+        # An unknown sibling defaults to slot-owned, which fails safe but
+        # silently: if Claude Code grows a new *shared* key, that default
+        # quietly reintroduces the stale-restore papercut for it. Leave a
+        # trace so it gets noticed.
+        unrecognized = data.keys() - SHARED_CREDENTIAL_KEYS - ACCOUNT_CREDENTIAL_KEYS
+        if unrecognized:
+            log.debug(
+                "credential has sibling keys jailbee does not recognize "
+                "(a newer Claude Code?), treating them as account-owned: %s",
+                sorted(unrecognized),
+            )
+    return {key: data[key] for key in SHARED_CREDENTIAL_KEYS if key in data}
+
+
+def compose_credential(target_raw: str, live_shared: dict[str, Any] | None) -> str:
+    """The credential to activate, composed from its two owners.
+
+    Shared keys come from `live_shared`; everything else comes from the slot.
+    A target that is not a JSON object carrying a login activates unchanged, as
+    does any target when there is nothing live to take shared fields from.
+    """
+    if live_shared is None:
+        return target_raw
+    target = _credential_object(target_raw)
+    if target is None or "claudeAiOauth" not in target:
+        return target_raw
+    composed = {k: v for k, v in target.items() if k not in SHARED_CREDENTIAL_KEYS}
+    composed.update(live_shared)
+    return json.dumps(composed)

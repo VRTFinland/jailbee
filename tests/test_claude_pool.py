@@ -135,3 +135,71 @@ def test_slot_email_and_org_hint() -> None:
 
     live = Slot(name=claude_pool.LIVE_UNIDENTIFIED, path=Path("/x"), live=True)
     assert live.email is None
+
+
+def _cred(**extra: object) -> str:
+    return json.dumps({"claudeAiOauth": {"accessToken": "t", "refreshToken": "r"}, **extra})
+
+
+def test_shared_fields_of_a_bare_login_is_empty() -> None:
+    assert claude_pool.shared_fields(_cred()) == {}
+
+
+def test_shared_fields_picks_only_the_allowlist() -> None:
+    raw = _cred(
+        mcpOAuth={"srv": 1},
+        pluginSecrets={"p": 2},
+        trustedDeviceToken="device",
+        somethingNew="x",
+    )
+    assert claude_pool.shared_fields(raw) == {"mcpOAuth": {"srv": 1}, "pluginSecrets": {"p": 2}}
+
+
+@pytest.mark.parametrize("raw", [None, "", "not json", "[1, 2]", '"a string"'])
+def test_shared_fields_is_none_for_a_non_object(raw: str | None) -> None:
+    assert claude_pool.shared_fields(raw) is None
+
+
+def test_shared_fields_logs_an_unrecognized_sibling(caplog) -> None:
+    with caplog.at_level("DEBUG", logger="jailbee.claude_pool"):
+        claude_pool.shared_fields(_cred(brandNewKey={"a": 1}))
+    assert "brandNewKey" in caplog.text
+
+
+def test_compose_takes_shared_keys_from_the_live_credential() -> None:
+    target = _cred(mcpOAuth={"stale": True})
+    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"fresh": True}}))
+    assert out["mcpOAuth"] == {"fresh": True}
+
+
+def test_compose_drops_a_shared_key_the_machine_no_longer_holds() -> None:
+    target = _cred(mcpOAuth={"stale": True})
+    out = json.loads(claude_pool.compose_credential(target, {}))
+    assert "mcpOAuth" not in out
+
+
+def test_compose_keeps_account_bound_and_unknown_keys_from_the_slot() -> None:
+    target = _cred(trustedDeviceToken="slot-device", somethingNew="slot-value")
+    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"a": 1}}))
+    assert out["trustedDeviceToken"] == "slot-device"
+    assert out["somethingNew"] == "slot-value"
+
+
+def test_compose_preserves_the_login_exactly() -> None:
+    target = _cred()
+    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"a": 1}}))
+    assert out["claudeAiOauth"] == {"accessToken": "t", "refreshToken": "r"}
+
+
+@pytest.mark.parametrize(
+    "target,live",
+    [
+        ("sk-ant-api-not-json", {"mcpOAuth": {}}),   # a managed API key
+        ('{"other": 1}', {"mcpOAuth": {}}),           # no claudeAiOauth to compose around
+        (_cred(mcpOAuth={"stale": True}), None),      # nothing live to take from
+    ],
+)
+def test_compose_returns_the_target_verbatim_when_it_cannot_merge(
+    target: str, live: dict[str, object] | None
+) -> None:
+    assert claude_pool.compose_credential(target, live) == target
