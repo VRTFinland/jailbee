@@ -1844,6 +1844,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlmodel import Session
 
+    from jailbee import claude_pool
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
@@ -7407,6 +7408,189 @@ def chrome_cmd(
         raise typer.Exit(2)
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="chrome")
     open_chrome(cfg, incus, name, url or cfg.chrome.url)
+
+
+claude_app = typer.Typer(
+    name="claude",
+    help="Switch which stored Claude Code login this repo's containers use.",
+    no_args_is_help=True,
+)
+app.add_typer(claude_app)
+
+
+def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
+    """The two configs every pool command needs."""
+    return _load_or_exit(config), _load_global()
+
+
+def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
+    from jailbee import table_format
+
+    return [
+        table_format.FieldSpec(
+            name="account",
+            header="ACCOUNT",
+            cell=lambda s: f"[bold]{s.name}[/bold]" if s.live else s.name,
+            json=lambda s: s.name,
+        ),
+        table_format.FieldSpec(
+            name="org",
+            header="ORG",
+            cell=lambda s: s.org_hint or "-",
+            json=lambda s: s.org_hint,
+        ),
+        table_format.FieldSpec(
+            name="state",
+            header="STATE",
+            cell=lambda s: "live" if s.live else "parked",
+            json=lambda s: "live" if s.live else "parked",
+        ),
+    ]
+
+
+def _report_side_effects(change: "claude_pool.PoolChange") -> None:
+    """The parts of a pool change that are the same for `use` and `park`."""
+    if change.cleared:
+        info(f"Recorded account cleared in: {', '.join(change.cleared)}")
+    if change.not_cleared:
+        warn(
+            "Could not clear the recorded account in: "
+            f"{', '.join(change.not_cleared)}. Those repos keep naming the previous "
+            "account until their config is readable again — authentication is "
+            "unaffected."
+        )
+    if change.live_sessions:
+        warn(
+            f"A Claude session looks live in: {', '.join(change.live_sessions)}. "
+            "The credential swaps on that session's next turn; the account shown "
+            "in /status may lag until it restarts."
+        )
+
+
+@claude_app.command("ls")
+def claude_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option("--fields", help="Comma-separated fields. Allowed: account, org, state."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List stored Claude logins and which one this repo's containers use."""
+    from jailbee import claude_pool, table_format
+    from jailbee.tui import console
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        slots = claude_pool.list_slots(cfg, gcfg)
+    except claude_pool.PoolError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    table_format.emit(
+        slots,
+        _claude_fields(),
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title=f"Claude logins for {claude_pool.holder_dir(cfg)}",
+        empty_message=(
+            "No stored Claude logins. `jailbee claude park` stores the one in use."
+        ),
+    )
+
+
+@claude_app.command("use")
+def claude_use_cmd(
+    ref: Annotated[
+        str, typer.Argument(help="Account email, or the full slot name for an exact match.")
+    ],
+    config: ConfigOption = None,
+) -> None:
+    """Switch this repo's containers to a stored login.
+
+    The switch is holder-wide: every repo sharing this credential group moves
+    with it. A running Claude session picks the new credential up on its next
+    turn — no restart.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeout
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        change = claude_pool.switch(cfg, gcfg, ref)
+    except (claude_pool.PoolError, ClaudeLockTimeout) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    success(f"Switched to {change.activated}")
+    if change.parked_as is not None:
+        info(f"Parked the previous login as `{change.parked_as}`.")
+    _report_side_effects(change)
+
+
+@claude_app.command("park")
+def claude_park_cmd(config: ConfigOption = None) -> None:
+    """Store the login in use and leave this repo's holder empty.
+
+    This is how a new account enters the pool: with no credential to find, the
+    next `claude` in a container of this holder prompts `/login`, and that
+    login lands straight in the holder.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeout
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        change = claude_pool.park(cfg, gcfg)
+    except (claude_pool.PoolError, ClaudeLockTimeout) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if change.parked_as is None:
+        info("Nothing to park: this holder has no stored login.")
+        return
+    success(f"Parked `{change.parked_as}`")
+    _report_side_effects(change)
+    info("The next `claude` in a container of this holder will prompt /login.")
+
+
+@claude_app.command("rm")
+def claude_rm_cmd(
+    ref: Annotated[str, typer.Argument(help="Account email, or the full slot name.")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete a stored login permanently.
+
+    JailBee never contacts Anthropic, so a deleted login can only come back
+    through a browser `/login`.
+    """
+    from jailbee import claude_pool
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        slot = claude_pool.resolve_ref(ref, claude_pool.list_slots(cfg, gcfg))
+        if slot.live:
+            raise claude_pool.PoolError(
+                f"`{slot.name}` is the live account — run `jailbee claude park` first."
+            )
+    except claude_pool.PoolError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if not yes and not typer.confirm(f"Delete stored login `{slot.name}`?", default=False):
+        raise typer.Exit(1)
+    claude_pool.remove_slot(slot)
+    success(f"Deleted `{slot.name}`")
 
 
 chrome_pool_app = typer.Typer(
