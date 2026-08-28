@@ -7502,9 +7502,7 @@ def claude_ls_cmd(
         fields=fields,
         console=console,
         title=f"Claude logins for {claude_pool.holder_dir(cfg)}",
-        empty_message=(
-            "No stored Claude logins. `jailbee claude park` stores the one in use."
-        ),
+        empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
     )
 
 
@@ -7588,8 +7586,7 @@ def claude_rm_cmd(
         raise typer.Exit(2) from e
 
     if not yes and not typer.confirm(
-        f"Delete stored login `{slot.name}`? It can only come back through a "
-        "browser /login.",
+        f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
         default=False,
     ):
         raise typer.Exit(1)

@@ -7,8 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee import claude_pool
-from jailbee.cli import app
 from jailbee.claude_pool import PoolChange, Slot
+from jailbee.cli import app
 from jailbee.global_config import GlobalConfig
 
 runner = CliRunner()
@@ -108,7 +108,8 @@ def test_use_exits_2_on_a_lock_timeout(repo, mocker):
     from jailbee.claude_locks import ClaudeLockTimeout
 
     mocker.patch(
-        "jailbee.claude_pool.switch", side_effect=ClaudeLockTimeout("/h/.oauth_refresh.lock is held")
+        "jailbee.claude_pool.switch",
+        side_effect=ClaudeLockTimeout("/h/.oauth_refresh.lock is held"),
     )
     result = runner.invoke(app, ["claude", "use", "x@y.com"])
     assert result.exit_code == 2
@@ -127,9 +128,7 @@ def test_park_tells_the_user_how_a_new_login_gets_in(repo, mocker):
 
 
 def test_park_of_an_empty_holder_is_not_an_error(repo, mocker):
-    mocker.patch(
-        "jailbee.claude_pool.park", return_value=PoolChange(None, None, [], [], [])
-    )
+    mocker.patch("jailbee.claude_pool.park", return_value=PoolChange(None, None, [], [], []))
     result = runner.invoke(app, ["claude", "park"])
     assert result.exit_code == 0, result.output
     assert "Nothing to park" in result.output

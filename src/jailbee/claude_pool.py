@@ -324,9 +324,7 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         return by_email[0]
     if len(by_email) > 1:
         names = ", ".join(sorted(s.name for s in by_email))
-        raise PoolError(
-            f"`{ref}` matches several accounts: {names}. Pass the full slot name."
-        )
+        raise PoolError(f"`{ref}` matches several accounts: {names}. Pass the full slot name.")
 
     known = ", ".join(sorted(s.name for s in slots))
     raise PoolError(
@@ -371,9 +369,7 @@ def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
     The single implementation of the group-matching rule; `doctor.py` filters
     the caller out of it for display.
     """
-    return sorted(
-        prefix for prefix, _ in _registered_repos() if _resolves_to(gcfg, prefix, group)
-    )
+    return sorted(prefix for prefix, _ in _registered_repos() if _resolves_to(gcfg, prefix, group))
 
 
 def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
@@ -597,7 +593,9 @@ def invalidate_identity(home: Path) -> bool:
     return True
 
 
-def _clear_identities(found: Sequence[Member], unreachable: Sequence[str]) -> tuple[list[str], list[str]]:
+def _clear_identities(
+    found: Sequence[Member], unreachable: Sequence[str]
+) -> tuple[list[str], list[str]]:
     """Delete every member's recorded account; report which ones took."""
     cleared: list[str] = []
     not_cleared: list[str] = list(unreachable)
@@ -663,9 +661,7 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     )
 
 
-def switch(
-    cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = None
-) -> PoolChange:
+def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = None) -> PoolChange:
     """Park the live login and activate a stored one.
 
     The target is renamed out of the store *before* anything else moves, so no
@@ -727,7 +723,5 @@ def switch(
 def remove_slot(slot: Slot) -> None:
     """Delete a parked login permanently."""
     if slot.live:
-        raise PoolError(
-            f"`{slot.name}` is the live account — run `jailbee claude park` first."
-        )
+        raise PoolError(f"`{slot.name}` is the live account — run `jailbee claude park` first.")
     slot.path.unlink()

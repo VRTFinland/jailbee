@@ -20,9 +20,7 @@ def _cfg(tmp_path: Path, *, group: str | None = None):
     `claude_credentials_dir` is an ordinary Config field, so it is passed as
     an override — the same form `tests/test_doctor.py:1678` uses.
     """
-    extra = (
-        {"claude_credentials_dir": tmp_path / "creds" / group} if group is not None else {}
-    )
+    extra = {"claude_credentials_dir": tmp_path / "creds" / group} if group is not None else {}
     return make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared", **extra)
 
 
@@ -86,9 +84,7 @@ def test_read_identity_tolerates_a_missing_organization(tmp_path: Path) -> None:
     assert claude_pool.read_identity(home) == Identity(email="me@example.com")
 
 
-@pytest.mark.parametrize(
-    "block", [None, {}, {"emailAddress": ""}, {"emailAddress": 7}, "nonsense"]
-)
+@pytest.mark.parametrize("block", [None, {}, {"emailAddress": ""}, {"emailAddress": 7}, "nonsense"])
 def test_read_identity_is_none_when_unusable(tmp_path: Path, block: object) -> None:
     home = tmp_path / "claude"
     _write_identity(home, block)
@@ -206,9 +202,9 @@ def test_compose_preserves_the_login_exactly() -> None:
 @pytest.mark.parametrize(
     "target,live",
     [
-        ("sk-ant-api-not-json", {"mcpOAuth": {}}),   # a managed API key
-        ('{"other": 1}', {"mcpOAuth": {}}),           # no claudeAiOauth to compose around
-        (_cred(mcpOAuth={"stale": True}), None),      # nothing live to take from
+        ("sk-ant-api-not-json", {"mcpOAuth": {}}),  # a managed API key
+        ('{"other": 1}', {"mcpOAuth": {}}),  # no claudeAiOauth to compose around
+        (_cred(mcpOAuth={"stale": True}), None),  # nothing live to take from
     ],
 )
 def test_compose_returns_the_target_verbatim_when_it_cannot_merge(
@@ -237,9 +233,7 @@ def test_parked_slots_reads_the_store(tmp_path: Path, monkeypatch) -> None:
     assert all(not s.live for s in slots)
 
 
-def test_parked_slots_is_empty_when_the_store_does_not_exist(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_parked_slots_is_empty_when_the_store_does_not_exist(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     assert claude_pool.parked_slots() == []
 
@@ -537,9 +531,7 @@ def test_park_clears_the_recorded_account(tmp_path: Path, monkeypatch) -> None:
     assert data["projects"] == {"/x": {}}
 
 
-def test_switch_parks_the_live_login_and_activates_the_target(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_switch_parks_the_live_login_and_activates_the_target(tmp_path: Path, monkeypatch) -> None:
     target = _park(tmp_path, "new@corp.com", monkeypatch)
     target.write_text(json.dumps({"claudeAiOauth": {"accessToken": "new"}}), encoding="utf-8")
     cfg = _cfg(tmp_path)
@@ -638,9 +630,7 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
         assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
 
 
-def test_switch_names_a_member_whose_config_file_is_torn(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
     claude_pool.holder_dir(cfg).mkdir(parents=True)

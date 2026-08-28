@@ -1764,9 +1764,7 @@ def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatc
     assert "/login" in results[0].detail or "claude use" in results[0].detail
 
 
-def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(
-    tmp_path, make_cfg, monkeypatch
-):
+def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(tmp_path, make_cfg, monkeypatch):
     """A store holding nothing but a staging file is the one case where an
     "empty" pool is not silent: that file is a login nothing else names."""
     from jailbee import claude_pool
@@ -1844,9 +1842,7 @@ def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
     assert any(not r.ok and "no live login" in r.detail for r in results)
 
 
-def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(
-    tmp_path, make_cfg, monkeypatch
-):
+def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_cfg, monkeypatch):
     """The staging file's own name can be taken by the time anyone reads this:
     park a fresh login of the same account and it lands on exactly that name.
     `mv` would overwrite it silently, so the advice must not be given."""
