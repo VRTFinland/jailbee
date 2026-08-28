@@ -106,8 +106,12 @@ def held_lock(
                 try:
                     path.rmdir()
                 except OSError:
-                    pass  # someone else got there first; fall through and retry
-                continue
+                    # Persistent (a non-empty lock dir, a permissions problem) or
+                    # a race with another stealer — either way, fall through to
+                    # the deadline check rather than spinning on it.
+                    pass
+                else:
+                    continue  # cleared it; retry immediately
             if time.monotonic() >= deadline:
                 raise ClaudeLockTimeout(
                     f"{path} is held by another process (waited {timeout_s:.0f}s). "

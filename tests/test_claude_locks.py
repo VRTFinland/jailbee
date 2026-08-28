@@ -90,3 +90,22 @@ def test_config_lock_is_a_sibling_of_the_config_file(tmp_path: Path) -> None:
     with config_lock(home, timeout_s=1.0):
         assert (home / ".claude.json.lock").is_dir()
     assert not (home / ".claude.json.lock").exists()
+
+
+def test_held_lock_times_out_when_a_stale_lock_cannot_be_removed(tmp_path: Path) -> None:
+    """A stale lock we cannot clear must still honour the wait budget.
+
+    `rmdir` on a non-empty directory raises ENOTEMPTY every time, so a steal
+    branch that retries unconditionally would spin here forever.
+    """
+    lock = tmp_path / "x.lock"
+    lock.mkdir()
+    (lock / "leftover").write_text("", encoding="utf-8")
+    old = time.time() - 120.0
+    os.utime(lock, (old, old))  # after the write: the write bumps the dir's mtime
+
+    started = time.monotonic()
+    with pytest.raises(ClaudeLockTimeout):
+        with held_lock(lock, stale_s=60.0, timeout_s=0.1):
+            pass  # pragma: no cover - the context must not be entered
+    assert time.monotonic() - started < 5.0
