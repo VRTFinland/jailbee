@@ -73,7 +73,11 @@ def test_seed_excludes_link_paths_from_the_copy_pass(tmp_path, mocker):
 
 def test_seed_hardlinks_each_link_path_in_its_own_pass(tmp_path, mocker):
     run = mocker.patch("jailbee.pool.subprocess.run")
-    p = _pool(tmp_path, link_paths=["caches/modules-2/files-2.1", "wrapper/dists"])
+    p = _pool(
+        tmp_path,
+        link_paths=["caches/modules-2/files-2.1", "wrapper/dists"],
+        stale_globs=["**/*.lck"],
+    )
     src = p.slots_dir / "slot-0"
     (src / "caches" / "modules-2" / "files-2.1").mkdir(parents=True)
     (src / "wrapper" / "dists").mkdir(parents=True)
@@ -83,6 +87,10 @@ def test_seed_hardlinks_each_link_path_in_its_own_pass(tmp_path, mocker):
     pool._seed(p, src, dst)
 
     assert run.call_count == 3  # one copy pass + one per link path
+    for link_argv in (run.call_args_list[1].args[0], run.call_args_list[2].args[0]):
+        # Every link pass carries the stale excludes and --delete-excluded.
+        assert "--exclude=**/*.lck" in link_argv
+        assert "--delete-excluded" in link_argv
     link_argv = run.call_args_list[1].args[0]
     assert f"--link-dest={src / 'caches/modules-2/files-2.1'}" in link_argv
     assert link_argv[-2] == f"{src / 'caches/modules-2/files-2.1'}/"
@@ -111,10 +119,19 @@ def test_seed_really_hardlinks_link_paths_and_really_copies_the_rest(tmp_path):
     src = p.slots_dir / "slot-0"
     (src / "files").mkdir(parents=True)
     (src / "files" / "artifact.jar").write_bytes(b"x" * 64)
+    (src / "files" / "deep").mkdir()
+    # A stale match INSIDE the link path: the hardlink pass must exclude it
+    # too. Hardlinking a lock file gives both slots one inode, and fcntl
+    # locks are per-inode — exactly the cross-container contention pooling
+    # exists to remove.
+    (src / "files" / "deep" / "inner.lock").write_bytes(b"")
     (src / "mutable.bin").write_bytes(b"y" * 64)
     (src / "stale.lock").write_bytes(b"")
     dst = p.slots_dir / "slot-1"
-    dst.mkdir(parents=True)
+    (dst / "files").mkdir(parents=True)
+    # A lock left in a reused free slot whose release never ran: seeding
+    # must clear it (`--delete-excluded`), not leave it behind.
+    (dst / "files" / "leftover.lock").write_bytes(b"")
 
     pool._seed(p, src, dst)
 
@@ -124,6 +141,8 @@ def test_seed_really_hardlinks_link_paths_and_really_copies_the_rest(tmp_path):
 
     assert (src / "mutable.bin").stat().st_ino != (dst / "mutable.bin").stat().st_ino
     assert not (dst / "stale.lock").exists()  # stale globs never seed
+    assert not (dst / "files" / "deep" / "inner.lock").exists()  # ...inside a link path either
+    assert not (dst / "files" / "leftover.lock").exists()  # nor survive in a reused slot
 
 
 def test_warmth_falls_back_to_slot_mtime_without_a_warmth_file(tmp_path):

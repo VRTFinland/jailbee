@@ -725,7 +725,16 @@ POOL_PRESETS: dict[str, PoolPreset] = {
         default_on=True,
         spec=PoolSpec(
             link_paths=["repository"],
-            stale_globs=["**/*.lock", "**/*.part*", "**/*.lastUpdated"],
+            # `_remote.repositories` is rewritten in place by
+            # maven-resolver's DefaultTrackingFileManager (RandomAccessFile
+            # "rw" → setLength(0) → rewrite), so it must never be
+            # hardlinked between slots.
+            stale_globs=[
+                "**/*.lock",
+                "**/*.part*",
+                "**/*.lastUpdated",
+                "**/_remote.repositories",
+            ],
         ),
     ),
     "npm": PoolPreset(

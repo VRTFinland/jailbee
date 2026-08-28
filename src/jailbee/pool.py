@@ -161,9 +161,16 @@ def _seed(pool: Pool, source: Path, target: Path) -> None:
     the link paths (`--delete` leaves excluded content in the target
     alone). Pass 2 syncs each link path with `--link-dest`, so identical
     files become second names for one inode instead of copies.
+
+    Pass 2 repeats the `stale_globs` excludes: a stale match living
+    *inside* a link path would otherwise be hardlinked, giving both slots
+    one inode — and fcntl locks are per-inode, so the two containers
+    would still serialise on it. `--delete-excluded` additionally clears
+    such a file out of a reused free slot whose release never ran.
     """
+    stale = [f"--exclude={g}" for g in pool.spec.stale_globs]
     excludes = [f"--exclude={p}/" for p in pool.spec.wipe_paths]
-    excludes += [f"--exclude={g}" for g in pool.spec.stale_globs]
+    excludes += stale
     excludes += [f"--exclude={p}/" for p in pool.spec.link_paths]
     subprocess.run(
         ["rsync", "-a", "--delete", *excludes, f"{source}/", f"{target}/"],
@@ -176,7 +183,16 @@ def _seed(pool: Pool, source: Path, target: Path) -> None:
         dst = target / rel
         dst.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["rsync", "-a", "--delete", f"--link-dest={src}", f"{src}/", f"{dst}/"],
+            [
+                "rsync",
+                "-a",
+                "--delete",
+                "--delete-excluded",
+                *stale,
+                f"--link-dest={src}",
+                f"{src}/",
+                f"{dst}/",
+            ],
             check=True,
         )
 
