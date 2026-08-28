@@ -19,7 +19,12 @@ directory about what the directory contains.
 config home's `.claude.json`, never from the credential. The credential file
 itself is parsed only to carry the machine-shared sibling keys across a switch
 (see `compose_credential`) — `claudeAiOauth` is moved, never read, logged or
-transmitted.
+transmitted. One exception: recovering an orphaned staging file (see
+`_adopt_orphaned_stages`) compares two files' `claudeAiOauth` blocks for
+equality, because the config home's identity is allowed to lag the
+credential beside it and a name-based check cannot see that. The comparison
+result — equal or not — is all that leaves that function; the value itself is
+still never logged, rendered or transmitted.
 """
 
 from __future__ import annotations
@@ -457,6 +462,16 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _fsync_file(path: Path) -> None:
+    """fsync a file by path. Not best-effort: callers use it where the file is
+    about to become the only copy of a grant."""
+    fd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _atomic_write(path: Path, text: str) -> None:
     """Replace `path` atomically and durably, mode 0600.
 
@@ -466,12 +481,18 @@ def _atomic_write(path: Path, text: str) -> None:
     before the rename and the directory after it: once the live credential has
     been parked, this file is the only copy of that grant, so "atomic" has to
     mean "survives a crash", not merely "no torn reader".
+
+    `mkstemp`'s descriptor is closed immediately and the file reopened by
+    name rather than wrapped with `os.fdopen`: if `fdopen` itself raised, that
+    descriptor would leak. `mkstemp` already creates the file at 0600 with a
+    name unique to us, so reopening it by name races nothing.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    os.close(fd)
     tmp = Path(name)
     try:
-        with os.fdopen(fd, "wb") as handle:
+        with open(tmp, "wb") as handle:
             handle.write(text.encode("utf-8"))
             handle.flush()
             os.fsync(handle.fileno())
@@ -491,9 +512,12 @@ def _move_file(src: Path, dest: Path) -> None:
     reachable here because `shared_dir` is user-overridable. The fallback is
     written out rather than delegated to `shutil.move` so its failure window is
     ours to close: a copy that fails leaves no partial file at the destination
-    to block a later park, and the source is unlinked only once the copy is on
-    disk. The copy-then-unlink window is the one moment a grant exists twice,
-    and it is unavoidable across filesystems.
+    to block a later park, and the source is unlinked only once the copy is
+    fsynced to disk — not merely copied, since a crash between an unsynced
+    copy and the source's unlink would leave a durable directory entry
+    pointing at data that was never written. The copy-then-unlink window is
+    the one moment a grant exists twice, and it is unavoidable across
+    filesystems.
     """
     try:
         os.replace(src, dest)
@@ -503,12 +527,31 @@ def _move_file(src: Path, dest: Path) -> None:
             raise
     try:
         shutil.copy2(src, dest)
+        _fsync_file(dest)
         _fsync_dir(dest.parent)
     except BaseException:
         with suppress(OSError):
             dest.unlink()
         raise
     src.unlink()
+
+
+def _login_of(path: Path) -> dict[str, Any] | None:
+    """The `claudeAiOauth` block of a credential file, for identity comparison.
+
+    Read only to answer "are these two files the same grant?" — a question the
+    slot name cannot answer, because a config home's `oauthAccount` is allowed
+    to lag the credential beside it. Never logged, never rendered, never
+    returned to anything that displays it.
+    """
+    try:
+        data = _credential_object(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    if data is None:
+        return None
+    block = data.get("claudeAiOauth")
+    return block if isinstance(block, dict) else None
 
 
 def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
@@ -521,7 +564,7 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identi
     return sorted(slots, key=lambda s: (not s.live, s.name)), identity
 
 
-def _adopt_orphaned_stages(live: Identity | None) -> None:
+def _adopt_orphaned_stages(cfg: Config, live: Identity | None) -> None:
     """Restore staging files a killed `switch` left behind.
 
     `switch` renames its target to `<name>.json.activating` before anything
@@ -532,13 +575,25 @@ def _adopt_orphaned_stages(live: Identity | None) -> None:
     A stage that fails those guards is left in place rather than deleted:
     jailbee never removes a credential on its own, and an inert file nothing
     reads is the safe residue for a human to clear.
+
+    The staging window extends past the write of the new credential, so a
+    stage can hold a grant that is already live while every config home still
+    names the previous account. Comparing names cannot see that — the
+    identity file is allowed to lag — so the live credential's own login is
+    compared too.
     """
     live_name = slug_for(live) if live is not None else None
+    live_grant = _login_of(live_credential_path(cfg))
     for stage in sorted(store_dir().glob("*.json.activating")):
         name = stage.name[: -len(".json.activating")]
         home = stage.with_name(f"{name}.json")
         if home.exists() or name == live_name:
             log.debug("leaving a stale staging file in place: %s", stage)
+            continue
+        if live_grant is not None and _login_of(stage) == live_grant:
+            # Killed after the credential was written: this grant is already
+            # live, and adopting it would make one login two files.
+            log.debug("staging file holds the live grant, leaving it: %s", stage)
             continue
         stage.replace(home)
 
@@ -652,7 +707,7 @@ def switch(
     """
     found, unreachable = members(cfg, gcfg)
     identity = live_identity(found, prefer=cfg.container_prefix)
-    _adopt_orphaned_stages(identity)
+    _adopt_orphaned_stages(cfg, identity)
     slots, identity = _slots_for(cfg, found)
     target = resolve_ref(ref, slots)
     if target.live:
@@ -680,6 +735,13 @@ def switch(
                 staged.replace(target.path)
             if parked_as is not None:
                 _move_file(store_dir() / f"{parked_as}.json", live_path)
+            elif live_raw is None:
+                # The holder started empty and nothing was parked, so whatever
+                # is at live_path is the grant we just wrote — and the target
+                # is back in the store. Removing it restores the empty holder
+                # and keeps one file per grant.
+                with suppress(OSError):
+                    live_path.unlink()
             raise
 
     cleared, not_cleared = _clear_identities(found, unreachable)

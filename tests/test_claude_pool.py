@@ -764,3 +764,58 @@ def test_switch_leaves_a_stage_alone_when_that_login_is_already_stored(
 
     assert (store / "dup@x.com.json.activating").exists()
     assert kept.exists()
+
+
+def test_switch_leaves_a_stage_alone_when_its_grant_is_already_live(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A kill after the credential was written leaves a stage whose grant is
+    already live, while every config home still names the previous account.
+    Adopting it on the name alone would make one login two files."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    grant = json.dumps({"claudeAiOauth": {"accessToken": "t", "refreshToken": "shared"}})
+    (store / "new@x.com.json.activating").write_text(grant, encoding="utf-8")
+    _park(tmp_path, "other@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, grant)                      # the interrupted switch already landed it
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@x.com"})
+
+    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
+
+    assert (store / "new@x.com.json.activating").exists()
+    assert not (store / "new@x.com.json").exists()
+
+
+def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """Nothing was parked, so a failure after the write must leave the holder as
+    empty as it found it — not holding a copy of the target's grant.
+
+    The mock fails only the staging file's own unlink (by name, not every
+    `Path.unlink` call) so the rollback's own cleanup call is left free to
+    run and can be asserted on directly, rather than being defeated by the
+    same blanket failure that triggers the rollback.
+    """
+    target = _park(tmp_path, "new@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    live_path = claude_pool.live_credential_path(cfg)
+    real_unlink = Path.unlink
+
+    def _flaky_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.endswith(".activating"):
+            raise OSError("busy")
+        real_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    mocker.patch("pathlib.Path.unlink", _flaky_unlink)
+
+    with pytest.raises(OSError):
+        claude_pool.switch(cfg, GlobalConfig(), "new@x.com")
+
+    # The target is back in the store and the holder is empty again — not
+    # holding a second copy of the grant `_atomic_write` already wrote.
+    assert target.exists()
+    assert not live_path.exists()
