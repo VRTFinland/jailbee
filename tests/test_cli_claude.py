@@ -149,6 +149,16 @@ def test_rm_confirms_before_deleting(repo, mocker):
     remove.assert_called_once_with(slot)
 
 
+def test_rm_warns_that_deletion_is_permanent(repo, mocker):
+    slot = Slot("old@x.com", Path("/s/old@x.com.json"), live=False)
+    mocker.patch("jailbee.claude_pool.list_slots", return_value=[slot])
+    mocker.patch("jailbee.claude_pool.remove_slot")
+
+    result = runner.invoke(app, ["claude", "rm", "old@x.com"], input="n\n")
+
+    assert "/login" in result.output
+
+
 def test_rm_yes_skips_the_prompt(repo, mocker):
     slot = Slot("old@x.com", Path("/s/old@x.com.json"), live=False)
     mocker.patch("jailbee.claude_pool.list_slots", return_value=[slot])

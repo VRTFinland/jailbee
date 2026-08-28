@@ -7485,7 +7485,7 @@ def claude_ls_cmd(
     config: ConfigOption = None,
 ) -> None:
     """List stored Claude logins and which one this repo's containers use."""
-    from jailbee import claude_pool, table_format
+    from jailbee import claude_pool
     from jailbee.tui import console
 
     cfg, gcfg = _claude_ctx(config)
@@ -7587,10 +7587,18 @@ def claude_rm_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
-    if not yes and not typer.confirm(f"Delete stored login `{slot.name}`?", default=False):
+    if not yes and not typer.confirm(
+        f"Delete stored login `{slot.name}`? It can only come back through a "
+        "browser /login.",
+        default=False,
+    ):
         raise typer.Exit(1)
-    claude_pool.remove_slot(slot)
-    success(f"Deleted `{slot.name}`")
+    try:
+        claude_pool.remove_slot(slot)
+    except (claude_pool.PoolError, OSError) as e:
+        error(f"could not delete `{slot.name}`: {e}")
+        raise typer.Exit(2) from e
+    success(f"Deleted `{slot.name}` — a browser /login is the only way back")
 
 
 chrome_pool_app = typer.Typer(
