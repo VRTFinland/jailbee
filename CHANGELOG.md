@@ -15,7 +15,10 @@
   login on its next turn — the credential file's mtime is what invalidates its
   cached token — so nothing needs restarting; only the account name shown in
   `/status` can lag. `jailbee claude ls` lists the store with the live account
-  first, `jailbee claude rm` deletes one for good. The switch runs under Claude
+  first, `jailbee claude rm` deletes one for good. Both `use` and `rm` take the
+  account as an *optional* argument: run either bare and it offers the stored
+  logins as an arrow-key menu, like `jailbee shell`/`jailbee tmux` do for
+  containers, with TAB completion over slot names when you'd rather type. The switch runs under Claude
   Code's own advisory locks, so a concurrent token refresh cannot overwrite it,
   and it carries the machine-shared credential keys (`mcpOAuth`,
   `pluginSecrets`, …) across from the live file rather than restoring the

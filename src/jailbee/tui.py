@@ -18,6 +18,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from rich.status import Status
 
+    from jailbee.claude_pool import Slot
     from jailbee.destroy_guard import RiskSummary
     from jailbee.lifecycle import ContainerInfo
     from jailbee.sync import BridgePlan, RefSummary
@@ -666,6 +667,41 @@ def pick_containers_multi(
     if result is None:
         return None
     return [str(v) for v in result]
+
+
+def _claude_choice_title(slot: Slot, width: int) -> str:
+    """One picker line: the account, then its organization when it has one.
+
+    Mirrors `jailbee claude ls`'s split — the account column carries
+    `display_name`, so the organization is not repeated inside it.
+    """
+    if not slot.org_hint:
+        # No padding: nothing follows, and trailing spaces are only whitespace
+        # for the terminal to render.
+        return slot.display_name
+    return f"{slot.display_name:<{width}}  {slot.org_hint}"
+
+
+def pick_claude_account(slots: Sequence[Slot], *, message: str) -> str | None:
+    """Arrow-key picker over stored Claude logins. Returns the slot *name*.
+
+    The name, not the `Slot`: it is what `claude use`/`claude rm` resolve, and
+    resolving again under the credential locks is what keeps one resolution
+    authoritative when another process is touching the store.
+
+    Returns None if the user cancels (Ctrl+C / ESC). Caller is responsible for
+    the TTY check — this function unconditionally renders the picker.
+    """
+    import questionary
+
+    width = max(len(s.display_name) for s in slots)
+    choices = [
+        questionary.Choice(title=_claude_choice_title(s, width), value=s.name) for s in slots
+    ]
+    result = questionary.select(message, choices=choices, use_shortcuts=True).ask()
+    if result is None:
+        return None
+    return str(result)
 
 
 _PLAN_HEADINGS = {

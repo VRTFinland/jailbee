@@ -881,6 +881,126 @@ def test_slot_email_and_org_hint_look_past_a_disambiguator() -> None:
     assert unidentified.org_hint is None
 
 
+def test_display_name_drops_only_the_organization() -> None:
+    """`display_name` is the ACCOUNT column's cell, and the ORG column carries
+    the `#<org8>` half. It must drop exactly that half and nothing else — the
+    disambiguator especially, since it is what `resolve_ref` needs typed to
+    tell two grants of one account apart."""
+    both = Slot(name=f"me@corp.com#a1b2c3d4~{PARK_STAMP}", path=Path("/x"), live=False)
+    assert both.display_name == f"me@corp.com~{PARK_STAMP}"
+    assert both.disambiguator == PARK_STAMP
+
+    org_only = Slot(name="me@corp.com#a1b2c3d4", path=Path("/x"), live=True)
+    assert org_only.display_name == "me@corp.com"
+    assert org_only.disambiguator is None
+
+    plain = Slot(name="me@corp.com", path=Path("/x"), live=False)
+    assert plain.display_name == "me@corp.com"
+
+
+def test_display_name_keeps_an_emailless_name_whole() -> None:
+    """The two emailless shapes have no `#<org8>` to drop, and their
+    disambiguator is the only thing telling two of them apart — so the name
+    passes through untouched rather than being rebuilt from `email`."""
+    unidentified = Slot(name=f"{claude_pool.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
+    assert unidentified.display_name == f"{claude_pool.LIVE_UNIDENTIFIED}~live"
+    assert unidentified.disambiguator == "live"
+
+    unknown = Slot(name=f"unknown-{PARK_STAMP}", path=Path("/x"), live=False)
+    assert unknown.display_name == f"unknown-{PARK_STAMP}"
+
+
+def _slots() -> list[Slot]:
+    return [
+        Slot(name="live@corp.com", path=Path("/h/.credentials.json"), live=True),
+        Slot(name="parked@corp.com", path=Path("/s/parked@corp.com.json"), live=False),
+        Slot(name="other@x.com", path=Path("/s/other@x.com.json"), live=False),
+    ]
+
+
+def test_resolve_interactively_passes_a_typed_ref_straight_through() -> None:
+    """A named account must not read the store or render a picker."""
+    calls: list[object] = []
+
+    def picker(slots):
+        calls.append(slots)
+        return "picked"
+
+    result = claude_pool.resolve_interactively(
+        _slots(),
+        "typed@corp.com",
+        purpose="switch to",
+        picker=picker,
+        is_interactive=lambda: True,
+    )
+    assert result == "typed@corp.com"
+    assert calls == []
+
+
+def test_resolve_interactively_never_offers_the_live_slot() -> None:
+    """`switch` and `rm` both refuse the live login, so offering it in a picker
+    would be offering a guaranteed error."""
+    seen: list[list[str]] = []
+
+    def picker(slots):
+        seen.append([s.name for s in slots])
+        return slots[0].name
+
+    result = claude_pool.resolve_interactively(
+        _slots(), None, purpose="switch to", picker=picker, is_interactive=lambda: True
+    )
+    assert seen == [["parked@corp.com", "other@x.com"]]
+    assert result == "parked@corp.com"
+
+
+def test_resolve_interactively_returns_none_when_the_picker_is_cancelled() -> None:
+    """ESC is not an error: the caller aborts without printing a failure."""
+    assert (
+        claude_pool.resolve_interactively(
+            _slots(), None, purpose="switch to", picker=lambda _: None, is_interactive=lambda: True
+        )
+        is None
+    )
+
+
+def test_resolve_interactively_rejects_a_holder_with_nothing_parked() -> None:
+    """One live login and nothing parked is not an empty pool — but there is
+    still nothing to switch *to*, and the message must say how to get one."""
+    only_live = [Slot(name="live@corp.com", path=Path("/h/c.json"), live=True)]
+    with pytest.raises(claude_pool.PoolError) as e:
+        claude_pool.resolve_interactively(
+            only_live,
+            None,
+            purpose="switch to",
+            picker=lambda _: "never",
+            is_interactive=lambda: True,
+        )
+    assert "no stored login to switch to" in str(e.value)
+    assert "park" in str(e.value)
+
+
+def test_resolve_interactively_names_the_candidates_without_a_tty() -> None:
+    """A script cannot answer a picker, so the failure has to teach it the
+    references it should have passed."""
+    with pytest.raises(claude_pool.PoolError) as e:
+        claude_pool.resolve_interactively(
+            _slots(),
+            None,
+            purpose="delete",
+            picker=lambda _: "never",
+            is_interactive=lambda: False,
+        )
+    message = str(e.value)
+    assert "run in a TTY" in message
+    assert "other@x.com" in message and "parked@corp.com" in message
+    assert "live@corp.com" not in message
+
+
+def test_group_name_is_the_directory_name_or_none(tmp_path: Path) -> None:
+    assert claude_pool.group_name(_cfg(tmp_path, group="gisgro")) == "gisgro"
+    assert claude_pool.group_name(_cfg(tmp_path)) is None
+
+
 def test_park_stores_a_second_independent_grant_for_one_account(
     tmp_path: Path, monkeypatch
 ) -> None:
