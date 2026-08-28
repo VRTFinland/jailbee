@@ -2895,6 +2895,48 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
         assert kw.get("mirror_endpoint") == ("10.234.216.1", 3128)
 
 
+def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, mocker):
+    """`jb new` is the primary path onto a pool slot, and nothing asserted
+    that it allocates at all — deleting the `allocate_startup` call left the
+    whole suite green. Two properties the surrounding comment claims and
+    only this test covers on the `new_container` path: allocation happens in
+    `--mount` mode too (the block above it is clone-only), and it precedes
+    autostart, which may run a build expecting its slot already mounted.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    events: list[str] = []
+    alloc = mocker.patch(
+        "jailbee.pool.allocate_startup",
+        side_effect=lambda *a, **kw: events.append("allocate"),
+    )
+    mocker.patch(
+        "jailbee.autostart.run_autostart",
+        side_effect=lambda *a, **kw: events.append("autostart"),
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
+
+    opts = NewContainerOptions(
+        container_branch="",
+        name="mounted",
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        mount=True,
+        autostart=True,
+    )
+    new_container(cfg, incus, opts)
+
+    alloc.assert_called_once_with(cfg, incus, "mounted")
+    assert events[0] == "allocate"
+    assert "autostart" in events[1:]
+
+
 def test_new_container_sets_pr_label(tmp_path):
     """`new_container` persists `opts.pr` as the `user.jailbee.pr` label so
     `gie ls` can render the container's PR association."""
