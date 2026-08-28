@@ -688,3 +688,79 @@ def test_remove_slot_deletes_a_parked_file(tmp_path: Path, monkeypatch) -> None:
     path = _park(tmp_path, "old@corp.com", monkeypatch)
     claude_pool.remove_slot(Slot(name="old@corp.com", path=path, live=False))
     assert not path.exists()
+
+
+def test_list_slots_puts_the_live_account_first(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "zzz@x.com", monkeypatch)
+    _park(tmp_path, "aaa@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "live@x.com"})
+
+    slots = claude_pool.list_slots(cfg, GlobalConfig())
+
+    assert [s.name for s in slots] == ["live@x.com", "aaa@x.com", "zzz@x.com"]
+    assert slots[0].live is True
+
+
+def test_invalidate_identity_reports_a_config_it_cannot_read(tmp_path: Path) -> None:
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
+
+    assert claude_pool.invalidate_identity(home) is False
+    assert (home / ".claude.json").read_text() == '["not", "an", "object"]'
+
+
+def test_invalidate_identity_is_true_when_there_is_nothing_to_clear(tmp_path: Path) -> None:
+    home = tmp_path / "claude"
+    home.mkdir()
+    assert claude_pool.invalidate_identity(home) is True
+    (home / ".claude.json").write_text('{"projects": {}}', encoding="utf-8")
+    assert claude_pool.invalidate_identity(home) is True
+
+
+def test_switch_leaves_no_staging_file_behind(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert list(claude_pool.store_dir().glob("*.activating")) == []
+
+
+def test_switch_adopts_a_stage_a_killed_switch_left_behind(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A kill between the staging rename and the write leaves a file
+    `parked_slots()` cannot see. The next switch must find it, not lose it."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(_cred(), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "orphan@x.com")
+
+    assert change.activated == "orphan@x.com"
+    assert list(store.glob("*.activating")) == []
+
+
+def test_switch_leaves_a_stage_alone_when_that_login_is_already_stored(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Adopting would create a second copy of one grant. jailbee never deletes
+    a credential on its own, so the stale stage stays for a human."""
+    kept = _park(tmp_path, "dup@x.com", monkeypatch)
+    store = claude_pool.store_dir()
+    (store / "dup@x.com.json.activating").write_text(_cred(), encoding="utf-8")
+    _park(tmp_path, "other@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
+
+    assert (store / "dup@x.com.json.activating").exists()
+    assert kept.exists()

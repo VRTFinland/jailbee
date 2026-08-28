@@ -24,6 +24,7 @@ transmitted.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -438,27 +439,76 @@ class PoolChange:
     live_sessions: list[str]
 
 
+def _fsync_dir(path: Path) -> None:
+    """Make a rename in `path` durable.
+
+    Best-effort: not every filesystem allows opening a directory for fsync,
+    and failing to harden a write is not a reason to fail the operation.
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _atomic_write(path: Path, text: str) -> None:
-    """Replace `path` atomically, mode 0600.
+    """Replace `path` atomically and durably, mode 0600.
 
     The temporary file is created in the destination directory so the replace
     is a same-filesystem rename, and its mode is set *before* the replace so
-    the final path is never briefly world-readable.
+    the final path is never briefly world-readable. The content is fsynced
+    before the rename and the directory after it: once the live credential has
+    been parked, this file is the only copy of that grant, so "atomic" has to
+    mean "survives a crash", not merely "no torn reader".
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     tmp = Path(name)
     try:
-        try:
-            os.write(fd, text.encode("utf-8"))
-        finally:
-            os.close(fd)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
         tmp.chmod(0o600)
         tmp.replace(path)
+        _fsync_dir(path.parent)
     except BaseException:
         with suppress(OSError):
             tmp.unlink()
         raise
+
+
+def _move_file(src: Path, dest: Path) -> None:
+    """Move a credential file, atomically where the filesystem allows it.
+
+    `os.replace` is atomic but raises `EXDEV` across filesystems, which is
+    reachable here because `shared_dir` is user-overridable. The fallback is
+    written out rather than delegated to `shutil.move` so its failure window is
+    ours to close: a copy that fails leaves no partial file at the destination
+    to block a later park, and the source is unlinked only once the copy is on
+    disk. The copy-then-unlink window is the one moment a grant exists twice,
+    and it is unavoidable across filesystems.
+    """
+    try:
+        os.replace(src, dest)
+        return
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+    try:
+        shutil.copy2(src, dest)
+        _fsync_dir(dest.parent)
+    except BaseException:
+        with suppress(OSError):
+            dest.unlink()
+        raise
+    src.unlink()
 
 
 def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
@@ -469,6 +519,28 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identi
     if live is not None:
         slots.append(live)
     return sorted(slots, key=lambda s: (not s.live, s.name)), identity
+
+
+def _adopt_orphaned_stages(live: Identity | None) -> None:
+    """Restore staging files a killed `switch` left behind.
+
+    `switch` renames its target to `<name>.json.activating` before anything
+    else moves. A hard kill in that window leaves a file `parked_slots()`
+    cannot see — a login lost with nothing naming it. Renaming it home is safe
+    only when it is the *only* copy of that grant, so a stage is adopted only
+    when neither the store nor the live credential already holds that account.
+    A stage that fails those guards is left in place rather than deleted:
+    jailbee never removes a credential on its own, and an inert file nothing
+    reads is the safe residue for a human to clear.
+    """
+    live_name = slug_for(live) if live is not None else None
+    for stage in sorted(store_dir().glob("*.json.activating")):
+        name = stage.name[: -len(".json.activating")]
+        home = stage.with_name(f"{name}.json")
+        if home.exists() or name == live_name:
+            log.debug("leaving a stale staging file in place: %s", stage)
+            continue
+        stage.replace(home)
 
 
 def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
@@ -516,9 +588,10 @@ def _clear_identities(found: Sequence[Member], unreachable: Sequence[str]) -> tu
 def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> str | None:
     """Move the live credential into the store. Caller holds the lock.
 
-    `shutil.move` rather than `Path.replace`: `shared_dir` is user-overridable,
+    `_move_file` rather than `Path.replace`: `shared_dir` is user-overridable,
     so the holder and the store can live on different filesystems, where a
-    rename raises `EXDEV`. Same-filesystem moves stay atomic renames.
+    rename raises `EXDEV`. Same-filesystem moves stay atomic renames, and the
+    cross-filesystem fallback has its own bounded, recoverable failure window.
     """
     live = live_credential_path(cfg)
     if not live.exists():
@@ -533,7 +606,7 @@ def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> str 
             "copies of one login, and the first token rotation would kill the "
             "other — remove or rename one of them first."
         )
-    shutil.move(str(live), str(dest))
+    _move_file(live, dest)
     return name
 
 
@@ -551,9 +624,21 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     with credential_locks(holder):
         parked_as = _park_locked(cfg, identity, now or datetime.now())
     if parked_as is None:
-        return PoolChange(None, None, [], list(unreachable), [])
+        return PoolChange(
+            parked_as=None,
+            activated=None,
+            cleared=[],
+            not_cleared=list(unreachable),
+            live_sessions=[],
+        )
     cleared, not_cleared = _clear_identities(found, unreachable)
-    return PoolChange(parked_as, None, cleared, not_cleared, live_session_prefixes(found))
+    return PoolChange(
+        parked_as=parked_as,
+        activated=None,
+        cleared=cleared,
+        not_cleared=not_cleared,
+        live_sessions=live_session_prefixes(found),
+    )
 
 
 def switch(
@@ -566,6 +651,8 @@ def switch(
     back where they were.
     """
     found, unreachable = members(cfg, gcfg)
+    identity = live_identity(found, prefer=cfg.container_prefix)
+    _adopt_orphaned_stages(identity)
     slots, identity = _slots_for(cfg, found)
     target = resolve_ref(ref, slots)
     if target.live:
@@ -584,16 +671,24 @@ def switch(
         try:
             parked_as = _park_locked(cfg, identity, now or datetime.now())
             _atomic_write(live_path, compose_credential(target_raw, shared_fields(live_raw)))
+            staged.unlink()
         except BaseException:
+            # The target first: a same-directory rename cannot fail for EXDEV,
+            # while putting the live credential back can, and a failure there
+            # must not strand the target under a name nothing lists.
+            with suppress(OSError):
+                staged.replace(target.path)
             if parked_as is not None:
-                shutil.move(str(store_dir() / f"{parked_as}.json"), str(live_path))
-            staged.replace(target.path)
+                _move_file(store_dir() / f"{parked_as}.json", live_path)
             raise
-        staged.unlink()
 
     cleared, not_cleared = _clear_identities(found, unreachable)
     return PoolChange(
-        parked_as, target.name, cleared, not_cleared, live_session_prefixes(found)
+        parked_as=parked_as,
+        activated=target.name,
+        cleared=cleared,
+        not_cleared=not_cleared,
+        live_sessions=live_session_prefixes(found),
     )
 
 
