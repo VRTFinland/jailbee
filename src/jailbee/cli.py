@@ -7497,6 +7497,21 @@ def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str)
     `park` leaves the holder empty and that session unauthenticated. One shared
     sentence would be a false reassurance in the command that removes auth.
     """
+    from jailbee import claude_pool
+
+    if change.parked_as is not None and claude_pool.is_unidentified(change.parked_as):
+        # The design requires this warning, and its absence is why an
+        # unidentified park was only ever discovered later, from `claude ls`.
+        # The file is a working login; only the record of *which* account it
+        # holds is missing, and it is missing because nothing on the host could
+        # be read to supply it.
+        warn(
+            f"`{change.parked_as}` does not say which account it holds: jailbee "
+            "could not read the account from any member repo's `.claude.json`. "
+            "The login itself is intact. To give it its real name, activate it "
+            "with `jailbee claude use`, run `claude` once in a container of this "
+            "holder, then `jailbee claude park` again."
+        )
     if change.updated:
         info(f"Recorded account updated in: {', '.join(change.updated)}")
     if change.not_updated:

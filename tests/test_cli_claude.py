@@ -230,6 +230,34 @@ def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
     remove.assert_called_once()
 
 
+def test_park_warns_when_the_slot_name_says_nothing_about_the_account(repo, mocker):
+    """The design requires this warning and it was never implemented, which is
+    why an unidentified park was only ever noticed later from `claude ls`. It
+    must say the login is intact and how to give it its real name."""
+    mocker.patch(
+        "jailbee.claude_pool.park",
+        return_value=PoolChange("unknown-20260828-161630", None, ["app"], [], []),
+    )
+    result = runner.invoke(app, ["claude", "park"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    flat = _flat(result.output)
+    assert "does not say which account it holds" in flat
+    assert "The login itself is intact" in flat
+    assert "jailbee claude park` again" in flat
+
+
+def test_use_does_not_warn_for_an_identified_park(repo, mocker):
+    """The common case must stay quiet — a warning on every switch would train
+    the user to ignore the one that matters."""
+    mocker.patch(
+        "jailbee.claude_pool.switch",
+        return_value=PoolChange("old@corp.com#aaaabbbb", "new@corp.com", ["app"], [], []),
+    )
+    result = runner.invoke(app, ["claude", "use", "new@corp.com"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "does not say which account" not in _flat(result.output)
+
+
 def test_use_reports_both_sides_of_the_switch(repo, mocker):
     mocker.patch(
         "jailbee.claude_pool.switch",
