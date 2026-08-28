@@ -282,6 +282,7 @@ def test_format_advice_names_the_observed_watermark() -> None:
                 action="base_build",
                 watermark=Watermark((1, 0, 3), observed=True),
                 reasons=("install.sh installs fd",),
+                releases=((1, 0, 4),),
             ),
         )
     )
@@ -302,6 +303,7 @@ def test_format_advice_does_not_claim_a_run_it_never_saw() -> None:
                 action="apply",
                 watermark=Watermark((1, 1, 0), observed=False),
                 reasons=("the ACL gained a rule",),
+                releases=((1, 1, 0),),
             ),
         )
     )
@@ -319,6 +321,7 @@ def test_format_advice_truncates_a_long_reason_list() -> None:
                 action="base_build",
                 watermark=Watermark((1, 0, 0), observed=True),
                 reasons=("a", "b", "c", "d", "e"),
+                releases=((1, 1, 0),),
             ),
         )
     )
@@ -336,8 +339,8 @@ def test_format_advice_renders_both_actions() -> None:
 
     owed = Pending(
         (
-            PendingAction("base_build", Watermark((1, 0, 0), observed=True), ("x",)),
-            PendingAction("apply", Watermark((1, 0, 0), observed=True), ("y",)),
+            PendingAction("base_build", Watermark((1, 0, 0), observed=True), ("x",), ((1, 1, 0),)),
+            PendingAction("apply", Watermark((1, 0, 0), observed=True), ("y",), ((1, 1, 0),)),
         )
     )
     lines = format_advice(owed)
@@ -530,3 +533,53 @@ def test_pool_note_advises_apply_only() -> None:
     note = matches[0]
     assert note.version == (1, 2, 0)
     assert note.actions == frozenset({"apply"})
+
+
+def test_format_advice_names_the_release_that_changed_things_not_the_watermark() -> None:
+    """An assumed watermark survives upgrades: a repo first seen under 1.1.0
+    still carries `Watermark((1, 1, 0), observed=False)` when 1.2.0 runs. The
+    line must name the release whose notes are being shown, not that
+    watermark — otherwise 1.2.0's changes are advertised as 1.1.0's."""
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                action="base_build",
+                watermark=Watermark((1, 1, 0), observed=False),
+                reasons=("install.sh masks the apt-daily timers",),
+                releases=((1, 2, 0),),
+            ),
+        )
+    )
+    lines = format_advice(owed)
+    assert lines[0] == "jailbee 1.2.0 changed what `jb base build` produces:"
+
+
+def test_format_advice_spans_several_releases_when_the_notes_do() -> None:
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                action="apply",
+                watermark=Watermark((1, 1, 0), observed=False),
+                reasons=("the ACL gained a rule", "the profile grew a mount"),
+                releases=((1, 1, 0), (1, 3, 0)),
+            ),
+        )
+    )
+    lines = format_advice(owed)
+    assert lines[0] == "jailbee 1.1.0-1.3.0 changed what `jb apply` writes:"
+
+
+def test_pending_reports_the_releases_behind_the_reasons() -> None:
+    from jailbee.upgrade import Watermark, pending
+
+    notes = (
+        _note(1, 1, 0, "base_build", reason="a"),
+        _note(1, 2, 0, "base_build", reason="b"),
+        _note(1, 2, 0, "base_build", reason="c"),
+    )
+    got = pending("1.2.0", {"base_build": Watermark((1, 1, 0), observed=False)}, notes=notes)
+    assert got.actions[0].releases == ((1, 1, 0), (1, 2, 0))

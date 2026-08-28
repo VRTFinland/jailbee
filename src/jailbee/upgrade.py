@@ -148,11 +148,19 @@ class Watermark:
 
 @dataclass(frozen=True)
 class PendingAction:
-    """One action that is owed, with the reasons and the watermark it beat."""
+    """One action that is owed, with the reasons and the watermark it beat.
+
+    `releases` are the versions of the notes behind `reasons`, ascending and
+    deduplicated. An assumed watermark survives upgrades — a repo first seen
+    under 1.1.0 keeps that watermark while 1.2.0 runs — so the watermark alone
+    cannot say which release changed anything, and rendering it as if it could
+    advertises the new release's changes under the old release's number.
+    """
 
     action: Action
     watermark: Watermark
     reasons: tuple[str, ...]
+    releases: tuple[tuple[int, int, int], ...]
 
 
 @dataclass(frozen=True)
@@ -188,15 +196,22 @@ def pending(
         mark = watermarks.get(action)
         if mark is None:
             continue
-        reasons = tuple(
-            note.reason
+        firing = tuple(
+            note
             for note in notes
             if action in note.actions
             and note.version <= now
             and (note.version > mark.version if mark.observed else note.version >= mark.version)
         )
-        if reasons:
-            owed.append(PendingAction(action=action, watermark=mark, reasons=reasons))
+        if firing:
+            owed.append(
+                PendingAction(
+                    action=action,
+                    watermark=mark,
+                    reasons=tuple(note.reason for note in firing),
+                    releases=tuple(sorted({note.version for note in firing})),
+                )
+            )
     return Pending(tuple(owed))
 
 
@@ -225,9 +240,14 @@ def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]
             lines.append(f"Since this repo last ran `{command}` (jailbee {version}):")
         else:
             # No run was ever observed, so claiming "since this repo last ran"
-            # would be a fabrication. Name the release instead.
+            # would be a fabrication. Name the releases the reasons come from
+            # instead — never the watermark, which is only where the repo was
+            # first seen and is older than those releases after any upgrade.
             verb = "produces" if item.action == "base_build" else "writes"
-            lines.append(f"jailbee {version} changed what `{command}` {verb}:")
+            span = _dotted(item.releases[0])
+            if item.releases[-1] != item.releases[0]:
+                span = f"{span}-{_dotted(item.releases[-1])}"
+            lines.append(f"jailbee {span} changed what `{command}` {verb}:")
         shown = item.reasons[:max_reasons]
         lines.extend(f"    - {reason}" for reason in shown)
         hidden = len(item.reasons) - len(shown)

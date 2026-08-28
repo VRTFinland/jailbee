@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The upgrade hint no longer attributes a release's changes to an older
+  version.** When jailbee has never observed `jb base build` (or `jb apply`)
+  run in a repo, its watermark is the version the repo was *first seen* under,
+  and that assumption survives later upgrades. The hint printed that watermark
+  as the release that changed things, so 1.2.0's golden-image changes were
+  announced as "jailbee 1.1.0 changed what `jb base build` produces". The line
+  now names the releases the listed reasons actually come from.
+
 ## 1.2.0 - 2026-08-28
 
 ### Added
