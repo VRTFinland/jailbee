@@ -1820,3 +1820,50 @@ def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
     assert len(failed) == 1
     assert str(stage) in failed[0].detail
     assert "rename it to orphan@x.com.json" in failed[0].detail
+
+
+def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A kill between the park and the write leaves exactly this state: the
+    login parked, the holder empty, and a staging file nothing else lists.
+    Both facts must be reported — the orphan is not swallowed by the failure."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "orphan@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert any(not r.ok and "orphan@x.com.json.activating" in r.detail for r in results)
+    assert any(not r.ok and "no live login" in r.detail for r in results)
+
+
+def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The staging file's own name can be taken by the time anyone reads this:
+    park a fresh login of the same account and it lands on exactly that name.
+    `mv` would overwrite it silently, so the advice must not be given."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+    orphan = next(r for r in results if "activating" in r.detail)
+
+    assert orphan.ok is False
+    assert "rename it to" not in orphan.detail
+    assert "already taken" in orphan.detail
+    assert "dup@x.com.json" in orphan.detail

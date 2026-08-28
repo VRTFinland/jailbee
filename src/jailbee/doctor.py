@@ -187,6 +187,13 @@ def _orphaned_stage_checks() -> list[CheckResult]:
     command sees one holder — jailbee cannot answer that, but the person
     reading this can. Naming the file and the exact `mv` is the whole recovery
     path; the risk of a wrong automatic rename is a silently dead login.
+
+    **The rename is only advised when the destination name is free.** It need
+    not be: after the kill, a fresh `/login` as the same account followed by
+    `jailbee claude park` lands on exactly `<name>.json`, because nothing was
+    occupying it. `mv` would then overwrite a newer, different grant without a
+    word — one login destroyed by following this very message. When the name is
+    taken, the two files are named and the choice is left to the reader.
     """
     from jailbee import claude_pool
 
@@ -195,17 +202,26 @@ def _orphaned_stage_checks() -> list[CheckResult]:
         stages = sorted(claude_pool.store_dir().glob(f"*.json{suffix}"))
     except OSError:  # an unreadable store is _check_claude_credentials' business
         return []
-    return [
-        CheckResult(
-            "claude account pool",
-            False,
-            f"an interrupted switch left {stage}; if that login is still "
-            f"wanted, rename it to {stage.name[: -len(suffix)]} — jailbee will "
-            "not move it for you, because it cannot tell from here whether "
-            "that login is already live in another repo's holder.",
-        )
-        for stage in stages
-    ]
+
+    results: list[CheckResult] = []
+    for stage in stages:
+        home = stage.with_name(stage.name[: -len(suffix)])
+        if home.exists():
+            detail = (
+                f"an interrupted switch left {stage}, but the name it came from "
+                f"({home.name}) is already taken by another stored login — "
+                "renaming over it would destroy that one. Compare the two and "
+                "delete whichever you do not want."
+            )
+        else:
+            detail = (
+                f"an interrupted switch left {stage}; if that login is still "
+                f"wanted, rename it to {home.name} — jailbee will not move it "
+                "for you, because it cannot tell from here whether that login "
+                "is already live in another repo's holder."
+            )
+        results.append(CheckResult("claude account pool", False, detail))
+    return results
 
 
 def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
