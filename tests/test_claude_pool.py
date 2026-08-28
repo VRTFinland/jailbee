@@ -302,3 +302,25 @@ def test_resolve_ref_reports_a_duplicated_name_as_corruption() -> None:
         claude_pool.resolve_ref("me@x.com", dupes)
     assert "/store/me@x.com.json" in str(excinfo.value)
     assert "/holder/.credentials.json" in str(excinfo.value)
+
+
+def test_slug_sanitizes_the_organization_half_too() -> None:
+    """The organization comes from a file containers write, so a separator in
+    it must not survive into a slot name that later becomes a path."""
+    slug = claude_pool.slug_for(Identity("me@x.com", "../../.."))
+    assert "/" not in slug
+    assert slug == "me@x.com#..-..-.."
+
+
+def test_slug_never_starts_with_a_dot() -> None:
+    assert claude_pool.slug_for(Identity(".hidden@x.com")) == "hidden@x.com"
+    assert claude_pool.slug_for(Identity("..")) == "unnamed"
+
+
+def test_read_identity_is_none_when_the_document_root_is_not_an_object(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
+    assert claude_pool.read_identity(home) is None

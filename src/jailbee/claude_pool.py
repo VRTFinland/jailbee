@@ -73,7 +73,12 @@ class Slot:
 
     @property
     def email(self) -> str | None:
-        """The account's email, or None for an unidentified slot."""
+        """The account's email, or None for an unidentified slot.
+
+        Display-only: a real email address that happens to start with
+        `unknown-` would be misreported as unidentified. `read_identity` does
+        not require an email-shaped string, so this is possible in principle.
+        """
         if self.name == LIVE_UNIDENTIFIED or self.name.startswith("unknown-"):
             return None
         return self.name.split("#", 1)[0]
@@ -156,11 +161,19 @@ def slug_for(identity: Identity) -> str:
     The organization is in the name whenever the account has one, not only on
     collision: detecting a collision after the fact would mean knowing an
     existing slot's organization, which without a manifest is not knowable.
+
+    **Both halves are sanitized, and the result is a single path component.**
+    Identity comes from a `.claude.json` that containers write, so it is
+    untrusted: an unsanitized organization carrying `/` would let a slot path
+    escape the store. Leading dots are stripped as hygiene — a slot file is not
+    meant to be hidden — though `Path.glob` would still list one.
     """
     email = _SLUG_UNSAFE.sub("-", identity.email.strip().lower())
+    slug = email
     if identity.org_uuid:
-        return f"{email}#{identity.org_uuid.strip().lower()[:8]}"
-    return email
+        org = _SLUG_UNSAFE.sub("-", identity.org_uuid.strip().lower())[:8]
+        slug = f"{email}#{org}"
+    return slug.lstrip(".") or "unnamed"
 
 
 def unknown_slot_name(when: datetime) -> str:
