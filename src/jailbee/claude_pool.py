@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -243,3 +244,57 @@ def compose_credential(target_raw: str, live_shared: dict[str, Any] | None) -> s
     composed = {k: v for k, v in target.items() if k not in SHARED_CREDENTIAL_KEYS}
     composed.update(live_shared)
     return json.dumps(composed)
+
+
+def parked_slots() -> list[Slot]:
+    """Every stored login, sorted by name. An absent store is an empty pool."""
+    store = store_dir()
+    try:
+        files = sorted(store.glob("*.json"))
+    except OSError:
+        return []
+    return [Slot(name=p.name[: -len(".json")], path=p, live=False) for p in files]
+
+
+def live_slot(cfg: Config, identity: Identity | None) -> Slot | None:
+    """The holder's live login, or None when nothing is logged in."""
+    path = live_credential_path(cfg)
+    if not path.exists():
+        return None
+    name = slug_for(identity) if identity is not None else LIVE_UNIDENTIFIED
+    return Slot(name=name, path=path, live=True)
+
+
+def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
+    """The slot a user-typed reference names.
+
+    An exact slot name wins; otherwise a bare email must match exactly one
+    account. Nothing is guessed — an ambiguous or unknown reference is an
+    error naming the candidates.
+    """
+    wanted = ref.strip()
+    exact = [s for s in slots if s.name == wanted]
+    if len(exact) > 1:
+        where = ", ".join(str(s.path) for s in sorted(exact, key=lambda s: str(s.path)))
+        raise PoolError(
+            f"`{wanted}` names {len(exact)} files ({where}). One login must exist "
+            "in exactly one place — remove or rename all but one before switching."
+        )
+    if exact:
+        return exact[0]
+
+    lowered = wanted.lower()
+    by_email = [s for s in slots if s.email is not None and s.email == lowered]
+    if len(by_email) == 1:
+        return by_email[0]
+    if len(by_email) > 1:
+        names = ", ".join(sorted(s.name for s in by_email))
+        raise PoolError(
+            f"`{ref}` matches several accounts: {names}. Pass the full slot name."
+        )
+
+    known = ", ".join(sorted(s.name for s in slots))
+    raise PoolError(
+        f"no stored account matches `{ref}`."
+        + (f" Known: {known}" if known else " The pool is empty.")
+    )

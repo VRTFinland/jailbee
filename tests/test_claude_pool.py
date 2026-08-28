@@ -203,3 +203,102 @@ def test_compose_returns_the_target_verbatim_when_it_cannot_merge(
     target: str, live: dict[str, object] | None
 ) -> None:
     assert claude_pool.compose_credential(target, live) == target
+
+
+def _park(tmp_path: Path, name: str, monkeypatch) -> Path:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True, exist_ok=True)
+    path = store / f"{name}.json"
+    path.write_text(_cred(), encoding="utf-8")
+    return path
+
+
+def test_parked_slots_reads_the_store(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "b@x.com", monkeypatch)
+    _park(tmp_path, "a@x.com#a1b2c3d4", monkeypatch)
+    (claude_pool.store_dir() / "notes.txt").write_text("ignored", encoding="utf-8")
+
+    slots = claude_pool.parked_slots()
+
+    assert [s.name for s in slots] == ["a@x.com#a1b2c3d4", "b@x.com"]
+    assert all(not s.live for s in slots)
+
+
+def test_parked_slots_is_empty_when_the_store_does_not_exist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert claude_pool.parked_slots() == []
+
+
+def test_live_slot_is_named_after_the_identity(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    live = claude_pool.live_credential_path(cfg)
+    live.parent.mkdir(parents=True)
+    live.write_text(_cred(), encoding="utf-8")
+
+    slot = claude_pool.live_slot(cfg, Identity("me@corp.com", "a1b2c3d4-99"))
+
+    assert slot is not None
+    assert slot.name == "me@corp.com#a1b2c3d4"
+    assert slot.live is True
+    assert slot.path == live
+
+
+def test_live_slot_falls_back_to_a_display_name(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    live = claude_pool.live_credential_path(cfg)
+    live.parent.mkdir(parents=True)
+    live.write_text(_cred(), encoding="utf-8")
+
+    slot = claude_pool.live_slot(cfg, None)
+
+    assert slot is not None
+    assert slot.name == claude_pool.LIVE_UNIDENTIFIED
+
+
+def test_live_slot_is_none_when_nothing_is_logged_in(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    assert claude_pool.live_slot(cfg, None) is None
+
+
+def _slot(name: str) -> Slot:
+    return Slot(name=name, path=Path(f"/store/{name}.json"), live=False)
+
+
+def test_resolve_ref_matches_a_full_slot_name() -> None:
+    slots = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
+    assert claude_pool.resolve_ref("me@x.com#bbbb2222", slots).name == "me@x.com#bbbb2222"
+
+
+def test_resolve_ref_matches_a_bare_email() -> None:
+    slots = [_slot("me@x.com#aaaa1111"), _slot("other@x.com")]
+    assert claude_pool.resolve_ref("Me@X.com", slots).name == "me@x.com#aaaa1111"
+
+
+def test_resolve_ref_reports_an_ambiguous_email() -> None:
+    slots = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.resolve_ref("me@x.com", slots)
+    assert "aaaa1111" in str(excinfo.value)
+    assert "bbbb2222" in str(excinfo.value)
+
+
+def test_resolve_ref_lists_what_it_knows_when_nothing_matches() -> None:
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.resolve_ref("nobody@x.com", [_slot("me@x.com")])
+    assert "me@x.com" in str(excinfo.value)
+
+
+def test_resolve_ref_reports_a_duplicated_name_as_corruption() -> None:
+    """Two files with one name means one grant exists twice — the invariant
+    the whole module is built to keep. Say so rather than picking one."""
+    dupes = [
+        Slot(name="me@x.com", path=Path("/store/me@x.com.json"), live=False),
+        Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True),
+    ]
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.resolve_ref("me@x.com", dupes)
+    assert "/store/me@x.com.json" in str(excinfo.value)
+    assert "/holder/.credentials.json" in str(excinfo.value)
