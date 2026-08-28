@@ -211,13 +211,13 @@ def test_complete_claude_account_offers_the_parked_slots_by_prefix(mocker):
     mocker.patch(
         "jailbee.claude_pool.parked_slots",
         return_value=[
-            Slot("me@corp.com#d38d520c", Path("/s/a.json"), live=False),
+            Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False),
             Slot("other@x.com", Path("/s/b.json"), live=False),
         ],
     )
-    assert completion.complete_claude_account(_ctx(), "me") == ["me@corp.com#d38d520c"]
+    assert completion.complete_claude_account(_ctx(), "me") == ["me@corp.com#c0ffee12"]
     assert completion.complete_claude_account(_ctx(), "") == [
-        "me@corp.com#d38d520c",
+        "me@corp.com#c0ffee12",
         "other@x.com",
     ]
 
