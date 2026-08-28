@@ -7448,8 +7448,14 @@ def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
     ]
 
 
-def _report_side_effects(change: "claude_pool.PoolChange") -> None:
-    """The parts of a pool change that are the same for `use` and `park`."""
+def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str) -> None:
+    """The parts of a pool change that are the same for `use` and `park`.
+
+    `session_note` is the caller's, because the two commands leave a running
+    session in opposite states: `use` swaps one credential for another, while
+    `park` leaves the holder empty and that session unauthenticated. One shared
+    sentence would be a false reassurance in the command that removes auth.
+    """
     if change.cleared:
         info(f"Recorded account cleared in: {', '.join(change.cleared)}")
     if change.not_cleared:
@@ -7460,11 +7466,7 @@ def _report_side_effects(change: "claude_pool.PoolChange") -> None:
             "unaffected."
         )
     if change.live_sessions:
-        warn(
-            f"A Claude session looks live in: {', '.join(change.live_sessions)}. "
-            "The credential swaps on that session's next turn; the account shown "
-            "in /status may lag until it restarts."
-        )
+        warn(f"A Claude session looks live in: {', '.join(change.live_sessions)}. {session_note}")
 
 
 @claude_app.command("ls")
@@ -7491,7 +7493,8 @@ def claude_ls_cmd(
     cfg, gcfg = _claude_ctx(config)
     try:
         slots = claude_pool.list_slots(cfg, gcfg)
-    except claude_pool.PoolError as e:
+        found, unreachable = claude_pool.members(cfg, gcfg)
+    except (claude_pool.PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -7504,6 +7507,17 @@ def claude_ls_cmd(
         title=f"Claude logins for {claude_pool.holder_dir(cfg)}",
         empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
     )
+    # A switch is holder-wide, so who else moves with it is part of reading
+    # this table — and the in-container skill promises the command says so.
+    # Table format only: the JSON payload is a row per slot, and a per-command
+    # fact does not belong in it.
+    if fmt == "table":
+        info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        if unreachable:
+            warn(
+                "Could not read the config of: "
+                f"{', '.join(unreachable)}. Those repos share this holder too."
+            )
 
 
 @claude_app.command("use")
@@ -7525,14 +7539,20 @@ def claude_use_cmd(
     cfg, gcfg = _claude_ctx(config)
     try:
         change = claude_pool.switch(cfg, gcfg, ref)
-    except (claude_pool.PoolError, ClaudeLockTimeoutError) as e:
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
     success(f"Switched to {change.activated}")
     if change.parked_as is not None:
         info(f"Parked the previous login as `{change.parked_as}`.")
-    _report_side_effects(change)
+    _report_side_effects(
+        change,
+        session_note=(
+            "The credential swaps on that session's next turn; the account shown "
+            "in /status may lag until it restarts."
+        ),
+    )
 
 
 @claude_app.command("park")
@@ -7549,7 +7569,7 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
     cfg, gcfg = _claude_ctx(config)
     try:
         change = claude_pool.park(cfg, gcfg)
-    except (claude_pool.PoolError, ClaudeLockTimeoutError) as e:
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -7557,7 +7577,14 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
         info("Nothing to park: this holder has no stored login.")
         return
     success(f"Parked `{change.parked_as}`")
-    _report_side_effects(change)
+    _report_side_effects(
+        change,
+        session_note=(
+            "This holder is now empty, so that session has no login: it will ask "
+            "for /login on its next turn, unless you run `jailbee claude use "
+            "<account>` first."
+        ),
+    )
     info("The next `claude` in a container of this holder will prompt /login.")
 
 
@@ -7576,12 +7603,15 @@ def claude_rm_cmd(
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        slot = claude_pool.resolve_ref(ref, claude_pool.list_slots(cfg, gcfg))
+        # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
+        # and a parked file is ambiguous for a switch but not for a deletion,
+        # and `rm` is the command that clears that state.
+        slot = claude_pool.resolve_removable(ref, claude_pool.list_slots(cfg, gcfg))
         if slot.live:
-            raise claude_pool.PoolError(
-                f"`{slot.name}` is the live account — run `jailbee claude park` first."
-            )
-    except claude_pool.PoolError as e:
+            # Pre-checked so the confirmation prompt is never shown for a
+            # deletion that `remove_slot` would refuse anyway.
+            raise claude_pool.PoolError(claude_pool.live_account_refusal(slot.name))
+    except (claude_pool.PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 

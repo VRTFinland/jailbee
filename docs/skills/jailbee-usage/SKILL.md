@@ -395,6 +395,10 @@ Four things worth knowing:
   authentication does not.
 - **Adding an account is `park` then `/login`.** There is no `add`: only a
   browser login creates a credential, and it lands in the holder by itself.
+  Logging in as an account that is *already* parked is fine — the two grants
+  are independent, so the new one is stored under a name with a `~<timestamp>`
+  suffix (`me@work.com~20260828-104233`). Pass that full name to `use`/`rm`
+  when a bare email is reported as ambiguous.
 - **A login is never copied.** Every operation moves the file, because two
   copies of one login share a refresh-token lineage and the first rotation
   silently kills the other. That is also why `rm` is permanent.

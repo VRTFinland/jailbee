@@ -1863,3 +1863,109 @@ def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_c
     assert "rename it to" not in orphan.detail
     assert "already taken" in orphan.detail
     assert "dup@x.com.json" in orphan.detail
+
+
+def _staged_grant(token: str) -> str:
+    """A credential whose refresh-token lineage is `token`."""
+    import json
+
+    return json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": token}})
+
+
+def test_doctor_says_a_staged_login_is_already_live_in_this_holder(tmp_path, make_cfg, monkeypatch):
+    """The likeliest post-kill state: the switch died between writing the
+    credential and unlinking its stage, so the grant is live *here*. Told only
+    that it "may be live in another repo's holder", a careful reader checks the
+    others, finds nothing, renames, and ends up with one refresh-token lineage
+    in two files. Doctor has `cfg`, so it can settle this case for free."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text(_staged_grant("one-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("one-lineage"), encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    detail = results[0].detail
+    assert "live in" in detail
+    assert "delete it" in detail
+    # The advice that would duplicate the lineage must not be given here.
+    assert "rename it to" not in detail
+
+
+def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A different grant is still unknowable from here — but the caveat now
+    names both ways it can already exist, not just the other-holder one."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(
+        _staged_grant("staged-lineage"), encoding="utf-8"
+    )
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "rename it to orphan@x.com.json" in detail
+    assert "parked under another name" in detail
+    assert "another repo's holder" in detail
+
+
+def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """Unreadable is not the same as "yes". An unreadable file falls back to the caveat
+    rather than telling the reader to delete a login."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text("not json", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text("not json", encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "delete it" not in detail
+    assert "rename it to orphan@x.com.json" in detail
+
+
+def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_cfg, monkeypatch):
+    """Deleting one of two logins is a destructive answer to "which do you
+    want?". Keeping both is the option that was missing."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("stored"), encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text(_staged_grant("staged"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "dup@x.com~<label>.json" in detail
+    assert "rename it to" not in detail

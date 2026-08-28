@@ -11,6 +11,14 @@ refresh-token lineage two refreshers, and the first rotation silently logs the
 other out. Every operation here is a rename or an atomic replace, so exactly
 one file holds any given grant.
 
+**One account is not one login.** Two independent grants for the same account
+are ordinary: `/login` as the same account after a `park` is the documented way
+to add one, and two holders on a host can each be logged into it. Slot names
+are derived from the account, so they collide, and a colliding name gets a
+disambiguator rather than a refusal — see `Slot` for the grammar and
+`_disambiguated_slot` for the rule. The invariant is one *login* per file,
+never one account per file.
+
 **No state but the filesystem.** A file in `store_dir()` is parked; the file in
 `holder_dir(cfg)` is live. There is no ledger, so nothing can disagree with the
 directory about what the directory contains.
@@ -43,7 +51,7 @@ import shutil
 import tempfile
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -63,6 +71,16 @@ The parentheses are load-bearing: they cannot appear in a slug, so this name
 can never collide with a parked slot or be typed as a bare-email reference.
 """
 
+DISAMBIGUATOR = "~"
+"""Separator between a slot's derived name and whatever makes it unique.
+
+Safe because `_SLUG_UNSAFE` replaces it inside both halves of a derived name,
+so it can never appear in one by accident. See `Slot` for the full grammar.
+"""
+
+_SLOT_SUFFIX = ".json"
+"""Extension every file in the store carries; a slot name is the rest."""
+
 
 class PoolError(Exception):
     """A pool operation cannot proceed; the message is user-facing."""
@@ -80,14 +98,38 @@ class Identity:
 class Slot:
     """One stored login: a parked file, or the live credential.
 
+    **Slot names follow one grammar**, and this docstring is its definition:
+
+        <email>[#<org8>][~<disambiguator>]
+
+    - `<email>` and `<org8>` are what `slug_for` derives from the account's
+      identity. Its allowed set — `[a-z0-9@._-]` — contains neither `#` nor
+      `~`, which is exactly what makes both separators safe to split on. Widen
+      that set and this grammar breaks.
+    - `~<disambiguator>` appears only when the derived name is already taken by
+      a **different** grant. One account can legitimately hold two independent
+      logins: `/login` as the same account after a `park` is the documented way
+      to add one, and two holders on a host can each be logged into it. See
+      `_disambiguated_slot` for the park side and `_slots_for` for the live
+      side, whose disambiguator is the literal `live`.
+    - Two shapes carry no email at all: `LIVE_UNIDENTIFIED`, and
+      `unknown-<timestamp>` from `unknown_slot_name`. Both properties below are
+      None for them, disambiguator or not.
+
     `org_hint` is the **truncated** organization from the slot name, not a
-    UUID. Never compare it with `Identity.org_uuid` — match a live identity to
-    a slot by comparing `slug_for(identity)` with `Slot.name`.
+    UUID. Never compare it with `Identity.org_uuid`, and do not treat a name as
+    an identity: `slug_for(identity)` equals the *derived* part of a slot name,
+    which for a disambiguated slot is not the whole of it.
     """
 
     name: str
     path: Path
     live: bool
+
+    @property
+    def _derived(self) -> str:
+        """The name without its `~<disambiguator>` suffix."""
+        return self.name.split(DISAMBIGUATOR, 1)[0]
 
     @property
     def email(self) -> str | None:
@@ -97,16 +139,17 @@ class Slot:
         `unknown-` would be misreported as unidentified. `read_identity` does
         not require an email-shaped string, so this is possible in principle.
         """
-        if self.name == LIVE_UNIDENTIFIED or self.name.startswith("unknown-"):
+        derived = self._derived
+        if derived == LIVE_UNIDENTIFIED or derived.startswith("unknown-"):
             return None
-        return self.name.split("#", 1)[0]
+        return derived.split("#", 1)[0]
 
     @property
     def org_hint(self) -> str | None:
         """First 8 characters of the organization UUID, when the name has one."""
         if self.email is None:
             return None
-        _, sep, tail = self.name.partition("#")
+        _, sep, tail = self._derived.partition("#")
         return tail if sep else None
 
 
@@ -270,6 +313,13 @@ def compose_credential(target_raw: str, live_shared: dict[str, Any] | None) -> s
     Shared keys come from `live_shared`; everything else comes from the slot.
     A target that is not a JSON object carrying a login activates unchanged, as
     does any target when there is nothing live to take shared fields from.
+
+    **`live_shared` is filtered, not trusted.** Its only producer,
+    `shared_fields`, already returns nothing else — but this is a public
+    function, and a caller that passed a whole credential through would write
+    the live account's `claudeAiOauth` into the target's file: one account's
+    login stored under another's identity, and two files for one lineage. The
+    allowlist costs a comprehension and closes that direction for good.
     """
     if live_shared is None:
         return target_raw
@@ -277,18 +327,23 @@ def compose_credential(target_raw: str, live_shared: dict[str, Any] | None) -> s
     if target is None or "claudeAiOauth" not in target:
         return target_raw
     composed = {k: v for k, v in target.items() if k not in SHARED_CREDENTIAL_KEYS}
-    composed.update(live_shared)
+    composed.update({k: v for k, v in live_shared.items() if k in SHARED_CREDENTIAL_KEYS})
     return json.dumps(composed)
+
+
+def _slot_name(path: Path) -> str:
+    """The slot name a store file carries: its filename without `.json`."""
+    return path.name[: -len(_SLOT_SUFFIX)]
 
 
 def parked_slots() -> list[Slot]:
     """Every stored login, sorted by name. An absent store is an empty pool."""
     store = store_dir()
     try:
-        files = sorted(store.glob("*.json"))
+        files = sorted(store.glob(f"*{_SLOT_SUFFIX}"))
     except OSError:
         return []
-    return [Slot(name=p.name[: -len(".json")], path=p, live=False) for p in files]
+    return [Slot(name=_slot_name(p), path=p, live=False) for p in files]
 
 
 def live_slot(cfg: Config, identity: Identity | None) -> Slot | None:
@@ -312,8 +367,11 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
     if len(exact) > 1:
         where = ", ".join(str(s.path) for s in sorted(exact, key=lambda s: str(s.path)))
         raise PoolError(
-            f"`{wanted}` names {len(exact)} files ({where}). One login must exist "
-            "in exactly one place — remove or rename all but one before switching."
+            f"`{wanted}` is carried by {len(exact)} files ({where}), which jailbee's "
+            "slot naming is supposed to make impossible — something else has written "
+            "to the store. They may be two different logins, so nothing here can say "
+            "which one you meant. Compare them yourself before moving or deleting "
+            "either; `jailbee doctor` reports the store's state."
         )
     if exact:
         return exact[0]
@@ -324,13 +382,31 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         return by_email[0]
     if len(by_email) > 1:
         names = ", ".join(sorted(s.name for s in by_email))
-        raise PoolError(f"`{ref}` matches several accounts: {names}. Pass the full slot name.")
+        raise PoolError(f"`{wanted}` matches several accounts: {names}. Pass the full slot name.")
 
     known = ", ".join(sorted(s.name for s in slots))
     raise PoolError(
-        f"no stored account matches `{ref}`."
+        f"no stored account matches `{wanted}`."
         + (f" Known: {known}" if known else " The pool is empty.")
     )
+
+
+def resolve_removable(ref: str, slots: Sequence[Slot]) -> Slot:
+    """The slot `jailbee claude rm` should act on.
+
+    `resolve_ref` refuses a name carried by two files, because it cannot know
+    which one a *switch* meant. `rm` never deletes a live login, so when the
+    pair is one live slot and one parked file the question does not arise: only
+    the parked file is a candidate. Without this the corruption would have no
+    in-tool escape — the very error reporting it would also block the one
+    command that clears it.
+    """
+    exact = [s for s in slots if s.name == ref.strip()]
+    if len(exact) > 1:
+        parked = [s for s in exact if not s.live]
+        if len(parked) == 1:
+            return parked[0]
+    return resolve_ref(ref, slots)
 
 
 @dataclass(frozen=True)
@@ -546,12 +622,129 @@ def _move_file(src: Path, dest: Path) -> None:
         raise
 
 
+def _login_of(path: Path) -> dict[str, Any] | None:
+    """The `claudeAiOauth` block of a credential file, for identity comparison.
+
+    Read only to answer "are these two files the same grant?" — a question the
+    slot name cannot answer, because a config home's `oauthAccount` is allowed
+    to lag the credential beside it. Never logged, never rendered, never
+    returned to anything that displays it.
+
+    Every unreadable shape is None, `UnicodeDecodeError` included: it is a
+    `ValueError` rather than an `OSError`, so a write torn mid-character would
+    otherwise escape as a traceback from a call whose whole job is to answer a
+    yes/no question. Callers must treat None as "cannot tell" and fail closed,
+    never as "different".
+    """
+    try:
+        data = _credential_object(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    if data is None:
+        return None
+    block = data.get("claudeAiOauth")
+    return block if isinstance(block, dict) else None
+
+
+def _same_grant(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Whether two `claudeAiOauth` blocks are one refresh-token lineage.
+
+    Equal blocks are trivially the same grant. A shared, non-empty
+    `refreshToken` is the stronger test and the reason this is not just `==`:
+    an access token rotates while the lineage behind it does not, so two blocks
+    can differ field by field and still be one login in two files — the exact
+    state this module exists to prevent.
+    """
+    if left == right:
+        return True
+    token = left.get("refreshToken")
+    return isinstance(token, str) and bool(token) and token == right.get("refreshToken")
+
+
+def holds_same_login(left: Path, right: Path) -> bool:
+    """Whether two credential files carry one refresh-token lineage.
+
+    False whenever either file is missing, unreadable or carries no login.
+    Callers use this to *soften* a warning (`doctor._orphaned_stage_checks`),
+    so "cannot tell" has to read as "cannot tell" and never as "yes". The
+    blocks are compared and discarded; nothing about them is logged or
+    returned.
+    """
+    a = _login_of(left)
+    b = _login_of(right)
+    return a is not None and b is not None and _same_grant(a, b)
+
+
+def _disambiguated_slot(store: Path, name: str, live: Path, dest: Path, when: datetime) -> Path:
+    """A free store path for a login whose derived slot name is taken.
+
+    **A taken name is not a duplicate login.** One account can hold two
+    independent grants — `/login` as the same account after a `park` is the
+    documented way to add one, and two holders on a host can each be logged
+    into it. Refusing the park would be wrong twice over: the second grant has
+    nowhere to go, and because this check runs on every switch through the
+    holder, the refusal would freeze the pool for *every other* account too
+    until someone did filesystem surgery. So a differing grant gets a
+    `~<timestamp>` suffix (`Slot` documents the grammar).
+
+    Only two cases raise, and both are about the invariant rather than the
+    name:
+
+    - **the same grant is already stored** — the one case where a second file
+      really would give one refresh-token lineage two refreshers;
+    - **either file is unreadable** — the question is unanswerable, so this
+      fails closed rather than guessing. It must not claim the two are copies.
+
+    Every file sharing the derived name is compared, not just `dest`: after one
+    disambiguation the lineage could otherwise be parked a second time under a
+    third name.
+    """
+    live_grant = _login_of(live)
+    taken = sorted({dest, *store.glob(f"{name}{DISAMBIGUATOR}*{_SLOT_SUFFIX}")})
+    for other in taken:
+        other_grant = _login_of(other)
+        if live_grant is None or other_grant is None:
+            raise PoolError(
+                f"the store already holds `{_slot_name(other)}` ({other}), and jailbee "
+                "could not read both files to tell whether that is the same login as "
+                "the one being parked. Nothing was moved; the live credential is still "
+                "in place. Compare the two files, and remove the stored one with "
+                f"`jailbee claude rm {_slot_name(other)}` if it is the stale copy."
+            )
+        if _same_grant(live_grant, other_grant):
+            raise PoolError(
+                f"the login being parked is already stored as `{_slot_name(other)}` "
+                f"({other}). Parking it again would leave one refresh-token lineage in "
+                "two files, and the first token rotation would kill one of them. "
+                f"Run `jailbee claude rm {_slot_name(other)}` first if the stored copy "
+                "is not the one to keep."
+            )
+    stamp = when.strftime("%Y%m%d-%H%M%S")
+    candidate = store / f"{name}{DISAMBIGUATOR}{stamp}{_SLOT_SUFFIX}"
+    attempt = 2
+    while candidate.exists():
+        candidate = store / f"{name}{DISAMBIGUATOR}{stamp}-{attempt}{_SLOT_SUFFIX}"
+        attempt += 1
+    return candidate
+
+
 def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
-    """Every slot for this holder, live last-resolved identity alongside."""
+    """Every slot for this holder, live last-resolved identity alongside.
+
+    The live slot's name is derived from an identity, so it can equal a parked
+    slot's — that is precisely the state the documented add flow leaves behind:
+    `park`, then `/login` as the same account. Two slots with one name make
+    every `resolve_ref` for it an error, wedging the holder, so the live one
+    takes the `~live` form `Slot` documents. `live` rather than a timestamp
+    because there is only ever one of them, and it reads as what it is in
+    `jailbee claude ls`.
+    """
     identity = live_identity(found, prefer=cfg.container_prefix)
     slots = parked_slots()
     live = live_slot(cfg, identity)
     if live is not None:
+        if any(s.name == live.name for s in slots):
+            live = replace(live, name=f"{live.name}{DISAMBIGUATOR}live")
         slots.append(live)
     return sorted(slots, key=lambda s: (not s.live, s.name)), identity
 
@@ -605,13 +798,17 @@ def _clear_identities(
     return sorted(cleared), sorted(not_cleared)
 
 
-def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> str | None:
-    """Move the live credential into the store. Caller holds the lock.
+def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> Path | None:
+    """Move the live credential into the store; return where it landed.
 
     `_move_file` rather than `Path.replace`: `shared_dir` is user-overridable,
     so the holder and the store can live on different filesystems, where a
     rename raises `EXDEV`. Same-filesystem moves stay atomic renames, and the
     cross-filesystem fallback has its own bounded, recoverable failure window.
+
+    Returns the path rather than the name because after `_disambiguated_slot`
+    the two are no longer interchangeable: `switch`'s rollback has to move back
+    the file that was actually written, not the one its name was derived from.
     """
     live = live_credential_path(cfg)
     if not live.exists():
@@ -619,15 +816,11 @@ def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> str 
     name = slug_for(identity) if identity is not None else unknown_slot_name(when)
     store = store_dir()
     store.mkdir(parents=True, exist_ok=True)
-    dest = store / f"{name}.json"
+    dest = store / f"{name}{_SLOT_SUFFIX}"
     if dest.exists():
-        raise PoolError(
-            f"the store already holds `{name}` ({dest}). Two files would be two "
-            "copies of one login, and the first token rotation would kill the "
-            "other — remove or rename one of them first."
-        )
+        dest = _disambiguated_slot(store, name, live, dest, when)
     _move_file(live, dest)
-    return name
+    return dest
 
 
 def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> PoolChange:
@@ -636,14 +829,22 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     This is how a *new* account enters the pool: with no credential to find,
     the next `claude` in any member container prompts `/login`, and that login
     lands straight in the holder.
+
+    Nothing is created on disk until there is something to park. Taking the
+    lock would create the holder and both lock directories as a side effect of
+    discovering the holder is empty — a write nobody asked for, in the one case
+    where the command does nothing. The check is repeated under the lock by
+    `_park_locked`, which is what makes it safe to do it early.
     """
     found, unreachable = members(cfg, gcfg)
     identity = live_identity(found, prefer=cfg.container_prefix)
-    holder = holder_dir(cfg)
-    holder.mkdir(parents=True, exist_ok=True)
-    with credential_locks(holder):
-        parked_as = _park_locked(cfg, identity, now or datetime.now())
-    if parked_as is None:
+    parked: Path | None = None
+    if live_credential_path(cfg).exists():
+        holder = holder_dir(cfg)
+        holder.mkdir(parents=True, exist_ok=True)
+        with credential_locks(holder):
+            parked = _park_locked(cfg, identity, now or datetime.now())
+    if parked is None:
         return PoolChange(
             parked_as=None,
             activated=None,
@@ -653,7 +854,7 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
         )
     cleared, not_cleared = _clear_identities(found, unreachable)
     return PoolChange(
-        parked_as=parked_as,
+        parked_as=_slot_name(parked),
         activated=None,
         cleared=cleared,
         not_cleared=not_cleared,
@@ -688,9 +889,9 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
         target_raw = target.path.read_text(encoding="utf-8")
         live_raw = live_path.read_text(encoding="utf-8") if live_path.exists() else None
         target.path.replace(staged)
-        parked_as: str | None = None
+        parked: Path | None = None
         try:
-            parked_as = _park_locked(cfg, identity, now or datetime.now())
+            parked = _park_locked(cfg, identity, now or datetime.now())
             _atomic_write(live_path, compose_credential(target_raw, shared_fields(live_raw)))
             staged.unlink()
         except BaseException:
@@ -699,8 +900,8 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
             # must not strand the target under a name nothing lists.
             with suppress(OSError):
                 staged.replace(target.path)
-            if parked_as is not None:
-                _move_file(store_dir() / f"{parked_as}.json", live_path)
+            if parked is not None:
+                _move_file(parked, live_path)
             elif live_raw is None:
                 # The holder started empty and nothing was parked, so whatever
                 # is at live_path is the grant we just wrote — and the target
@@ -712,7 +913,7 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
 
     cleared, not_cleared = _clear_identities(found, unreachable)
     return PoolChange(
-        parked_as=parked_as,
+        parked_as=_slot_name(parked) if parked is not None else None,
         activated=target.name,
         cleared=cleared,
         not_cleared=not_cleared,
@@ -720,8 +921,18 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
     )
 
 
+def live_account_refusal(name: str) -> str:
+    """The one wording for "that slot is the live login, park it first".
+
+    `cli.claude_rm_cmd` refuses before it prompts, so the user is not asked to
+    confirm a deletion that was never going to happen; `remove_slot` refuses
+    again because it is callable without the CLI. Two sites, one sentence.
+    """
+    return f"`{name}` is the live account — run `jailbee claude park` first."
+
+
 def remove_slot(slot: Slot) -> None:
     """Delete a parked login permanently."""
     if slot.live:
-        raise PoolError(f"`{slot.name}` is the live account — run `jailbee claude park` first.")
+        raise PoolError(live_account_refusal(slot.name))
     slot.path.unlink()

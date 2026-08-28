@@ -173,7 +173,7 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     return [p for p in prefixes if p != exclude]
 
 
-def _orphaned_stage_checks() -> list[CheckResult]:
+def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
     """One failed check per staging file an interrupted `jailbee claude use`
     left in the store.
 
@@ -184,16 +184,27 @@ def _orphaned_stage_checks() -> list[CheckResult]:
 
     Reported, never repaired. Renaming it back is safe only if that grant is
     not already live somewhere, and the store is host-wide while any one
-    command sees one holder — jailbee cannot answer that, but the person
-    reading this can. Naming the file and the exact `mv` is the whole recovery
-    path; the risk of a wrong automatic rename is a silently dead login.
+    command sees one holder — jailbee cannot answer that in general, but the
+    person reading this can. Naming the file and the exact `mv` is the whole
+    recovery path; the risk of a wrong automatic rename is a silently dead
+    login.
 
     **The rename is only advised when the destination name is free.** It need
     not be: after the kill, a fresh `/login` as the same account followed by
     `jailbee claude park` lands on exactly `<name>.json`, because nothing was
     occupying it. `mv` would then overwrite a newer, different grant without a
     word — one login destroyed by following this very message. When the name is
-    taken, the two files are named and the choice is left to the reader.
+    taken, the two files are named and the choice is left to the reader, with
+    the non-destructive option (a free, disambiguated name) spelled out.
+
+    **The same-holder case is settled here rather than caveated.** A kill
+    between the credential write and the staging unlink — the likeliest window
+    of the three, because the write is the slow part — leaves the grant live in
+    *this* holder. `cfg` is in hand, so that comparison is free, and it matters:
+    a careful reader told only that the grant "may be live in another repo"
+    checks the other repos, finds nothing, renames, and ends up with one
+    refresh-token lineage in two files. The remaining caveat covers what is
+    genuinely unknowable from here — another holder, or another name.
     """
     from jailbee import claude_pool
 
@@ -203,6 +214,7 @@ def _orphaned_stage_checks() -> list[CheckResult]:
     except OSError:  # an unreadable store is _check_claude_credentials' business
         return []
 
+    live = claude_pool.live_credential_path(cfg)
     results: list[CheckResult] = []
     for stage in stages:
         home = stage.with_name(stage.name[: -len(suffix)])
@@ -211,14 +223,25 @@ def _orphaned_stage_checks() -> list[CheckResult]:
                 f"an interrupted switch left {stage}, but the name it came from "
                 f"({home.name}) is already taken by another stored login — "
                 "renaming over it would destroy that one. Compare the two and "
-                "delete whichever you do not want."
+                "delete whichever you do not want, or keep both by moving the "
+                f"staging file to a free name of the form {home.stem}~<label>.json."
+            )
+        elif claude_pool.holds_same_login(stage, live):
+            detail = (
+                f"an interrupted switch left {stage}, and that login is the one "
+                f"live in {claude_pool.holder_dir(cfg)} right now — the switch had "
+                "already written it before it was killed. The staging file is a "
+                "leftover second copy of a live grant, so delete it; renaming it "
+                "into the store is the one move that would put that login in two "
+                "files."
             )
         else:
             detail = (
                 f"an interrupted switch left {stage}; if that login is still "
                 f"wanted, rename it to {home.name} — jailbee will not move it "
                 "for you, because it cannot tell from here whether that login "
-                "is already live in another repo's holder."
+                "is already parked under another name, or already live in "
+                "another repo's holder."
             )
         results.append(CheckResult("claude account pool", False, detail))
     return results
@@ -241,7 +264,7 @@ def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
     """
     from jailbee import claude_pool
 
-    orphans = _orphaned_stage_checks()
+    orphans = _orphaned_stage_checks(cfg)
 
     parked = claude_pool.parked_slots()
     if not parked:

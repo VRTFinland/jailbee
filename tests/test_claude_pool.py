@@ -298,16 +298,37 @@ def test_resolve_ref_lists_what_it_knows_when_nothing_matches() -> None:
 
 
 def test_resolve_ref_reports_a_duplicated_name_as_corruption() -> None:
-    """Two files with one name means one grant exists twice — the invariant
-    the whole module is built to keep. Say so rather than picking one."""
+    """Names are unique by construction, so two files under one name means
+    something else wrote to the store. The message names both files and must
+    **not** tell anyone to delete one: they may be two different logins, and
+    following that advice would destroy a real one with no way back."""
     dupes = [
         Slot(name="me@x.com", path=Path("/store/me@x.com.json"), live=False),
         Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True),
     ]
     with pytest.raises(claude_pool.PoolError) as excinfo:
         claude_pool.resolve_ref("me@x.com", dupes)
-    assert "/store/me@x.com.json" in str(excinfo.value)
-    assert "/holder/.credentials.json" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "/store/me@x.com.json" in message
+    assert "/holder/.credentials.json" in message
+    assert "different logins" in message
+    assert "remove or rename" not in message
+
+
+def test_resolve_ref_quotes_the_stripped_reference_in_every_message() -> None:
+    """All three failures name the same thing the lookup used. The duplicate
+    branch already used the stripped form; the other two quoted the raw
+    argument, so the same typo was echoed two different ways."""
+    padded = "  Me@X.com  "
+
+    with pytest.raises(claude_pool.PoolError) as unknown:
+        claude_pool.resolve_ref(padded, [_slot("other@x.com")])
+    assert "`Me@X.com`" in str(unknown.value)
+
+    ambiguous = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
+    with pytest.raises(claude_pool.PoolError) as several:
+        claude_pool.resolve_ref(padded, ambiguous)
+    assert "`Me@X.com`" in str(several.value)
 
 
 def test_slug_sanitizes_the_organization_half_too() -> None:
@@ -501,7 +522,9 @@ def test_park_of_an_empty_holder_changes_nothing(tmp_path: Path, monkeypatch) ->
     assert claude_pool.parked_slots() == []
 
 
-def test_park_refuses_to_create_a_second_copy(tmp_path: Path, monkeypatch) -> None:
+def test_park_refuses_to_store_the_same_login_twice(tmp_path: Path, monkeypatch) -> None:
+    """The one case where a taken name really is a duplicate: the *same* grant.
+    A second file would give one refresh-token lineage two refreshers."""
     _park(tmp_path, "me@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
@@ -510,7 +533,11 @@ def test_park_refuses_to_create_a_second_copy(tmp_path: Path, monkeypatch) -> No
     with pytest.raises(claude_pool.PoolError) as excinfo:
         claude_pool.park(cfg, GlobalConfig())
 
-    assert "me@corp.com" in str(excinfo.value)
+    message = str(excinfo.value)
+    # The message says what is true — this login is already stored — and names
+    # the escape, rather than telling the user to delete an unrelated file.
+    assert "already stored as `me@corp.com`" in message
+    assert "jailbee claude rm me@corp.com" in message
     # The live credential is untouched: a refused park must not lose a login.
     assert claude_pool.live_credential_path(cfg).exists()
 
@@ -805,3 +832,314 @@ def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
         {"claudeAiOauth": {"accessToken": "o", "refreshToken": "only"}}
     )
     assert not (store / "orphan@x.com.json").exists()
+
+
+# --- Two independent grants for one account -------------------------------
+#
+# `slug_for` derives a slot name from the account alone, so two *different*
+# logins for one account collide. Both ways of reaching that state are
+# ordinary: `/login` as the same account after a `park` (the documented way to
+# add an account), and two holders on one host each logged into it. Refusing
+# the second one used to freeze the whole holder — the check runs on every
+# switch — so the pool could not be used for any account until someone renamed
+# files by hand.
+
+
+def _grant(token: str, **extra: object) -> str:
+    """A credential whose refresh-token lineage is `token`."""
+    return json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": token}, **extra})
+
+
+PARK_TIME = datetime(2026, 8, 28, 10, 42, 33)
+PARK_STAMP = "20260828-104233"
+
+
+def test_the_disambiguator_cannot_appear_in_a_derived_name() -> None:
+    """The whole grammar rests on this: `~` separates a derived name from what
+    makes it unique, which only works because `_SLUG_UNSAFE` strips `~` out of
+    both halves. Widen that allowed set and slot names stop parsing."""
+    slug = claude_pool.slug_for(Identity("a~b@x.com", "c~d~e"))
+    assert claude_pool.DISAMBIGUATOR not in slug
+    assert slug == "a-b@x.com#c-d-e"
+
+
+def test_slot_email_and_org_hint_look_past_a_disambiguator() -> None:
+    disambiguated = Slot(name=f"me@corp.com#a1b2c3d4~{PARK_STAMP}", path=Path("/x"), live=False)
+    assert disambiguated.email == "me@corp.com"
+    assert disambiguated.org_hint == "a1b2c3d4"
+
+    no_org = Slot(name="me@corp.com~live", path=Path("/x"), live=True)
+    assert no_org.email == "me@corp.com"
+    assert no_org.org_hint is None
+
+    unknown = Slot(name=f"unknown-{PARK_STAMP}~{PARK_STAMP}", path=Path("/x"), live=False)
+    assert unknown.email is None
+    assert unknown.org_hint is None
+
+    unidentified = Slot(name=f"{claude_pool.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
+    assert unidentified.email is None
+    assert unidentified.org_hint is None
+
+
+def test_park_stores_a_second_independent_grant_for_one_account(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`park`, `/login` as the same account, `park` again. Nothing about that
+    is a duplicate: the two grants refresh independently."""
+    first = _park(tmp_path, "me@corp.com", monkeypatch)
+    first.write_text(_grant("lineage-1"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("lineage-2"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    change = claude_pool.park(cfg, GlobalConfig(), now=PARK_TIME)
+
+    assert change.parked_as == f"me@corp.com~{PARK_STAMP}"
+    assert first.read_text() == _grant("lineage-1")
+    second = claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json"
+    assert second.read_text() == _grant("lineage-2")
+    assert not claude_pool.live_credential_path(cfg).exists()
+
+
+def test_park_refuses_a_rotated_copy_of_a_stored_login(tmp_path: Path, monkeypatch) -> None:
+    """An access token rotates while its refresh-token lineage does not, so two
+    blocks can differ field by field and still be one login in two files."""
+    stored = _park(tmp_path, "me@corp.com", monkeypatch)
+    stored.write_text(_grant("same-lineage"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    rotated = {"claudeAiOauth": {"accessToken": "rotated", "refreshToken": "same-lineage"}}
+    _holder_with(cfg, json.dumps(rotated))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.park(cfg, GlobalConfig(), now=PARK_TIME)
+
+    assert "already stored as `me@corp.com`" in str(excinfo.value)
+    assert claude_pool.live_credential_path(cfg).exists()
+    assert not (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json").exists()
+
+
+def test_park_fails_closed_when_the_two_grants_cannot_be_compared(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Unreadable is not "different". The message must say jailbee could not
+    tell — never that the files are copies, which would be a claim about
+    something it failed to open."""
+    stored = _park(tmp_path, "me@corp.com", monkeypatch)
+    stored.write_text("not json at all", encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("lineage-2"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.park(cfg, GlobalConfig(), now=PARK_TIME)
+
+    message = str(excinfo.value)
+    assert "could not read both files" in message
+    assert "copies" not in message
+    assert claude_pool.live_credential_path(cfg).exists()
+    assert not (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json").exists()
+
+
+def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, monkeypatch) -> None:
+    """A third grant parked in the same second as the second one still gets its
+    own file, and every earlier grant is compared — not just the plain name, or
+    one lineage could be parked twice under two different suffixes."""
+    plain = _park(tmp_path, "me@corp.com", monkeypatch)
+    plain.write_text(_grant("lineage-1"), encoding="utf-8")
+    already = _park(tmp_path, f"me@corp.com~{PARK_STAMP}", monkeypatch)
+    already.write_text(_grant("lineage-2"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("lineage-3"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    change = claude_pool.park(cfg, GlobalConfig(), now=PARK_TIME)
+
+    assert change.parked_as == f"me@corp.com~{PARK_STAMP}-2"
+    assert plain.read_text() == _grant("lineage-1")
+    assert already.read_text() == _grant("lineage-2")
+    assert (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}-2.json").read_text() == _grant(
+        "lineage-3"
+    )
+
+
+def test_park_refuses_a_lineage_already_stored_under_a_disambiguated_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The comparison covers every file sharing the derived name, so the escape
+    hatch cannot be used to smuggle in a second copy of one lineage."""
+    plain = _park(tmp_path, "me@corp.com", monkeypatch)
+    plain.write_text(_grant("lineage-1"), encoding="utf-8")
+    already = _park(tmp_path, f"me@corp.com~{PARK_STAMP}", monkeypatch)
+    already.write_text(_grant("lineage-2"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("lineage-2"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.park(cfg, GlobalConfig(), now=PARK_TIME)
+
+    assert f"already stored as `me@corp.com~{PARK_STAMP}`" in str(excinfo.value)
+
+
+def test_a_switch_for_another_account_survives_a_collided_one(tmp_path: Path, monkeypatch) -> None:
+    """The wedge this fix exists for: the park-side name check runs on *every*
+    switch, so one account with two grants used to make every other account
+    unswitchable through that holder."""
+    mine = _park(tmp_path, "me@x.com", monkeypatch)
+    mine.write_text(_grant("mine-parked"), encoding="utf-8")
+    colleague = _park(tmp_path, "colleague@x.com", monkeypatch)
+    colleague.write_text(_grant("colleague"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("mine-live"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "colleague@x.com", now=PARK_TIME)
+
+    assert change.activated == "colleague@x.com"
+    assert change.parked_as == f"me@x.com~{PARK_STAMP}"
+    assert json.loads(claude_pool.live_credential_path(cfg).read_text())["claudeAiOauth"] == {
+        "accessToken": "a",
+        "refreshToken": "colleague",
+    }
+    assert [s.name for s in claude_pool.parked_slots()] == [
+        "me@x.com",
+        f"me@x.com~{PARK_STAMP}",
+    ]
+
+
+def test_list_slots_disambiguates_a_live_name_a_parked_slot_holds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The state the documented add flow leaves behind. Two slots under one
+    name make every `resolve_ref` for it an error, so the live one is renamed
+    for display and reference."""
+    _park(tmp_path, "me@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("live"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+
+    slots = claude_pool.list_slots(cfg, GlobalConfig())
+
+    assert [(s.name, s.live) for s in slots] == [("me@x.com~live", True), ("me@x.com", False)]
+    # Still one account as far as the columns are concerned.
+    assert {s.email for s in slots} == {"me@x.com"}
+
+
+def test_switch_to_a_parked_slot_whose_name_the_live_one_shares(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Same state, exercised through `switch`. Before the live slot was
+    disambiguated this raised `resolve_ref`'s "names 2 files" — the reference
+    was unusable even though only one of the two was a stored file.
+
+    The plain name comes back free here, and that is the point: `switch` stages
+    the target out of the store *first*, so the grant it parks lands on
+    `me@x.com.json` with no suffix. The two accounts have swapped places and
+    there is still exactly one file per grant.
+    """
+    parked = _park(tmp_path, "me@x.com", monkeypatch)
+    parked.write_text(_grant("parked"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("live"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "me@x.com", now=PARK_TIME)
+
+    assert change.activated == "me@x.com"
+    assert change.parked_as == "me@x.com"
+    assert json.loads(claude_pool.live_credential_path(cfg).read_text())["claudeAiOauth"] == {
+        "accessToken": "a",
+        "refreshToken": "parked",
+    }
+    stored = claude_pool.parked_slots()
+    assert [s.name for s in stored] == ["me@x.com"]
+    assert json.loads(stored[0].path.read_text())["claudeAiOauth"]["refreshToken"] == "live"
+
+
+def test_resolve_removable_picks_the_parked_file_of_a_duplicated_name() -> None:
+    """`rm` never deletes a live login, so a name carried by the live slot and
+    a parked file is unambiguous here even though `resolve_ref` refuses it.
+    Without this the corruption would have no in-tool escape."""
+    dupes = [
+        Slot(name="me@x.com", path=Path("/store/me@x.com.json"), live=False),
+        Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True),
+    ]
+    assert claude_pool.resolve_removable("me@x.com", dupes).path == Path("/store/me@x.com.json")
+
+
+def test_resolve_removable_still_reports_the_live_account() -> None:
+    """The escape must not swallow the ordinary refusal: with no duplicate,
+    `rm <live>` still resolves to the live slot so the caller can refuse it."""
+    live = Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True)
+    assert claude_pool.resolve_removable("me@x.com", [live]).live is True
+
+
+def test_resolve_removable_defers_to_resolve_ref_for_two_parked_files() -> None:
+    """Two *parked* files under one name are still unanswerable — picking one
+    to delete would be picking a login to destroy."""
+    dupes = [
+        Slot(name="me@x.com", path=Path("/store/a.json"), live=False),
+        Slot(name="me@x.com", path=Path("/store/b.json"), live=False),
+    ]
+    with pytest.raises(claude_pool.PoolError):
+        claude_pool.resolve_removable("me@x.com", dupes)
+
+
+def test_compose_ignores_a_non_shared_key_offered_as_live(tmp_path: Path) -> None:
+    """`compose_credential` is public, and a caller passing a whole credential
+    through would write the live account's login into the target's file: one
+    account's grant under another's identity, and two files for one lineage."""
+    target = _grant("target-lineage")
+    out = json.loads(
+        claude_pool.compose_credential(
+            target,
+            {"claudeAiOauth": {"accessToken": "x", "refreshToken": "live-lineage"}, "mcpOAuth": {}},
+        )
+    )
+    assert out["claudeAiOauth"] == {"accessToken": "a", "refreshToken": "target-lineage"}
+
+
+def test_park_of_an_empty_holder_creates_nothing(tmp_path: Path, monkeypatch) -> None:
+    """Discovering there is nothing to park is a read. Taking the lock would
+    create the holder and both lock directories as a side effect of it."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path, group="work")
+
+    change = claude_pool.park(cfg, GlobalConfig())
+
+    assert change.parked_as is None
+    assert not claude_pool.holder_dir(cfg).exists()
+
+
+def test_the_live_account_refusal_has_one_source(tmp_path: Path) -> None:
+    """`cli.claude_rm_cmd` pre-checks so the prompt is skipped, and
+    `remove_slot` refuses again for non-CLI callers. One sentence, two sites."""
+    live = Slot(name="me@corp.com", path=tmp_path / "c.json", live=True)
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.remove_slot(live)
+    assert str(excinfo.value) == claude_pool.live_account_refusal("me@corp.com")
+
+
+def test_switch_rolls_back_a_park_that_had_to_disambiguate(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """The rollback moves back the file that was written, not the one whose
+    name was asked for. Rebuilding the path from the slot name works only while
+    the two are the same string — after a disambiguation it names a file that
+    does not exist, and the live credential is stranded in the store."""
+    mine = _park(tmp_path, "me@x.com", monkeypatch)
+    mine.write_text(_grant("mine-parked"), encoding="utf-8")
+    colleague = _park(tmp_path, "colleague@x.com", monkeypatch)
+    colleague.write_text(_grant("colleague"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    live = _holder_with(cfg, _grant("mine-live"))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
+
+    with pytest.raises(OSError):
+        claude_pool.switch(cfg, GlobalConfig(), "colleague@x.com", now=PARK_TIME)
+
+    assert live.read_text() == _grant("mine-live")
+    assert not (claude_pool.store_dir() / f"me@x.com~{PARK_STAMP}.json").exists()
+    assert [s.name for s in claude_pool.parked_slots()] == ["colleague@x.com", "me@x.com"]

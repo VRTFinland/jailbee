@@ -179,3 +179,120 @@ def test_rm_refuses_the_live_account(repo, mocker):
     assert result.exit_code == 2
     assert "park" in result.output
     remove.assert_not_called()
+
+
+def test_ls_names_the_repos_that_share_the_holder(repo, mocker):
+    """A switch is holder-wide, so who else moves with it is part of reading
+    the table — and the in-container skill file promises `ls` says so."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@x.com", Path("/h/.credentials.json"), live=True)],
+    )
+    mocker.patch(
+        "jailbee.claude_pool.members",
+        return_value=(
+            [
+                claude_pool.Member("app", Path("/repos/app/.shared/claude")),
+                claude_pool.Member("other", Path("/repos/other/.shared/claude")),
+            ],
+            ["broken"],
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert result.exit_code == 0, result.output
+    assert "app, other" in result.output
+    # A member whose config would not load shares the holder too — silently
+    # dropping it would understate who the next switch moves.
+    assert "broken" in result.output
+
+
+def test_ls_json_stays_a_clean_payload(repo, mocker):
+    """The member list is a per-command fact, not a row: printing it in JSON
+    mode would make the output unparseable for the caller that asked for it."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots",
+        return_value=[Slot("me@x.com", Path("/h/c.json"), live=True)],
+    )
+    mocker.patch(
+        "jailbee.claude_pool.members",
+        return_value=([claude_pool.Member("app", Path("/repos/app"))], []),
+    )
+
+    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [{"account": "me@x.com", "org": None, "state": "live"}]
+
+
+def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
+    """`_registered_repos`, `holder.mkdir` and every credential read raise
+    `OSError`, and a traceback is not a diagnosis."""
+    mocker.patch(
+        "jailbee.claude_pool.list_slots", side_effect=OSError("permission denied: _parked")
+    )
+    result = runner.invoke(app, ["claude", "ls"])
+    assert result.exit_code == 2
+    assert "permission denied" in result.output
+
+
+def test_use_exits_2_on_an_os_error(repo, mocker):
+    """`_move_file` and `_atomic_write` raise `OSError` mid-move: the one
+    moment the user most needs a message rather than a stack trace."""
+    mocker.patch("jailbee.claude_pool.switch", side_effect=OSError("no space left on device"))
+    result = runner.invoke(app, ["claude", "use", "x@y.com"])
+    assert result.exit_code == 2
+    assert "no space left" in result.output
+
+
+def test_park_exits_2_on_an_os_error(repo, mocker):
+    mocker.patch("jailbee.claude_pool.park", side_effect=OSError("read-only file system"))
+    result = runner.invoke(app, ["claude", "park"])
+    assert result.exit_code == 2
+    assert "read-only file system" in result.output
+
+
+def test_park_warns_that_a_live_session_loses_its_login(repo, mocker):
+    """`use` swaps one credential for another; `park` leaves the holder empty.
+    The shared "the account in /status may lag" wording is a false reassurance
+    in the one command that removes authentication."""
+    mocker.patch(
+        "jailbee.claude_pool.park",
+        return_value=PoolChange("me@x.com", None, ["app"], [], ["app"]),
+    )
+
+    result = runner.invoke(app, ["claude", "park"])
+
+    assert result.exit_code == 0, result.output
+    assert "no login" in result.output
+    assert "lag" not in result.output
+
+
+def test_rm_deletes_the_parked_half_of_a_duplicated_name(repo, mocker):
+    """A store corrupt enough for two slots to share a name still has to be
+    fixable with `rm`: the error that reports it must not also block the only
+    command that clears it. `rm` never deletes a live login, so the parked file
+    is the unambiguous target."""
+    parked = Slot("old@x.com", Path("/s/old@x.com.json"), live=False)
+    live = Slot("old@x.com", Path("/h/.credentials.json"), live=True)
+    mocker.patch("jailbee.claude_pool.list_slots", return_value=[parked, live])
+    remove = mocker.patch("jailbee.claude_pool.remove_slot")
+
+    result = runner.invoke(app, ["claude", "rm", "old@x.com", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    remove.assert_called_once_with(parked)
+
+
+def test_rm_speaks_the_shared_live_account_refusal(repo, mocker):
+    """One sentence for "that is the live login", not two that can drift."""
+    slot = Slot("me@x.com", Path("/h/.credentials.json"), live=True)
+    mocker.patch("jailbee.claude_pool.list_slots", return_value=[slot])
+    mocker.patch("jailbee.claude_pool.remove_slot")
+
+    result = runner.invoke(app, ["claude", "rm", "me@x.com", "--yes"])
+
+    assert result.exit_code == 2
+    assert "run `jailbee claude park` first" in claude_pool.live_account_refusal("me@x.com")
+    assert "run `jailbee claude park` first" in result.output
