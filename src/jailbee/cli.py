@@ -586,8 +586,15 @@ def apply(
     for name, err in result.port_failures:
         error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
 
-    if result.fully_successful:
-        _record_upgrade_action(cfg, "apply")
+    # Unconditional: `run_apply` raises if the config-writing steps fail, so
+    # returning at all means profiles, ACL, /etc/hosts and the dockerd proxy
+    # now match the repo's config — which is the only question the upgrade
+    # advice asks. A container that refused to restart, a port already in
+    # use, or a pool root needing hand-resolution are real failures (hence
+    # the exit code below), but each is reported on its own and re-reported
+    # by `jailbee doctor`. Gating the watermark on them left the `jb ls`
+    # hint nagging about an `apply` that had in fact run.
+    _record_upgrade_action(cfg, "apply")
 
     if not result.fully_successful:
         raise typer.Exit(1)

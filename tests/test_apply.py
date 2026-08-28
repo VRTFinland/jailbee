@@ -1107,6 +1107,158 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
     )
 
 
+# ---- Polluted pool roots ----
+
+
+def _cfg_with_pool(make_cfg, tmp_path: Path):
+    """A config carrying the `gradle` pool, rooted under `tmp_path`.
+
+    `shared_dir` is passed explicitly: `make_cfg`'s default points at the
+    real `~/.local/share/jailbee/shared`, and these tests create directories
+    under it.
+    """
+    return make_cfg(
+        tmp_path,
+        shared_dir=tmp_path / "shared",
+        golden={"stacks": {"java": "corretto-21"}},
+    )
+
+
+def _pollute_pools(cfg) -> list:
+    """Make every pool root refuse: loose content beside an existing slot-0."""
+    from jailbee import pool
+
+    pools = pool.pools_for(cfg)
+    assert pools, "the fixture config must pool something for this test to mean anything"
+    for p in pools:
+        (p.slots_dir / "slot-0").mkdir(parents=True)
+        (p.root / "daemon").mkdir(parents=True)
+    return pools
+
+
+def _apply_mocks(mocker: MockerFixture, cfg, tmp_path: Path, *, running: bool) -> MagicMock:
+    """Wire the incus/profile mocks the restart-prompt tests all share."""
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.profiles import profile_names
+
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    names = profile_names(cfg)
+    mocker.patch(
+        "jailbee.apply._profile_differs",
+        side_effect=lambda _i, n, _y: n == names.binds,
+    )
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=(
+            [
+                ContainerInfo(
+                    name="a",
+                    state="Running",
+                    network="strict",
+                    ip="10.0.0.1",
+                    memory_limit="16GiB",
+                    repo=tmp_path.name,
+                ),
+            ]
+            if running
+            else []
+        ),
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    return incus
+
+
+def test_run_apply_offers_to_resolve_a_polluted_pool_root(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The fix for "Move or delete the loose entries by hand": `apply` is
+    where the user is sitting at a terminal, so it asks."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=False)
+    mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == []
+    for p in pools:
+        assert not (p.root / "daemon").exists()
+        assert list(p.root.parent.glob(f"{p.root.name}.loose-*"))
+
+
+def test_run_apply_does_not_offer_a_restart_that_would_fail(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Every boot runs `allocate_startup` -> `ensure_pool_dirs`, so with a
+    pool root still polluted each restart is guaranteed to raise the very
+    error the user was just shown. Don't ask, and don't try."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    confirm = mocker.MagicMock(return_value=False)
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=confirm)
+
+    assert result.unresolved_pools == [p.name for p in pools]
+    assert restart_one.call_count == 0
+    assert result.restarted == []
+    assert result.restart_failures == []
+    # Declining the move is the only question asked — never "Restart now?".
+    assert not any("Restart" in c.args[0] for c in confirm.call_args_list)
+
+
+def test_run_apply_restarts_once_the_pool_is_resolved(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The suppression is conditional on the pool, not on it having ever
+    been polluted: accepting the move must restore the normal prompt."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == []
+    assert restart_one.call_count == 1
+
+
+def test_run_apply_assume_yes_never_moves_cache_directories(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`--yes` is documented as "skip restart confirmation". Relocating a
+    user's cache content unasked is not covered by that."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), assume_yes=True, confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == [p.name for p in pools]
+    for p in pools:
+        assert (p.root / "daemon").is_dir()
+    assert restart_one.call_count == 0
+
+
 def test_restart_one_runs_autostart_on_start(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
