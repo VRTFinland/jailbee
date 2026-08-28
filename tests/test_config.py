@@ -3961,6 +3961,31 @@ def test_pooled_caches_true_without_preset_is_an_error(tmp_path):
         load_config_from_text(text, tmp_path / "c.yaml")
 
 
+def test_pooled_caches_false_on_a_pool_only_preset_is_an_error(tmp_path):
+    """`chrome-profile`'s host_subpath is the pool root itself, so the
+    un-pooled form would render `source: <shared_dir>/chrome-pool`,
+    `path: ~/.config/google-chrome` — every container's Chrome profile
+    becoming the pool root, writing alongside `slots/` and `by-container/`
+    and thereby breaking the next `ensure_pool_dirs`."""
+    from jailbee.config import ConfigError, load_config_from_text
+
+    text = "chrome:\n  enabled: true\npooled_caches:\n  chrome-profile: false\n"
+    with pytest.raises(ConfigError, match="cannot be un-pooled"):
+        load_config_from_text(text, tmp_path / "c.yaml")
+
+
+def test_pool_only_preset_stays_pooled_even_if_the_flag_says_otherwise(tmp_path):
+    """Defence in depth for a Config built without validation: honouring
+    `false` here is what mounts the pool root into the container."""
+    from jailbee.config import POOL_PRESETS, load_config_from_text
+
+    assert POOL_PRESETS["chrome-profile"].pool_only is True
+    cfg = load_config_from_text("chrome:\n  enabled: true\n", tmp_path / "c.yaml")
+    cfg = cfg.model_copy(update={"pooled_caches": {"chrome-profile": False}})
+    chrome = next(c for c in cfg.effective_shared_caches() if c.name == "chrome-profile")
+    assert chrome.pool is not None
+
+
 def test_chrome_pool_entry_matches_the_legacy_layout(tmp_path):
     """The device name and pool root existing containers already carry."""
     from jailbee.config import load_config_from_text

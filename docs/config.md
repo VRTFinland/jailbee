@@ -562,7 +562,7 @@ An entry can carry its own `pool:` block instead of relying on
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. |
+| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. `chrome-profile: false` is also rejected: its host directory *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Use `chrome.enabled: false` to turn Chrome off. |
 
 A pooled cache is **not** mounted by the binds profile like the rest of
 `shared_caches`. Instead each container gets its own slot directory under

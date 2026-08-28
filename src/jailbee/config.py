@@ -394,7 +394,8 @@ def _label_spellings(legacy: list[Path], modern: list[Path]) -> list[tuple[Path,
 
 
 def _validate_pooled_caches(cfg: Config) -> None:
-    """Reject `pooled_caches` keys that name nothing or have no preset."""
+    """Reject `pooled_caches` keys that name nothing, have no preset, or
+    try to un-pool a `PoolPreset.pool_only` cache."""
     if not cfg.pooled_caches:
         return
     caches = {c.name: c for c in cfg.effective_shared_caches()}
@@ -409,6 +410,19 @@ def _validate_pooled_caches(cfg: Config) -> None:
             raise ConfigError(
                 f"pooled_caches: '{name}' has no builtin pool preset. "
                 f"Give the shared_caches entry an explicit `pool:` block instead."
+            )
+        preset = POOL_PRESETS.get(name)
+        if not wanted and preset is not None and preset.pool_only:
+            remedy = (
+                "Set `chrome.enabled: false` to turn Chrome off instead."
+                if name == "chrome-profile"
+                else "Disable the integration that adds it instead."
+            )
+            raise ConfigError(
+                f"pooled_caches: '{name}' cannot be un-pooled — its host "
+                f"directory is the pool root itself, so a plain shared mount "
+                f"would point every container at the pool's own `slots/` and "
+                f"`by-container/`. {remedy}"
             )
 
 
@@ -669,11 +683,21 @@ class PoolSpec(BaseModel):
 
 
 class PoolPreset(BaseModel):
-    """A builtin `PoolSpec` plus whether it applies without being asked."""
+    """A builtin `PoolSpec` plus whether it applies without being asked.
+
+    `pool_only` marks a cache whose un-pooled form has no meaning: its
+    `host_subpath` is the pool root itself, not a cache directory, so
+    rendering it as a plain shared mount would point every container at
+    `slots/`, `by-container/` and `.lock` — and the profile writing its
+    own content there is exactly what `ensure_pool_dirs` then refuses.
+    `pooled_caches: {<name>: false}` is rejected at load time for such a
+    preset (see `_validate_pooled_caches`).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     default_on: bool
     spec: PoolSpec
+    pool_only: bool = False
 
 
 class SharedCache(BaseModel):
@@ -747,6 +771,8 @@ POOL_PRESETS: dict[str, PoolPreset] = {
     ),
     "chrome-profile": PoolPreset(
         default_on=True,
+        # `host_subpath` is "chrome-pool" — the pool root, not a cache dir.
+        pool_only=True,
         spec=PoolSpec(
             link_paths=[],  # SQLite + Preferences are rewritten in place
             wipe_paths=list(_CHROME_WIPE_PATHS),
@@ -2283,11 +2309,14 @@ class Config(BaseModel):
         if cache.pool is not None:
             return cache  # explicit block always wins
         flag = self.pooled_caches.get(cache.name)
-        if flag is False:
-            return cache
         preset = POOL_PRESETS.get(cache.name)
         if preset is None:
             return cache  # `true` without a preset is rejected at load time
+        # `false` on a `pool_only` preset is a load-time ConfigError; honouring
+        # it here anyway would mount the pool root into every container, so a
+        # Config built without validation (tests, `model_copy`) still pools.
+        if flag is False and not preset.pool_only:
+            return cache
         if flag is True or preset.default_on:
             return cache.model_copy(update={"pool": preset.spec})
         return cache
