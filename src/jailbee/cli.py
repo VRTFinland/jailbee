@@ -7497,12 +7497,12 @@ def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str)
     `park` leaves the holder empty and that session unauthenticated. One shared
     sentence would be a false reassurance in the command that removes auth.
     """
-    if change.cleared:
-        info(f"Recorded account cleared in: {', '.join(change.cleared)}")
-    if change.not_cleared:
+    if change.updated:
+        info(f"Recorded account updated in: {', '.join(change.updated)}")
+    if change.not_updated:
         warn(
-            "Could not clear the recorded account in: "
-            f"{', '.join(change.not_cleared)}. Those repos keep naming the previous "
+            "Could not update the recorded account in: "
+            f"{', '.join(change.not_updated)}. Those repos keep naming the previous "
             "account until their config is readable again — authentication is "
             "unaffected."
         )

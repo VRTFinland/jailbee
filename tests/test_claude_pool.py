@@ -498,7 +498,12 @@ def test_park_names_the_slot_after_the_live_identity(tmp_path: Path, monkeypatch
     change = claude_pool.park(cfg, GlobalConfig())
 
     assert change.parked_as == "me@corp.com"
-    assert (claude_pool.store_dir() / "me@corp.com.json").read_text() == _cred()
+    stored = claude_pool.store_dir() / "me@corp.com.json"
+    assert _login_in(stored) == json.loads(_cred())["claudeAiOauth"]
+    # The account record travels with the grant, so a later switch can restore it.
+    assert json.loads(stored.read_text())[claude_pool.ACCOUNT_RECORD_KEY] == {
+        "emailAddress": "me@corp.com"
+    }
     assert not claude_pool.live_credential_path(cfg).exists()
 
 
@@ -551,7 +556,7 @@ def test_park_clears_the_recorded_account(tmp_path: Path, monkeypatch) -> None:
 
     change = claude_pool.park(cfg, GlobalConfig())
 
-    assert change.cleared == [cfg.container_prefix]
+    assert change.updated == [cfg.container_prefix]
     data = json.loads((home / ".claude.json").read_text())
     assert "oauthAccount" not in data
     # Everything else in the file survives.
@@ -576,6 +581,161 @@ def test_switch_parks_the_live_login_and_activates_the_target(tmp_path: Path, mo
     # Exactly one file per login: the target is gone from the store.
     assert not target.exists()
     assert [s.name for s in claude_pool.parked_slots()] == ["old@corp.com"]
+
+
+ACCOUNT_BLOCK = {
+    "emailAddress": "first@corp.com",
+    "accountUuid": "1111-2222",
+    "organizationUuid": "ccccdddd-1111",
+    "organizationName": "First Org",
+}
+"""One `oauthAccount` as Claude Code writes it, for the record-carrying tests."""
+
+SECOND_ACCOUNT_BLOCK = {
+    "emailAddress": "second@corp.com",
+    "organizationUuid": "aaaabbbb-9999",
+}
+
+
+def _park_carrying(tmp_path: Path, name: str, token: str, monkeypatch) -> Path:
+    """A stored slot shaped like one `park` wrote: a grant plus its record."""
+    path = _park(tmp_path, name, monkeypatch)
+    path.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {"refreshToken": token},
+                claude_pool.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _login_as(cfg, block: dict, token: str) -> None:
+    """What a `/login` in a container leaves behind: a credential in the holder
+    and an `oauthAccount` in the config home."""
+    _holder_with(cfg, _grant(token))
+    _write_identity(claude_pool.config_home(cfg), block)
+
+
+def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, monkeypatch) -> None:
+    """The reported bug. `switch` reads the live login's identity from the
+    members' `oauthAccount`, and its own last step deletes it — so a second
+    `switch` before any container had run Claude again found no identity and
+    parked a perfectly identified login as `unknown-<timestamp>`, losing the
+    only record of which account the file holds.
+
+    Driven through `park` rather than by writing the store by hand: the fix
+    rests on what `park` puts *inside* the parked file, so a hand-built store
+    would let this test pass while the real flow stays broken.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+
+    _login_as(cfg, SECOND_ACCOUNT_BLOCK, "second")
+    assert claude_pool.park(cfg, GlobalConfig()).parked_as == "second@corp.com#aaaabbbb"
+    _login_as(cfg, ACCOUNT_BLOCK, "first")
+
+    first = claude_pool.switch(cfg, GlobalConfig(), "second@corp.com#aaaabbbb")
+    assert first.parked_as == "first@corp.com#ccccdddd"
+
+    # Nothing ran Claude in between, so nothing repopulated `oauthAccount`.
+    back = claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd")
+
+    assert back.parked_as == "second@corp.com#aaaabbbb"
+    assert [s.name for s in claude_pool.parked_slots()] == ["second@corp.com#aaaabbbb"]
+    # And the holder can still say which account is live, which is what `ls`
+    # rendered as `(unknown)` for every switch until a container ran Claude.
+    live = [s for s in claude_pool.list_slots(cfg, GlobalConfig()) if s.live]
+    assert [s.name for s in live] == ["first@corp.com#ccccdddd"]
+
+
+def test_park_keeps_claude_codes_own_account_record_with_the_grant(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Verbatim, not reconstructed: the slot name truncates the organization to
+    eight characters, so the name can never rebuild the record. The parked file
+    is jailbee's own — Claude Code never reads the store — so the record rides
+    along inside the file whose grant it describes, which is what keeps it from
+    becoming a ledger that can disagree with the directory.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("first"))
+    _write_identity(claude_pool.config_home(cfg), ACCOUNT_BLOCK)
+
+    change = claude_pool.park(cfg, GlobalConfig())
+
+    assert change.parked_as == "first@corp.com#ccccdddd"
+    stored = json.loads((claude_pool.store_dir() / f"{change.parked_as}.json").read_text())
+    assert stored[claude_pool.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
+
+
+def test_switch_restores_the_activated_accounts_record(tmp_path: Path, monkeypatch) -> None:
+    """Restoring beats clearing: `ls` names the live account immediately instead
+    of `(unknown)` until some container happens to run Claude."""
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("other"))
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "other@corp.com"})
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd")
+
+    assert change.updated == [cfg.container_prefix]
+    data = json.loads((home / ".claude.json").read_text())
+    assert data["oauthAccount"] == ACCOUNT_BLOCK
+    # Everything else in the config home survives, as it does for a clear.
+    assert data["projects"] == {"/x": {}}
+
+
+def test_the_activated_credential_never_carries_jailbees_record(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The live file is Claude Code's, and it must be exactly the shape Claude
+    Code wrote — jailbee's own key stays behind in the store."""
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("other", mcpOAuth={"srv": 1}))
+
+    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd")
+
+    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    assert claude_pool.ACCOUNT_RECORD_KEY not in live
+    assert live["claudeAiOauth"] == {"refreshToken": "first"}
+    assert live["mcpOAuth"] == {"srv": 1}
+
+
+def test_the_activated_credential_drops_the_record_into_an_empty_holder(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The empty-holder path returns the target unchanged when there are no
+    shared fields to compose, and must still strip jailbee's key."""
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd")
+
+    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    assert claude_pool.ACCOUNT_RECORD_KEY not in live
+
+
+def test_switch_still_clears_when_the_target_carries_no_record(tmp_path: Path, monkeypatch) -> None:
+    """Back-compatibility, and the `/login` case: a login that jailbee never
+    parked has no record to restore, so clearing stays the fallback and Claude
+    Code repopulates the account on its next run."""
+    target = _park(tmp_path, "first@corp.com", monkeypatch)
+    target.write_text(_grant("first"), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("other"))
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "other@corp.com"})
+
+    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com")
+
+    assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
 
 
 def test_switch_into_an_empty_holder_parks_nothing(tmp_path: Path, monkeypatch) -> None:
@@ -649,7 +809,7 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
 
     change = claude_pool.switch(cfg, gcfg, "new@corp.com")
 
-    assert change.cleared == sorted([cfg.container_prefix, "other"])
+    assert change.updated == sorted([cfg.container_prefix, "other"])
     for home in (
         claude_pool.config_home(cfg),
         tmp_path / "other-shared" / "claude",
@@ -667,7 +827,7 @@ def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeyp
 
     change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
 
-    assert change.not_cleared == [cfg.container_prefix]
+    assert change.not_updated == [cfg.container_prefix]
     # A file we could not read is never overwritten.
     assert (home / ".claude.json").read_text() == '{"oauthAccount": {"emai'
 
@@ -850,6 +1010,16 @@ def _grant(token: str, **extra: object) -> str:
     return json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": token}, **extra})
 
 
+def _login_in(path: Path) -> object:
+    """The `claudeAiOauth` block a stored file holds.
+
+    What the "this grant landed intact" assertions actually mean. Comparing the
+    whole file would also pin `ACCOUNT_RECORD_KEY`, which `park` stamps in and
+    which is not what those tests are about.
+    """
+    return json.loads(path.read_text())["claudeAiOauth"]
+
+
 PARK_TIME = datetime(2026, 8, 28, 10, 42, 33)
 PARK_STAMP = "20260828-104233"
 
@@ -1017,7 +1187,7 @@ def test_park_stores_a_second_independent_grant_for_one_account(
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}"
     assert first.read_text() == _grant("lineage-1")
     second = claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json"
-    assert second.read_text() == _grant("lineage-2")
+    assert _login_in(second) == json.loads(_grant("lineage-2"))["claudeAiOauth"]
     assert not claude_pool.live_credential_path(cfg).exists()
 
 
@@ -1078,9 +1248,8 @@ def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, mo
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}-2"
     assert plain.read_text() == _grant("lineage-1")
     assert already.read_text() == _grant("lineage-2")
-    assert (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}-2.json").read_text() == _grant(
-        "lineage-3"
-    )
+    third = claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}-2.json"
+    assert _login_in(third) == json.loads(_grant("lineage-3"))["claudeAiOauth"]
 
 
 def test_park_refuses_a_lineage_already_stored_under_a_disambiguated_name(

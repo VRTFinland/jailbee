@@ -232,8 +232,8 @@ def identity_file(home: Path) -> Path:
     return legacy if legacy.exists() else home / ".claude.json"
 
 
-def read_identity(home: Path) -> Identity | None:
-    """The account a config home names, or None when it names none.
+def read_account_record(home: Path) -> dict[str, Any] | None:
+    """Claude Code's own `oauthAccount` block, or None when there is none.
 
     Every failure — absent, unreadable, torn, or missing the block — is None.
     Callers treat an unidentified account as a fact to report, not an error:
@@ -242,6 +242,11 @@ def read_identity(home: Path) -> Identity | None:
     `UnicodeDecodeError` is in the caught set because it is a `ValueError`, not
     an `OSError`: a write torn mid-character makes `read_text` raise it, and
     that is the same "unreadable file" fact as a torn JSON document.
+
+    Returns the block verbatim, because `Identity` is a lossy reading of it:
+    it keeps the email and the organization UUID and drops the rest, and
+    `slug_for` truncates the UUID further. Restoring a record after a switch
+    has to put back what Claude Code wrote, not what jailbee understood.
     """
     try:
         data = json.loads(identity_file(home).read_text(encoding="utf-8"))
@@ -250,13 +255,22 @@ def read_identity(home: Path) -> Identity | None:
     if not isinstance(data, dict):
         return None
     block = data.get("oauthAccount")
-    if not isinstance(block, dict):
-        return None
-    email = block.get("emailAddress")
+    return block if isinstance(block, dict) else None
+
+
+def identity_of(record: dict[str, Any]) -> Identity | None:
+    """The `Identity` an `oauthAccount` block names, or None when it names none."""
+    email = record.get("emailAddress")
     if not isinstance(email, str) or not email:
         return None
-    org = block.get("organizationUuid")
+    org = record.get("organizationUuid")
     return Identity(email=email, org_uuid=org if isinstance(org, str) and org else None)
+
+
+def read_identity(home: Path) -> Identity | None:
+    """The account a config home names, or None when it names none."""
+    record = read_account_record(home)
+    return None if record is None else identity_of(record)
 
 
 _SLUG_UNSAFE = re.compile(r"[^a-z0-9@._-]")
@@ -307,6 +321,29 @@ ACCOUNT_CREDENTIAL_KEYS = frozenset({"claudeAiOauth", "trustedDeviceToken"})
 """Account-scoped siblings we know about, named so the probe below does not
 flag them. `trustedDeviceToken` is enrolled per (device, account) at login."""
 
+ACCOUNT_RECORD_KEY = "jailbeeAccount"
+"""Where a parked file keeps the `oauthAccount` block of the login it holds.
+
+**Not a ledger.** The identity of a live credential is Claude Code's to record,
+in a config home's `oauthAccount` — and `switch` has to invalidate that record,
+or every member repo would go on naming the previous account. That leaves a
+window in which no file on disk says which account the live credential belongs
+to, and a `park` landing in it can only name the file `unknown-<timestamp>`,
+losing the one record of what the file contains.
+
+So the record travels *with the grant*: parking copies Claude Code's own
+`oauthAccount` into the parked file, and activating writes it back. Because it
+lives inside the file whose grant it describes, it cannot disagree with the
+directory — moving or deleting the file moves or deletes the record with it,
+which is what keeps `store_dir()` the only state.
+
+Never written to a *live* credential: that file is Claude Code's, and it stays
+the shape Claude Code wrote. `compose_credential` strips this key on the way
+out. A parked file without it — a login jailbee never parked, or one parked
+before this key existed — falls back to invalidating the record, which is what
+every switch did before.
+"""
+
 
 def _credential_object(raw: str | None) -> dict[str, Any] | None:
     """Parse a credential file's text, or None when it is not a JSON object.
@@ -339,7 +376,9 @@ def shared_fields(raw: str | None) -> dict[str, Any] | None:
         # silently: if Claude Code grows a new *shared* key, that default
         # quietly reintroduces the stale-restore papercut for it. Leave a
         # trace so it gets noticed.
-        unrecognized = data.keys() - SHARED_CREDENTIAL_KEYS - ACCOUNT_CREDENTIAL_KEYS
+        unrecognized = (
+            data.keys() - SHARED_CREDENTIAL_KEYS - ACCOUNT_CREDENTIAL_KEYS - {ACCOUNT_RECORD_KEY}
+        )
         if unrecognized:
             log.debug(
                 "credential has sibling keys jailbee does not recognize "
@@ -362,15 +401,39 @@ def compose_credential(target_raw: str, live_shared: dict[str, Any] | None) -> s
     the live account's `claudeAiOauth` into the target's file: one account's
     login stored under another's identity, and two files for one lineage. The
     allowlist costs a comprehension and closes that direction for good.
+
+    `ACCOUNT_RECORD_KEY` is stripped on every path that produces a composed
+    object, `live_shared is None` included: jailbee's own bookkeeping must not
+    reach a file Claude Code reads.
     """
-    if live_shared is None:
-        return target_raw
     target = _credential_object(target_raw)
     if target is None or "claudeAiOauth" not in target:
+        # Nothing to strip from a blob that is not a credential object, and no
+        # shared fields to compose into one.
         return target_raw
-    composed = {k: v for k, v in target.items() if k not in SHARED_CREDENTIAL_KEYS}
-    composed.update({k: v for k, v in live_shared.items() if k in SHARED_CREDENTIAL_KEYS})
+    composed = {
+        k: v
+        for k, v in target.items()
+        if k != ACCOUNT_RECORD_KEY and (live_shared is None or k not in SHARED_CREDENTIAL_KEYS)
+    }
+    if live_shared is not None:
+        composed.update({k: v for k, v in live_shared.items() if k in SHARED_CREDENTIAL_KEYS})
     return json.dumps(composed)
+
+
+def _record_in(raw: str) -> dict[str, Any] | None:
+    """The account record a slot's blob carries, or None when it carries none.
+
+    None for every shape that is not a credential object with a dict under
+    `ACCOUNT_RECORD_KEY` — a login that entered through `/login`, or one parked
+    before the key existed. Callers fall back to invalidating the members'
+    record, which is what every switch did before.
+    """
+    data = _credential_object(raw)
+    if data is None:
+        return None
+    record = data.get(ACCOUNT_RECORD_KEY)
+    return record if isinstance(record, dict) else None
 
 
 def _slot_name(path: Path) -> str:
@@ -565,19 +628,44 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
     return sorted(found, key=lambda m: m.container_prefix), sorted(unreachable)
 
 
-def live_identity(found: Sequence[Member], *, prefer: str) -> Identity | None:
-    """The account the holder's live credential belongs to.
+@dataclass(frozen=True)
+class LiveAccount:
+    """The holder's live login, as one member's config home describes it.
+
+    The identity and the record come from the *same* read, which is why they
+    are one object: the name a park writes and the record it stores must
+    describe the same account, and two separate scans of the members could
+    land on two different files.
+    """
+
+    identity: Identity
+    record: dict[str, Any]
+
+
+def live_account(found: Sequence[Member], *, prefer: str) -> LiveAccount | None:
+    """The account the holder's live credential belongs to, with its record.
 
     Read from a config home, never from the credential. The calling repo is
     consulted first; any member will do, since they share one login. None
-    means no member names an account yet — a fresh group, not an error.
+    means no member names an account yet — a fresh group, or the window a
+    `switch` opens before any container has run Claude again, which is exactly
+    what `ACCOUNT_RECORD_KEY` exists to close.
     """
     ordered = sorted(found, key=lambda m: m.container_prefix != prefer)
     for member in ordered:
-        identity = read_identity(member.config_home)
+        record = read_account_record(member.config_home)
+        if record is None:
+            continue
+        identity = identity_of(record)
         if identity is not None:
-            return identity
+            return LiveAccount(identity=identity, record=record)
     return None
+
+
+def live_identity(found: Sequence[Member], *, prefer: str) -> Identity | None:
+    """The identity half of `live_account`, for callers that only display it."""
+    account = live_account(found, prefer=prefer)
+    return None if account is None else account.identity
 
 
 def live_session_prefixes(found: Sequence[Member]) -> list[str]:
@@ -603,8 +691,16 @@ class PoolChange:
 
     parked_as: str | None
     activated: str | None
-    cleared: list[str]
-    not_cleared: list[str]
+    updated: list[str]
+    """Members whose recorded account now agrees with the holder.
+
+    "Updated" rather than "cleared": an activation *writes* the record the slot
+    was carrying (see `ACCOUNT_RECORD_KEY`), and only a `park` — or a slot with
+    no record — deletes it. Both leave the member correct, which is the fact the
+    CLI reports.
+    """
+    not_updated: list[str]
+    """Members still naming the previous account, unreadable ones included."""
     live_sessions: list[str]
 
 
@@ -811,8 +907,8 @@ def _disambiguated_slot(store: Path, name: str, live: Path, dest: Path, when: da
     return candidate
 
 
-def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
-    """Every slot for this holder, live last-resolved identity alongside.
+def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], LiveAccount | None]:
+    """Every slot for this holder, the live account alongside.
 
     The live slot's name is derived from an identity, so it can equal a parked
     slot's — that is precisely the state the documented add flow leaves behind:
@@ -822,14 +918,14 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identi
     because there is only ever one of them, and it reads as what it is in
     `jailbee claude ls`.
     """
-    identity = live_identity(found, prefer=cfg.container_prefix)
+    account = live_account(found, prefer=cfg.container_prefix)
     slots = parked_slots()
-    live = live_slot(cfg, identity)
+    live = live_slot(cfg, None if account is None else account.identity)
     if live is not None:
         if any(s.name == live.name for s in slots):
             live = replace(live, name=f"{live.name}{DISAMBIGUATOR}live")
         slots.append(live)
-    return sorted(slots, key=lambda s: (not s.live, s.name)), identity
+    return sorted(slots, key=lambda s: (not s.live, s.name)), account
 
 
 def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
@@ -869,20 +965,93 @@ def invalidate_identity(home: Path) -> bool:
     return True
 
 
-def _clear_identities(
-    found: Sequence[Member], unreachable: Sequence[str]
+def restore_identity(home: Path, record: dict[str, Any]) -> bool:
+    """Write `record` back as this config home's `oauthAccount`.
+
+    The counterpart to `invalidate_identity`, with the same contract: True when
+    the config home is consistent afterwards, False when the file exists but
+    could not be read or written — and in that case it is **never** overwritten,
+    because a torn `.claude.json` still holds the user's projects and MCP
+    servers.
+
+    An absent file is True and left absent, exactly as in `invalidate_identity`:
+    creating Claude Code's config here would be a write nobody asked for, and
+    Claude Code writes the account itself from the credential it finds.
+    """
+    path = identity_file(home)
+    try:
+        with config_lock(home):
+            if not path.exists():
+                return True
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return False
+            if data.get("oauthAccount") == record:
+                return True
+            data["oauthAccount"] = record
+            _atomic_write(path, json.dumps(data, indent=2))
+    except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return True
+
+
+def _rewrite_identities(
+    found: Sequence[Member],
+    unreachable: Sequence[str],
+    record: dict[str, Any] | None,
 ) -> tuple[list[str], list[str]]:
-    """Delete every member's recorded account; report which ones took."""
-    cleared: list[str] = []
-    not_cleared: list[str] = list(unreachable)
+    """Point every member's recorded account at the login now live.
+
+    With `record`, that means writing it: the activated slot carried Claude
+    Code's own block (see `ACCOUNT_RECORD_KEY`), so the members can be made
+    correct immediately instead of merely not-wrong. Without one — a login
+    jailbee never parked, or one parked before the key existed — the record is
+    deleted and Claude Code repopulates it on its next run, which is what every
+    switch did before.
+
+    Reports which members took the change, so the caller can name the ones that
+    are still naming the previous account.
+    """
+    done: list[str] = []
+    failed: list[str] = list(unreachable)
     for member in found:
-        target = cleared if invalidate_identity(member.config_home) else not_cleared
-        target.append(member.container_prefix)
-    return sorted(cleared), sorted(not_cleared)
+        ok = (
+            invalidate_identity(member.config_home)
+            if record is None
+            else restore_identity(member.config_home, record)
+        )
+        (done if ok else failed).append(member.container_prefix)
+    return sorted(done), sorted(failed)
 
 
-def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> Path | None:
+def _stamp_account_record(path: Path, record: dict[str, Any] | None) -> None:
+    """Keep `record` inside the newly parked file, best-effort.
+
+    Best-effort on purpose: the login is already safely in the store by the
+    time this runs, and a failure here costs a future `park` its account name —
+    the state this whole mechanism improves on, never worse than it. Raising
+    would report a failed park that had in fact landed, which is the one
+    outcome worth avoiding.
+    """
+    if record is None:
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return
+        data[ACCOUNT_RECORD_KEY] = record
+        _atomic_write(path, json.dumps(data))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        log.debug("could not record the account of the login parked at %s", path, exc_info=True)
+
+
+def _park_locked(cfg: Config, account: LiveAccount | None, when: datetime) -> Path | None:
     """Move the live credential into the store; return where it landed.
+
+    `account` carries both halves of what a park needs: the identity that names
+    the file, and Claude Code's own `oauthAccount` to keep inside it so a later
+    activation can restore it (see `ACCOUNT_RECORD_KEY`). One parameter rather
+    than two, so a caller cannot pair a name with another account's record.
 
     `_move_file` rather than `Path.replace`: `shared_dir` is user-overridable,
     so the holder and the store can live on different filesystems, where a
@@ -896,13 +1065,14 @@ def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> Path
     live = live_credential_path(cfg)
     if not live.exists():
         return None
-    name = slug_for(identity) if identity is not None else unknown_slot_name(when)
+    name = slug_for(account.identity) if account is not None else unknown_slot_name(when)
     store = store_dir()
     store.mkdir(parents=True, exist_ok=True)
     dest = store / f"{name}{_SLOT_SUFFIX}"
     if dest.exists():
         dest = _disambiguated_slot(store, name, live, dest, when)
     _move_file(live, dest)
+    _stamp_account_record(dest, None if account is None else account.record)
     return dest
 
 
@@ -920,27 +1090,29 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     `_park_locked`, which is what makes it safe to do it early.
     """
     found, unreachable = members(cfg, gcfg)
-    identity = live_identity(found, prefer=cfg.container_prefix)
+    account = live_account(found, prefer=cfg.container_prefix)
     parked: Path | None = None
     if live_credential_path(cfg).exists():
         holder = holder_dir(cfg)
         holder.mkdir(parents=True, exist_ok=True)
         with credential_locks(holder):
-            parked = _park_locked(cfg, identity, now or datetime.now())
+            parked = _park_locked(cfg, account, now or datetime.now())
     if parked is None:
         return PoolChange(
             parked_as=None,
             activated=None,
-            cleared=[],
-            not_cleared=list(unreachable),
+            updated=[],
+            not_updated=list(unreachable),
             live_sessions=[],
         )
-    cleared, not_cleared = _clear_identities(found, unreachable)
+    # No record to restore: `park` leaves the holder empty on purpose, so there
+    # is no live login for the members to name.
+    updated, not_updated = _rewrite_identities(found, unreachable, None)
     return PoolChange(
         parked_as=_slot_name(parked),
         activated=None,
-        cleared=cleared,
-        not_cleared=not_cleared,
+        updated=updated,
+        not_updated=not_updated,
         live_sessions=live_session_prefixes(found),
     )
 
@@ -956,9 +1128,13 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
     the staging file behind. It stays exactly where it is: `jailbee doctor`
     names it and the rename that recovers it (see the module docstring for why
     this is reported rather than repaired).
+
+    `target_raw` is read *before* the file moves and is what the members'
+    recorded account is rewritten from, so an activation restores the record
+    the slot was carrying rather than deleting what the previous account left.
     """
     found, unreachable = members(cfg, gcfg)
-    slots, identity = _slots_for(cfg, found)
+    slots, account = _slots_for(cfg, found)
     target = resolve_ref(ref, slots)
     if target.live:
         raise PoolError(f"`{target.name}` is already the live account for this holder.")
@@ -974,7 +1150,7 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
         target.path.replace(staged)
         parked: Path | None = None
         try:
-            parked = _park_locked(cfg, identity, now or datetime.now())
+            parked = _park_locked(cfg, account, now or datetime.now())
             _atomic_write(live_path, compose_credential(target_raw, shared_fields(live_raw)))
             staged.unlink()
         except BaseException:
@@ -994,12 +1170,12 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
                     live_path.unlink()
             raise
 
-    cleared, not_cleared = _clear_identities(found, unreachable)
+    updated, not_updated = _rewrite_identities(found, unreachable, _record_in(target_raw))
     return PoolChange(
         parked_as=_slot_name(parked) if parked is not None else None,
         activated=target.name,
-        cleared=cleared,
-        not_cleared=not_cleared,
+        updated=updated,
+        not_updated=not_updated,
         live_sessions=live_session_prefixes(found),
     )
 
