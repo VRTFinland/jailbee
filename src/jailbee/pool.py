@@ -309,7 +309,9 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
         else:
             target = _create_new_slot(pool)
 
-        if source is not None and target != source and pool.spec.seed:
+        seeded = source is not None and target != source and pool.spec.seed
+        if seeded:
+            assert source is not None  # narrows for mypy; implied by `seeded`
             _seed(pool, source, target)
 
         symlink.symlink_to(Path("..") / "slots" / target.name)
@@ -323,11 +325,13 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
             info(f"Allocated fresh {target.name} for {container} ({pool.name})")
         elif target == source:
             info(f"Reusing {target.name} for {container} ({pool.name})")
-        else:
+        elif seeded:
             info(
                 f"Allocated {target.name} for {container} ({pool.name}) "
                 f"(seeded from {source.name})"
             )
+        else:
+            info(f"Allocated {target.name} for {container} ({pool.name}) (seed disabled)")
         return target
 
 

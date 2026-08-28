@@ -171,6 +171,57 @@ def test_allocate_startup_skips_on_demand_pools(tmp_path, mocker):
     assert "chrome-profile-slot" not in added
 
 
+def test_allocate_startup_attaches_every_on_start_pool(tmp_path, mocker):
+    """Positive path: gradle+m2 (on-start) get slots; chrome-profile (on-demand)
+    is skipped. A body reduced to `return`, or a filter bug dropping every
+    pool, would pass `test_allocate_startup_skips_on_demand_pools` (it only
+    asserts the negative) but fails the assertions below.
+    """
+    cfg = _cfg_gradle(tmp_path).model_copy(update={"chrome": ChromeConfig(enabled=True)})
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "c1"}]
+    mocker.patch("jailbee.pool.subprocess.run")
+
+    pool.allocate_startup(cfg, incus, "c1")
+
+    added = {call.args[1] for call in incus.config_device_add.call_args_list}
+    assert "gradle-slot" in added
+    assert "m2-slot" in added
+    assert "chrome-profile-slot" not in added
+
+
+def test_allocate_skips_seed_when_pool_spec_disables_it(tmp_path, mocker, capsys):
+    """`seed=False` must skip the rsync copy (dropping `and pool.spec.seed`
+    from the seed condition would still call rsync here, since target !=
+    source), but the symlink and mount are still created — and the log
+    message must not falsely claim a seed that never happened.
+    """
+    cfg = _cfg(tmp_path)  # built before patching subprocess.run: load_config shells
+    # out to `git` itself, and patching `jailbee.pool.subprocess.run` patches the
+    # `run` attribute on the shared `subprocess` module process-wide.
+    p = _pool(tmp_path, seed=False)
+    older = p.slots_dir / "slot-0"
+    newer = p.slots_dir / "slot-1"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    os.utime(older, (100.0, 100.0))
+    os.utime(newer, (200.0, 200.0))
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "c1"}]
+    run = mocker.patch("jailbee.pool.subprocess.run")
+
+    target = pool.allocate(cfg, incus, p, "c1")
+
+    assert target == older  # oldest free slot picked as target; newer is source
+    run.assert_not_called()  # seed disabled: no rsync at all
+    assert (p.by_container_dir / "c1").is_symlink()
+    incus.config_device_add.assert_called_once()
+
+    out = capsys.readouterr().out
+    assert "seeded" not in out.lower()  # nothing was actually seeded
+    assert "seed disabled" in out.lower()
+
+
 def test_release_all_releases_every_pool(tmp_path, mocker):
     """Two pools at once: gradle (on-start) and chrome-profile (on-demand)."""
     cfg = _cfg_gradle(tmp_path).model_copy(update={"chrome": ChromeConfig(enabled=True)})
