@@ -10,6 +10,7 @@ import pytest
 
 from jailbee import claude_pool
 from jailbee.claude_pool import Identity, Slot
+from jailbee.global_config import GlobalConfig
 from tests.conftest import make_cfg
 
 
@@ -324,3 +325,132 @@ def test_read_identity_is_none_when_the_document_root_is_not_an_object(
     home.mkdir()
     (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
     assert claude_pool.read_identity(home) is None
+
+
+def _register(prefix: str, repo_root: Path) -> None:
+    """Insert a RegisteredRepo row into the autouse-isolated state DB.
+
+    Rows go into the real (tmp) DB rather than a mocked engine, the same way
+    tests/test_doctor.py:1684 does it — that is what makes the query honest.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    with Session(get_engine()) as session:
+        session.add(
+            RegisteredRepo(
+                container_prefix=prefix,
+                repo_root=str(repo_root),
+                registered_at=datetime(2026, 8, 28, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+
+def _no_git(mocker) -> None:
+    """Keep `load_config` off the `git` binary.
+
+    `members()` loads other repos' configs, and `load_config` resolves
+    `upstream_remote` and `default_branch` by shelling out. tmp_path is not a
+    git repo, so the calls are slow and their results meaningless. Mocked the
+    same way `tests/test_config_layered.py:26` does it.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
+
+
+def _write_repo(root: Path, *, shared: Path) -> None:
+    """A minimal on-disk jailbee repo whose config load_config can read."""
+    (root / ".jailbee").mkdir(parents=True)
+    (root / ".jailbee" / "config.yaml").write_text(
+        f"container_prefix: {root.name}\nshared_dir: {shared}\n", encoding="utf-8"
+    )
+
+
+def test_members_of_an_ungrouped_repo_is_the_repo_itself(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    found, unreachable = claude_pool.members(cfg, GlobalConfig())
+    assert [m.container_prefix for m in found] == [cfg.container_prefix]
+    assert found[0].config_home == tmp_path / "shared" / "claude"
+    assert unreachable == []
+
+
+def test_members_of_a_group_include_other_registered_repos(tmp_path: Path, mocker) -> None:
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="work")
+    other = tmp_path / "other"
+    _write_repo(other, shared=tmp_path / "other-shared")
+    _register("other", other)
+    _register("outsider", tmp_path / "outsider")
+    gcfg = GlobalConfig.model_validate(
+        {"claude_credentials": {"group": "work", "repos": {"outsider": None}}}
+    )
+
+    found, unreachable = claude_pool.members(cfg, gcfg)
+
+    assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, "other"])
+    assert any(m.config_home == tmp_path / "other-shared" / "claude" for m in found)
+    assert unreachable == []
+
+
+def test_members_names_a_repo_whose_config_will_not_load(tmp_path: Path, mocker) -> None:
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="work")
+    broken = tmp_path / "broken"
+    (broken / ".jailbee").mkdir(parents=True)
+    (broken / ".jailbee" / "config.yaml").write_text(": not yaml :", encoding="utf-8")
+    _register("broken", broken)
+    _register("gone", tmp_path / "gone")  # no config file at all
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    found, unreachable = claude_pool.members(cfg, gcfg)
+
+    assert [m.container_prefix for m in found] == [cfg.container_prefix]
+    assert unreachable == ["broken", "gone"]
+
+
+def test_live_identity_prefers_the_calling_repo(tmp_path: Path) -> None:
+    mine = tmp_path / "mine" / "claude"
+    theirs = tmp_path / "theirs" / "claude"
+    _write_identity(mine, {"emailAddress": "mine@x.com"})
+    _write_identity(theirs, {"emailAddress": "theirs@x.com"})
+    found = [
+        claude_pool.Member("theirs", theirs),
+        claude_pool.Member("mine", mine),
+    ]
+
+    assert claude_pool.live_identity(found, prefer="mine") == Identity("mine@x.com")
+
+
+def test_live_identity_falls_back_to_another_member(tmp_path: Path) -> None:
+    theirs = tmp_path / "theirs" / "claude"
+    _write_identity(theirs, {"emailAddress": "theirs@x.com"})
+    found = [
+        claude_pool.Member("mine", tmp_path / "mine" / "claude"),
+        claude_pool.Member("theirs", theirs),
+    ]
+
+    assert claude_pool.live_identity(found, prefer="mine") == Identity("theirs@x.com")
+
+
+def test_live_identity_is_none_when_no_member_names_an_account(tmp_path: Path) -> None:
+    found = [claude_pool.Member("mine", tmp_path / "mine" / "claude")]
+    assert claude_pool.live_identity(found, prefer="mine") is None
+
+
+def test_live_session_prefixes_reports_members_with_session_files(
+    tmp_path: Path,
+) -> None:
+    busy = tmp_path / "busy" / "claude"
+    (busy / "sessions").mkdir(parents=True)
+    (busy / "sessions" / "4242.json").write_text("{}", encoding="utf-8")
+    idle = tmp_path / "idle" / "claude"
+    (idle / "sessions").mkdir(parents=True)
+
+    found = [claude_pool.Member("busy", busy), claude_pool.Member("idle", idle)]
+
+    assert claude_pool.live_session_prefixes(found) == ["busy"]

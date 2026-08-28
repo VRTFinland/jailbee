@@ -160,19 +160,17 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     A bookkeeping read, not a diagnosis (see `_check_upgrade_advice`): an
     unreadable registry says nothing about whether the credential join
     itself is healthy, so it degrades this check's "shared with" listing
-    to empty rather than failing the check.
+    to empty rather than failing the check. The matching rule itself lives
+    in `claude_pool.group_member_prefixes`, which raises — the degradation
+    is this caller's policy, not the rule's.
     """
-    from jailbee.db.models import RegisteredRepo
+    from jailbee.claude_pool import group_member_prefixes
 
-    creds = gcfg.claude_credentials
     try:
-        with Session(get_engine()) as session:
-            prefixes = list(session.exec(select(RegisteredRepo.container_prefix)))
-    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        prefixes = group_member_prefixes(gcfg, group)
+    except Exception:  # a bookkeeping read is not a diagnosis
         return []
-    return sorted(
-        p for p in prefixes if p != exclude and (creds.dir_for(p) or Path()).name == group
-    )
+    return [p for p in prefixes if p != exclude]
 
 
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:

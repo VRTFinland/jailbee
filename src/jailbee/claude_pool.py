@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.global_config import GlobalConfig
 
 log = logging.getLogger(__name__)
 
@@ -311,3 +312,110 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         f"no stored account matches `{ref}`."
         + (f" Known: {known}" if known else " The pool is empty.")
     )
+
+
+@dataclass(frozen=True)
+class Member:
+    """One repo sharing a holder, and the config home whose identity it owns."""
+
+    container_prefix: str
+    config_home: Path
+
+
+def _registered_repos() -> list[tuple[str, Path]]:
+    """Every registered repo as (container_prefix, repo_root).
+
+    Raises rather than degrading to empty: for a mutation, an unreadable
+    registry must not look like "this holder has no other members".
+    """
+    from sqlmodel import Session, select
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+
+    with Session(get_engine()) as session:
+        rows = session.exec(select(RegisteredRepo)).all()
+    return [(row.container_prefix, Path(row.repo_root)) for row in rows]
+
+
+def _resolves_to(gcfg: GlobalConfig, prefix: str, group: str) -> bool:
+    """Whether `prefix` resolves to `group` under this host's config."""
+    resolved = gcfg.claude_credentials.dir_for(prefix)
+    return resolved is not None and resolved.name == group
+
+
+def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
+    """Registered repos resolving to `group`, sorted, including the caller.
+
+    The single implementation of the group-matching rule; `doctor.py` filters
+    the caller out of it for display.
+    """
+    return sorted(
+        prefix for prefix, _ in _registered_repos() if _resolves_to(gcfg, prefix, group)
+    )
+
+
+def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
+    """Every repo sharing this repo's holder, plus the ones we could not read.
+
+    A repo that shares nothing is its own only member, with no registry read.
+    An unreadable member is *named*, not skipped: skipping is right for a
+    read-only listing (`dashboard.py:240`), but here it would leave that
+    repo's `oauthAccount` stale and silently naming the wrong account.
+    """
+    from jailbee.config import load_config
+    from jailbee.paths import repo_config_path
+
+    me = Member(cfg.container_prefix, config_home(cfg))
+    if cfg.claude_credentials_dir is None:
+        return [me], []
+
+    group = cfg.claude_credentials_dir.name
+    found = [me]
+    unreachable: list[str] = []
+    for prefix, repo_root in _registered_repos():
+        if prefix == cfg.container_prefix or not _resolves_to(gcfg, prefix, group):
+            continue
+        path = repo_config_path(repo_root)
+        if path is None:
+            unreachable.append(prefix)
+            continue
+        try:
+            other = load_config(path)
+        except Exception:  # ConfigError, OSError, YAML/Pydantic — all mean "unreadable"
+            unreachable.append(prefix)
+            continue
+        found.append(Member(prefix, config_home(other)))
+    return sorted(found, key=lambda m: m.container_prefix), sorted(unreachable)
+
+
+def live_identity(found: Sequence[Member], *, prefer: str) -> Identity | None:
+    """The account the holder's live credential belongs to.
+
+    Read from a config home, never from the credential. The calling repo is
+    consulted first; any member will do, since they share one login. None
+    means no member names an account yet — a fresh group, not an error.
+    """
+    ordered = sorted(found, key=lambda m: m.container_prefix != prefer)
+    for member in ordered:
+        identity = read_identity(member.config_home)
+        if identity is not None:
+            return identity
+    return None
+
+
+def live_session_prefixes(found: Sequence[Member]) -> list[str]:
+    """Members that look like they have a Claude Code session running.
+
+    Claude Code writes `<config home>/sessions/<pid>.json` per session. The
+    PIDs belong to container namespaces the host cannot check, so a leftover
+    file reads as live — this is a warning input, never a refusal.
+    """
+    busy: list[str] = []
+    for member in found:
+        try:
+            if any((member.config_home / "sessions").glob("*.json")):
+                busy.append(member.container_prefix)
+        except OSError:
+            continue
+    return sorted(busy)
