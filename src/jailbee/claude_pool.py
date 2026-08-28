@@ -48,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jailbee.claude_locks import ClaudeLockTimeout, config_lock, credential_locks
+from jailbee.claude_locks import ClaudeLockTimeoutError, config_lock, credential_locks
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -588,7 +588,7 @@ def invalidate_identity(home: Path) -> bool:
                 return True
             del data["oauthAccount"]
             _atomic_write(path, json.dumps(data, indent=2))
-    except (ClaudeLockTimeout, OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
 

@@ -7520,12 +7520,12 @@ def claude_use_cmd(
     turn — no restart.
     """
     from jailbee import claude_pool
-    from jailbee.claude_locks import ClaudeLockTimeout
+    from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
     try:
         change = claude_pool.switch(cfg, gcfg, ref)
-    except (claude_pool.PoolError, ClaudeLockTimeout) as e:
+    except (claude_pool.PoolError, ClaudeLockTimeoutError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -7544,12 +7544,12 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
     login lands straight in the holder.
     """
     from jailbee import claude_pool
-    from jailbee.claude_locks import ClaudeLockTimeout
+    from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
     try:
         change = claude_pool.park(cfg, gcfg)
-    except (claude_pool.PoolError, ClaudeLockTimeout) as e:
+    except (claude_pool.PoolError, ClaudeLockTimeoutError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 

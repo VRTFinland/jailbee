@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from jailbee.claude_locks import (
-    ClaudeLockTimeout,
+    ClaudeLockTimeoutError,
     config_lock,
     credential_locks,
     held_lock,
@@ -26,7 +26,7 @@ def test_held_lock_creates_and_removes_the_directory(tmp_path: Path) -> None:
 def test_held_lock_times_out_on_a_fresh_foreign_lock(tmp_path: Path) -> None:
     lock = tmp_path / "x.lock"
     lock.mkdir()
-    with pytest.raises(ClaudeLockTimeout) as excinfo:
+    with pytest.raises(ClaudeLockTimeoutError) as excinfo:
         with held_lock(lock, stale_s=60.0, timeout_s=0.1):
             pass  # pragma: no cover - the context must not be entered
     assert str(lock) in str(excinfo.value)
@@ -77,7 +77,7 @@ def test_credential_locks_releases_the_primary_when_the_legacy_is_held(
     holder = tmp_path / "creds"
     holder.mkdir()
     (tmp_path / "creds.lock").mkdir()
-    with pytest.raises(ClaudeLockTimeout):
+    with pytest.raises(ClaudeLockTimeoutError):
         with credential_locks(holder, timeout_s=0.1):
             pass  # pragma: no cover - the context must not be entered
     # The primary must not be left behind holding off a live Claude Code.
@@ -105,7 +105,7 @@ def test_held_lock_times_out_when_a_stale_lock_cannot_be_removed(tmp_path: Path)
     os.utime(lock, (old, old))  # after the write: the write bumps the dir's mtime
 
     started = time.monotonic()
-    with pytest.raises(ClaudeLockTimeout):
+    with pytest.raises(ClaudeLockTimeoutError):
         with held_lock(lock, stale_s=60.0, timeout_s=0.1):
             pass  # pragma: no cover - the context must not be entered
     assert time.monotonic() - started < 5.0

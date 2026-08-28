@@ -60,7 +60,7 @@ sequentially, so its worst case is roughly twice this.
 """
 
 
-class ClaudeLockTimeout(RuntimeError):
+class ClaudeLockTimeoutError(RuntimeError):
     """A Claude Code advisory lock stayed held past the wait budget."""
 
 
@@ -113,7 +113,7 @@ def held_lock(
                 else:
                     continue  # cleared it; retry immediately
             if time.monotonic() >= deadline:
-                raise ClaudeLockTimeout(
+                raise ClaudeLockTimeoutError(
                     f"{path} is held by another process (waited {timeout_s:.0f}s). "
                     "A Claude Code session may be refreshing its token; retry shortly."
                 ) from None

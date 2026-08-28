@@ -105,11 +105,11 @@ def test_use_exits_2_on_a_pool_error(repo, mocker):
 
 
 def test_use_exits_2_on_a_lock_timeout(repo, mocker):
-    from jailbee.claude_locks import ClaudeLockTimeout
+    from jailbee.claude_locks import ClaudeLockTimeoutError
 
     mocker.patch(
         "jailbee.claude_pool.switch",
-        side_effect=ClaudeLockTimeout("/h/.oauth_refresh.lock is held"),
+        side_effect=ClaudeLockTimeoutError("/h/.oauth_refresh.lock is held"),
     )
     result = runner.invoke(app, ["claude", "use", "x@y.com"])
     assert result.exit_code == 2
