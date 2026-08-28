@@ -18,9 +18,13 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from jailbee.cli import app
 
-# Positional arguments named `name` that are NOT container names. Empty today;
-# kept so a future exception is a deliberate, reviewed entry rather than a
-# silently loosened assertion.
+# Positional arguments named `name` that are NOT container names.
+#
+# `jailbee pool ls`/`jailbee pool prune` take an optional pool name under the
+# same "name" parameter name as every container-name positional, but it's a
+# `pool.py` name (gradle, chrome-profile, ...), completed by
+# `completion.complete_pool_names`, not `completion.complete_container` —
+# hence the exclusion.
 #
 # Blind spots this guard does not cover, because both checks below key on the
 # literal parameter name "name" and on `TyperArgument`: a container-name
@@ -29,7 +33,10 @@ from jailbee.cli import app
 # would not be walked either, since `_walk` never filters on `TyperOption`.
 # Neither has arisen yet; if one does, extend the walk rather than assume this
 # set already covers it.
-NON_CONTAINER_NAME_ARGS: set[tuple[str, str]] = set()
+NON_CONTAINER_NAME_ARGS: set[tuple[str, str]] = {
+    ("jailbee pool ls", "name"),
+    ("jailbee pool prune", "name"),
+}
 
 
 def _walk(cmd: TyperCommand | TyperGroup, path: str = ""):
@@ -179,7 +186,7 @@ def test_fixed_choice_options_complete_their_values():
         ("jailbee ls", "fmt", ["table", "json"]),
         ("jailbee job ls", "fmt", ["table", "json"]),
         ("jailbee snapshot ls", "fmt", ["table", "json"]),
-        ("jailbee chrome-pool ls", "fmt", ["table", "json"]),
+        ("jailbee pool ls", "fmt", ["table", "json"]),
         ("jailbee disk-usage", "fmt", ["table", "json"]),
         ("jailbee config show", "layer", ["global", "repo", "effective"]),
         ("jailbee new", "attach", ["shell", "tmux", "none"]),

@@ -9,8 +9,17 @@ from typer.testing import CliRunner
 from jailbee.cli import app
 from jailbee.config import load_config
 from jailbee.lifecycle import ResolvedContainer
+from tests.conftest import make_config
 
 FIXTURES = Path(__file__).parent / "fixtures"
+runner = CliRunner()
+
+
+def _fake_pool(name: str):
+    from jailbee.config import PoolSpec
+    from jailbee.pool import Pool
+
+    return Pool(name=name, root=Path("/tmp/x"), container_path="/home/dev/x", spec=PoolSpec())
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -321,74 +330,130 @@ def test_net_help() -> None:
     assert "loose" in result.stdout
 
 
-def test_chrome_pool_ls_renders_table(tmp_path, mocker):
-    """`gie chrome pool ls` lists all slots with state."""
-    from typer.testing import CliRunner
+def test_pool_ls_lists_every_pool(tmp_path, mocker):
+    """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
+    from jailbee.pool import Pool, SlotInfo
 
-    from jailbee.chrome_pool import SlotInfo
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[_fake_pool("gradle")])
     mocker.patch(
-        "jailbee.chrome_pool.list_slots",
+        "jailbee.pool.list_slots",
         return_value=[
             SlotInfo(
+                pool="gradle",
                 name="slot-0",
                 path=tmp_path / "slot-0",
-                container="feat-foo",
-                login_data_mtime=100.0,
-                size_bytes=1024,
-            ),
-            SlotInfo(
-                name="slot-1",
-                path=tmp_path / "slot-1",
-                container=None,
-                login_data_mtime=None,
-                size_bytes=512,
-            ),
+                container="c1",
+                warmth_mtime=None,
+                size_bytes=10,
+            )
         ],
     )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=10)
+    result = runner.invoke(app, ["pool", "ls"])
+    assert result.exit_code == 0
+    assert "gradle" in result.stdout
+    assert "slot-0" in result.stdout
 
-    runner = CliRunner()
-    result = runner.invoke(app, ["chrome-pool", "ls"])
+
+def test_pool_ls_rejects_an_unknown_pool_name(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[])
+    result = runner.invoke(app, ["pool", "ls", "nosuch"])
+    assert result.exit_code == 2
+    assert "nosuch" in result.output
+
+
+def test_pool_ls_with_name_filters_to_that_pool(tmp_path, mocker):
+    """A NAME that does match narrows to that one pool's slots via `pool.get`."""
+    from jailbee.pool import SlotInfo
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("gradle"))
+    mocker.patch(
+        "jailbee.pool.list_slots",
+        return_value=[
+            SlotInfo(
+                pool="gradle",
+                name="slot-0",
+                path=tmp_path / "slot-0",
+                container=None,
+                warmth_mtime=None,
+                size_bytes=10,
+            )
+        ],
+    )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=10)
+    result = runner.invoke(app, ["pool", "ls", "gradle"])
     assert result.exit_code == 0, result.stdout
     assert "slot-0" in result.stdout
-    assert "slot-1" in result.stdout
-    assert "feat-foo" in result.stdout
 
 
-def test_chrome_pool_ls_format_json(tmp_path, mocker):
+def test_pool_ls_format_json(tmp_path, mocker):
     import json as _json
 
-    from typer.testing import CliRunner
+    from jailbee.pool import SlotInfo
 
-    from jailbee.chrome_pool import SlotInfo
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[_fake_pool("gradle")])
     mocker.patch(
-        "jailbee.chrome_pool.list_slots",
+        "jailbee.pool.list_slots",
         return_value=[
             SlotInfo(
+                pool="gradle",
                 name="slot-0",
                 path=tmp_path / "slot-0",
                 container="feat-foo",
-                login_data_mtime=100.0,
+                warmth_mtime=None,
                 size_bytes=1024,
             ),
         ],
     )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=1024)
 
-    result = CliRunner().invoke(
-        app, ["chrome-pool", "ls", "--format", "json", "--fields", "slot,container,size_bytes"]
+    result = runner.invoke(
+        app,
+        ["pool", "ls", "--format", "json", "--fields", "pool,slot,container,size_bytes"],
     )
     assert result.exit_code == 0, result.stdout
     data = _json.loads(result.stdout)
-    assert data == [{"slot": "slot-0", "container": "feat-foo", "size_bytes": 1024}]
+    assert data == [
+        {"pool": "gradle", "slot": "slot-0", "container": "feat-foo", "size_bytes": 1024}
+    ]
+
+
+def test_pool_ls_prints_total_footer(tmp_path, mocker):
+    """The dedup total (`unique_bytes`, summed over selected pools) is the
+    only place the real on-disk figure appears — per-slot sizes double-count
+    hardlinked content."""
+    from jailbee.pool import SlotInfo
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch(
+        "jailbee.pool.pools_for",
+        return_value=[_fake_pool("gradle"), _fake_pool("chrome-profile")],
+    )
+    mocker.patch(
+        "jailbee.pool.list_slots",
+        return_value=[
+            SlotInfo(
+                pool="gradle",
+                name="slot-0",
+                path=tmp_path / "slot-0",
+                container=None,
+                warmth_mtime=None,
+                size_bytes=99999,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=2048)
+    result = runner.invoke(app, ["pool", "ls"])
+    assert result.exit_code == 0, result.stdout
+    assert "total on disk (deduplicated)" in result.stdout
+    # unique_bytes mocked to 2048 per pool, 2 selected pools -> 4096 -> "4.0 KB".
+    # Not 99999 (the fabricated, deliberately wrong, per-slot size_bytes) —
+    # the footer must come from unique_bytes(), never from summing SlotInfo.
+    assert "4.0 KB" in result.stdout
 
 
 def test_disk_usage_table_includes_total_footer(tmp_path, mocker):
@@ -557,20 +622,46 @@ def test_snapshot_ls_format_json_empty_returns_empty_list(tmp_path, mocker):
     assert _json.loads(result.stdout) == []
 
 
-def test_chrome_pool_prune_reports_count(tmp_path, mocker):
-    from typer.testing import CliRunner
-
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.chrome_pool.prune", return_value=3)
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["chrome-pool", "prune"])
+def test_pool_prune_sums_across_multiple_pools(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch(
+        "jailbee.pool.pools_for",
+        return_value=[_fake_pool("gradle"), _fake_pool("chrome-profile")],
+    )
+    prune = mocker.patch("jailbee.pool.prune", side_effect=[2, 3])
+    result = runner.invoke(app, ["pool", "prune"])
     assert result.exit_code == 0, result.stdout
-    assert "3" in result.stdout
+    assert "Pruned 5 free slots" in result.stdout
+    assert prune.call_count == 2
+
+
+def test_pool_prune_rejects_an_unknown_pool_name(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[])
+    result = runner.invoke(app, ["pool", "prune", "nosuch"])
+    assert result.exit_code == 2
+    assert "nosuch" in result.output
+
+
+def test_chrome_pool_alias_still_works(tmp_path, mocker):
+    """The old `chrome-pool prune` name keeps working, as a deprecated alias."""
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    prune = mocker.patch("jailbee.pool.prune", return_value=0)
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("chrome-profile"))
+    result = runner.invoke(app, ["chrome-pool", "prune"])
+    assert result.exit_code == 0
+    assert "deprecated" in result.stdout.lower()
+    prune.assert_called_once()
+
+
+def test_chrome_pool_ls_alias_still_works(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("chrome-profile"))
+    mocker.patch("jailbee.pool.list_slots", return_value=[])
+    mocker.patch("jailbee.pool.unique_bytes", return_value=0)
+    result = runner.invoke(app, ["chrome-pool", "ls"])
+    assert result.exit_code == 0, result.stdout
+    assert "deprecated" in result.stdout.lower()
 
 
 def test_ls_without_dot_jailbee_config_exits_with_error(tmp_path, monkeypatch):

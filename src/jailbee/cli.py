@@ -1850,6 +1850,7 @@ if TYPE_CHECKING:
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.pool import Pool
     from jailbee.pr_flow import PrState
     from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import (
@@ -7410,16 +7411,46 @@ def chrome_cmd(
     open_chrome(cfg, incus, name, url or cfg.chrome.url)
 
 
-chrome_pool_app = typer.Typer(
-    name="chrome-pool",
-    help="Chrome profile pool management.",
+pool_app = typer.Typer(
+    name="pool",
+    help="Per-container cache pool management.",
     no_args_is_help=True,
 )
-app.add_typer(chrome_pool_app)
+app.add_typer(pool_app)
 
 
-@chrome_pool_app.command("ls")
-def chrome_pool_ls_cmd(
+def _pools_or_exit(cfg: "Config", name: str | None) -> "list[Pool]":
+    """Resolve the CLI's optional NAME argument to the pools to act on.
+
+    `None` means every configured pool. A given name is looked up with
+    `pool.get` (a single-pool lookup) rather than filtering the full
+    `pools_for` list ourselves, so a caller mocking `pool.get` (as the
+    `chrome-pool` alias tests do) controls this path directly.
+    """
+    from jailbee import pool as pool_mod
+
+    if name is None:
+        return pool_mod.pools_for(cfg)
+    found = pool_mod.get(cfg, name)
+    if found is not None:
+        return [found]
+    pools = pool_mod.pools_for(cfg)
+    error(
+        f"No pooled cache named '{name}'. "
+        f"Pooled: {', '.join(p.name for p in pools) or '(none)'}"
+    )
+    raise typer.Exit(2)
+
+
+@pool_app.command("ls")
+def pool_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to list. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
     fmt: Annotated[
         str,
         typer.Option(
@@ -7434,36 +7465,44 @@ def chrome_pool_ls_cmd(
         typer.Option(
             "--fields",
             help=(
-                "Comma-separated list of fields to show. Allowed: slot, container, "
-                "login_data_mtime, size_bytes, size, path."
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
             ),
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """List Chrome profile pool slots."""
+    """List cache pool slots."""
     from datetime import datetime
 
-    from jailbee import chrome_pool
-    from jailbee.chrome_pool import SlotInfo
+    from jailbee import pool as pool_mod
     from jailbee.incus import Incus
     from jailbee.maintenance import humanize
+    from jailbee.pool import SlotInfo
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    slots = chrome_pool.list_slots(cfg, Incus())
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    slots = [s for p in selected for s in pool_mod.list_slots(cfg, incus, p)]
 
     def _mtime_cell(s: SlotInfo) -> str:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return "-"
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat(" ", "seconds")
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat(" ", "seconds")
 
     def _mtime_json(s: SlotInfo) -> str | None:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return None
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat()
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat()
 
     all_fields: list[table_format.FieldSpec[SlotInfo]] = [
+        table_format.FieldSpec(
+            name="pool",
+            header="POOL",
+            cell=lambda s: s.pool,
+            json=lambda s: s.pool,
+        ),
         table_format.FieldSpec(
             name="slot",
             header="SLOT",
@@ -7477,8 +7516,8 @@ def chrome_pool_ls_cmd(
             json=lambda s: s.container,
         ),
         table_format.FieldSpec(
-            name="login_data_mtime",
-            header="LOGIN DATA MTIME",
+            name="warmth_mtime",
+            header="WARMTH MTIME",
             cell=_mtime_cell,
             json=_mtime_json,
         ),
@@ -7514,20 +7553,61 @@ def chrome_pool_ls_cmd(
         fmt=fmt,
         fields=fields,
         console=console,
-        title="Chrome profile pool" if fmt == "table" else None,
+        title="Cache pools" if fmt == "table" else None,
         empty_message="[dim](pool is empty)[/dim]",
     )
+
+    if fmt == "table":
+        total = sum(pool_mod.unique_bytes(p) for p in selected)
+        console.print(f"[dim]total on disk (deduplicated): {humanize(total)}[/dim]")
+
+
+@pool_app.command("prune")
+def pool_prune_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to prune. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Delete all unallocated slots."""
+    from jailbee import pool as pool_mod
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    deleted = sum(pool_mod.prune(cfg, incus, p) for p in selected)
+    success(f"Pruned {deleted} free slots")
+
+
+chrome_pool_app = typer.Typer(
+    name="chrome-pool",
+    help="Deprecated alias for `jailbee pool` (Chrome profile pool).",
+    no_args_is_help=True,
+)
+app.add_typer(chrome_pool_app, hidden=True)
+
+
+@chrome_pool_app.command("ls")
+def chrome_pool_ls_cmd(
+    fmt: Annotated[str, typer.Option("--format", "-o")] = "table",
+    fields: Annotated[str | None, typer.Option("--fields")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee pool ls chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_ls_cmd(name="chrome-profile", fmt=fmt, fields=fields, config=config)
 
 
 @chrome_pool_app.command("prune")
 def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
-    """Delete all unallocated Chrome profile slots."""
-    from jailbee import chrome_pool
-    from jailbee.incus import Incus
-
-    cfg = _load_or_exit(config)
-    deleted = chrome_pool.prune(cfg, Incus())
-    success(f"Pruned {deleted} free slots")
+    """Deprecated: use `jailbee pool prune chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_prune_cmd(name="chrome-profile", config=config)
 
 
 @app.command("exec")
