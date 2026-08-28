@@ -4,6 +4,27 @@
 
 ### Added
 
+- **`jailbee claude` switches which stored Claude login a repo's containers
+  use.** `jailbee claude park` stores the login in use and empties the holder
+  — the credential group directory, or the repo's own config home when it
+  shares none — so the next `claude` in a container prompts `/login` and a
+  second account enters the pool. `jailbee claude use <email>` then swaps
+  between them: the live credential is parked, the target is activated, and
+  every member repo's recorded account is cleared so Claude Code repopulates
+  it from the credential it now finds. A running Claude session adopts the new
+  login on its next turn — the credential file's mtime is what invalidates its
+  cached token — so nothing needs restarting; only the account name shown in
+  `/status` can lag. `jailbee claude ls` lists the store with the live account
+  first, `jailbee claude rm` deletes one for good. The switch runs under Claude
+  Code's own advisory locks, so a concurrent token refresh cannot overwrite it,
+  and it carries the machine-shared credential keys (`mcpOAuth`,
+  `pluginSecrets`, …) across from the live file rather than restoring the
+  target's stale copies. A login is always **moved**, never copied: two copies
+  share one refresh-token lineage and the first rotation would silently log
+  the other out. No `cswap`, no database table, no golden-image rebuild —
+  the store is `<xdg_data_home>/jailbee/claude-credentials/_parked/` and the
+  filesystem is the only state. `jailbee doctor` reports the live account and
+  the parked count once anything is stored.
 - **Several repos on one host can now share a single Claude Code login.**
   `claude_credentials` in `~/.config/jailbee/global.yaml` names a `group`
   every repo on the host defaults into, with a per-repo `repos:` map

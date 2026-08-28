@@ -28,7 +28,7 @@ Common conventions:
 - [PR publishing (`pr`)](#pr-publishing)
 - [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
-- [Claude accounts (`claude ls|use|add|allow|release|rm`)](#claude-accounts)
+- [Claude accounts (`claude ls|use|park|rm`)](#claude-accounts)
 - [GUI (`ide`, `chrome`, `chrome-pool`)](#gui)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
@@ -740,6 +740,34 @@ container's ACL or `/etc/hosts` themselves. `jailbee apply`, or the next
 change. Container-scope add/rm are the opposite: they materialise
 immediately (against the container's current network mode, per the table
 above), with no separate apply step needed.
+
+## Claude accounts
+
+### `jailbee claude ls [-o json] [--fields account,org,state]`
+
+Every stored login on the host, the one live for this repo's holder first. The
+store is host-wide, not per group: a login parked from one credential group can
+be activated into another.
+
+### `jailbee claude use <email|slot>`
+
+Park the live login and activate a stored one. Holder-wide — every repo sharing
+the credential group moves with it. Pass the bare email unless two stored
+accounts share it, in which case the error names the full slot names
+(`<email>#<org8>`) to choose between. A Claude session that is already running
+adopts the new credential on its next turn; only the account name in `/status`
+can lag until it restarts.
+
+### `jailbee claude park`
+
+Store the live login and leave the holder empty, so the next `claude` in a
+container of this holder prompts `/login`. This is how a second account enters
+the pool — there is no `add`, because only a browser login creates a credential.
+
+### `jailbee claude rm <email|slot> [--yes]`
+
+Delete a stored login permanently; refuses the live one. JailBee never contacts
+Anthropic, so this cannot be undone except by logging in again.
 
 ## GUI
 

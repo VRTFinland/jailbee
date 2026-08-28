@@ -3001,3 +3001,28 @@ incus exec <container> -- systemctl --user --machine=dev@ --failed
 Audio is the other half of the same fix: with `pulse-socket` read-only,
 `jb chrome` (or any GUI app) must still play sound from inside the container,
 and the host's own audio must survive the container's boot.
+
+## `jailbee claude` account pool smoke test
+
+Needs two Claude accounts. Everything below runs on the host.
+
+1. `jailbee claude ls` — one row, `live`, naming the account in use.
+2. `jailbee claude park` — the row moves to `parked`, and
+   `ls <holder>/.credentials.json` is gone.
+3. In a container of that holder, run `claude` and `/login` as the **second**
+   account. Back on the host, `jailbee claude ls` shows two rows and the new
+   one is `live`.
+4. **The hot-reload gate.** Leave an interactive `claude` running in a
+   container. On the host, `jailbee claude use <first account>`. Ask the
+   session a question **without restarting it**: it must answer. Then check
+   `/status` — a lagging account name there is expected and harmless; a
+   login prompt is not, and would mean the mtime hot-reload (spec §5.1) does
+   not hold on this Claude Code version.
+5. **The identity gate.** In each member repo's `<shared_dir>/claude/.claude.json`,
+   `oauthAccount` must be absent right after the switch and repopulated with
+   the *new* account's email after the next container run.
+6. **The concurrency gate.** With two containers of *different* repos in one
+   group both running Claude, switch on the host. Neither container may end
+   up on the old account, and no `.oauth_refresh.lock` may be left behind
+   (`ls -a <holder>`).
+7. `jailbee claude rm <parked account>` — confirms, then the row is gone.
