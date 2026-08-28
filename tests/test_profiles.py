@@ -462,8 +462,8 @@ def test_binds_profile_includes_shared_caches_rw():
 
 
 def test_binds_profile_omits_shared_chrome_profile():
-    """The chrome profile mount is now per-container via chrome_pool;
-    must not be in the gisgro-binds profile."""
+    """The chrome profile mount is per-container, attached by `pool.py` as
+    the `chrome-profile-slot` device; it must not be in the binds profile."""
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
     parsed = yaml.safe_load(out)

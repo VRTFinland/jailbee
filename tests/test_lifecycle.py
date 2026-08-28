@@ -4045,6 +4045,32 @@ def test_destroy_deletes_even_when_pool_release_raises(tmp_path, mocker):
     incus.delete.assert_called_once_with("x", force=True)
 
 
+def test_destroy_warns_when_pool_release_raises(tmp_path, mocker, capsys):
+    """The swallow stays, but it must not be silent: as written
+    (`except Exception: pass`) a signature mismatch in `release_all` stopped
+    pooling working with no user-visible sign at all. Matches the ACL-drop
+    block a few lines below.
+    """
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Stopped",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    mocker.patch("jailbee.pool.release_all", side_effect=TypeError("bad signature"))
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "release pooled cache slots" in out
+    assert "bad signature" in out
+    incus.delete.assert_called_once_with("x", force=True)
+
+
 def test_destroy_container_cleans_gie_refs(tmp_path, mocker):
     """Destroy must clean refs/jailbee/<short>/* on the host so the
     refspecs created by `gie git fetch` don't accumulate after containers are

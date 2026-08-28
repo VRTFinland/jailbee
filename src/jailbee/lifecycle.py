@@ -1576,12 +1576,16 @@ def destroy_container(
     # allocated until the next pool operation; the cost of not
     # swallowing it is a container the user asked to destroy but that
     # never gets deleted.
+    #
+    # Say so, though: silently swallowing meant a signature mismatch or
+    # any other breakage in `release_all` stopped pooling with no
+    # user-visible sign at all.
     try:
         from jailbee.pool import release_all
 
         release_all(cfg, incus, name)
-    except Exception:
-        pass
+    except Exception as e:
+        warn(f"Could not release pooled cache slots for '{name}' (continuing): {e}")
 
     # Clean refs/jailbee/<short>/* on the host. Best-effort: a failure here
     # (git missing, repo broken) must not block destroy — leftover refs

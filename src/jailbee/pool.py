@@ -100,7 +100,12 @@ def get(cfg: Config, name: str) -> Pool | None:
     return None
 
 
-_RESERVED = frozenset({"slots", "by-container", ".lock"})
+RESERVED_ENTRIES = frozenset({"slots", "by-container", ".lock"})
+"""Pool-root entries that are the pool layout itself, not cache content.
+
+Public so `doctor` can classify a pool root by the same rule
+`ensure_pool_dirs` migrates by — the two must agree or doctor's report
+contradicts what `apply` actually does."""
 
 
 @contextmanager
@@ -132,7 +137,7 @@ def ensure_pool_dirs(cfg: Config, pool: Pool) -> None:
     with _lock(pool):
         pool.slots_dir.mkdir(exist_ok=True)
         pool.by_container_dir.mkdir(exist_ok=True)
-        legacy = [p for p in pool.root.iterdir() if p.name not in _RESERVED]
+        legacy = [p for p in pool.root.iterdir() if p.name not in RESERVED_ENTRIES]
         if not legacy:
             return
         slot0 = pool.slots_dir / "slot-0"
