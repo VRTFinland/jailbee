@@ -332,7 +332,7 @@ def test_net_help() -> None:
 
 def test_pool_ls_lists_every_pool(tmp_path, mocker):
     """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
-    from jailbee.pool import Pool, SlotInfo
+    from jailbee.pool import SlotInfo
 
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
     mocker.patch("jailbee.pool.pools_for", return_value=[_fake_pool("gradle")])

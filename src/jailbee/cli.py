@@ -7435,10 +7435,7 @@ def _pools_or_exit(cfg: "Config", name: str | None) -> "list[Pool]":
     if found is not None:
         return [found]
     pools = pool_mod.pools_for(cfg)
-    error(
-        f"No pooled cache named '{name}'. "
-        f"Pooled: {', '.join(p.name for p in pools) or '(none)'}"
-    )
+    error(f"No pooled cache named '{name}'. Pooled: {', '.join(p.name for p in pools) or '(none)'}")
     raise typer.Exit(2)
 
 

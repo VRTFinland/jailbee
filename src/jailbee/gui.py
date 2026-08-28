@@ -139,7 +139,8 @@ def open_chrome(cfg: Config, incus: Incus, container: str, url: str | None) -> N
     they don't collide on Chrome's SingletonLock.
     """
     from jailbee.pool import allocate as pool_allocate
-    from jailbee.pool import ensure_pool_dirs, get as pool_get
+    from jailbee.pool import ensure_pool_dirs
+    from jailbee.pool import get as pool_get
 
     # None only when chrome.enabled is false, which cli.chrome_cmd has
     # already rejected before reaching here — this guard is for direct

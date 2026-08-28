@@ -3602,9 +3602,7 @@ def test_new_container_skips_pooled_under_repo_shared_cache(tmp_path, mocker):
     )
     new_container(cfg, incus, opts)
 
-    assert not any(
-        c.args[1] == "shared-mycache" for c in incus.config_device_add.call_args_list
-    )
+    assert not any(c.args[1] == "shared-mycache" for c in incus.config_device_add.call_args_list)
 
 
 # ---- new_container: clone_commit (PR heads) ----

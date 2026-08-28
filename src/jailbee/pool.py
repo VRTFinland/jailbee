@@ -327,8 +327,7 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
             info(f"Reusing {target.name} for {container} ({pool.name})")
         elif seeded:
             info(
-                f"Allocated {target.name} for {container} ({pool.name}) "
-                f"(seeded from {source.name})"
+                f"Allocated {target.name} for {container} ({pool.name}) (seeded from {source.name})"
             )
         else:
             info(f"Allocated {target.name} for {container} ({pool.name}) (seed disabled)")

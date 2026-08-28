@@ -30,9 +30,7 @@ def _cfg_gradle(tmp_path: Path):
     `model_copy(update={"golden": {...}})`: `model_copy` does not
     validate, so the field would end up holding a raw dict.
     """
-    cfg = load_config_from_text(
-        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
-    )
+    cfg = load_config_from_text("golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml")
     return cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
 
 
