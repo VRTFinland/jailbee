@@ -1106,6 +1106,14 @@ def new_container(
     if not opts.mount:
         _attach_under_repo_shared_caches(cfg, incus, name)
 
+    # Pooled caches (Gradle, Maven, ...) attach as per-container devices.
+    # Must run in both clone and --mount mode (unlike the block above,
+    # which is clone-only) and must precede autostart, which may run a
+    # build that expects its cache slot already mounted.
+    from jailbee.pool import allocate_startup
+
+    allocate_startup(cfg, incus, name)
+
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
     # claude-install, provides its persistent store) and after the network
@@ -1239,11 +1247,19 @@ def _under_repo_shared_caches(cfg: Config) -> list[tuple[SharedCache, str]]:
     under /home/<user>/<container_prefix>/.
 
     The resolved path (with ``~`` expanded) is returned alongside the
-    cache so the caller doesn't repeat the expansion.
+    cache so the caller doesn't repeat the expansion. Pooled entries
+    (``cache.pool is not None``) are excluded: they're attached per
+    container by `pool.allocate` (see `pool.allocate_startup` in
+    `new_container`), and attaching them again here as a plain
+    ``shared-<name>`` device would reintroduce the cross-container
+    sharing pooling exists to remove. Mirrors the skip in
+    `profiles.binds_profile_yaml`.
     """
     home = f"/home/{CONTAINER_USERNAME}"
     result: list[tuple[SharedCache, str]] = []
     for cache in cfg.effective_shared_caches():
+        if cache.pool is not None:
+            continue
         path = (
             cache.container_path.replace("~", home, 1)
             if cache.container_path.startswith("~")
@@ -1493,6 +1509,12 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
             state = raw.get("status", "Stopped")
             break
 
+    # Idempotent: this is also how a container created before pooling
+    # existed acquires its slot.
+    from jailbee.pool import allocate_startup
+
+    allocate_startup(cfg, incus, name)
+
     detach_runtime_devices(cfg, incus, name)
     if restart and state == "Running":
         incus.restart(name)
@@ -1509,7 +1531,7 @@ def destroy_container(
     force: bool,
     on_phase: Callable[[str], None] | None = None,
 ) -> None:
-    """Stop (if running), release Chrome pool slot, clean refs/jailbee/*, and delete.
+    """Stop (if running), release pooled cache slots, clean refs/jailbee/*, and delete.
 
     ``on_phase``, if given, is invoked with ``"stopping"`` before
     ``incus.stop`` (only when the container is running) and ``"deleting"``
@@ -1546,10 +1568,10 @@ def destroy_container(
             show_progress=False,
         )
 
-    # Release Chrome pool slot before deleting
-    from jailbee.chrome_pool import release as chrome_pool_release
+    # Release every pooled cache slot before deleting.
+    from jailbee.pool import release_all
 
-    chrome_pool_release(cfg, incus, name)
+    release_all(cfg, incus, name)
 
     # Clean refs/jailbee/<short>/* on the host. Best-effort: a failure here
     # (git missing, repo broken) must not block destroy — leftover refs

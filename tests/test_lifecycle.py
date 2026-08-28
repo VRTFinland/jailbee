@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jailbee.config import CONTAINER_USERNAME, NewConfig, load_config
+from jailbee.config import CONTAINER_USERNAME, NewConfig, PoolSpec, SharedCache, load_config
 from jailbee.lifecycle import (
     NewContainerOptions,
     ResolvedContainer,
@@ -3568,6 +3568,45 @@ def test_new_container_does_not_attach_under_repo_shared_cache_when_share_idea_o
     )
 
 
+def test_new_container_skips_pooled_under_repo_shared_cache(tmp_path, mocker):
+    """A user's own `shared_caches` entry with an explicit `pool:` block
+    and an under-repo `container_path` must NOT be attached as a plain
+    `shared-<name>` device: that would bypass pool allocation and
+    reintroduce exactly the cross-container cache sharing pooling exists
+    to remove. `pool.allocate_startup` is mocked so this test stays
+    focused on the skip, not on allocation itself.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    pooled_cache = SharedCache(
+        name="mycache",
+        host_subpath="mycache",
+        container_path="/home/dev/repo/.mycache",
+        pool=PoolSpec(),
+    )
+    cfg = cfg.model_copy(update={"shared_caches": [*cfg.shared_caches, pooled_cache]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.pool.allocate_startup")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    assert not any(
+        c.args[1] == "shared-mycache" for c in incus.config_device_add.call_args_list
+    )
+
+
 # ---- new_container: clone_commit (PR heads) ----
 
 
@@ -3778,6 +3817,44 @@ def test_boot_container_start_mode_never_reboots_a_running_container(tmp_path, m
     incus.start.assert_called_once_with("feat-x")
 
 
+def test_boot_container_allocates_on_start_pools(tmp_path, mocker):
+    """A container created before pooling existed (or one whose slot got
+    dropped) must acquire its on-start pool slots on every boot, not just
+    on create.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    alloc = mocker.patch("jailbee.pool.allocate_startup")
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    alloc.assert_called_once_with(cfg, incus, "feat-x")
+
+
+def test_boot_container_allocates_pools_before_starting(tmp_path, mocker):
+    """Allocation must precede `incus.start`/`incus.restart`: on the very
+    first boot of an upgraded container, the slot device has to exist
+    before autostart (which runs post-boot) can use it.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events: list[str] = []
+    mocker.patch(
+        "jailbee.pool.allocate_startup", side_effect=lambda *a, **kw: events.append("allocate")
+    )
+    incus.start.side_effect = lambda _n: events.append("start")
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    assert events == ["allocate", "start"]
+
+
 # ---- destroy_container ----
 
 
@@ -3788,7 +3865,6 @@ def _cfg_for_destroy(tmp_path):
 
 def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3808,7 +3884,6 @@ def test_destroy_container_bounds_the_clean_shutdown(tmp_path, mocker):
     from jailbee.stopping import CLEAN_STOP_BUDGET
 
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3829,7 +3904,6 @@ def test_destroy_container_forces_a_container_that_will_not_shut_down(tmp_path, 
     from jailbee.incus import IncusError
 
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3862,7 +3936,6 @@ def _raise(exc):
 
 def test_destroy_container_just_deletes_when_stopped(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3879,16 +3952,15 @@ def test_destroy_container_just_deletes_when_stopped(tmp_path, mocker):
 
 def test_destroy_raises_if_not_exists(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = False
     with pytest.raises(ValueError, match="does not exist"):
         destroy_container(cfg, incus, "missing", force=True)
 
 
-def test_destroy_container_calls_chrome_pool_release(tmp_path, mocker):
-    """Destroy must release the container's Chrome profile slot
-    before deleting the container, so the slot is freed for reuse.
+def test_destroy_releases_every_pool(tmp_path, mocker):
+    """Destroy must release every pooled cache slot (Chrome, Gradle, ...)
+    for the container before deleting it, so every slot is freed for reuse.
     """
     cfg = _cfg_for_destroy(tmp_path)
     incus = MagicMock()
@@ -3900,11 +3972,11 @@ def test_destroy_container_calls_chrome_pool_release(tmp_path, mocker):
             "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
         }
     ]
-    release = mocker.patch("jailbee.chrome_pool.release")
+    release_all = mocker.patch("jailbee.pool.release_all")
 
     destroy_container(cfg, incus, "x", force=True)
 
-    release.assert_called_once_with(cfg, incus, "x")
+    release_all.assert_called_once_with(cfg, incus, "x")
     incus.delete.assert_called_once_with("x", force=True)
 
 
@@ -3918,7 +3990,6 @@ def test_destroy_container_cleans_gie_refs(tmp_path, mocker):
     full = f"{cfg.container_prefix}-feat-foo"
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
-    mocker.patch("jailbee.chrome_pool.release")
     mock_list = mocker.patch(
         "jailbee.git.list_refs",
         return_value=[
@@ -3945,7 +4016,6 @@ def test_destroy_container_succeeds_when_ref_cleanup_fails(tmp_path, mocker):
     full = f"{cfg.container_prefix}-feat-foo"
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", side_effect=RuntimeError("git broken"))
 
     destroy_container(cfg, incus, full, force=True)
@@ -3960,7 +4030,6 @@ def test_destroy_container_prunes_background_op(make_cfg, tmp_path, monkeypatch,
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.chrome_pool.release")
 
     from datetime import UTC, datetime
 
@@ -3998,7 +4067,6 @@ def test_destroy_prunes_submodule_refs(tmp_path, mocker):
     incus.list_containers.return_value = [
         {"name": f"{cfg.container_prefix}-feat-x", "status": "Stopped", "profiles": []}
     ]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
     prune = mocker.patch("jailbee.submodules.prune_host_submodule_refs")
 
@@ -4017,7 +4085,6 @@ def test_destroy_container_fires_phase_callbacks(make_cfg, tmp_path, mocker):
     incus = mocker.MagicMock(spec=Incus)
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
 
     phases: list[str] = []
@@ -4036,7 +4103,6 @@ def test_destroy_container_stopped_skips_stopping_phase(make_cfg, tmp_path, mock
     incus = mocker.MagicMock(spec=Incus)
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": "c", "status": "Stopped"}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
 
     phases: list[str] = []
