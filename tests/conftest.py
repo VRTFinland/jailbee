@@ -229,21 +229,31 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _disable_cli_color(monkeypatch):
-    """Force Rich/Typer help output to be plain (no ANSI) in tests.
+    """Force Rich/Typer help output to be plain (no ANSI) and width-stable.
 
-    CI runners (e.g. GitHub Actions) export ``FORCE_COLOR``, which makes
-    Typer's Rich help formatter emit ANSI style codes. Those codes split
-    styled tokens apart — ``--pr 1234`` renders as ``-`` + ``-pr`` +
-    `` 1234`` with escape sequences interleaved — which breaks the
-    substring assertions in the CLI help tests. Locally the same tests
-    pass because ``CliRunner`` captures a plain, non-tty buffer with no
-    colour. Neutralise the colour env so ``invoke(...).output`` is plain
-    text wherever the suite runs. ``TERM=dumb`` also disables colour even
-    if ``FORCE_COLOR`` leaks back in (it wins over ``FORCE_COLOR`` in
-    Rich's detection).
+    Typer decides once, at import time, whether its help console is a
+    terminal: ``rich_utils.FORCE_TERMINAL`` is True whenever ``GITHUB_ACTIONS``,
+    ``FORCE_COLOR`` or ``PY_COLORS`` is set. On a CI runner that flips the help
+    formatter into terminal mode, with two consequences for assertions:
+
+    * ANSI style codes appear and split styled tokens apart — ``--pr 1234``
+      renders as ``-`` + ``-pr`` + `` 1234`` with escapes interleaved.
+    * Rich's ``Console.size`` takes its dumb-terminal short-circuit (a
+      hard-coded 80x25) *before* it looks at ``COLUMNS``, so help text wraps at
+      80 no matter what a test pins — and it takes that branch even when Typer
+      passes an explicit width, because the branch only yields to a console
+      with both width *and* height set. Assertions on help strings longer than
+      the 80-column layout allows then pass locally and fail in CI.
+
+    Clearing ``FORCE_TERMINAL`` puts CI back on the same path as a local run:
+    ``CliRunner`` captures a plain, non-tty buffer, so the output has no colour
+    and ``env={"COLUMNS": ...}`` decides the width. The colour env vars are
+    neutralised too, for the Rich consoles jailbee builds itself.
     """
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", None, raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("CLICOLOR_FORCE", raising=False)
+    monkeypatch.delenv("PY_COLORS", raising=False)
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("TERM", "dumb")
 
