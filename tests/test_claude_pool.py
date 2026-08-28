@@ -722,6 +722,52 @@ def test_the_activated_credential_drops_the_record_into_an_empty_holder(
     assert claude_pool.ACCOUNT_RECORD_KEY not in live
 
 
+def test_switch_ignores_a_record_that_contradicts_the_slot_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Storing the record beside the grant names the account twice for one file,
+    and a hand-renamed slot changes only one of the two. Restoring the record
+    then would write one account into the members' config while the user
+    believed they activated the other. The filename wins."""
+    renamed = _park(tmp_path, "renamed@corp.com", monkeypatch)
+    renamed.write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {"refreshToken": "first"},
+                # The record still names the account the file was parked under.
+                claude_pool.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("other"))
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "other@corp.com"})
+
+    claude_pool.switch(cfg, GlobalConfig(), "renamed@corp.com")
+
+    # Invalidated, not repointed at the record's account: the pre-record
+    # behaviour, which is correct and merely slower to display.
+    data = json.loads((home / ".claude.json").read_text())
+    assert "oauthAccount" not in data
+
+
+def test_a_disambiguator_is_not_a_contradiction(tmp_path: Path, monkeypatch) -> None:
+    """`~<disambiguator>` separates two grants of *one* account, so the record
+    matches the derived name and must still be restored."""
+    slot = _park_carrying(tmp_path, f"first@corp.com#ccccdddd~{PARK_STAMP}", "first", monkeypatch)
+    assert slot.exists()
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _grant("other"))
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "other@corp.com"})
+
+    claude_pool.switch(cfg, GlobalConfig(), f"first@corp.com#ccccdddd~{PARK_STAMP}")
+
+    assert json.loads((home / ".claude.json").read_text())["oauthAccount"] == ACCOUNT_BLOCK
+
+
 def test_switch_still_clears_when_the_target_carries_no_record(tmp_path: Path, monkeypatch) -> None:
     """Back-compatibility, and the `/login` case: a login that jailbee never
     parked has no record to restore, so clearing stays the fallback and Claude

@@ -139,10 +139,9 @@ class Slot:
         `unknown-` would be misreported as unidentified. `read_identity` does
         not require an email-shaped string, so this is possible in principle.
         """
-        derived = self._derived
-        if derived == LIVE_UNIDENTIFIED or derived.startswith("unknown-"):
+        if is_unidentified(self.name):
             return None
-        return derived.split("#", 1)[0]
+        return self._derived.split("#", 1)[0]
 
     @property
     def org_hint(self) -> str | None:
@@ -297,6 +296,21 @@ def slug_for(identity: Identity) -> str:
     return slug.lstrip(".") or "unnamed"
 
 
+_UNKNOWN_PREFIX = "unknown-"
+
+
+def is_unidentified(name: str) -> bool:
+    """Whether a slot name says nothing about which account it holds.
+
+    True for the two emailless shapes: `unknown_slot_name`'s output and
+    `LIVE_UNIDENTIFIED`. One definition, because `Slot.email` and the CLI's
+    warning have to agree on what "unidentified" means — a name that reads as
+    identified but warns, or the reverse, is worse than either.
+    """
+    derived = name.split(DISAMBIGUATOR, 1)[0]
+    return derived == LIVE_UNIDENTIFIED or derived.startswith(_UNKNOWN_PREFIX)
+
+
 def unknown_slot_name(when: datetime) -> str:
     """Name for parking a credential whose account cannot be identified.
 
@@ -304,7 +318,7 @@ def unknown_slot_name(when: datetime) -> str:
     its config home carries an identity, so the *next* park writes the real
     name.
     """
-    return f"unknown-{when.strftime('%Y%m%d-%H%M%S')}"
+    return f"{_UNKNOWN_PREFIX}{when.strftime('%Y%m%d-%H%M%S')}"
 
 
 SHARED_CREDENTIAL_KEYS = frozenset(
@@ -333,9 +347,15 @@ losing the one record of what the file contains.
 
 So the record travels *with the grant*: parking copies Claude Code's own
 `oauthAccount` into the parked file, and activating writes it back. Because it
-lives inside the file whose grant it describes, it cannot disagree with the
-directory — moving or deleting the file moves or deletes the record with it,
-which is what keeps `store_dir()` the only state.
+lives inside the file whose grant it describes, it cannot be orphaned: moving or
+deleting the file moves or deletes the record with it, so `store_dir()` stays
+the only state and there is no manifest to repair.
+
+It *can*, however, disagree with the one other place the account is named — the
+filename — because a file renamed by hand keeps the record it was written with.
+The filename wins: `trusted_record_in` restores a record only while it derives
+the slot's own name, and a mismatch degrades to the pre-record behaviour rather
+than writing one account's identity under another's name.
 
 Never written to a *live* credential: that file is Claude Code's, and it stays
 the shape Claude Code wrote. `compose_credential` strips this key on the way
@@ -434,6 +454,39 @@ def _record_in(raw: str) -> dict[str, Any] | None:
         return None
     record = data.get(ACCOUNT_RECORD_KEY)
     return record if isinstance(record, dict) else None
+
+
+def trusted_record_in(slot: Slot, raw: str) -> dict[str, Any] | None:
+    """The slot's account record, but only while it agrees with the slot's name.
+
+    **The filename stays authoritative.** Keeping the record beside the grant
+    means the account is named twice for one file — in the name and in the
+    record — and two records of one fact can differ. A slot renamed by hand,
+    which is how `doctor`'s recovery advice works, changes the name and not the
+    record; restoring that record would write one account into the members'
+    config while the user believed they activated the other, silently.
+
+    So a mismatch is treated as no record at all: the members' recorded account
+    is invalidated instead, and Claude Code repopulates it from the credential
+    now live. That is the pre-record behaviour — correct, only slower to
+    display — so a disagreement costs an optimisation rather than causing a
+    wrong write.
+
+    Compared on the *derived* name, so a `~<disambiguator>` is not a mismatch:
+    it separates two grants of one account, which by definition share an
+    identity.
+    """
+    record = _record_in(raw)
+    if record is None:
+        return None
+    identity = identity_of(record)
+    if identity is None or slug_for(identity) != slot._derived:
+        log.debug(
+            "slot %s carries a record for a different account; invalidating instead",
+            slot.name,
+        )
+        return None
+    return record
 
 
 def _slot_name(path: Path) -> str:
@@ -1170,7 +1223,9 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
                     live_path.unlink()
             raise
 
-    updated, not_updated = _rewrite_identities(found, unreachable, _record_in(target_raw))
+    updated, not_updated = _rewrite_identities(
+        found, unreachable, trusted_record_in(target, target_raw)
+    )
     return PoolChange(
         parked_as=_slot_name(parked) if parked is not None else None,
         activated=target.name,
