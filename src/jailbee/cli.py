@@ -7554,23 +7554,18 @@ def claude_ls_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
-    # The group name, not the holder path: it is what the user typed in
-    # `claude_credentials`, while the path is one they never chose — and long
-    # enough to wrap a narrow table's title across three lines. The path is
-    # still printed, once, under the table.
-    group = claude_pool.group_name(cfg)
-    title = (
-        f"Claude logins for group `{group}`"
-        if group is not None
-        else f"Claude logins for {cfg.container_prefix} (no shared group)"
-    )
+    # "on this host", not "for group X": the table mixes two scopes. Only the
+    # `live` row belongs to this holder — every `parked` row comes from the
+    # host-wide store, so the same rows appear under every group. A title
+    # naming one group read as a claim over the whole table, and a user asked
+    # why an account had "appeared in" a group they had not touched.
     table_format.emit(
         slots,
         _claude_fields(),
         fmt=fmt,
         fields=fields,
         console=console,
-        title=title,
+        title="Claude logins on this host",
         empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
     )
     # A switch is holder-wide, so who else moves with it is part of reading
@@ -7580,8 +7575,17 @@ def claude_ls_cmd(
     if fmt == "table":
         from jailbee.paths import display_path
 
-        info(f"Holder: {display_path(claude_pool.holder_dir(cfg))}")
+        # The group belongs to the live row, so it is stated where the holder
+        # is, not in the title.
+        group = claude_pool.group_name(cfg)
+        where = f"group `{group}`" if group is not None else f"{cfg.container_prefix} (no group)"
+        info(f"Live in {where} → {display_path(claude_pool.holder_dir(cfg))}")
         info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        if any(not s.live for s in slots):
+            info(
+                "Parked logins are host-wide — any of them can be activated into "
+                "any group, which is why they are listed here too."
+            )
         if unreachable:
             warn(
                 "Could not read the config of: "
