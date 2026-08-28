@@ -936,7 +936,8 @@ def test_net_profile_yaml_rejects_offline():
 def test_pooled_caches_are_not_profile_devices(tmp_path):
     """A pooled cache is a per-container device, never a profile mount."""
     cfg = load_config_from_text(
-        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+        "chrome:\n  enabled: true\ngolden:\n  stacks:\n    java: corretto-21\n",
+        tmp_path / "c.yaml",
     ).model_copy(update={"shared_dir": tmp_path / "shared"})
     profile = yaml.safe_load(binds_profile_yaml(cfg))
     assert "shared-gradle" not in profile["devices"]
