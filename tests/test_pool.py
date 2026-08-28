@@ -718,6 +718,58 @@ def test_allocate_recovers_from_dangling_symlink(tmp_path, mocker):
     assert (p.by_container_dir / "feat-foo").resolve() == slot.resolve()
 
 
+def test_allocate_recovers_when_the_stale_device_is_still_attached(tmp_path, mocker):
+    """A slot deleted out of band leaves the symlink dangling AND
+    `<name>-slot` still attached. `incus config device add` errors on an
+    existing device, so without dropping it first the recovery branch
+    propagates out of `allocate_startup` into `boot_container` — which has
+    no guard — and `jb start`/`shell`/`restart` fails with an Incus error
+    the user cannot clear without hand-removing the device.
+    """
+    cfg = _cfg(tmp_path)
+    p = _chrome_pool(tmp_path)
+    pool.ensure_pool_dirs(cfg, p)
+    (p.by_container_dir / "feat-foo").symlink_to(Path("..") / "slots" / "slot-99")
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-foo"}]
+    attached = {p.device_name}
+
+    def _add(_container, device, _dtype, _props):
+        if device in attached:
+            raise IncusError(f"Device {device} already exists")
+        attached.add(device)
+
+    def _remove(_container, device):
+        if device not in attached:
+            raise IncusError(f"Device {device} not found")
+        attached.discard(device)
+
+    incus.config_device_add.side_effect = _add
+    incus.config_device_remove.side_effect = _remove
+    _fake_rsync(mocker)
+
+    slot = pool.allocate(cfg, incus, p, "feat-foo")
+
+    assert slot.exists()
+    assert (p.by_container_dir / "feat-foo").resolve() == slot.resolve()
+    incus.config_device_remove.assert_called_once_with("feat-foo", p.device_name)
+
+
+def test_allocate_does_not_drop_the_device_on_a_first_allocation(tmp_path, mocker):
+    """The stale-device removal is scoped to the re-allocate path: a normal
+    first allocation must not touch devices at all."""
+    cfg = _cfg(tmp_path)
+    p = _chrome_pool(tmp_path)
+    pool.ensure_pool_dirs(cfg, p)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-foo"}]
+    _fake_rsync(mocker)
+
+    pool.allocate(cfg, incus, p, "feat-foo")
+
+    incus.config_device_remove.assert_not_called()
+
+
 def test_release_unmounts_and_wipes_caches(tmp_path):
     cfg = _cfg(tmp_path)
     p = _chrome_pool(tmp_path)

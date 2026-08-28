@@ -322,12 +322,14 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
         _reconcile(pool, incus)
 
         symlink = pool.by_container_dir / container
+        reallocating = False
         if symlink.is_symlink():
             target = symlink.resolve()
             if target.exists():
                 return target
             # Dangling — clean up, fall through to re-allocate
             symlink.unlink()
+            reallocating = True
 
         all_slots = _all_slots(pool)
         free = _free_slots(pool)
@@ -345,6 +347,13 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
 
         symlink.symlink_to(Path("..") / "slots" / target.name)
         try:
+            if reallocating:
+                # A slot deleted out of band leaves the symlink dangling
+                # *and* `<name>-slot` still attached to the container, and
+                # `incus config device add` errors on an existing device —
+                # so the recovery above only works if the stale device goes
+                # first. `_try_remove_device` absorbs "device not found".
+                _try_remove_device(incus, pool, container)
             _ensure_mount(incus, pool, container, target)
         except Exception:
             symlink.unlink()
