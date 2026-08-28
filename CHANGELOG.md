@@ -10,8 +10,13 @@
   shares none — so the next `claude` in a container prompts `/login` and a
   second account enters the pool. `jailbee claude use <email>` then swaps
   between them: the live credential is parked, the target is activated, and
-  every member repo's recorded account is cleared so Claude Code repopulates
-  it from the credential it now finds. A running Claude session adopts the new
+  every member repo's recorded account is repointed at it. The account record
+  travels *with* the grant — parking copies Claude Code's own `oauthAccount`
+  into the parked file, activating writes it back — so `jailbee claude ls`
+  names the live account straight away and two switches in a row keep both
+  filenames. Without a record to restore (a login that entered through
+  `/login`, never parked by jailbee) the field is cleared instead and Claude
+  Code repopulates it from the credential it now finds. A running Claude session adopts the new
   login on its next turn — the credential file's mtime is what invalidates its
   cached token — so nothing needs restarting; only the account name shown in
   `/status` can lag. `jailbee claude ls` lists the store with the live account

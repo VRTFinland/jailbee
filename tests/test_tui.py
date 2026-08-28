@@ -201,16 +201,16 @@ def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
     from jailbee.claude_pool import Slot
     from jailbee.tui import _claude_choice_title
 
-    long = Slot("tuomas.airaksinen@gisgro.com#d38d520c", Path("/s/a.json"), live=False)
+    long = Slot("a.long.address@example.com#c0ffee12", Path("/s/a.json"), live=False)
     short = Slot("me@x.com#aaaabbbb", Path("/s/b.json"), live=False)
     width = max(len(s.display_name) for s in (long, short))
 
     long_title = _claude_choice_title(long, width)
     short_title = _claude_choice_title(short, width)
-    assert long_title == "tuomas.airaksinen@gisgro.com  d38d520c"
-    assert "#d38d520c" not in long_title
+    assert long_title == "a.long.address@example.com  c0ffee12"
+    assert "#c0ffee12" not in long_title
     # The short row's org starts at the same column as the long row's.
-    assert short_title.index("aaaabbbb") == long_title.index("d38d520c")
+    assert short_title.index("aaaabbbb") == long_title.index("c0ffee12")
 
 
 def test_claude_picker_omits_the_org_for_an_account_without_one() -> None:
@@ -234,13 +234,13 @@ def test_claude_picker_offers_the_slot_name_as_the_value(mocker) -> None:
     from jailbee.tui import pick_claude_account
 
     select = mocker.patch("questionary.select")
-    select.return_value.ask.return_value = "me@corp.com#d38d520c"
-    slots = [Slot("me@corp.com#d38d520c", Path("/s/a.json"), live=False)]
+    select.return_value.ask.return_value = "me@corp.com#c0ffee12"
+    slots = [Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False)]
 
     result = pick_claude_account(slots, message="Switch this repo to:")
 
-    assert result == "me@corp.com#d38d520c"
-    assert [c.value for c in select.call_args.kwargs["choices"]] == ["me@corp.com#d38d520c"]
+    assert result == "me@corp.com#c0ffee12"
+    assert [c.value for c in select.call_args.kwargs["choices"]] == ["me@corp.com#c0ffee12"]
     assert select.call_args.args[0] == "Switch this repo to:"
 
 

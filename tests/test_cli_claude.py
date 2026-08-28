@@ -236,8 +236,8 @@ def test_use_reports_both_sides_of_the_switch(repo, mocker):
         return_value=PoolChange(
             parked_as="old@corp.com",
             activated="new@corp.com",
-            cleared=["app", "other"],
-            not_cleared=[],
+            updated=["app", "other"],
+            not_updated=[],
             live_sessions=[],
         ),
     )
