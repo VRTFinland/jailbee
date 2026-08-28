@@ -20,8 +20,9 @@ config home's `.claude.json`, never from the credential. The credential file
 itself is parsed only to carry the machine-shared sibling keys across a switch
 (see `compose_credential`) — `claudeAiOauth` is moved, never read, logged or
 transmitted. One exception: recovering an orphaned staging file (see
-`_adopt_orphaned_stages`) compares two files' `claudeAiOauth` blocks for
-equality, because the config home's identity is allowed to lag the
+`_adopt_orphaned_stages`) compares a staging file's `claudeAiOauth` block
+against every credential the pool already holds — the live one and every
+parked slot — because the config home's identity is allowed to lag the
 credential beside it and a name-based check cannot see that. The comparison
 result — equal or not — is all that leaves that function; the value itself is
 still never logged, rendered or transmitted.
@@ -533,7 +534,12 @@ def _move_file(src: Path, dest: Path) -> None:
         with suppress(OSError):
             dest.unlink()
         raise
-    src.unlink()
+    try:
+        src.unlink()
+    except BaseException:
+        with suppress(OSError):
+            dest.unlink()
+        raise
 
 
 def _login_of(path: Path) -> dict[str, Any] | None:
@@ -564,38 +570,55 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identi
     return sorted(slots, key=lambda s: (not s.live, s.name)), identity
 
 
-def _adopt_orphaned_stages(cfg: Config, live: Identity | None) -> None:
+def _adopt_orphaned_stages(cfg: Config) -> None:
     """Restore staging files a killed `switch` left behind.
 
     `switch` renames its target to `<name>.json.activating` before anything
     else moves. A hard kill in that window leaves a file `parked_slots()`
     cannot see — a login lost with nothing naming it. Renaming it home is safe
-    only when it is the *only* copy of that grant, so a stage is adopted only
-    when neither the store nor the live credential already holds that account.
-    A stage that fails those guards is left in place rather than deleted:
-    jailbee never removes a credential on its own, and an inert file nothing
-    reads is the safe residue for a human to clear.
+    only when it is the *only* copy of that grant.
 
-    The staging window extends past the write of the new credential, so a
-    stage can hold a grant that is already live while every config home still
-    names the previous account. Comparing names cannot see that — the
-    identity file is allowed to lag — so the live credential's own login is
-    compared too.
+    Names cannot answer that question. A config home's `oauthAccount` is
+    allowed to lag the credential beside it, so a stage can hold a grant that
+    is live, or one that has since been parked under a lagging account's name.
+    The grant itself is compared instead — against the live credential and
+    against every stored slot.
+
+    Every unreadable file refuses adoption rather than allowing it: a stage
+    left in place is a file a human can recover, while a wrongly adopted one
+    is two refreshers on one lineage and a login that dies at the next
+    rotation. A stage that fails the guards is never deleted.
     """
-    live_name = slug_for(live) if live is not None else None
-    live_grant = _login_of(live_credential_path(cfg))
-    for stage in sorted(store_dir().glob("*.json.activating")):
-        name = stage.name[: -len(".json.activating")]
-        home = stage.with_name(f"{name}.json")
-        if home.exists() or name == live_name:
-            log.debug("leaving a stale staging file in place: %s", stage)
+    stages = sorted(store_dir().glob("*.json.activating"))
+    if not stages:
+        return
+
+    held: list[dict[str, Any]] = []
+    live_path = live_credential_path(cfg)
+    if live_path.exists():
+        live_grant = _login_of(live_path)
+        if live_grant is None:
+            log.debug("live credential at %s is unreadable; adopting nothing", live_path)
+            return
+        held.append(live_grant)
+    for slot in parked_slots():
+        grant = _login_of(slot.path)
+        if grant is None:
+            log.debug("stored slot %s is unreadable; adopting nothing", slot.path)
+            return
+        held.append(grant)
+
+    for stage in stages:
+        home = stage.with_name(stage.name[: -len(".activating")])
+        if home.exists():
+            log.debug("a slot already holds this name, leaving %s", stage)
             continue
-        if live_grant is not None and _login_of(stage) == live_grant:
-            # Killed after the credential was written: this grant is already
-            # live, and adopting it would make one login two files.
-            log.debug("staging file holds the live grant, leaving it: %s", stage)
+        grant = _login_of(stage)
+        if grant is None or grant in held:
+            log.debug("staging file is unreadable or already held, leaving %s", stage)
             continue
         stage.replace(home)
+        held.append(grant)
 
 
 def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
@@ -706,8 +729,7 @@ def switch(
     back where they were.
     """
     found, unreachable = members(cfg, gcfg)
-    identity = live_identity(found, prefer=cfg.container_prefix)
-    _adopt_orphaned_stages(cfg, identity)
+    _adopt_orphaned_stages(cfg)
     slots, identity = _slots_for(cfg, found)
     target = resolve_ref(ref, slots)
     if target.live:

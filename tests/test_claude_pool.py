@@ -819,3 +819,64 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
     # holding a second copy of the grant `_atomic_write` already wrote.
     assert target.exists()
     assert not live_path.exists()
+
+
+def test_switch_leaves_a_stage_alone_when_its_grant_is_already_stored(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The identity lag can park a grant under another account's name, so a
+    stage must be compared against the store's contents, not its names."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    shared = json.dumps({"claudeAiOauth": {"accessToken": "t", "refreshToken": "shared"}})
+    (store / "new@x.com.json.activating").write_text(shared, encoding="utf-8")
+    (store / "old@x.com.json").write_text(shared, encoding="utf-8")   # parked under the lagging name
+    _park(tmp_path, "other@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
+
+    assert (store / "new@x.com.json.activating").exists()
+    assert not (store / "new@x.com.json").exists()
+
+
+def test_switch_adopts_nothing_when_the_live_credential_is_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An unreadable live credential could be any grant, including the stage's.
+    Refusing costs a file on disk; adopting could kill a login."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(_cred(), encoding="utf-8")
+    _park(tmp_path, "other@x.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, '{"claudeAiOauth": {"accessTok')     # torn
+
+    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
+
+    assert (store / "orphan@x.com.json.activating").exists()
+    assert not (store / "orphan@x.com.json").exists()
+
+
+def test_switch_still_adopts_a_stage_that_is_the_only_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The refusals must not strand a login: a stage whose grant appears
+    nowhere else is still adopted."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(
+        json.dumps({"claudeAiOauth": {"accessToken": "o", "refreshToken": "only"}}),
+        encoding="utf-8",
+    )
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "orphan@x.com")
+
+    assert change.activated == "orphan@x.com"
+    assert list(store.glob("*.activating")) == []
