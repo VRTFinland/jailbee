@@ -96,6 +96,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "the host's agent sockets on every container boot"
         ),
     ),
+    UpgradeNote(
+        version=(1, 2, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the Gradle and Maven caches move into per-container pool slots, "
+            "so two containers no longer share one set of lock files"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

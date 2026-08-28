@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jailbee.config import load_config
-from jailbee.doctor import run_checks
+from jailbee.doctor import _check_pool_roots, run_checks
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from jailbee.registry import MirrorStatus
 from tests.conftest import with_agent
@@ -346,6 +346,7 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -375,6 +376,7 @@ def test_doctor_flags_missing_claude_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -398,6 +400,7 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -432,6 +435,7 @@ def test_doctor_flags_missing_agent_dir(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -460,6 +464,7 @@ def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -484,6 +489,7 @@ def test_doctor_flags_missing_jetbrains_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -508,6 +514,7 @@ def test_doctor_flags_missing_jetbrains_idea_when_share_idea_on(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -535,6 +542,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_share_idea_off(tmp_pat
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -560,6 +568,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -573,6 +582,83 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
     tree = next(r for r in results if r.name == "shared_dir tree")
     assert tree.ok is True, tree.detail
     assert "jetbrains-idea" not in tree.detail
+
+
+def _cfg_with_gradle_pool(tmp_path):
+    """`_cfg` loads full_config.yaml, which has no `golden.stacks` and so no
+    gradle cache — the pool-root tests need a config that actually pools one."""
+    from jailbee.config import load_config_from_text
+
+    return load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+
+
+def _pool_row(results):
+    return next(r for r in results if r.name == "cache pool roots")
+
+
+def test_doctor_reports_unmigrated_pool_root(tmp_path):
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle" / "caches").mkdir(parents=True)
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "pre-pooling cache" in row.detail
+    assert "gradle" in row.detail
+    assert "jailbee apply" in row.detail
+
+
+def test_doctor_advises_apply_not_init_for_an_uncreated_pool_root(tmp_path):
+    """A pool root that does not exist yet, or exists but is empty, is not
+    "unmigrated" — and folding its `slots` subdir into the generic
+    `shared_dir tree` row advised `jailbee init`, which errors once profiles
+    exist. On every upgrade path the fix is `jailbee apply`."""
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle").mkdir(parents=True)  # empty root
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "layout not created" in row.detail
+    assert "jailbee apply" in row.detail
+    assert "jailbee init" not in row.detail
+
+
+def test_doctor_pool_row_is_ok_once_the_layout_exists(tmp_path):
+    from jailbee.pool import ensure_pools
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    ensure_pools(cfg)
+
+    row = _pool_row(_check_pool_roots(cfg))
+    assert row.ok is True
+    assert "gradle" in row.detail
+    # ...and `run_checks` actually emits it, so the row is wired in.
+    assert _pool_row(run_checks(cfg, _baseline_incus())).ok is True
+
+
+def test_doctor_pool_row_absent_when_nothing_is_pooled(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared", chrome={"enabled": False})
+    assert _check_pool_roots(cfg) == []
+
+
+def test_doctor_pool_reserved_entries_match_the_migrator(tmp_path):
+    """doctor classifies a pool root by `pool.RESERVED_ENTRIES` — the same
+    set `ensure_pool_dirs` migrates by. Re-spelling it inline let the two
+    drift, and doctor's report would then contradict what `apply` does."""
+    import jailbee.pool as pool_mod
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    pool_mod.ensure_pools(cfg)
+    for entry in pool_mod.RESERVED_ENTRIES:
+        assert (cfg.shared_dir / "caches" / "gradle" / entry).exists()
+    assert _pool_row(_check_pool_roots(cfg)).ok is True
 
 
 # ---------- github integration

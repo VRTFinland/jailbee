@@ -134,13 +134,21 @@ def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
 def open_chrome(cfg: Config, incus: Incus, container: str, url: str | None) -> None:
     """Launch Chrome inside the container, optionally to a URL.
 
-    Allocates a slot from the chrome profile pool before
+    Allocates a slot from the generic chrome-profile pool before
     launching, so each container has its own Chrome profile dir and
     they don't collide on Chrome's SingletonLock.
     """
-    from jailbee.chrome_pool import allocate as chrome_pool_allocate
+    from jailbee.pool import allocate as pool_allocate
+    from jailbee.pool import ensure_pool_dirs
+    from jailbee.pool import get as pool_get
 
-    chrome_pool_allocate(cfg, incus, container)
+    # None only when chrome.enabled is false, which cli.chrome_cmd has
+    # already rejected before reaching here — this guard is for direct
+    # callers of open_chrome.
+    chrome_pool_handle = pool_get(cfg, "chrome-profile")
+    if chrome_pool_handle is not None:
+        ensure_pool_dirs(cfg, chrome_pool_handle)
+        pool_allocate(cfg, incus, chrome_pool_handle, container)
 
     args = ["/opt/google/chrome/google-chrome"]
     if host_is_wayland():

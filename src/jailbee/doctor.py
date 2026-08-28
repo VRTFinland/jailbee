@@ -418,7 +418,6 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     expected = [
         "caches/pnpm-store",
         "caches/gradle",
-        "chrome-pool/slots",
     ]
     if cfg.jetbrains.enabled:
         expected.append("jetbrains-config")
@@ -428,6 +427,13 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     for spec in enabled_agent_specs(cfg):
         expected.extend(spec.dir_subpaths)
+
+    # Pool roots are reported on their own row, not folded into `expected`:
+    # every way a pool root can be wrong is fixed by `jailbee apply`, while
+    # the generic "missing" row advises `jailbee init` — which errors once
+    # profiles exist, i.e. on every upgrade path. See `_check_pool_roots`.
+    results.extend(_check_pool_roots(cfg))
+
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
         results.append(
@@ -797,6 +803,55 @@ def _net_refresh_binary_check() -> CheckResult | None:
             "auto-revert with it); run `jailbee init` to rewrite the unit"
         ),
     )
+
+
+def _check_pool_roots(cfg: Config) -> list[CheckResult]:
+    """One row for the cache pool roots, or none when nothing is pooled.
+
+    Deliberately separate from the `shared_dir tree` row. Every way a pool
+    root can be wrong — never created, or still holding a pre-pooling
+    cache — is fixed by `jailbee apply`, whereas the generic missing-dir
+    row advises `jailbee init`, which errors once profiles exist. Folding
+    pool subdirs into that row therefore gave the wrong advice on exactly
+    the upgrade path pooling introduced.
+
+    `pool.RESERVED_ENTRIES` is imported rather than re-spelled so this
+    classification cannot drift from what `ensure_pool_dirs` migrates.
+    """
+    from jailbee.pool import RESERVED_ENTRIES, pools_for
+
+    pools = pools_for(cfg)
+    if not pools:
+        return []
+
+    unmigrated: list[str] = []
+    uncreated: list[str] = []
+    for pool in pools:
+        if pool.root.is_dir() and any(e.name not in RESERVED_ENTRIES for e in pool.root.iterdir()):
+            unmigrated.append(pool.name)
+        elif not (pool.slots_dir.is_dir() and pool.by_container_dir.is_dir()):
+            uncreated.append(pool.name)
+
+    problems: list[str] = []
+    if unmigrated:
+        problems.append(f"still holding a pre-pooling cache: {', '.join(unmigrated)}")
+    if uncreated:
+        problems.append(f"layout not created: {', '.join(uncreated)}")
+    if problems:
+        return [
+            CheckResult(
+                "cache pool roots",
+                False,
+                f"{'; '.join(problems)} — run `jailbee apply`",
+            )
+        ]
+    return [
+        CheckResult(
+            "cache pool roots",
+            True,
+            f"{len(pools)} pooled: {', '.join(p.name for p in pools)}",
+        )
+    ]
 
 
 def _check_egress_pool(cfg: Config) -> list[CheckResult]:

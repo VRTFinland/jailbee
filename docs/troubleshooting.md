@@ -59,7 +59,26 @@ be installed. Re-run step 2 of the install and restart Incus: see
 - "Only one IDEA at a time" → the JetBrains profile is shared across
   containers, so a second IDEA won't open while one is running. Chrome runs
   per-container (`jailbee chrome`); inspect its profile pool with
-  `jailbee chrome-pool ls`.
+  `jailbee pool ls chrome-profile` (`jailbee chrome-pool ls` still works too).
+
+### Gradle (or Maven) builds hang on "Waiting to acquire ... lock"
+
+**Cause:** two containers of the same repo built against the same
+`~/.gradle` (or `~/.m2`) at once, and Gradle/Maven's own inter-process file
+lock on the cache directory made the second build wait — or, past its
+timeout, fail. This is what cache pooling exists to prevent: `gradle` and
+`m2` are pooled by default (`pooled_caches`), which gives each container
+its own private slot instead of one shared mount. If it's still happening,
+`jailbee pool ls gradle` (or `m2`) tells you whether the cache is actually
+pooled in this repo — it errors "No pooled cache named ..." if it isn't,
+which means a `pooled_caches: {gradle: false}` (or `m2: false`) override.
+A pooled cache attaches when a container next boots, so a container that
+was already running when the pool was created needs a restart before it
+uses its own slot. Run `jailbee apply`, restart the affected containers,
+then re-check `jailbee pool ls gradle` / `jailbee pool ls m2` for a slot
+per running container.
+
+See [`pooled_caches`](config.md#pooled_caches).
 
 ### `git push` / `gh` fails inside a container
 

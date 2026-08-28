@@ -120,3 +120,23 @@ def test_cli_init_records_nothing_when_run_init_fails(mocker: MockerFixture) -> 
     assert result.exit_code == 1
 
     assert _upgrade_rows() == []
+
+
+def test_cli_init_reports_pool_error_legibly(mocker: MockerFixture) -> None:
+    """`ensure_pools` raises `PoolError` (not `RuntimeError`) when a pool root
+    holds both migrated slots and un-migrated loose cache content. Without a
+    matching `except` clause in `cli.py`'s `init` command, this escapes as an
+    unhandled traceback instead of the same clean "error: ..." + exit 1 that
+    every other `run_init` failure gets."""
+    from jailbee.pool import PoolError
+
+    _init_invocation(mocker)
+    mocker.patch(
+        "jailbee.init_command.run_init",
+        side_effect=PoolError("holds both pool slots and loose cache content"),
+    )
+
+    result = CliRunner().invoke(app, ["init"])
+
+    assert result.exit_code == 1
+    assert "holds both pool slots and loose cache content" in result.output

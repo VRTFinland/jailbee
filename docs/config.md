@@ -501,6 +501,15 @@ container are visible in the next. The same mounts outlive
 than in your host's dotfiles, so a container can write to them freely
 without touching your own setup.
 
+That "one cache, all containers" description is the plain shared-mount
+case. An entry whose `pool` resolves to non-`None` (see
+[`pooled_caches`](#pooled_caches) below) is not a shared mount at all: it
+is a per-container **pool slot**, seeded from the warmest existing slot
+rather than shared live. Gradle and Maven default to pooled, precisely
+because their tools take an inter-process lock on the cache directory —
+sharing one mount across containers meant one build's lock made every
+other container's build wait or fail.
+
 List of bind-mounted shared caches, each `{name, host_subpath, container_path}`.
 The host source is `<shared_dir>/<host_subpath>`; `container_path` may
 start with `~` (expands to `/home/dev`).
@@ -545,6 +554,84 @@ SSH integration with `ssh.enabled: false`.
 Set `shared_caches: []` to disable, or override with your own list for
 non-JVM/Node stacks. `name` must match `[a-z0-9][a-z0-9-]*` and be
 unique. `container_path` must be absolute or start with `~`.
+
+An entry can carry its own `pool:` block instead of relying on
+`pooled_caches` below — see `SharedCache.pool` in the next section.
+
+### `pooled_caches`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. `chrome-profile: false` is also rejected: its host directory *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Use `chrome.enabled: false` to turn Chrome off. |
+
+A pooled cache is **not** mounted by the binds profile like the rest of
+`shared_caches`. Instead each container gets its own slot directory under
+`<shared_dir>/<host_subpath>/slots/`, attached as a per-container disk
+device named `<cache name>-slot` — allocated on `jailbee new` and on every
+boot (or on first use, for Chrome), released on `jailbee destroy`. This is
+what stops two containers from contending on one tool's lock files: Gradle
+and Maven both take an inter-process lock on their cache directory, so a
+build in one container used to block or fail while another container's
+build held it.
+
+A key absent from `pooled_caches` follows the preset's own `default_on`:
+
+| Preset | `default_on` | What's hardlinked (`link_paths`) |
+|---|---|---|
+| `gradle` | `true` | `caches/modules-2/files-2.1`, `wrapper/dists` |
+| `m2` | `true` | `repository` |
+| `chrome-profile` | `true` | none — SQLite + `Preferences` are rewritten in place |
+| `npm` | `false` | `_cacache` |
+| `pnpm-store` | `false` | `v3/files` |
+
+`pooled_caches` is a dict rather than a list specifically so
+`~/.config/jailbee/global.yaml` and a repo's `.jailbee/config.yaml` merge
+per key (the generic dict rule from [Merge rules](#merge-rules)) instead of
+one layer's list appending to the other's.
+
+A fresh slot is seeded by copying the warmest existing slot (the one whose
+`warmth_file` — or, absent that, whose directory — has the newest mtime).
+`link_paths` names subtrees hardlinked from the seed source instead of
+copied, so a multi-gigabyte artifact store (Gradle's module cache, Maven's
+`repository/`) costs close to nothing per extra container. **`link_paths`
+may only name subtrees whose files are written once and later deleted
+whole, never modified in place** — hardlinking a lock file, or a `.bin`
+that a tool rewrites in place, would restore exactly the cross-container
+sharing pooling exists to remove. `wipe_paths` and `stale_globs` are the
+other side of that same rule: content excluded from seeding and removed
+when a slot is released — regenerable bulk (Gradle's `daemon/` dir) and
+stale lock files an unclean exit left behind, respectively.
+
+To pool a cache with no builtin preset — including one of your own
+`shared_caches` entries — give that entry an explicit `pool:` block
+instead of a `pooled_caches` key:
+
+```yaml
+shared_caches:
+  - name: my-tool-cache
+    host_subpath: my-tool
+    container_path: ~/.cache/my-tool
+    pool:
+      link_paths: [blobs]
+      stale_globs: ["*.lock"]
+```
+
+**An explicit `pool:` block on a `shared_caches` entry always overrides
+`pooled_caches`** — even a `pooled_caches: {my-tool-cache: false}` key does
+not un-pool it. This is also true of the presets themselves: setting
+`pool:` on the `gradle`/`m2`/`chrome-profile`/`npm`/`pnpm-store` entries
+replaces their builtin `PoolSpec` outright rather than merging into it.
+
+`jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` inspect and clean
+pool slots — see [`commands.md`](commands.md). A pre-existing
+non-pooled cache is migrated automatically: `jailbee init` and
+`jailbee apply` move a cache sitting directly under the pool root into
+`slots/slot-0`, so the warm cache becomes the first seed source rather
+than being discarded. A pooled cache attaches to a container when that
+container next boots, so restart any container that was running during
+`jailbee apply` (`jailbee restart <name>`) before trusting it to be using
+its own slot; `jailbee doctor` flags a pool root that still needs
+migrating.
 
 ### Networks
 

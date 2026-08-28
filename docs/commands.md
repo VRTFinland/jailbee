@@ -41,7 +41,7 @@
 | `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` | Optional mounts |
 | `jailbee ide <name> [--app idea\|webstorm]` | Launch JetBrains IDE |
 | `jailbee chrome <name> [URL]` | Launch Chrome |
-| `jailbee chrome-pool ls/prune` | Inspect or clean Chrome profile pool |
+| `jailbee pool ls/prune [NAME]` | Inspect or clean per-container cache pool slots (Gradle, Maven and Chrome by default — see [`pooled_caches`](config.md#pooled_caches)); omit `NAME` for every pool. `jailbee chrome-pool ls/prune` still works as a deprecated alias for `jailbee pool ls/prune chrome-profile` |
 | `jailbee base build` | Build the golden image |
 | `jailbee base prune [--all] [--days N] [--yes-to-all]` | Remove superseded dated golden-image archives (`<alias>-YYYY-MM-DD`). Lists all candidates and confirms once (a single batch confirmation, not per-archive); the live base image is always kept; in-use archives are skipped (batch continues). `--all` prunes archives for every registered repo, not just the current one; `--days N` only removes archives older than N days (default: all dated archives are candidates); `--yes-to-all` skips the confirmation prompt |
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base and dated archive with its size, per-repo subtotals, a prunable (archives-only) figure, and a grand total. `--all` includes every registered repo, not just the current one |

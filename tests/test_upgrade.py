@@ -516,3 +516,17 @@ def test_advice_lines_reports_the_current_release_on_a_fresh_repo(db_engine) -> 
 
     assert lines[0] == "jailbee 1.4.0 changed what `jb base build` produces:"
     assert "install.sh installs fd" in lines[1]
+
+
+def test_pool_note_advises_apply_only() -> None:
+    """Pins the real manifest's cache-pool entry: version, and that it names
+    only `apply` — a single entry declaring both actions would print the
+    pool reason against `base_build` too, which nothing in the pooling
+    change actually touches."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    matches = [n for n in UPGRADE_NOTES if "pool" in n.reason]
+    assert len(matches) == 1
+    note = matches[0]
+    assert note.version == (1, 2, 0)
+    assert note.actions == frozenset({"apply"})
