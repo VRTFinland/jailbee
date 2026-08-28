@@ -3887,3 +3887,88 @@ def test_claude_credentials_rejects_a_group_name_that_is_not_one_path_segment():
             ClaudeCredentials(group=bad)
     with pytest.raises(ValidationError):
         ClaudeCredentials(repos={"repo": "../escape"})
+
+
+def test_gradle_cache_is_pooled_by_default_when_java_stack_on(tmp_path):
+    """The java stack adds caches/gradle; its preset defaults to pooled."""
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text("golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml")
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is not None
+    assert "caches/modules-2/files-2.1" in gradle.pool.link_paths
+
+
+def test_pooled_caches_false_opts_out(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\npooled_caches:\n  gradle: false\n",
+        tmp_path / "c.yaml",
+    )
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is None
+
+
+def test_pooled_caches_true_opts_in_for_default_off_preset(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    node: 24\npooled_caches:\n  npm: true\n",
+        tmp_path / "c.yaml",
+    )
+    npm = next(c for c in cfg.effective_shared_caches() if c.name == "npm")
+    assert npm.pool is not None
+    assert npm.pool.link_paths == ["_cacache"]
+
+
+def test_explicit_pool_block_beats_pooled_caches(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    text = (
+        "pooled_caches:\n  gradle: false\n"
+        "shared_caches:\n"
+        "  - name: gradle\n"
+        "    host_subpath: caches/gradle\n"
+        "    container_path: ~/.gradle\n"
+        "    pool:\n"
+        "      seed: false\n"
+    )
+    cfg = load_config_from_text(text, tmp_path / "c.yaml")
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is not None
+    assert gradle.pool.seed is False
+
+
+def test_pooled_caches_unknown_name_is_an_error(tmp_path):
+    from jailbee.config import ConfigError, load_config_from_text
+
+    with pytest.raises(ConfigError, match="no shared cache named 'nosuch'"):
+        load_config_from_text("pooled_caches:\n  nosuch: true\n", tmp_path / "c.yaml")
+
+
+def test_pooled_caches_true_without_preset_is_an_error(tmp_path):
+    from jailbee.config import ConfigError, load_config_from_text
+
+    text = (
+        "pooled_caches:\n  sbt: true\n"
+        "shared_caches:\n"
+        "  - name: sbt\n"
+        "    host_subpath: caches/sbt\n"
+        "    container_path: ~/.sbt\n"
+    )
+    with pytest.raises(ConfigError, match="no builtin pool preset"):
+        load_config_from_text(text, tmp_path / "c.yaml")
+
+
+def test_chrome_pool_entry_matches_the_legacy_layout(tmp_path):
+    """The device name and pool root existing containers already carry."""
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text("chrome:\n  enabled: true\n", tmp_path / "c.yaml")
+    chrome = next(c for c in cfg.effective_shared_caches() if c.name == "chrome-profile")
+    assert chrome.host_subpath == "chrome-pool"
+    assert chrome.container_path == "~/.config/google-chrome"
+    assert chrome.pool is not None
+    assert chrome.pool.allocate == "on-demand"
+    assert chrome.pool.warmth_file == "Default/Login Data"

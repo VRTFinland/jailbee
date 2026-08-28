@@ -393,6 +393,25 @@ def _label_spellings(legacy: list[Path], modern: list[Path]) -> list[tuple[Path,
     return [(path, " and ".join(spellings)) for path, spellings in labels.items()]
 
 
+def _validate_pooled_caches(cfg: Config) -> None:
+    """Reject `pooled_caches` keys that name nothing or have no preset."""
+    if not cfg.pooled_caches:
+        return
+    caches = {c.name: c for c in cfg.effective_shared_caches()}
+    for name, wanted in cfg.pooled_caches.items():
+        cache = caches.get(name)
+        if cache is None:
+            raise ConfigError(
+                f"pooled_caches: no shared cache named '{name}'. "
+                f"Known names: {', '.join(sorted(caches))}"
+            )
+        if wanted and cache.pool is None:
+            raise ConfigError(
+                f"pooled_caches: '{name}' has no builtin pool preset. "
+                f"Give the shared_caches entry an explicit `pool:` block instead."
+            )
+
+
 def _expand(value: str | Path) -> Path:
     return expand_path(value)
 
@@ -614,16 +633,119 @@ class OptionalMount(BaseModel):
     description: str = ""
 
 
+class PoolSpec(BaseModel):
+    """Pool a shared cache: one private copy per container.
+
+    A pooled cache is not mounted by the binds profile. Each container
+    gets its own slot directory from `<shared_dir>/<host_subpath>/slots/`,
+    attached as a per-container disk device named `<cache name>-slot`.
+    This is how two containers avoid sharing one tool's lock files.
+
+    - `seed`: copy the warmest existing slot into a fresh one, so a new
+      container starts warm. False means every slot starts empty.
+    - `link_paths`: subtrees hardlinked from the seed source instead of
+      copied. ONLY for files written once and deleted whole, never
+      modified in place — a hardlinked lock file or in-place-rewritten
+      `.bin` restores exactly the cross-container sharing this exists to
+      remove.
+    - `wipe_paths`: removed when a slot is released, and excluded from
+      seeding. Regenerable bulk.
+    - `stale_globs`: unlinked on release, and excluded from seeding.
+      Lock files left behind by an unclean exit.
+    - `warmth_file`: slot-relative path whose mtime ranks slots by real
+      activity. None ranks by the slot directory's own mtime.
+    - `allocate`: `on-start` attaches the slot on create and on every
+      boot; `on-demand` waits for an explicit call (Chrome, which most
+      containers never launch).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    seed: bool = True
+    link_paths: list[str] = []
+    wipe_paths: list[str] = []
+    stale_globs: list[str] = []
+    warmth_file: str | None = None
+    allocate: Literal["on-start", "on-demand"] = "on-start"
+
+
+class PoolPreset(BaseModel):
+    """A builtin `PoolSpec` plus whether it applies without being asked."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    default_on: bool
+    spec: PoolSpec
+
+
 class SharedCache(BaseModel):
     """A bind-mount from <shared_dir>/<host_subpath> into the container.
 
     `container_path` may start with ``~``, expanded to ``/home/<user>``.
+    `pool` turns the entry into a per-container pool instead of a shared
+    mount.
     """
 
     model_config = ConfigDict(extra="forbid")
     name: str
     host_subpath: str
     container_path: str
+    pool: PoolSpec | None = None
+
+
+# Copy (not moved — chrome_pool.py keeps its own copy until Task 5 deletes
+# that module) of `chrome_pool._CACHE_RELATIVE`: regenerable Chrome cache
+# subtrees wiped when a pool slot is released.
+_CHROME_WIPE_PATHS = (
+    "Default/Cache",
+    "Default/Code Cache",
+    "Default/GPUCache",
+    "Default/Service Worker/CacheStorage",
+    "Default/DawnGraphiteCache",
+    "Default/DawnWebGPUCache",
+    "ShaderCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    # Top-level regenerable data sets — large, redownloaded on demand,
+    # not user state. Without these the freed slot stays at ~80 MB.
+    "Safe Browsing",
+    "optimization_guide_model_store",
+    "BrowserMetrics",
+)
+
+POOL_PRESETS: dict[str, PoolPreset] = {
+    "gradle": PoolPreset(
+        default_on=True,
+        spec=PoolSpec(
+            link_paths=["caches/modules-2/files-2.1", "wrapper/dists"],
+            wipe_paths=["daemon"],
+            stale_globs=["**/*.lock", "**/*.lck"],
+        ),
+    ),
+    "m2": PoolPreset(
+        default_on=True,
+        spec=PoolSpec(
+            link_paths=["repository"],
+            stale_globs=["**/*.lock", "**/*.part*", "**/*.lastUpdated"],
+        ),
+    ),
+    "npm": PoolPreset(
+        default_on=False,
+        spec=PoolSpec(link_paths=["_cacache"], wipe_paths=["_logs"], stale_globs=["**/*.lock"]),
+    ),
+    "pnpm-store": PoolPreset(
+        default_on=False,
+        spec=PoolSpec(link_paths=["v3/files"], stale_globs=["**/*.lock"]),
+    ),
+    "chrome-profile": PoolPreset(
+        default_on=True,
+        spec=PoolSpec(
+            link_paths=[],  # SQLite + Preferences are rewritten in place
+            wipe_paths=list(_CHROME_WIPE_PATHS),
+            stale_globs=["Singleton*", "BrowserMetrics-*.pma"],
+            warmth_file="Default/Login Data",
+            allocate="on-demand",
+        ),
+    ),
+}
 
 
 def _default_shared_caches() -> list[SharedCache]:
@@ -1906,6 +2028,16 @@ class Config(BaseModel):
     shared_caches: list[SharedCache] = Field(
         default_factory=_default_shared_caches,
     )
+    pooled_caches: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "Per-cache override of pooling. Key is a `shared_caches` name; "
+            "true pools it using POOL_PRESETS[name], false keeps the shared "
+            "mount. Absent keys follow the preset's own default_on. A dict "
+            "rather than a list so global.yaml and the repo config deep-merge "
+            "per key instead of appending."
+        ),
+    )
     egress_allow: list[str] = []
     defaults: Defaults = Defaults()
     golden: Golden = Golden()
@@ -2097,8 +2229,11 @@ class Config(BaseModel):
         node — see `Stacks.shared_caches`) are folded in first, ahead of
         the integration auto-adds. Then each enabled agent's mounts are
         folded in (see `agents.enabled_agent_specs`) — for `claude` this is
-        `claude` + `claude-install` — followed by
-        `jetbrains-config` + `jetbrains-data` when `jetbrains.enabled`.
+        `claude` + `claude-install` — followed by `chrome-profile` when
+        `chrome.enabled`, then `jetbrains-config` + `jetbrains-data` when
+        `jetbrains.enabled`. Finally each entry's `pool` is resolved per
+        `pooled_caches` / `POOL_PRESETS` (see `_resolve_pool`) before the
+        list is returned.
         """
         from jailbee.agents import enabled_agent_specs
 
@@ -2114,6 +2249,16 @@ class Config(BaseModel):
         _extend(self.golden.stacks.shared_caches())
         for spec in enabled_agent_specs(self):
             _extend(list(spec.shared))
+        if self.chrome.enabled:
+            _extend(
+                [
+                    SharedCache(
+                        name="chrome-profile",
+                        host_subpath="chrome-pool",
+                        container_path="~/.config/google-chrome",
+                    )
+                ]
+            )
         if self.jetbrains.enabled:
             _extend(
                 _jetbrains_shared_caches(
@@ -2121,7 +2266,21 @@ class Config(BaseModel):
                     share_idea=self.jetbrains.share_idea,
                 )
             )
-        return result
+        return [self._resolve_pool(c) for c in result]
+
+    def _resolve_pool(self, cache: SharedCache) -> SharedCache:
+        """Attach the preset `PoolSpec` when this cache should be pooled."""
+        if cache.pool is not None:
+            return cache  # explicit block always wins
+        flag = self.pooled_caches.get(cache.name)
+        if flag is False:
+            return cache
+        preset = POOL_PRESETS.get(cache.name)
+        if preset is None:
+            return cache  # `true` without a preset is rejected at load time
+        if flag is True or preset.default_on:
+            return cache.model_copy(update={"pool": preset.spec})
+        return cache
 
     def effective_loose_auto_revert(
         self,
@@ -2611,6 +2770,8 @@ def load_config_from_text(text: str, path: Path) -> Config:
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))
+
+    _validate_pooled_caches(cfg)
 
     # Token security: global.yaml must be 0600 when it carries github.api_tokens.
     if cfg.github.api_tokens:

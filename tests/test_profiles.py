@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jailbee.config import load_config
+from jailbee.config import load_config, load_config_from_text
 from jailbee.profiles import (
     ProfileNames,
     base_profile_yaml,
@@ -426,7 +426,13 @@ def test_host_tmux_paths_filters_to_existing(tmp_path, mocker):
 def test_binds_profile_includes_shared_caches_rw():
     """Language caches are opt-in (not in the stack-neutral default), but
     when configured explicitly via `shared_caches:` they must render as
-    RW disk devices on the binds profile."""
+    RW disk devices on the binds profile.
+
+    `gradle` and `m2` opt out of `pooled_caches` here because their
+    presets default to pooled (see `POOL_PRESETS`) — pooling them would
+    correctly remove them from this profile, which is exactly what
+    `test_pooled_caches_are_not_profile_devices` in test_profiles.py and
+    the `pool`-focused tests in test_config.py cover instead."""
     from jailbee.config import SharedCache
 
     cfg = _cfg()
@@ -444,6 +450,7 @@ def test_binds_profile_includes_shared_caches_rw():
                 SharedCache(name="npm", host_subpath="caches/npm", container_path="~/.npm"),
                 SharedCache(name="m2", host_subpath="caches/m2", container_path="~/.m2"),
             ],
+            "pooled_caches": {"gradle": False, "m2": False},
         }
     )
     out = binds_profile_yaml(cfg)
@@ -924,3 +931,23 @@ def test_net_by_mode_has_no_offline():
 def test_net_profile_yaml_rejects_offline():
     with pytest.raises(ValueError, match="Unknown network mode"):
         net_profile_yaml(_cfg(), "offline")
+
+
+def test_pooled_caches_are_not_profile_devices(tmp_path):
+    """A pooled cache is a per-container device, never a profile mount."""
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    profile = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "shared-gradle" not in profile["devices"]
+    assert "shared-chrome-profile" not in profile["devices"]
+    assert "shared-ssh" in profile["devices"]  # unpooled caches still mount
+
+
+def test_opting_out_restores_the_shared_gradle_mount(tmp_path):
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\npooled_caches:\n  gradle: false\n",
+        tmp_path / "c.yaml",
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    profile = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "shared-gradle" in profile["devices"]
