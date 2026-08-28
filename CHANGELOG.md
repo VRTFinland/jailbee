@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.2 - 2026-08-28
+
 ### Fixed
 
 - **A polluted cache pool root is now resolvable from the command line
