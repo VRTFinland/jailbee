@@ -194,6 +194,21 @@ def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(b for b in list_branches(cfg.repo_root) if b.startswith(incomplete))
 
 
+@_never_raises
+def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a pool name from this repo's configured cache pools.
+
+    Used by `jailbee pool ls`/`prune`'s optional NAME positional.
+    """
+    from jailbee import pool as pool_mod
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, _incus = loaded
+    return [p.name for p in pool_mod.pools_for(cfg) if p.name.startswith(incomplete)]
+
+
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:
     """Map a user-typed container name to its full Incus name, or None.
 

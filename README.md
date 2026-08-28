@@ -104,12 +104,14 @@ sped up and say so on screen; nothing else is edited.
   ship as untested starting points — see
   [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md).
 - **One shared state layer per repo** — package-manager caches, the JetBrains
-  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a shared
-  dir bind-mounted into every one of the repo's containers. Branches running in
-  parallel draw on one warm Gradle or pnpm cache and one set of tool settings
-  rather than building each from scratch, and the state outlives
-  `jailbee destroy` / `jailbee new` — while nothing a container does reaches
-  your host's own dotfiles.
+  config, `~/.ssh` and Claude's login live in a shared dir outside the
+  containers, set up once per repo instead of once per branch. Most of it is
+  one mount every container shares live — pnpm's store, JetBrains, `~/.ssh`,
+  Claude's login. Gradle, Maven and the Chrome profile instead give each
+  container its own private slot seeded from the warmest one: a warm cache
+  without the lock contention one shared `~/.gradle` used to cause. Either
+  way the state outlives `jailbee destroy` / `jailbee new` — while nothing a
+  container does reaches your host's own dotfiles.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
   TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans
   every repo, and acts on what it shows: attach a shell or tmux, open the IDE,

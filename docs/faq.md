@@ -469,7 +469,8 @@ a Chrome onto your Wayland session. Both are opt-in
 (`jetbrains.enabled`, `chrome.enabled`, personal settings that belong in
 `global.yaml`). Only one IDEA-family IDE runs at a time across containers
 (shared profile); Chrome runs per-container from a profile pool
-(`jailbee chrome-pool ls/prune`).
+(`jailbee pool ls/prune chrome-profile`, or the deprecated
+`jailbee chrome-pool ls/prune` alias).
 
 → [Limitations](security.md#limitations),
 [Configuration reference](config.md)
@@ -547,13 +548,20 @@ Auto-launching the IDE or Chrome is configured *outside* that block, via
 
 ### How do containers of the same repo share caches and credentials?
 
-Through `<shared_dir>` — one host directory per repo, bind-mounted entry by
-entry into every one of its containers, so a package-manager cache stays warm
-across branches and settings written in one container appear in the next. It
-outlives `jailbee destroy` / `jailbee new`, and it is a layer of its own, so
-nothing a container does reaches your host dotfiles.
+Through `<shared_dir>` — one host directory per repo. Most entries are
+bind-mounted read-write into every container of the repo, so a
+package-manager cache stays warm across branches and settings written in
+one container appear in the next. A few caches — Gradle and Maven by
+default, since their tools take an inter-process lock on the cache
+directory — are instead **pooled**: each container gets its own private
+slot, seeded from the warmest existing one rather than shared live, so two
+containers never contend on one lock file. Either way it outlives
+`jailbee destroy` / `jailbee new`, and it is a layer of its own, so nothing
+a container does reaches your host dotfiles.
 
-→ [`shared_caches`](config.md#shared_caches), [`shared_dir`](config.md#shared_dir)
+→ [`shared_caches`](config.md#shared_caches),
+[`pooled_caches`](config.md#pooled_caches),
+[`shared_dir`](config.md#shared_dir)
 
 ### How do I stop two repos from colliding on this host?
 

@@ -160,19 +160,136 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     A bookkeeping read, not a diagnosis (see `_check_upgrade_advice`): an
     unreadable registry says nothing about whether the credential join
     itself is healthy, so it degrades this check's "shared with" listing
-    to empty rather than failing the check.
+    to empty rather than failing the check. The matching rule itself lives
+    in `claude_pool.group_member_prefixes`, which raises — the degradation
+    is this caller's policy, not the rule's.
     """
-    from jailbee.db.models import RegisteredRepo
+    from jailbee.claude_pool import group_member_prefixes
 
-    creds = gcfg.claude_credentials
     try:
-        with Session(get_engine()) as session:
-            prefixes = list(session.exec(select(RegisteredRepo.container_prefix)))
-    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        prefixes = group_member_prefixes(gcfg, group)
+    except Exception:  # a bookkeeping read is not a diagnosis
         return []
-    return sorted(
-        p for p in prefixes if p != exclude and (creds.dir_for(p) or Path()).name == group
-    )
+    return [p for p in prefixes if p != exclude]
+
+
+def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
+    """One failed check per staging file an interrupted `jailbee claude use`
+    left in the store.
+
+    `claude_pool.switch` renames its target to `<name>.json.activating` before
+    anything else moves, so a hard kill in that window leaves a login in a file
+    `parked_slots()` does not list — invisible to `jailbee claude ls`, and
+    invisible here too unless something goes looking for it.
+
+    Reported, never repaired. Renaming it back is safe only if that grant is
+    not already live somewhere, and the store is host-wide while any one
+    command sees one holder — jailbee cannot answer that in general, but the
+    person reading this can. Naming the file and the exact `mv` is the whole
+    recovery path; the risk of a wrong automatic rename is a silently dead
+    login.
+
+    **The rename is only advised when the destination name is free.** It need
+    not be: after the kill, a fresh `/login` as the same account followed by
+    `jailbee claude park` lands on exactly `<name>.json`, because nothing was
+    occupying it. `mv` would then overwrite a newer, different grant without a
+    word — one login destroyed by following this very message. When the name is
+    taken, the two files are named and the choice is left to the reader, with
+    the non-destructive option (a free, disambiguated name) spelled out.
+
+    **The same-holder case is settled here rather than caveated.** A kill
+    between the credential write and the staging unlink — the likeliest window
+    of the three, because the write is the slow part — leaves the grant live in
+    *this* holder. `cfg` is in hand, so that comparison is free, and it matters:
+    a careful reader told only that the grant "may be live in another repo"
+    checks the other repos, finds nothing, renames, and ends up with one
+    refresh-token lineage in two files. The remaining caveat covers what is
+    genuinely unknowable from here — another holder, or another name.
+    """
+    from jailbee import claude_pool
+
+    suffix = ".activating"
+    try:
+        stages = sorted(claude_pool.store_dir().glob(f"*.json{suffix}"))
+    except OSError:  # an unreadable store is _check_claude_credentials' business
+        return []
+
+    live = claude_pool.live_credential_path(cfg)
+    results: list[CheckResult] = []
+    for stage in stages:
+        home = stage.with_name(stage.name[: -len(suffix)])
+        if claude_pool.holds_same_login(stage, live):
+            detail = (
+                f"an interrupted switch left {stage}, and that login is the one "
+                f"live in {claude_pool.holder_dir(cfg)} right now — the switch had "
+                "already written it before it was killed. The staging file is a "
+                "leftover second copy of a live grant, so delete it; renaming it "
+                "into the store is the one move that would put that login in two "
+                "files."
+            )
+        elif home.exists():
+            detail = (
+                f"an interrupted switch left {stage}, but the name it came from "
+                f"({home.name}) is already taken by another stored login — "
+                "renaming over it would destroy that one. Compare the two and "
+                "delete whichever you do not want, or keep both by moving the "
+                f"staging file to a free name of the form {home.stem}~<label>.json."
+            )
+        else:
+            detail = (
+                f"an interrupted switch left {stage}; if that login is still "
+                f"wanted, rename it to {home.name} — jailbee will not move it "
+                "for you, because it cannot tell from here whether that login "
+                "is already parked under another name, or already live in "
+                "another repo's holder."
+            )
+        results.append(CheckResult("claude account pool", False, detail))
+    return results
+
+
+def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report the parked-login store and which account this holder is on.
+
+    Silent when the store is empty: the pool is optional, and reporting an
+    unused feature on every run is noise — the same rule
+    `_check_claude_credentials` follows for a repo that shares nothing. An
+    orphaned staging file is the exception, and the reason it is collected
+    before the early return: it is the one case where a store that lists no
+    slots is nevertheless holding a login.
+
+    The other failure it reports is a holder with parked logins and no live
+    one, which is what a `jailbee claude park` leaves behind until someone logs
+    in or switches. Not a broken state, but one worth naming, because the
+    symptom inside a container is "Not logged in" with no explanation.
+    """
+    from jailbee import claude_pool
+
+    orphans = _orphaned_stage_checks(cfg)
+
+    parked = claude_pool.parked_slots()
+    if not parked:
+        return orphans
+
+    try:
+        found, _ = claude_pool.members(cfg, gcfg)
+        identity = claude_pool.live_identity(found, prefer=cfg.container_prefix)
+    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        identity = None
+
+    holder = claude_pool.holder_dir(cfg)
+    count = f"{len(parked)} parked"
+    if not (holder / ".credentials.json").exists():
+        return [
+            CheckResult(
+                "claude account pool",
+                False,
+                f"{count}, but {holder} holds no live login — run "
+                "`jailbee claude use <account>`, or `/login` in a container.",
+            ),
+            *orphans,
+        ]
+    live = claude_pool.slug_for(identity) if identity is not None else "an unidentified account"
+    return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
@@ -226,6 +343,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
+    results.extend(_check_claude_pool(cfg, gcfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
@@ -300,7 +418,6 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     expected = [
         "caches/pnpm-store",
         "caches/gradle",
-        "chrome-pool/slots",
     ]
     if cfg.jetbrains.enabled:
         expected.append("jetbrains-config")
@@ -310,6 +427,13 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     for spec in enabled_agent_specs(cfg):
         expected.extend(spec.dir_subpaths)
+
+    # Pool roots are reported on their own row, not folded into `expected`:
+    # every way a pool root can be wrong is fixed by `jailbee apply`, while
+    # the generic "missing" row advises `jailbee init` — which errors once
+    # profiles exist, i.e. on every upgrade path. See `_check_pool_roots`.
+    results.extend(_check_pool_roots(cfg))
+
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
         results.append(
@@ -679,6 +803,55 @@ def _net_refresh_binary_check() -> CheckResult | None:
             "auto-revert with it); run `jailbee init` to rewrite the unit"
         ),
     )
+
+
+def _check_pool_roots(cfg: Config) -> list[CheckResult]:
+    """One row for the cache pool roots, or none when nothing is pooled.
+
+    Deliberately separate from the `shared_dir tree` row. Every way a pool
+    root can be wrong — never created, or still holding a pre-pooling
+    cache — is fixed by `jailbee apply`, whereas the generic missing-dir
+    row advises `jailbee init`, which errors once profiles exist. Folding
+    pool subdirs into that row therefore gave the wrong advice on exactly
+    the upgrade path pooling introduced.
+
+    `pool.RESERVED_ENTRIES` is imported rather than re-spelled so this
+    classification cannot drift from what `ensure_pool_dirs` migrates.
+    """
+    from jailbee.pool import RESERVED_ENTRIES, pools_for
+
+    pools = pools_for(cfg)
+    if not pools:
+        return []
+
+    unmigrated: list[str] = []
+    uncreated: list[str] = []
+    for pool in pools:
+        if pool.root.is_dir() and any(e.name not in RESERVED_ENTRIES for e in pool.root.iterdir()):
+            unmigrated.append(pool.name)
+        elif not (pool.slots_dir.is_dir() and pool.by_container_dir.is_dir()):
+            uncreated.append(pool.name)
+
+    problems: list[str] = []
+    if unmigrated:
+        problems.append(f"still holding a pre-pooling cache: {', '.join(unmigrated)}")
+    if uncreated:
+        problems.append(f"layout not created: {', '.join(uncreated)}")
+    if problems:
+        return [
+            CheckResult(
+                "cache pool roots",
+                False,
+                f"{'; '.join(problems)} — run `jailbee apply`",
+            )
+        ]
+    return [
+        CheckResult(
+            "cache pool roots",
+            True,
+            f"{len(pools)} pooled: {', '.join(p.name for p in pools)}",
+        )
+    ]
 
 
 def _check_egress_pool(cfg: Config) -> list[CheckResult]:

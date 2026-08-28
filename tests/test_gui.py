@@ -108,7 +108,8 @@ def test_open_ide_skips_launch_when_no_launcher_found(mocker):
 def test_open_chrome_redirects_to_log_file_not_dev_null(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -125,7 +126,8 @@ def test_open_chrome_redirects_to_log_file_not_dev_null(mocker):
 def test_open_chrome_announces_log_path_in_info_message(mocker, capsys):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", "https://example.com")
@@ -137,7 +139,8 @@ def test_open_chrome_announces_log_path_in_info_message(mocker, capsys):
 def test_open_chrome_passes_url_when_provided(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", "https://example.com")
@@ -184,7 +187,8 @@ def test_open_ide_passes_home_env_var(mocker):
 def test_open_chrome_passes_home_env_var(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -200,7 +204,8 @@ def test_open_chrome_passes_ozone_wayland_on_wayland_host(mocker, monkeypatch):
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -214,7 +219,8 @@ def test_open_chrome_passes_dark_mode_flags_when_enabled(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"chrome": cfg.chrome.model_copy(update={"dark_mode": True})})
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -228,7 +234,8 @@ def test_open_chrome_omits_dark_mode_flags_by_default(mocker):
     """Chrome.dark_mode defaults to False — no forced dark mode."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -242,7 +249,8 @@ def test_open_chrome_omits_ozone_wayland_on_x11_host(mocker, monkeypatch):
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
@@ -254,15 +262,19 @@ def test_open_chrome_omits_ozone_wayland_on_x11_host(mocker, monkeypatch):
 def test_open_chrome_calls_allocate_before_popen(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
     allocate = mocker.patch(
-        "jailbee.chrome_pool.allocate",
+        "jailbee.pool.allocate",
         return_value=Path("/x/slot-0"),
     )
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)
 
-    allocate.assert_called_once_with(cfg, incus, "feat-smoke")
+    from jailbee.pool import get as pool_get
+
+    chrome_pool = pool_get(cfg, "chrome-profile")
+    allocate.assert_called_once_with(cfg, incus, chrome_pool, "feat-smoke")
     assert popen.called
 
 
@@ -295,7 +307,8 @@ def test_open_ide_popen_fully_detaches_from_parent(mocker):
 def test_open_chrome_popen_fully_detaches_from_parent(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
-    mocker.patch("jailbee.chrome_pool.allocate", return_value=Path("/x"))
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
     open_chrome(cfg, incus, "feat-smoke", None)

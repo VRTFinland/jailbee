@@ -4,6 +4,27 @@
 
 ### Added
 
+- **`jailbee claude` switches which stored Claude login a repo's containers
+  use.** `jailbee claude park` stores the login in use and empties the holder
+  — the credential group directory, or the repo's own config home when it
+  shares none — so the next `claude` in a container prompts `/login` and a
+  second account enters the pool. `jailbee claude use <email>` then swaps
+  between them: the live credential is parked, the target is activated, and
+  every member repo's recorded account is cleared so Claude Code repopulates
+  it from the credential it now finds. A running Claude session adopts the new
+  login on its next turn — the credential file's mtime is what invalidates its
+  cached token — so nothing needs restarting; only the account name shown in
+  `/status` can lag. `jailbee claude ls` lists the store with the live account
+  first, `jailbee claude rm` deletes one for good. The switch runs under Claude
+  Code's own advisory locks, so a concurrent token refresh cannot overwrite it,
+  and it carries the machine-shared credential keys (`mcpOAuth`,
+  `pluginSecrets`, …) across from the live file rather than restoring the
+  target's stale copies. A login is always **moved**, never copied: two copies
+  share one refresh-token lineage and the first rotation would silently log
+  the other out. No `cswap`, no database table, no golden-image rebuild —
+  the store is `<xdg_data_home>/jailbee/claude-credentials/_parked/` and the
+  filesystem is the only state. `jailbee doctor` reports the live account and
+  the parked count once anything is stored.
 - **Several repos on one host can now share a single Claude Code login.**
   `claude_credentials` in `~/.config/jailbee/global.yaml` names a `group`
   every repo on the host defaults into, with a per-repo `repos:` map
@@ -225,6 +246,43 @@
   `golden.python` deprecation — this now makes `config validate` exit 2 for a
   config that previously validated clean, so upgrading can turn a green CI or
   pre-commit hook red until the block is removed.
+- **Generic cache pools: `pooled_caches`, and Gradle/Maven join Chrome as
+  per-container instead of shared.** A repo's containers used to share one
+  `~/.gradle` (and one `~/.m2`) through a single profile-level bind mount, so
+  Gradle and Maven's own inter-process lock on the cache directory was
+  shared across containers too — a build in one container made every other
+  container's build wait on that lock, or fail once it timed out, which in
+  practice surfaced as an agent process timing out inside a container. The
+  mechanism `chrome_pool.py` already used for Chrome's profile is now
+  generic (`pool.py`), and applies to any cache named in the new
+  `pooled_caches: {name: bool}` config key or carrying its own `pool:`
+  block on a `shared_caches` entry (`SharedCache.pool`). `POOL_PRESETS`
+  ships built-in specs for `gradle`, `m2`, `npm`, `pnpm-store` and
+  `chrome-profile`; `gradle`, `m2` and `chrome-profile` default on, while
+  `npm` and `pnpm-store` ship a preset but leave pooling to an explicit
+  `pooled_caches: {npm: true}` / `{pnpm-store: true}`. A pooled cache is
+  not a shared mount: each container gets its own slot directory under
+  `<shared_dir>/<host_subpath>/slots/`, attached as a disk device named
+  `<cache name>-slot`, allocated at container creation and on every boot (or
+  on demand, for Chrome) and released at `jailbee destroy`. A fresh slot is
+  seeded by copying the warmest existing slot, with each preset's
+  `link_paths` subtrees hardlinked instead of copied — a multi-gigabyte
+  Gradle module cache or Maven repository costs almost nothing per extra
+  container this way. `link_paths` may only name subtrees written once and
+  later deleted whole, never rewritten in place: hardlinking a lock file
+  would restore exactly the cross-container sharing pooling exists to
+  remove. `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` replace
+  `jailbee chrome-pool ls/prune`, which remains a hidden, deprecated alias
+  scoped to the Chrome pool; `pool ls`'s footer prints the deduplicated
+  on-disk total, since summing per-slot sizes counts every hardlinked file
+  once per slot and over-reports severalfold. `jailbee init` and
+  `jailbee apply` create the pool layout and migrate a pre-existing cache
+  sitting directly under the pool root into `slots/slot-0`, so it stays warm
+  as the first seed rather than being discarded; a pooled cache attaches
+  when a container next boots, so restart any container that was running
+  during `jailbee apply` before trusting it to be using its own slot.
+  `jailbee doctor` reports a pool root that still needs migrating.
+  See [`pooled_caches`](docs/config.md#pooled_caches).
 
 ### Fixed
 

@@ -69,6 +69,10 @@ def run_init(
     if not cfg.claude.enabled:
         info("Claude integration disabled (claude.enabled=false) — skipping subdir")
 
+    from jailbee.pool import ensure_pools
+
+    ensure_pools(cfg)
+
     if cfg.ssh.enabled and cfg.ssh.seed_from_host:
         ssh_target = cfg.shared_dir / "ssh"
         host_ssh = Path.home() / ".ssh"

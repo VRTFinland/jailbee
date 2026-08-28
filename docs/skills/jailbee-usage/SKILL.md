@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -346,12 +346,11 @@ You can tell from inside a container with `echo
 $CLAUDE_SECURESTORAGE_CONFIG_DIR`: set means this repo is in a group, empty
 means it keeps its own login.
 
-**To change which account the group uses: `/login` inside any member
-container.** That writes straight into the shared directory, and every other
-member picks the new account up on its next Claude Code start. There is no
-jailbee command for this — the `jailbee claude` account pool was removed
-because `cswap` cannot write to a shared credential directory (see
-`CHANGELOG.md`); do not suggest it.
+**To change which account the group uses:** `/login` inside any member
+container writes straight into the shared directory, and every other member
+picks the new account up on its next Claude Code start. If the account is
+already stored from an earlier `jailbee claude park`, `jailbee claude use
+<email>` (see below) switches the whole group to it without a fresh login.
 
 **"Why did my Claude account change?"** Almost always: someone ran `/login` in
 a container of *another* repo in the same group. Point the user at the host —
@@ -371,6 +370,48 @@ repo. Two things about that are worth warning a user about before they run it:
 
 Neither is reversible by jailbee, and neither can be run from inside a
 container — there is no `jb` binary there.
+
+## Switching which Claude account is in use — `jailbee claude`
+
+A *holder* is whatever directory a repo's containers read `.credentials.json`
+from: the credential group directory when `claude_credentials` puts the repo in
+a group, otherwise the repo's own config home. One holder has at most one live
+login; every other stored login sits parked in a host-wide store.
+
+```bash
+jailbee claude ls                  # what is stored, and which one is live here
+jailbee claude use me@work.com     # switch this holder to a stored login
+jailbee claude park                # store the current one; next `claude` asks /login
+jailbee claude rm old@work.com     # delete a stored login for good
+```
+
+Four things worth knowing:
+
+- **A switch is holder-wide.** In a credential group, every member repo moves
+  with it. `jailbee claude ls` names the repos that share the holder.
+- **No restart.** Claude Code re-reads the credential when the file's mtime
+  changes, so a session that is open right now picks the new account up on its
+  next turn. The account shown by `/status` can lag until the session restarts;
+  authentication does not.
+- **Adding an account is `park` then `/login`.** There is no `add`: only a
+  browser login creates a credential, and it lands in the holder by itself.
+  Logging in as an account that is *already* parked is fine — the two grants
+  are independent, so the new one is stored under a name with a `~<timestamp>`
+  suffix (`me@work.com~20260828-104233`). Pass that full name to `use`/`rm`
+  when a bare email is reported as ambiguous.
+- **A login is never copied.** Every operation moves the file, because two
+  copies of one login share a refresh-token lineage and the first rotation
+  silently kills the other. That is also why `rm` is permanent.
+
+If a container says "Not logged in" straight after a switch, run
+`jailbee doctor` on the host: a holder with parked logins and no live one is
+what a `park` leaves behind.
+
+A login that has sat parked for a long time can also come back dead — Anthropic
+can revoke the grant, and JailBee never contacts the token endpoint, so it
+cannot tell in advance. The symptom is a `/login` prompt in the container right
+after a switch that reported success. Logging in there fixes it, and the new
+credential lands in the holder as usual.
 
 ## Port forwarding — `jailbee port`
 
@@ -454,7 +495,16 @@ otherwise fight over.
 - **GUI:** `jailbee ide <name>` (JetBrains; `--app webstorm` to override), `jailbee chrome
   <name> [URL]`. Both require the matching `jetbrains`/`chrome` blocks enabled
   (usually in `~/.config/jailbee/global.yaml`). One JetBrains IDE runs at a time
-  (shared profile); Chrome is per-container (`jailbee chrome-pool ls`/`prune`).
+  (shared profile); Chrome is per-container, from a cache pool slot
+  (`jailbee pool ls`/`prune chrome-profile`; the old `jailbee chrome-pool
+  ls`/`prune` spelling still works, deprecated).
+- **Cache pools:** `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` — any
+  cache configured with `pooled_caches`/`SharedCache.pool` (Gradle and Maven by
+  default) gets one private slot per container instead of one cache shared
+  by all of them, because those tools take a lock on the cache directory that
+  a shared mount serialised across containers. Omit `NAME` for every pool.
+  `ls`'s footer total is deduplicated (hardlinked files counted once); the
+  per-slot sizes above it are not, and over-report when slots share files.
 - **Snapshots:** `jailbee snapshot create <name> <tag>` / `restore <name> <tag>` /
   `ls` / `delete` — cheap save/rollback of a container's state.
 - **Optional mounts:** `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` to

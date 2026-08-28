@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jailbee.config import load_config
-from jailbee.doctor import run_checks
+from jailbee.doctor import _check_pool_roots, run_checks
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from jailbee.registry import MirrorStatus
 from tests.conftest import with_agent
@@ -346,6 +346,7 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -375,6 +376,7 @@ def test_doctor_flags_missing_claude_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -398,6 +400,7 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -432,6 +435,7 @@ def test_doctor_flags_missing_agent_dir(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -460,6 +464,7 @@ def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -484,6 +489,7 @@ def test_doctor_flags_missing_jetbrains_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -508,6 +514,7 @@ def test_doctor_flags_missing_jetbrains_idea_when_share_idea_on(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -535,6 +542,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_share_idea_off(tmp_pat
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -560,6 +568,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -573,6 +582,83 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
     tree = next(r for r in results if r.name == "shared_dir tree")
     assert tree.ok is True, tree.detail
     assert "jetbrains-idea" not in tree.detail
+
+
+def _cfg_with_gradle_pool(tmp_path):
+    """`_cfg` loads full_config.yaml, which has no `golden.stacks` and so no
+    gradle cache — the pool-root tests need a config that actually pools one."""
+    from jailbee.config import load_config_from_text
+
+    return load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+
+
+def _pool_row(results):
+    return next(r for r in results if r.name == "cache pool roots")
+
+
+def test_doctor_reports_unmigrated_pool_root(tmp_path):
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle" / "caches").mkdir(parents=True)
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "pre-pooling cache" in row.detail
+    assert "gradle" in row.detail
+    assert "jailbee apply" in row.detail
+
+
+def test_doctor_advises_apply_not_init_for_an_uncreated_pool_root(tmp_path):
+    """A pool root that does not exist yet, or exists but is empty, is not
+    "unmigrated" — and folding its `slots` subdir into the generic
+    `shared_dir tree` row advised `jailbee init`, which errors once profiles
+    exist. On every upgrade path the fix is `jailbee apply`."""
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle").mkdir(parents=True)  # empty root
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "layout not created" in row.detail
+    assert "jailbee apply" in row.detail
+    assert "jailbee init" not in row.detail
+
+
+def test_doctor_pool_row_is_ok_once_the_layout_exists(tmp_path):
+    from jailbee.pool import ensure_pools
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    ensure_pools(cfg)
+
+    row = _pool_row(_check_pool_roots(cfg))
+    assert row.ok is True
+    assert "gradle" in row.detail
+    # ...and `run_checks` actually emits it, so the row is wired in.
+    assert _pool_row(run_checks(cfg, _baseline_incus())).ok is True
+
+
+def test_doctor_pool_row_absent_when_nothing_is_pooled(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared", chrome={"enabled": False})
+    assert _check_pool_roots(cfg) == []
+
+
+def test_doctor_pool_reserved_entries_match_the_migrator(tmp_path):
+    """doctor classifies a pool root by `pool.RESERVED_ENTRIES` — the same
+    set `ensure_pool_dirs` migrates by. Re-spelling it inline let the two
+    drift, and doctor's report would then contradict what `apply` does."""
+    import jailbee.pool as pool_mod
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    pool_mod.ensure_pools(cfg)
+    for entry in pool_mod.RESERVED_ENTRIES:
+        assert (cfg.shared_dir / "caches" / "gradle" / entry).exists()
+    assert _pool_row(_check_pool_roots(cfg)).ok is True
 
 
 # ---------- github integration
@@ -1711,3 +1797,291 @@ def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, ma
     members = _credential_group_members(gcfg, "work", exclude=cfg.container_prefix)
 
     assert members == ["other-repo"]
+
+
+def test_doctor_is_silent_when_the_pool_is_empty(tmp_path, make_cfg, monkeypatch):
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    assert _check_claude_pool(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkeypatch):
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert "live@x.com" in results[0].detail
+    assert "1 parked" in results[0].detail
+
+
+def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatch):
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert "/login" in results[0].detail or "claude use" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(tmp_path, make_cfg, monkeypatch):
+    """A store holding nothing but a staging file is the one case where an
+    "empty" pool is not silent: that file is a login nothing else names."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    assert str(stage) in results[0].detail
+    assert "rename it to orphan@x.com.json" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The orphan is reported in addition to the ordinary pool line, not
+    instead of it."""
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 2
+    healthy = [r for r in results if r.ok]
+    failed = [r for r in results if not r.ok]
+    assert len(healthy) == 1
+    assert "live@x.com" in healthy[0].detail
+    assert len(failed) == 1
+    assert str(stage) in failed[0].detail
+    assert "rename it to orphan@x.com.json" in failed[0].detail
+
+
+def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A kill between the park and the write leaves exactly this state: the
+    login parked, the holder empty, and a staging file nothing else lists.
+    Both facts must be reported — the orphan is not swallowed by the failure."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "orphan@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert any(not r.ok and "orphan@x.com.json.activating" in r.detail for r in results)
+    assert any(not r.ok and "no live login" in r.detail for r in results)
+
+
+def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_cfg, monkeypatch):
+    """The staging file's own name can be taken by the time anyone reads this:
+    park a fresh login of the same account and it lands on exactly that name.
+    `mv` would overwrite it silently, so the advice must not be given."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+    orphan = next(r for r in results if "activating" in r.detail)
+
+    assert orphan.ok is False
+    assert "rename it to" not in orphan.detail
+    assert "already taken" in orphan.detail
+    assert "dup@x.com.json" in orphan.detail
+
+
+def _staged_grant(token: str) -> str:
+    """A credential whose refresh-token lineage is `token`."""
+    import json
+
+    return json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": token}})
+
+
+def test_doctor_says_a_staged_login_is_already_live_in_this_holder(tmp_path, make_cfg, monkeypatch):
+    """The likeliest post-kill state: the switch died between writing the
+    credential and unlinking its stage, so the grant is live *here*. Told only
+    that it "may be live in another repo's holder", a careful reader checks the
+    others, finds nothing, renames, and ends up with one refresh-token lineage
+    in two files. Doctor has `cfg`, so it can settle this case for free."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text(_staged_grant("one-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("one-lineage"), encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    detail = results[0].detail
+    assert "live in" in detail
+    assert "delete it" in detail
+    # The advice that would duplicate the lineage must not be given here.
+    assert "rename it to" not in detail
+
+
+def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A different grant is still unknowable from here — but the caveat now
+    names both ways it can already exist, not just the other-holder one."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(
+        _staged_grant("staged-lineage"), encoding="utf-8"
+    )
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "rename it to orphan@x.com.json" in detail
+    assert "parked under another name" in detail
+    assert "another repo's holder" in detail
+
+
+def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """Unreadable is not the same as "yes". An unreadable file falls back to the caveat
+    rather than telling the reader to delete a login."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text("not json", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text("not json", encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "delete it" not in detail
+    assert "rename it to orphan@x.com.json" in detail
+
+
+def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_cfg, monkeypatch):
+    """Deleting one of two logins is a destructive answer to "which do you
+    want?". Keeping both is the option that was missing."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("stored"), encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text(_staged_grant("staged"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "dup@x.com~<label>.json" in detail
+    assert "rename it to" not in detail
+
+
+def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The same-holder case must win even when the plain name is also taken:
+    telling a reader to park a live grant under a free name would give one
+    refresh-token lineage two files, which is exactly the harm the
+    same-holder check exists to prevent."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("other-stored"), encoding="utf-8")
+    stage = store / "dup@x.com.json.activating"
+    stage.write_text(_staged_grant("live-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("live-lineage"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "delete it" in detail
+    assert "dup@x.com~<label>.json" not in detail
+    assert "keep both" not in detail

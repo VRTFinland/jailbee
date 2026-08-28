@@ -155,7 +155,9 @@ typing a command.
 ## Limitations
 
 - Linux host only
-- One IDEA at a time across containers (shared JetBrains profile). Chrome
-  runs per-container with its own profile slot, seeded from the most recent
-  slot — see `jailbee chrome-pool ls` / `jailbee chrome-pool prune` to inspect or clean.
+- One IDEA at a time across containers (shared JetBrains profile). Chrome,
+  Gradle and Maven run per-container from their own pool slot instead,
+  seeded from the most recent slot — see `jailbee pool ls` /
+  `jailbee pool prune` to inspect or clean (`jailbee chrome-pool ls/prune`
+  is a deprecated alias scoped to Chrome).
 - NVIDIA GPU passthrough requires extra setup (not covered by `jailbee init`)

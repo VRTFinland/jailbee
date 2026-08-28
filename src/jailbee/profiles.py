@@ -357,6 +357,10 @@ def binds_profile_yaml(cfg: Config) -> str:
     shared = str(cfg.shared_dir)
 
     for cache in cfg.effective_shared_caches():
+        if cache.pool is not None:
+            # Pooled: attached per container by `pool.allocate`, because a
+            # profile-level mount is the sharing this exists to remove.
+            continue
         container_path = (
             cache.container_path.replace("~", home, 1)
             if cache.container_path.startswith("~")

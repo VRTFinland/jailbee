@@ -398,6 +398,7 @@ def init(config: ConfigOption = None) -> None:
     from jailbee.docker_daemon import mirror_wanted
     from jailbee.incus import Incus
     from jailbee.init_command import run_init
+    from jailbee.pool import PoolError
 
     cfg = _load_or_exit(config)
 
@@ -417,7 +418,7 @@ def init(config: ConfigOption = None) -> None:
 
     try:
         run_init(cfg, incus, mirror_endpoint=mirror_endpoint)
-    except RuntimeError as e:
+    except (RuntimeError, PoolError) as e:
         error(str(e))
         raise typer.Exit(1) from e
 
@@ -1844,11 +1845,13 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlmodel import Session
 
+    from jailbee import claude_pool
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.pool import Pool
     from jailbee.pr_flow import PrState
     from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import (
@@ -7409,16 +7412,261 @@ def chrome_cmd(
     open_chrome(cfg, incus, name, url or cfg.chrome.url)
 
 
-chrome_pool_app = typer.Typer(
-    name="chrome-pool",
-    help="Chrome profile pool management.",
+claude_app = typer.Typer(
+    name="claude",
+    help="Switch which stored Claude Code login this repo's containers use.",
     no_args_is_help=True,
 )
-app.add_typer(chrome_pool_app)
+app.add_typer(claude_app)
 
 
-@chrome_pool_app.command("ls")
-def chrome_pool_ls_cmd(
+def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
+    """The two configs every pool command needs."""
+    return _load_or_exit(config), _load_global()
+
+
+def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
+    from jailbee import table_format
+
+    return [
+        table_format.FieldSpec(
+            name="account",
+            header="ACCOUNT",
+            cell=lambda s: f"[bold]{s.name}[/bold]" if s.live else s.name,
+            json=lambda s: s.name,
+        ),
+        table_format.FieldSpec(
+            name="org",
+            header="ORG",
+            cell=lambda s: s.org_hint or "-",
+            json=lambda s: s.org_hint,
+        ),
+        table_format.FieldSpec(
+            name="state",
+            header="STATE",
+            cell=lambda s: "live" if s.live else "parked",
+            json=lambda s: "live" if s.live else "parked",
+        ),
+    ]
+
+
+def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str) -> None:
+    """The parts of a pool change that are the same for `use` and `park`.
+
+    `session_note` is the caller's, because the two commands leave a running
+    session in opposite states: `use` swaps one credential for another, while
+    `park` leaves the holder empty and that session unauthenticated. One shared
+    sentence would be a false reassurance in the command that removes auth.
+    """
+    if change.cleared:
+        info(f"Recorded account cleared in: {', '.join(change.cleared)}")
+    if change.not_cleared:
+        warn(
+            "Could not clear the recorded account in: "
+            f"{', '.join(change.not_cleared)}. Those repos keep naming the previous "
+            "account until their config is readable again — authentication is "
+            "unaffected."
+        )
+    if change.live_sessions:
+        warn(f"A Claude session looks live in: {', '.join(change.live_sessions)}. {session_note}")
+
+
+@claude_app.command("ls")
+def claude_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option("--fields", help="Comma-separated fields. Allowed: account, org, state."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List stored Claude logins and which one this repo's containers use."""
+    from jailbee import claude_pool
+    from jailbee.tui import console
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        slots = claude_pool.list_slots(cfg, gcfg)
+        found, unreachable = claude_pool.members(cfg, gcfg)
+    except (claude_pool.PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    table_format.emit(
+        slots,
+        _claude_fields(),
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title=f"Claude logins for {claude_pool.holder_dir(cfg)}",
+        empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
+    )
+    # A switch is holder-wide, so who else moves with it is part of reading
+    # this table — and the in-container skill promises the command says so.
+    # Table format only: the JSON payload is a row per slot, and a per-command
+    # fact does not belong in it.
+    if fmt == "table":
+        info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        if unreachable:
+            warn(
+                "Could not read the config of: "
+                f"{', '.join(unreachable)}. Those repos share this holder too."
+            )
+
+
+@claude_app.command("use")
+def claude_use_cmd(
+    ref: Annotated[
+        str, typer.Argument(help="Account email, or the full slot name for an exact match.")
+    ],
+    config: ConfigOption = None,
+) -> None:
+    """Switch this repo's containers to a stored login.
+
+    The switch is holder-wide: every repo sharing this credential group moves
+    with it. A running Claude session picks the new credential up on its next
+    turn — no restart.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        change = claude_pool.switch(cfg, gcfg, ref)
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    success(f"Switched to {change.activated}")
+    if change.parked_as is not None:
+        info(f"Parked the previous login as `{change.parked_as}`.")
+    _report_side_effects(
+        change,
+        session_note=(
+            "The credential swaps on that session's next turn; the account shown "
+            "in /status may lag until it restarts."
+        ),
+    )
+
+
+@claude_app.command("park")
+def claude_park_cmd(config: ConfigOption = None) -> None:
+    """Store the login in use and leave this repo's holder empty.
+
+    This is how a new account enters the pool: with no credential to find, the
+    next `claude` in a container of this holder prompts `/login`, and that
+    login lands straight in the holder.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        change = claude_pool.park(cfg, gcfg)
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if change.parked_as is None:
+        info("Nothing to park: this holder has no stored login.")
+        return
+    success(f"Parked `{change.parked_as}`")
+    _report_side_effects(
+        change,
+        session_note=(
+            "This holder is now empty, so that session has no login: it will ask "
+            "for /login on its next turn, unless you run `jailbee claude use "
+            "<account>` first."
+        ),
+    )
+    info("The next `claude` in a container of this holder will prompt /login.")
+
+
+@claude_app.command("rm")
+def claude_rm_cmd(
+    ref: Annotated[str, typer.Argument(help="Account email, or the full slot name.")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete a stored login permanently.
+
+    JailBee never contacts Anthropic, so a deleted login can only come back
+    through a browser `/login`.
+    """
+    from jailbee import claude_pool
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
+        # and a parked file is ambiguous for a switch but not for a deletion,
+        # and `rm` is the command that clears that state.
+        slot = claude_pool.resolve_removable(ref, claude_pool.list_slots(cfg, gcfg))
+        if slot.live:
+            # Pre-checked so the confirmation prompt is never shown for a
+            # deletion that `remove_slot` would refuse anyway.
+            raise claude_pool.PoolError(claude_pool.live_account_refusal(slot.name))
+    except (claude_pool.PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if not yes and not typer.confirm(
+        f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
+        default=False,
+    ):
+        raise typer.Exit(1)
+    try:
+        claude_pool.remove_slot(slot)
+    except (claude_pool.PoolError, OSError) as e:
+        error(f"could not delete `{slot.name}`: {e}")
+        raise typer.Exit(2) from e
+    success(f"Deleted `{slot.name}` — a browser /login is the only way back")
+
+
+pool_app = typer.Typer(
+    name="pool",
+    help="Per-container cache pool management.",
+    no_args_is_help=True,
+)
+app.add_typer(pool_app)
+
+
+def _pools_or_exit(cfg: "Config", name: str | None) -> "list[Pool]":
+    """Resolve the CLI's optional NAME argument to the pools to act on.
+
+    `None` means every configured pool. A given name is looked up with
+    `pool.get` (a single-pool lookup) rather than filtering the full
+    `pools_for` list ourselves, so a caller mocking `pool.get` (as the
+    `chrome-pool` alias tests do) controls this path directly.
+    """
+    from jailbee import pool as pool_mod
+
+    if name is None:
+        return pool_mod.pools_for(cfg)
+    found = pool_mod.get(cfg, name)
+    if found is not None:
+        return [found]
+    pools = pool_mod.pools_for(cfg)
+    error(f"No pooled cache named '{name}'. Pooled: {', '.join(p.name for p in pools) or '(none)'}")
+    raise typer.Exit(2)
+
+
+@pool_app.command("ls")
+def pool_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to list. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
     fmt: Annotated[
         str,
         typer.Option(
@@ -7433,36 +7681,44 @@ def chrome_pool_ls_cmd(
         typer.Option(
             "--fields",
             help=(
-                "Comma-separated list of fields to show. Allowed: slot, container, "
-                "login_data_mtime, size_bytes, size, path."
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
             ),
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """List Chrome profile pool slots."""
+    """List cache pool slots."""
     from datetime import datetime
 
-    from jailbee import chrome_pool
-    from jailbee.chrome_pool import SlotInfo
+    from jailbee import pool as pool_mod
     from jailbee.incus import Incus
     from jailbee.maintenance import humanize
+    from jailbee.pool import SlotInfo
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    slots = chrome_pool.list_slots(cfg, Incus())
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    slots = [s for p in selected for s in pool_mod.list_slots(cfg, incus, p)]
 
     def _mtime_cell(s: SlotInfo) -> str:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return "-"
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat(" ", "seconds")
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat(" ", "seconds")
 
     def _mtime_json(s: SlotInfo) -> str | None:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return None
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat()
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat()
 
     all_fields: list[table_format.FieldSpec[SlotInfo]] = [
+        table_format.FieldSpec(
+            name="pool",
+            header="POOL",
+            cell=lambda s: s.pool,
+            json=lambda s: s.pool,
+        ),
         table_format.FieldSpec(
             name="slot",
             header="SLOT",
@@ -7476,8 +7732,8 @@ def chrome_pool_ls_cmd(
             json=lambda s: s.container,
         ),
         table_format.FieldSpec(
-            name="login_data_mtime",
-            header="LOGIN DATA MTIME",
+            name="warmth_mtime",
+            header="WARMTH MTIME",
             cell=_mtime_cell,
             json=_mtime_json,
         ),
@@ -7513,20 +7769,78 @@ def chrome_pool_ls_cmd(
         fmt=fmt,
         fields=fields,
         console=console,
-        title="Chrome profile pool" if fmt == "table" else None,
+        title="Cache pools" if fmt == "table" else None,
         empty_message="[dim](pool is empty)[/dim]",
     )
+
+    if fmt == "table":
+        total = sum(pool_mod.unique_bytes(p) for p in selected)
+        console.print(f"[dim]total on disk (deduplicated): {humanize(total)}[/dim]")
+
+
+@pool_app.command("prune")
+def pool_prune_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to prune. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Delete all unallocated slots."""
+    from jailbee import pool as pool_mod
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    deleted = sum(pool_mod.prune(cfg, incus, p) for p in selected)
+    success(f"Pruned {deleted} free slots")
+
+
+chrome_pool_app = typer.Typer(
+    name="chrome-pool",
+    help="Deprecated alias for `jailbee pool` (Chrome profile pool).",
+    no_args_is_help=True,
+)
+app.add_typer(chrome_pool_app, hidden=True)
+
+
+@chrome_pool_app.command("ls")
+def chrome_pool_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee pool ls chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_ls_cmd(name="chrome-profile", fmt=fmt, fields=fields, config=config)
 
 
 @chrome_pool_app.command("prune")
 def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
-    """Delete all unallocated Chrome profile slots."""
-    from jailbee import chrome_pool
-    from jailbee.incus import Incus
-
-    cfg = _load_or_exit(config)
-    deleted = chrome_pool.prune(cfg, Incus())
-    success(f"Pruned {deleted} free slots")
+    """Deprecated: use `jailbee pool prune chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_prune_cmd(name="chrome-profile", config=config)
 
 
 @app.command("exec")
