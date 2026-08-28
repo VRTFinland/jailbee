@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-08-28
+
 ### Added
 
 - **`jailbee claude` switches which stored Claude login a repo's containers
