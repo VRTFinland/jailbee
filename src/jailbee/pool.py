@@ -17,10 +17,10 @@ from __future__ import annotations
 import fcntl
 import shutil
 import subprocess
-from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import IO
 

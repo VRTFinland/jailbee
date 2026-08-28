@@ -77,9 +77,7 @@ def run_init(
     from jailbee.pool import PoolError, preflight_pools
     from jailbee.tui import default_confirm
 
-    unresolved = preflight_pools(
-        cfg, confirm=default_confirm if _stdin_is_interactive() else None
-    )
+    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
     if unresolved:
         raise PoolError(
             f"cache pool {', '.join(unresolved)} holds both pool slots and loose "

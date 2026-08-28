@@ -14,8 +14,6 @@ tests/test_pool.py; these tests cover the wiring and the refusal.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -88,7 +86,9 @@ def _setup_boot(tmp_path, mocker):
     cfg = make_cfg(repo, shared_dir=tmp_path / "shared")
     object.__setattr__(cfg, "container_prefix", "myrepo")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "myrepo-feat-a"))
+    mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "myrepo-feat-a")
+    )
     mocker.patch("jailbee.cli._post_start_actions")
     return mocker.patch("jailbee.lifecycle.boot_container")
 
@@ -167,9 +167,8 @@ def test_preflight_prompts_on_a_terminal(tmp_path, mocker):
 def test_preflight_names_the_pool_and_the_way_out(tmp_path, mocker):
     """The message has to carry both, or it is the old "by hand" dead end
     with extra steps."""
-    import typer
-
     import pytest
+    import typer
 
     from jailbee.cli import _preflight_cache_pools
 

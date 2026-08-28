@@ -1332,9 +1332,7 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     from jailbee.pool import preflight_pools
     from jailbee.tui import default_confirm
 
-    unresolved = preflight_pools(
-        cfg, confirm=default_confirm if _stdin_is_interactive() else None
-    )
+    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
     if not unresolved:
         return
     error(
