@@ -300,7 +300,6 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     expected = [
         "caches/pnpm-store",
         "caches/gradle",
-        "chrome-pool/slots",
     ]
     if cfg.jetbrains.enabled:
         expected.append("jetbrains-config")
@@ -310,6 +309,35 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     for spec in enabled_agent_specs(cfg):
         expected.extend(spec.dir_subpaths)
+
+    from jailbee.pool import pools_for
+
+    pool_roots = pools_for(cfg)
+    # A pool root holding legacy (pre-migration) content alongside — or
+    # instead of — `slots`/`by-container` is reported by the `unmigrated`
+    # check below, not the generic "missing" one: it needs `jailbee apply`
+    # (a migration), not `jailbee init` (dirs that were never created).
+    unmigrated = [
+        pool.name
+        for pool in pool_roots
+        if pool.root.is_dir()
+        and any(e.name not in {"slots", "by-container", ".lock"} for e in pool.root.iterdir())
+    ]
+    for pool in pool_roots:
+        if pool.name in unmigrated:
+            continue
+        expected.append(str(pool.slots_dir.relative_to(cfg.shared_dir)))
+        expected.append(str(pool.by_container_dir.relative_to(cfg.shared_dir)))
+
+    if unmigrated:
+        results.append(
+            CheckResult(
+                "shared_dir tree",
+                False,
+                f"pool roots not migrated: {', '.join(unmigrated)} — run `jailbee apply`",
+            )
+        )
+
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
         results.append(

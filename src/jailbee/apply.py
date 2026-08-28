@@ -208,6 +208,13 @@ def run_apply(
     _ensure_user_shared_dirs(cfg)
     _ensure_integration_shared_dirs(cfg)
 
+    from jailbee.pool import ensure_pools, pools_for
+
+    ensure_pools(cfg)
+
+    if pools_for(cfg):
+        info("Pooled caches attach on next boot; running containers keep their current mount.")
+
     # Refresh jailbee's bundled skills in the shared ~/.claude/skills so existing
     # containers pick up a newer jailbee without recreation. Non-fatal.
     from jailbee.claude_skills import sync_jailbee_skills

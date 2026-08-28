@@ -346,6 +346,7 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -375,6 +376,7 @@ def test_doctor_flags_missing_claude_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -398,6 +400,7 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -432,6 +435,7 @@ def test_doctor_flags_missing_agent_dir(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -460,6 +464,7 @@ def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -484,6 +489,7 @@ def test_doctor_flags_missing_jetbrains_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -508,6 +514,7 @@ def test_doctor_flags_missing_jetbrains_idea_when_share_idea_on(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -535,6 +542,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_share_idea_off(tmp_pat
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -560,6 +568,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -573,6 +582,23 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
     tree = next(r for r in results if r.name == "shared_dir tree")
     assert tree.ok is True, tree.detail
     assert "jetbrains-idea" not in tree.detail
+
+
+def test_doctor_reports_unmigrated_pool_root(tmp_path):
+    """`_cfg` loads full_config.yaml, which has no `golden.stacks` and so no
+    gradle cache — this test needs a config that actually pools one."""
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    (cfg.shared_dir / "caches" / "gradle" / "caches").mkdir(parents=True)
+
+    results = run_checks(cfg, _baseline_incus())
+
+    tree = [r for r in results if r.name == "shared_dir tree" and not r.ok]
+    assert tree
+    assert "jailbee apply" in tree[0].detail
 
 
 # ---------- github integration

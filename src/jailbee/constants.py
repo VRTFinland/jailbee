@@ -46,13 +46,13 @@ CLAUDE_PLUGIN_HOSTS: tuple[str, ...] = (
     "registry.npmjs.org:443",
 )
 
+# Pool roots are NOT listed here: which caches are pooled depends on the
+# repo's config, so `init`/`apply` derive them from `pool.pools_for(cfg)`.
 SHARED_SUBDIRS = (
     "caches/pnpm-store",
     "caches/gradle",
     "caches/npm",
     "caches/m2",
-    "chrome-pool/slots",
-    "chrome-pool/by-container",
     "docker-registry",
     "ssh",
 )

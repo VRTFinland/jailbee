@@ -44,8 +44,6 @@ def test_init_creates_shared_dirs(tmp_path):
         "caches/gradle",
         "caches/npm",
         "caches/m2",
-        "chrome-pool/slots",
-        "chrome-pool/by-container",
         "docker-registry",
         "ssh",
     ]
@@ -55,6 +53,11 @@ def test_init_creates_shared_dirs(tmp_path):
     assert not (tmp_path / "shared" / "claude-install").exists()
     assert not (tmp_path / "shared" / "jetbrains-config").exists()
     assert not (tmp_path / "shared" / "jetbrains-data").exists()
+    # chrome-pool/{slots,by-container} are no longer in SHARED_SUBDIRS (Task
+    # 3): they must instead come from `run_init`'s `ensure_pools(cfg)` call,
+    # since the fixture's chrome.enabled=true makes chrome-profile a pool.
+    assert (tmp_path / "shared" / "chrome-pool" / "slots").is_dir()
+    assert (tmp_path / "shared" / "chrome-pool" / "by-container").is_dir()
 
 
 def test_run_init_does_not_create_jetbrains_subdirs_when_disabled(tmp_path):
