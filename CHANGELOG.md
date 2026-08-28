@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-08-28
+
 ### Fixed
 
 - **The upgrade hint no longer attributes a release's changes to an older

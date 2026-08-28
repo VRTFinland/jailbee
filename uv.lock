@@ -83,7 +83,7 @@ wheels = [
 
 [[package]]
 name = "jailbee"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
