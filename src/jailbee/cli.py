@@ -398,6 +398,7 @@ def init(config: ConfigOption = None) -> None:
     from jailbee.docker_daemon import mirror_wanted
     from jailbee.incus import Incus
     from jailbee.init_command import run_init
+    from jailbee.pool import PoolError
 
     cfg = _load_or_exit(config)
 
@@ -417,7 +418,7 @@ def init(config: ConfigOption = None) -> None:
 
     try:
         run_init(cfg, incus, mirror_endpoint=mirror_endpoint)
-    except RuntimeError as e:
+    except (RuntimeError, PoolError) as e:
         error(str(e))
         raise typer.Exit(1) from e
 
