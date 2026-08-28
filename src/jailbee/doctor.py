@@ -709,9 +709,7 @@ def _check_pool_roots(cfg: Config) -> list[CheckResult]:
     unmigrated: list[str] = []
     uncreated: list[str] = []
     for pool in pools:
-        if pool.root.is_dir() and any(
-            e.name not in RESERVED_ENTRIES for e in pool.root.iterdir()
-        ):
+        if pool.root.is_dir() and any(e.name not in RESERVED_ENTRIES for e in pool.root.iterdir()):
             unmigrated.append(pool.name)
         elif not (pool.slots_dir.is_dir() and pool.by_container_dir.is_dir()):
             uncreated.append(pool.name)

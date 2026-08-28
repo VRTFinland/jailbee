@@ -19,7 +19,7 @@ import shutil
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
@@ -37,7 +37,11 @@ class Pool:
     name: str
     root: Path
     container_path: str
-    spec: PoolSpec
+    # hash=False: `frozen=True` generates `__hash__`, and hashing a pydantic
+    # model with `list[str]` fields raises TypeError. `frozen=True` on
+    # `PoolSpec` would not help — pydantic's generated hash chokes on the
+    # lists just the same. The three fields above identify a pool anyway.
+    spec: PoolSpec = field(hash=False)
 
     @property
     def device_name(self) -> str:

@@ -48,6 +48,16 @@ def test_device_name_is_derived_from_the_cache_name(tmp_path):
     assert _pool(tmp_path).device_name == "gradle-slot"
 
 
+def test_a_pool_is_hashable(tmp_path):
+    """`Pool` is `frozen=True`, so it gets a generated `__hash__` — which
+    raised TypeError on the `PoolSpec` field, because hashing a pydantic
+    model with `list[str]` fields is not possible. `field(hash=False)`
+    excludes it; `frozen=True` on `PoolSpec` would not have helped."""
+    p = _pool(tmp_path, link_paths=["files"], stale_globs=["**/*.lock"])
+    assert hash(p) == hash(_pool(tmp_path, link_paths=["files"], stale_globs=["**/*.lock"]))
+    assert len({p, p}) == 1
+
+
 def test_chrome_pool_keeps_its_legacy_device_name(tmp_path):
     """Existing containers carry `chrome-profile-slot`; renaming strands them."""
     p = pool.get(_cfg(tmp_path), "chrome-profile")

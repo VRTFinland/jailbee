@@ -188,9 +188,12 @@ itself:
   are derived from each `shared[].subpath`. The two coincide for every
   shipped preset only because each preset names its subpath after the agent.
 - `enabled: true` requires a non-empty `command`.
-- A `shared` subpath may not collide with a built-in shared subdir (the
-  `caches/*`, `chrome-pool/*`, `docker-registry`, `ssh` names `jailbee`
-  itself uses).
+- A `shared` subpath may not collide with a built-in shared subdir — the
+  `constants.SHARED_SUBDIRS` names `jailbee` itself uses: `caches/pnpm-store`,
+  `caches/gradle`, `caches/npm`, `caches/m2`, `docker-registry`, `ssh`.
+  (`chrome-pool` is *not* in that list: it is a cache pool root, managed by
+  `pool.py` rather than created as a shared subdir, so this guard does not
+  cover it.)
 - Two agents may share the exact same subpath only if they mount it to the
   same `path`/`type` — a conflicting reuse is rejected.
 
