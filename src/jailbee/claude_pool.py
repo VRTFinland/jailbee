@@ -26,12 +26,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from jailbee.claude_locks import ClaudeLockTimeout, config_lock, credential_locks
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -419,3 +425,182 @@ def live_session_prefixes(found: Sequence[Member]) -> list[str]:
         except OSError:
             continue
     return sorted(busy)
+
+
+@dataclass(frozen=True)
+class PoolChange:
+    """What one pool operation did, for the CLI to report."""
+
+    parked_as: str | None
+    activated: str | None
+    cleared: list[str]
+    not_cleared: list[str]
+    live_sessions: list[str]
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Replace `path` atomically, mode 0600.
+
+    The temporary file is created in the destination directory so the replace
+    is a same-filesystem rename, and its mode is set *before* the replace so
+    the final path is never briefly world-readable.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    tmp = Path(name)
+    try:
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+        tmp.chmod(0o600)
+        tmp.replace(path)
+    except BaseException:
+        with suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
+    """Every slot for this holder, live last-resolved identity alongside."""
+    identity = live_identity(found, prefer=cfg.container_prefix)
+    slots = parked_slots()
+    live = live_slot(cfg, identity)
+    if live is not None:
+        slots.append(live)
+    return sorted(slots, key=lambda s: (not s.live, s.name)), identity
+
+
+def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
+    """Every stored login, the live one first."""
+    found, _ = members(cfg, gcfg)
+    return _slots_for(cfg, found)[0]
+
+
+def invalidate_identity(home: Path) -> bool:
+    """Delete `oauthAccount` so Claude Code repopulates it from the credential.
+
+    Returns whether the config home is now consistent — True also when there
+    was nothing to delete. False means the file exists but could not be read
+    or written; it is **never** overwritten in that case, because a torn
+    `.claude.json` still holds the user's projects and MCP servers and an
+    `or {}` here would erase them.
+    """
+    path = identity_file(home)
+    try:
+        with config_lock(home):
+            if not path.exists():
+                return True
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return False
+            if "oauthAccount" not in data:
+                return True
+            del data["oauthAccount"]
+            _atomic_write(path, json.dumps(data, indent=2))
+    except (ClaudeLockTimeout, OSError, json.JSONDecodeError):
+        return False
+    return True
+
+
+def _clear_identities(found: Sequence[Member], unreachable: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Delete every member's recorded account; report which ones took."""
+    cleared: list[str] = []
+    not_cleared: list[str] = list(unreachable)
+    for member in found:
+        target = cleared if invalidate_identity(member.config_home) else not_cleared
+        target.append(member.container_prefix)
+    return sorted(cleared), sorted(not_cleared)
+
+
+def _park_locked(cfg: Config, identity: Identity | None, when: datetime) -> str | None:
+    """Move the live credential into the store. Caller holds the lock.
+
+    `shutil.move` rather than `Path.replace`: `shared_dir` is user-overridable,
+    so the holder and the store can live on different filesystems, where a
+    rename raises `EXDEV`. Same-filesystem moves stay atomic renames.
+    """
+    live = live_credential_path(cfg)
+    if not live.exists():
+        return None
+    name = slug_for(identity) if identity is not None else unknown_slot_name(when)
+    store = store_dir()
+    store.mkdir(parents=True, exist_ok=True)
+    dest = store / f"{name}.json"
+    if dest.exists():
+        raise PoolError(
+            f"the store already holds `{name}` ({dest}). Two files would be two "
+            "copies of one login, and the first token rotation would kill the "
+            "other — remove or rename one of them first."
+        )
+    shutil.move(str(live), str(dest))
+    return name
+
+
+def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> PoolChange:
+    """Store the live login and leave the holder empty.
+
+    This is how a *new* account enters the pool: with no credential to find,
+    the next `claude` in any member container prompts `/login`, and that login
+    lands straight in the holder.
+    """
+    found, unreachable = members(cfg, gcfg)
+    identity = live_identity(found, prefer=cfg.container_prefix)
+    holder = holder_dir(cfg)
+    holder.mkdir(parents=True, exist_ok=True)
+    with credential_locks(holder):
+        parked_as = _park_locked(cfg, identity, now or datetime.now())
+    if parked_as is None:
+        return PoolChange(None, None, [], list(unreachable), [])
+    cleared, not_cleared = _clear_identities(found, unreachable)
+    return PoolChange(parked_as, None, cleared, not_cleared, live_session_prefixes(found))
+
+
+def switch(
+    cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = None
+) -> PoolChange:
+    """Park the live login and activate a stored one.
+
+    The target is renamed out of the store *before* anything else moves, so no
+    failure path can leave one grant in two files. On any error both files go
+    back where they were.
+    """
+    found, unreachable = members(cfg, gcfg)
+    slots, identity = _slots_for(cfg, found)
+    target = resolve_ref(ref, slots)
+    if target.live:
+        raise PoolError(f"`{target.name}` is already the live account for this holder.")
+
+    holder = holder_dir(cfg)
+    holder.mkdir(parents=True, exist_ok=True)
+    live_path = live_credential_path(cfg)
+    staged = target.path.with_name(target.path.name + ".activating")
+
+    with credential_locks(holder):
+        target_raw = target.path.read_text(encoding="utf-8")
+        live_raw = live_path.read_text(encoding="utf-8") if live_path.exists() else None
+        target.path.replace(staged)
+        parked_as: str | None = None
+        try:
+            parked_as = _park_locked(cfg, identity, now or datetime.now())
+            _atomic_write(live_path, compose_credential(target_raw, shared_fields(live_raw)))
+        except BaseException:
+            if parked_as is not None:
+                shutil.move(str(store_dir() / f"{parked_as}.json"), str(live_path))
+            staged.replace(target.path)
+            raise
+        staged.unlink()
+
+    cleared, not_cleared = _clear_identities(found, unreachable)
+    return PoolChange(
+        parked_as, target.name, cleared, not_cleared, live_session_prefixes(found)
+    )
+
+
+def remove_slot(slot: Slot) -> None:
+    """Delete a parked login permanently."""
+    if slot.live:
+        raise PoolError(
+            f"`{slot.name}` is the live account — run `jailbee claude park` first."
+        )
+    slot.path.unlink()

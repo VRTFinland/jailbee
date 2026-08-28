@@ -454,3 +454,237 @@ def test_live_session_prefixes_reports_members_with_session_files(
     found = [claude_pool.Member("busy", busy), claude_pool.Member("idle", idle)]
 
     assert claude_pool.live_session_prefixes(found) == ["busy"]
+
+
+def _holder_with(cfg, raw: str) -> Path:
+    path = claude_pool.live_credential_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw, encoding="utf-8")
+    return path
+
+
+def test_park_names_the_slot_after_the_live_identity(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    change = claude_pool.park(cfg, GlobalConfig())
+
+    assert change.parked_as == "me@corp.com"
+    assert (claude_pool.store_dir() / "me@corp.com.json").read_text() == _cred()
+    assert not claude_pool.live_credential_path(cfg).exists()
+
+
+def test_park_falls_back_to_a_timestamped_name(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+
+    change = claude_pool.park(cfg, GlobalConfig(), now=datetime(2026, 8, 28, 10, 42, 33))
+
+    assert change.parked_as == "unknown-20260828-104233"
+
+
+def test_park_of_an_empty_holder_changes_nothing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+
+    change = claude_pool.park(cfg, GlobalConfig())
+
+    assert change.parked_as is None
+    assert claude_pool.parked_slots() == []
+
+
+def test_park_refuses_to_create_a_second_copy(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "me@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.park(cfg, GlobalConfig())
+
+    assert "me@corp.com" in str(excinfo.value)
+    # The live credential is untouched: a refused park must not lose a login.
+    assert claude_pool.live_credential_path(cfg).exists()
+
+
+def test_park_clears_the_recorded_account(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "me@corp.com"})
+
+    change = claude_pool.park(cfg, GlobalConfig())
+
+    assert change.cleared == [cfg.container_prefix]
+    data = json.loads((home / ".claude.json").read_text())
+    assert "oauthAccount" not in data
+    # Everything else in the file survives.
+    assert data["projects"] == {"/x": {}}
+
+
+def test_switch_parks_the_live_login_and_activates_the_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = _park(tmp_path, "new@corp.com", monkeypatch)
+    target.write_text(json.dumps({"claudeAiOauth": {"accessToken": "new"}}), encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred(mcpOAuth={"live": True}))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert change.activated == "new@corp.com"
+    assert change.parked_as == "old@corp.com"
+    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    assert live["claudeAiOauth"] == {"accessToken": "new"}
+    # The machine's live MCP tokens came across; the target's stale ones did not.
+    assert live["mcpOAuth"] == {"live": True}
+    # Exactly one file per login: the target is gone from the store.
+    assert not target.exists()
+    assert [s.name for s in claude_pool.parked_slots()] == ["old@corp.com"]
+
+
+def test_switch_into_an_empty_holder_parks_nothing(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert change.parked_as is None
+    assert change.activated == "new@corp.com"
+    assert claude_pool.live_credential_path(cfg).exists()
+
+
+def test_switch_refuses_the_account_already_live(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    _holder_with(cfg, _cred())
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+
+    with pytest.raises(claude_pool.PoolError) as excinfo:
+        claude_pool.switch(cfg, GlobalConfig(), "me@corp.com")
+
+    assert "already" in str(excinfo.value).lower()
+
+
+def test_switch_writes_the_credential_readable_only_by_its_owner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+
+    claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    mode = claude_pool.live_credential_path(cfg).stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_switch_restores_both_files_when_activation_fails(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    target = _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    live = _holder_with(cfg, _cred())
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
+
+    with pytest.raises(OSError):
+        claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert live.read_text() == _cred()
+    assert target.exists()
+    assert not (claude_pool.store_dir() / "old@corp.com.json").exists()
+
+
+def test_switch_clears_the_account_in_every_member_including_this_repo(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    _no_git(mocker)
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path, group="work")
+    other = tmp_path / "other"
+    _write_repo(other, shared=tmp_path / "other-shared")
+    _register("other", other)
+    _register(cfg.container_prefix, tmp_path / "repo")
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+    _write_identity(tmp_path / "other-shared" / "claude", {"emailAddress": "old@corp.com"})
+
+    change = claude_pool.switch(cfg, gcfg, "new@corp.com")
+
+    assert change.cleared == sorted([cfg.container_prefix, "other"])
+    for home in (
+        claude_pool.config_home(cfg),
+        tmp_path / "other-shared" / "claude",
+    ):
+        assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
+
+
+def test_switch_names_a_member_whose_config_file_is_torn(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True, exist_ok=True)
+    (home / ".claude.json").write_text('{"oauthAccount": {"emai', encoding="utf-8")
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert change.not_cleared == [cfg.container_prefix]
+    # A file we could not read is never overwritten.
+    assert (home / ".claude.json").read_text() == '{"oauthAccount": {"emai'
+
+
+def test_switch_reports_a_member_that_looks_busy(tmp_path: Path, monkeypatch) -> None:
+    _park(tmp_path, "new@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path)
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    sessions = claude_pool.config_home(cfg) / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "77.json").write_text("{}", encoding="utf-8")
+
+    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
+
+    assert change.live_sessions == [cfg.container_prefix]
+
+
+def test_park_use_park_round_trip_preserves_the_login(tmp_path: Path, monkeypatch) -> None:
+    """The spec's core promise: a login that goes out and comes back is the
+    same login, byte for byte in its `claudeAiOauth` block."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path)
+    original = json.dumps(
+        {"claudeAiOauth": {"accessToken": "a", "refreshToken": "b", "expiresAt": 123}}
+    )
+    _holder_with(cfg, original)
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "first@x.com"})
+
+    claude_pool.park(cfg, GlobalConfig())
+    _holder_with(cfg, json.dumps({"claudeAiOauth": {"accessToken": "second"}}))
+    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "second@x.com"})
+    claude_pool.switch(cfg, GlobalConfig(), "first@x.com")
+
+    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    assert live["claudeAiOauth"] == json.loads(original)["claudeAiOauth"]
+    assert [s.name for s in claude_pool.parked_slots()] == ["second@x.com"]
+
+
+def test_remove_slot_refuses_the_live_account(tmp_path: Path) -> None:
+    live = Slot(name="me@corp.com", path=tmp_path / "c.json", live=True)
+    with pytest.raises(claude_pool.PoolError):
+        claude_pool.remove_slot(live)
+
+
+def test_remove_slot_deletes_a_parked_file(tmp_path: Path, monkeypatch) -> None:
+    path = _park(tmp_path, "old@corp.com", monkeypatch)
+    claude_pool.remove_slot(Slot(name="old@corp.com", path=path, live=False))
+    assert not path.exists()
