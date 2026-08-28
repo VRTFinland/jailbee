@@ -3001,3 +3001,127 @@ incus exec <container> -- systemctl --user --machine=dev@ --failed
 Audio is the other half of the same fix: with `pulse-socket` read-only,
 `jb chrome` (or any GUI app) must still play sound from inside the container,
 and the host's own audio must survive the container's boot.
+
+## Cache pool smoke test (`pool.py`, `pooled_caches`)
+
+`src/jailbee/pool.py`'s unit tests mock `subprocess`/Incus throughout, except
+`test_seed_really_hardlinks_link_paths_and_really_copies_the_rest` in
+`tests/test_pool.py`, which runs a real `rsync` against a `tmp_path` fixture
+(skipped if `rsync` isn't installed) and proves hardlinking in isolation.
+None of that proves the three things the feature actually exists for: that
+Gradle stops blocking on `Waiting to acquire ... lock` with two containers
+up, that migrating a real multi-gigabyte cache into `slot-0` behaves, and
+that Incus accepts the `<cache>-slot` disk device on a container that's
+already running. Needs a real Incus daemon and a repo with `golden.stacks:
+{java: true}` (or an equivalent `shared_caches`/`pooled_caches` setup).
+
+### 1. Real hardlinks across slots
+
+```bash
+jb new hardlink-test
+jb new hardlink-test-2
+# Run (or repeat) a Gradle build in each container first, so both slots
+# actually hold artifacts — a build against an empty cache has nothing to
+# hardlink and this check would pass vacuously.
+
+find <shared_dir>/caches/gradle/slots -name '*.jar' -links +1 | head
+# expect: non-empty — a jar with link count > 1 is the same inode in more
+# than one slot, i.e. actually shared rather than copied.
+
+jb pool ls gradle
+# expect: per-slot SIZE values that, summed, considerably overstate the
+# real footprint (each slot recounts every hardlinked jar); the printed
+# "total on disk (deduplicated)" footer is the number that matters — it
+# counts each inode once (see `pool.unique_bytes`) and should be close to
+# the size of one warm ~/.gradle, not N times that.
+```
+
+### 2. A second container's Gradle build no longer waits on the first
+
+This is the actual bug this feature fixes — reproduce it once against a
+repo predating the change (or with `pooled_caches: {gradle: false}`) before
+confirming the fix, or a passing run proves nothing:
+
+```bash
+# Baseline (pooling off): with a real ~/.gradle shared mount, start a build
+# with a long-held daemon/lock in one container...
+jb exec repro-a -- bash -c 'cd <repo> && ./gradlew build --no-daemon &
+                             sleep 2 && ./gradlew help' # or any two overlapping invocations
+# ...and a concurrent build in a second container of the same repo.
+jb exec repro-b -- ./gradlew build
+# expect (pooling off): the second build's output includes
+# "Waiting to acquire ... lock" and it stalls until the first releases it.
+
+# Now with pooling on (the default) for the same repo. `jailbee apply` only
+# creates the pool layout on disk — a container already running keeps its
+# old shared mount until it next boots, so restart both to actually pick up
+# a slot:
+jb apply
+jb restart repro-a
+jb restart repro-b
+jb pool ls gradle
+# expect: one slot per running container, no two containers sharing a slot
+
+jb exec repro-a -- ./gradlew build &
+jb exec repro-b -- ./gradlew build
+wait
+# expect: both complete without ever printing "Waiting to acquire ... lock" —
+# each container's Gradle daemon holds a lock on its own private slot.
+```
+
+### 3. Slot-0 migration on a multi-gigabyte cache
+
+Unit tests exercise `ensure_pool_dirs`'s migration against tiny synthetic
+directories; they can't show that moving a real, multi-gigabyte `~/.gradle`
+behaves — in particular that `shutil.move` (used because the pool root and
+the destination slot are on the same filesystem) is a rename and not a
+slow, space-doubling copy, and that nothing partially moves on failure.
+
+```bash
+# A repo with a real, multi-GB pre-pooling cache — either an existing repo
+# that's been building for a while, or seed one:
+du -sh <shared_dir>/caches/gradle       # note the size; should be several GB
+
+jailbee apply
+# expect: near-instant even for a multi-GB cache (same-filesystem rename,
+# not a copy) — time it if the size is large enough to notice a copy.
+# Console should print "Migrated the existing gradle cache into .../slot-0"
+
+du -sh <shared_dir>/caches/gradle/slots/slot-0
+# expect: same size as the pre-migration figure above — nothing lost
+
+ls <shared_dir>/caches/gradle
+# expect: only slots/, by-container/, .lock — no loose cache content left
+# directly under the pool root
+
+jailbee doctor
+# expect: no "pool roots not migrated" line for gradle
+```
+
+### 4. Incus accepts the pool device on an already-running container
+
+`boot_container` calls `allocate_startup` — which calls `incus config
+device add` — **before** it issues the actual `incus restart`, so the add
+happens against a container Incus still considers Running, not one that's
+already stopped. This ordering is the one part of the mechanism no mock can
+validate, since the unit tests fake the Incus client entirely.
+
+```bash
+# A container created before gradle pooling was turned on for this repo
+# (or with pooled_caches: {gradle: false} at creation time), left running:
+incus list <prefix>-live-attach-test --format csv -c s
+# expect: RUNNING
+jb pool ls gradle
+# expect: no slot for live-attach-test yet
+
+jb apply                    # picks up the config change, creates the pool layout
+jb restart live-attach-test # boot_container: allocate_startup runs while
+                             # the container is still Running, *then* restarts it
+
+incus config device show <prefix>-live-attach-test | grep -A3 gradle-slot
+# expect: a "disk" device named gradle-slot, source pointing at a real
+# slots/slot-N directory — added without Incus rejecting the live device add
+
+jb exec live-attach-test -- ls ~/.gradle
+# expect: the slot's contents visible inside the container after the restart
+```

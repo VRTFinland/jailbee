@@ -24,7 +24,8 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `optional_mounts` | dict of name → `{host, container, readonly, description}` | `{}` | repo |
 | `host_devices` | list of `{path, source, type, mode, gid, uid, group}` | `[]` | repo |
 | `host_ports` | list of `{name, port, host_port, proto, host_address, container_address}` | `[]` | repo |
-| `shared_caches` | list of `{name, host_subpath, container_path}` | bundled defaults (see below) | repo (rarely overridden) |
+| `shared_caches` | list of `{name, host_subpath, container_path, pool}` | `ssh` only (see below) | repo (rarely overridden) |
+| `pooled_caches` | dict of `name` → bool | `{}` | repo, or global for a personal override |
 | `share_local` | bool | `true` | repo |
 | `egress_allow` | list of strings | `[]` | global for cross-cutting, repo appends |
 | `defaults` | `{memory, cpu, network, storage_pool}` | `16GiB/8/strict/default` | repo |
@@ -132,23 +133,95 @@ Entries are attached by `jailbee new` and reconciled by `jailbee apply` (added /
 
 ## `shared_caches`
 
-Bind-mounts from `<shared_dir>/<host_subpath>` into the container at `container_path`. `container_path` may start with `~` (expands to `/home/dev`). Default set:
+Bind-mounts from `<shared_dir>/<host_subpath>` into the container at `container_path`. `container_path` may start with `~` (expands to `/home/dev`). The literal default (`shared_caches:` unset) is stack-neutral — `ssh` only:
 
 | name | host_subpath | container_path |
 |---|---|---|
-| `pnpm-store` | `caches/pnpm-store` | `~/.local/share/pnpm/store` |
-| `gradle` | `caches/gradle` | `~/.gradle` |
-| `npm` | `caches/npm` | `~/.npm` |
-| `m2` | `caches/m2` | `~/.m2` |
-| `jetbrains-config` | `jetbrains-config` | `~/.config/JetBrains` |
-| `jetbrains-data` | `jetbrains-data` | `~/.local/share/JetBrains` |
 | `ssh` | `ssh` | `~/.ssh` |
 
-> The claude shared caches are *not* defaults; they are appended by
-> `Config.effective_shared_caches()` when `claude.enabled: true`. See
-> `## claude` below.
+Everything else here is **auto-added**, not part of the literal default, by
+`Config.effective_shared_caches()`:
 
-Override with `shared_caches: [...]` to replace entirely, or `shared_caches: []` to disable. `name` must match `[a-z0-9][a-z0-9-]*` and be unique. `container_path` must be absolute or start with `~`.
+| name | host_subpath | container_path | added when |
+|---|---|---|---|
+| `pnpm-store` | `caches/pnpm-store` | `~/.local/share/pnpm/store` | `golden.stacks.node` enabled |
+| `npm` | `caches/npm` | `~/.npm` | `golden.stacks.node` enabled |
+| `gradle` | `caches/gradle` | `~/.gradle` | `golden.stacks.java` enabled |
+| `m2` | `caches/m2` | `~/.m2` | `golden.stacks.java` enabled |
+| `jetbrains-config` | `jetbrains-config` | `~/.config/JetBrains` | `jetbrains.enabled: true` |
+| `jetbrains-data` | `jetbrains-data` | `~/.local/share/JetBrains` | `jetbrains.enabled: true` |
+| `chrome-profile` | `chrome-pool` | `~/.config/google-chrome` | `chrome.enabled: true` |
+
+> The claude shared caches (`claude`, `claude-install`) are auto-added the
+> same way, when `claude.enabled: true`. See `## claude` below.
+
+A manual entry in `shared_caches:` whose `name` matches an auto-add
+suppresses it — write your own `host_subpath`/`container_path` for that
+name to override just it. Override the whole list with `shared_caches: [...]`, or `shared_caches: []` to disable defaults and auto-adds alike. `name` must match `[a-z0-9][a-z0-9-]*` and be unique. `container_path` must be absolute or start with `~`.
+
+## `pooled_caches`
+
+Turns a `shared_caches` entry into a per-container **pool** instead of a
+plain shared mount: each container gets its own slot directory under
+`<shared_dir>/<host_subpath>/slots/`, attached as a disk device named
+`<cache name>-slot`, seeded from the warmest existing slot. This is for
+caches whose tool takes an inter-process lock on the cache directory —
+sharing one mount meant one container's lock blocked or failed every other
+container's build.
+
+```yaml
+pooled_caches:
+  gradle: true    # explicit, though gradle already defaults on
+  npm: true       # opt in to a shipped-but-off-by-default preset
+  m2: false       # opt out of a default-on preset, keep it a shared mount
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `pooled_caches` | dict of `name` → bool | `{}` | `true`/`false` overrides pooling for a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`). A key naming a cache with no builtin preset is a `ConfigError` unless that cache's own `shared_caches` entry carries an explicit `pool:` block. |
+
+Builtin presets and their `default_on` (absent keys follow this):
+
+| name | `default_on` | hardlinked (`link_paths`) |
+|---|---|---|
+| `gradle` | `true` | `caches/modules-2/files-2.1`, `wrapper/dists` |
+| `m2` | `true` | `repository` |
+| `chrome-profile` | `true` | none (Chrome rewrites its state files in place) |
+| `npm` | `false` | `_cacache` |
+| `pnpm-store` | `false` | `v3/files` |
+
+It's a dict, not a list, so global and repo config merge it per key
+(the generic dict deep-merge rule) instead of one appending to the other.
+
+For a cache with no preset — including a custom `shared_caches` entry —
+pool it by giving that entry its own `pool:` block (`SharedCache.pool`)
+instead of a `pooled_caches` key:
+
+```yaml
+shared_caches:
+  - name: my-tool-cache
+    host_subpath: my-tool
+    container_path: ~/.cache/my-tool
+    pool:
+      link_paths: [blobs]      # written once, deleted whole — safe to hardlink
+      stale_globs: ["*.lock"]  # cleaned on release, excluded from seeding
+```
+
+**`link_paths` may only name subtrees whose files are written once and
+later deleted whole, never modified in place** — hardlinking a lock file or
+an in-place-rewritten file would restore exactly the cross-container
+sharing pooling exists to remove.
+
+**An explicit `pool:` block always overrides `pooled_caches`** — even
+`pooled_caches: {my-tool-cache: false}` doesn't un-pool an entry that
+carries its own `pool:` block, and setting `pool:` on one of the five
+presets above replaces its builtin `PoolSpec` rather than merging into it.
+
+`jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` inspect and clean
+slots. `jailbee init`/`jailbee apply` create the pool layout and migrate a
+pre-existing cache into `slots/slot-0` so it stays warm as the seed source;
+a container already running when a pool is created keeps its old shared
+mount until it next restarts.
 
 ## `egress_allow` — strict-mode allowlist
 

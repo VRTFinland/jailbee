@@ -225,6 +225,42 @@
   `golden.python` deprecation — this now makes `config validate` exit 2 for a
   config that previously validated clean, so upgrading can turn a green CI or
   pre-commit hook red until the block is removed.
+- **Generic cache pools: `pooled_caches`, and Gradle/Maven join Chrome as
+  per-container instead of shared.** A repo's containers used to share one
+  `~/.gradle` (and one `~/.m2`) through a single profile-level bind mount, so
+  Gradle and Maven's own inter-process lock on the cache directory was
+  shared across containers too — a build in one container made every other
+  container's build wait on that lock, or fail once it timed out, which in
+  practice surfaced as an agent process timing out inside a container. The
+  mechanism `chrome_pool.py` already used for Chrome's profile is now
+  generic (`pool.py`), and applies to any cache named in the new
+  `pooled_caches: {name: bool}` config key or carrying its own `pool:`
+  block on a `shared_caches` entry (`SharedCache.pool`). `POOL_PRESETS`
+  ships built-in specs for `gradle`, `m2`, `npm`, `pnpm-store` and
+  `chrome-profile`; `gradle`, `m2` and `chrome-profile` default on, while
+  `npm` and `pnpm-store` ship a preset but leave pooling to an explicit
+  `pooled_caches: {npm: true}` / `{pnpm-store: true}`. A pooled cache is
+  not a shared mount: each container gets its own slot directory under
+  `<shared_dir>/<host_subpath>/slots/`, attached as a disk device named
+  `<cache name>-slot`, allocated at container creation and on every boot (or
+  on demand, for Chrome) and released at `jailbee destroy`. A fresh slot is
+  seeded by copying the warmest existing slot, with each preset's
+  `link_paths` subtrees hardlinked instead of copied — a multi-gigabyte
+  Gradle module cache or Maven repository costs almost nothing per extra
+  container this way. `link_paths` may only name subtrees written once and
+  later deleted whole, never rewritten in place: hardlinking a lock file
+  would restore exactly the cross-container sharing pooling exists to
+  remove. `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` replace
+  `jailbee chrome-pool ls/prune`, which remains a hidden, deprecated alias
+  scoped to the Chrome pool; `pool ls`'s footer prints the deduplicated
+  on-disk total, since summing per-slot sizes counts every hardlinked file
+  once per slot and over-reports severalfold. `jailbee init` and
+  `jailbee apply` create the pool layout and migrate a pre-existing cache
+  sitting directly under the pool root into `slots/slot-0`, so it stays warm
+  as the first seed rather than being discarded; a container already
+  running when a pool is created keeps its old shared mount until it next
+  boots. `jailbee doctor` reports a pool root that still needs migrating.
+  See [`pooled_caches`](docs/config.md#pooled_caches).
 
 ### Fixed
 

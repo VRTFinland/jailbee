@@ -70,14 +70,22 @@ apply via `jailbee apply` without rebuilding the container.
 
 ## Shared state
 
-`<shared_dir>` (default `~/.local/share/jailbee/shared/<container_prefix>`) is
-bind-mounted read-write into every container for the repo. It holds package
-manager caches (pnpm, Gradle, npm, m2), the JetBrains config/data directories,
-the Chrome profile pool, and the Claude Code install + config — state that
-should persist across `jailbee new`/`jailbee destroy` cycles and be shared between a
-repo's containers, but never leak into the host's own dotfiles. A separate
-host-global Docker registry mirror container (`jailbee-registry-mirror`) caches
-image pulls across all repos.
+`<shared_dir>` (default `~/.local/share/jailbee/shared/<container_prefix>`)
+holds state that should persist across `jailbee new`/`jailbee destroy`
+cycles and be visible to a repo's other containers, but never leak into the
+host's own dotfiles: package manager caches (pnpm, Gradle, npm, m2), the
+JetBrains config/data directories, and the Claude Code install + config.
+Most of it is a genuine **shared mount** — bind-mounted read-write into
+every container of the repo at once, so one container's writes are visible
+to the next. A subset instead lives in **pool slots**: Gradle, Maven and
+the Chrome profile default to one private copy per container
+(`<shared_dir>/<host_subpath>/slots/`, attached as a disk device, seeded
+from the warmest existing slot) rather than one mount every container
+writes into concurrently — the tools in question take an inter-process
+lock on their cache directory, and a shared mount meant one container's
+lock blocked every other. See [`pooled_caches`](config.md#pooled_caches)
+and `src/jailbee/pool.py`. A separate host-global Docker registry mirror
+container (`jailbee-registry-mirror`) caches image pulls across all repos.
 
 ## Read-only host binds
 

@@ -31,14 +31,17 @@ A quick mental model before the commands:
 - **Network modes.** Each container runs `strict` (kernel egress allowlist)
   or `loose` (open egress, auto-reverts) — switch with `jailbee net`.
 - **One shared state layer per repo.** Package-manager caches, the JetBrains
-  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a
-  shared dir outside the containers, bind-mounted into every one of them.
-  It works across both axes: branches running *in parallel* share one warm
-  Gradle or pnpm cache and one set of tool settings — configure something in
-  one container and the others have it — and the state also survives
-  `jailbee destroy` / `jailbee new` cycles. It is a layer of its own, so
-  nothing a container does leaks into your host's own dotfiles. See
-  [`shared_caches`](config.md#shared_caches).
+  config, `~/.ssh` and Claude's login live in a shared dir outside the
+  containers. Most of it is bind-mounted into every container at once, so
+  branches running *in parallel* share one warm pnpm cache and one set of
+  tool settings — configure something in one container and the others have
+  it. A few caches that a tool locks — Gradle, Maven, and the Chrome profile
+  — instead give each container its **own** private copy, seeded from the
+  warmest existing one, so concurrent builds don't contend on one lock file.
+  Either way the state survives `jailbee destroy` / `jailbee new` cycles and
+  is a layer of its own, so nothing a container does leaks into your host's
+  own dotfiles. See [`shared_caches`](config.md#shared_caches) and
+  [`pooled_caches`](config.md#pooled_caches).
 
 ## Configure
 

@@ -29,7 +29,8 @@ Common conventions:
 - [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
 - [Claude accounts (`claude ls|use|add|allow|release|rm`)](#claude-accounts)
-- [GUI (`ide`, `chrome`, `chrome-pool`)](#gui)
+- [GUI (`ide`, `chrome`)](#gui)
+- [Cache pools (`pool`, `chrome-pool`)](#cache-pools)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
 
@@ -747,7 +748,21 @@ above), with no separate apply step needed.
 |---|---|
 | `jailbee ide [NAME] [--app idea\|webstorm\|pycharm\|...]` | Launch a JetBrains IDE in the container. Needs `jetbrains.enabled`. One IDE at a time across containers (shared profile). |
 | `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `chrome.enabled`. URL falls back to `chrome.url`. |
-| `jailbee chrome-pool ls` / `prune` | Inspect / delete unallocated Chrome profile slots. |
+
+## Cache pools
+
+Any cache pooled via `pooled_caches` or `SharedCache.pool` — `gradle`, `m2`
+and (when `chrome.enabled`) `chrome-profile` default on; `npm` and
+`pnpm-store` ship a preset but need an explicit opt-in (see
+[`config-schema.md` `pooled_caches`](../../jailbee-repo-setup/references/config-schema.md#pooled_caches))
+— gets one private slot directory per container instead of one mount
+shared by all of them, seeded from the warmest existing slot.
+
+| Command | Notes |
+|---|---|
+| `jailbee pool ls [NAME] [--format table\|json] [--fields ...]` | List every slot of every pool, or just `NAME`'s. Fields: `pool`, `slot`, `container` (or `(free)`), `warmth_mtime`, `size_bytes`/`size`, `path`. The table footer's "total on disk (deduplicated)" counts each inode once — per-slot sizes above it don't, and over-report once slots share hardlinked files. |
+| `jailbee pool prune [NAME]` | Delete every slot with no container attached, for `NAME`'s pool or all of them. |
+| `jailbee chrome-pool ls` / `prune` | Deprecated alias for `jailbee pool ls/prune chrome-profile`. Still works; prints a deprecation warning. |
 
 ## Mounts
 

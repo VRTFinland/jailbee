@@ -454,7 +454,16 @@ otherwise fight over.
 - **GUI:** `jailbee ide <name>` (JetBrains; `--app webstorm` to override), `jailbee chrome
   <name> [URL]`. Both require the matching `jetbrains`/`chrome` blocks enabled
   (usually in `~/.config/jailbee/global.yaml`). One JetBrains IDE runs at a time
-  (shared profile); Chrome is per-container (`jailbee chrome-pool ls`/`prune`).
+  (shared profile); Chrome is per-container, from a cache pool slot
+  (`jailbee pool ls`/`prune chrome-profile`; the old `jailbee chrome-pool
+  ls`/`prune` spelling still works, deprecated).
+- **Cache pools:** `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` — any
+  cache configured with `pooled_caches`/`SharedCache.pool` (Gradle and Maven by
+  default) gets one private slot per container instead of one cache shared
+  by all of them, because those tools take a lock on the cache directory that
+  a shared mount serialised across containers. Omit `NAME` for every pool.
+  `ls`'s footer total is deduplicated (hardlinked files counted once); the
+  per-slot sizes above it are not, and over-report when slots share files.
 - **Snapshots:** `jailbee snapshot create <name> <tag>` / `restore <name> <tag>` /
   `ls` / `delete` — cheap save/rollback of a container's state.
 - **Optional mounts:** `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` to
