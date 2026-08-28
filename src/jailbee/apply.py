@@ -210,10 +210,18 @@ def run_apply(
 
     from jailbee.pool import ensure_pools, pools_for
 
-    ensure_pools(cfg)
+    # strict=False: a polluted pool root must not abort `apply` before the
+    # profiles, the ACL and the port forwards are written — otherwise one
+    # directory needing hand-cleaning wedges every later `jailbee apply`.
+    # `jailbee doctor` reports the unmigrated root, so nothing is lost.
+    ensure_pools(cfg, strict=False)
 
     if pools_for(cfg):
-        info("Pooled caches attach on next boot; running containers keep their current mount.")
+        info(
+            "A pooled cache attaches when a container next boots — restart any "
+            "container that was running just now (`jailbee restart <name>`) "
+            "before trusting it to use its own slot."
+        )
 
     # Refresh jailbee's bundled skills in the shared ~/.claude/skills so existing
     # containers pick up a newer jailbee without recreation. Non-fatal.

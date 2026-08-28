@@ -257,9 +257,10 @@
   once per slot and over-reports severalfold. `jailbee init` and
   `jailbee apply` create the pool layout and migrate a pre-existing cache
   sitting directly under the pool root into `slots/slot-0`, so it stays warm
-  as the first seed rather than being discarded; a container already
-  running when a pool is created keeps its old shared mount until it next
-  boots. `jailbee doctor` reports a pool root that still needs migrating.
+  as the first seed rather than being discarded; a pooled cache attaches
+  when a container next boots, so restart any container that was running
+  during `jailbee apply` before trusting it to be using its own slot.
+  `jailbee doctor` reports a pool root that still needs migrating.
   See [`pooled_caches`](docs/config.md#pooled_caches).
 
 ### Fixed

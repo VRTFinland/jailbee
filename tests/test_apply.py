@@ -289,6 +289,40 @@ def test_run_apply_reports_acl_changed_when_pool_grew(
     _no_egress_refresh.assert_called_once()
 
 
+def test_run_apply_survives_a_polluted_pool_root(
+    make_cfg,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """A pool root needing hand-cleaning must not abort `apply` before the
+    profiles, ACL and port forwards are written — otherwise it wedges every
+    subsequent `jailbee apply`. `jailbee doctor` reports the unmigrated root,
+    so warn-and-continue loses no information.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.pool import pools_for
+
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared", chrome={"enabled": True})
+    pools = pools_for(cfg)
+    assert pools, "test needs at least one pool to pollute"
+    # Loose content *and* an existing slot-0: ensure_pool_dirs refuses to
+    # guess which is the real cache and raises PoolError.
+    (pools[0].slots_dir / "slot-0").mkdir(parents=True)
+    (pools[0].root / "Default").mkdir(parents=True)
+
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=True)
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert incus.profile_set_yaml.call_count == 4  # base, binds, net-strict, net-loose
+
+
 def test_run_apply_does_not_push_acl_directly(
     make_cfg,
     tmp_path: Path,

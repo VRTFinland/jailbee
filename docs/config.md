@@ -627,9 +627,11 @@ pool slots — see [`commands.md`](commands.md). A pre-existing
 non-pooled cache is migrated automatically: `jailbee init` and
 `jailbee apply` move a cache sitting directly under the pool root into
 `slots/slot-0`, so the warm cache becomes the first seed source rather
-than being discarded. A container already running when `jailbee apply`
-migrates a pool keeps its old shared mount until it is next restarted;
-`jailbee doctor` flags a pool root that still needs migrating.
+than being discarded. A pooled cache attaches to a container when that
+container next boots, so restart any container that was running during
+`jailbee apply` (`jailbee restart <name>`) before trusting it to be using
+its own slot; `jailbee doctor` flags a pool root that still needs
+migrating.
 
 ### Networks
 

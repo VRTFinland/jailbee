@@ -266,6 +266,43 @@ def test_ensure_pools_creates_layout_for_every_pool(tmp_path):
         assert p.by_container_dir.is_dir()
 
 
+def _pollute(p: pool.Pool) -> None:
+    """Make `ensure_pool_dirs` raise for this pool: loose content *and*
+    an existing slot-0, so it refuses to guess which is the real cache."""
+    (p.slots_dir / "slot-0").mkdir(parents=True)
+    (p.root / "caches").mkdir(parents=True)
+
+
+def test_ensure_pools_strict_propagates_the_first_pool_error(tmp_path):
+    """`init` must stop: a fresh repo with a polluted pool root is a
+    situation to look at, not to warn past."""
+    cfg = _cfg_gradle(tmp_path)
+    pools = pool.pools_for(cfg)
+    _pollute(pools[0])
+
+    with pytest.raises(pool.PoolError):
+        pool.ensure_pools(cfg)
+
+
+def test_ensure_pools_non_strict_warns_and_keeps_going(tmp_path, capsys):
+    """`apply` must not be wedged by one polluted pool root: it still has
+    profiles, the ACL and the port forwards to write."""
+    cfg = _cfg_gradle(tmp_path)
+    pools = pool.pools_for(cfg)
+    assert len(pools) > 1  # otherwise "keeps going" proves nothing
+    _pollute(pools[0])
+
+    pool.ensure_pools(cfg, strict=False)
+
+    # Rich wraps at the console width, so compare on collapsed whitespace.
+    out = " ".join(capsys.readouterr().out.split())
+    assert f"pool {pools[0].name}" in out
+    assert "loose cache content" in out
+    for later in pools[1:]:
+        assert later.slots_dir.is_dir()
+        assert later.by_container_dir.is_dir()
+
+
 def test_ensure_pool_dirs_migrates_a_pre_pool_cache_into_slot_0(tmp_path):
     cfg = _cfg(tmp_path)
     p = _pool(tmp_path)

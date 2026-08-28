@@ -25,7 +25,7 @@ from typing import IO
 
 from jailbee.config import CONTAINER_USERNAME, Config, PoolSpec
 from jailbee.incus import Incus, IncusError
-from jailbee.tui import info
+from jailbee.tui import info, warn_plain
 
 
 class PoolError(Exception):
@@ -148,10 +148,23 @@ def ensure_pool_dirs(cfg: Config, pool: Pool) -> None:
         info(f"Migrated the existing {pool.name} cache into {slot0}")
 
 
-def ensure_pools(cfg: Config) -> None:
-    """`ensure_pool_dirs` for every pool. Called by init and apply."""
+def ensure_pools(cfg: Config, *, strict: bool = True) -> None:
+    """`ensure_pool_dirs` for every pool. Called by init and apply.
+
+    `strict=True` (init) propagates the first `PoolError`: a fresh repo
+    whose pool root is already polluted should stop and be looked at.
+    `strict=False` (apply) warns and carries on, so one pool root needing
+    hand-cleaning cannot wedge every subsequent `jailbee apply` before it
+    writes the profiles, the ACL and the port forwards. Nothing is lost:
+    `jailbee doctor` reports an unmigrated pool root.
+    """
     for p in pools_for(cfg):
-        ensure_pool_dirs(cfg, p)
+        try:
+            ensure_pool_dirs(cfg, p)
+        except PoolError as e:
+            if strict:
+                raise
+            warn_plain(f"pool {p.name}: {e}")
 
 
 def _seed(pool: Pool, source: Path, target: Path) -> None:

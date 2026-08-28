@@ -3053,9 +3053,8 @@ jb exec repro-b -- ./gradlew build
 # "Waiting to acquire ... lock" and it stalls until the first releases it.
 
 # Now with pooling on (the default) for the same repo. `jailbee apply` only
-# creates the pool layout on disk — a container already running keeps its
-# old shared mount until it next boots, so restart both to actually pick up
-# a slot:
+# creates the pool layout on disk — a pooled cache attaches when a container
+# next boots, so restart both to actually pick up a slot:
 jb apply
 jb restart repro-a
 jb restart repro-b
@@ -3124,4 +3123,49 @@ incus config device show <prefix>-live-attach-test | grep -A3 gradle-slot
 
 jb exec live-attach-test -- ls ~/.gradle
 # expect: the slot's contents visible inside the container after the restart
+```
+
+### 5. What a Running container sees between `apply` and its restart — OPEN QUESTION
+
+`jailbee apply` drops the pooled cache's bind mount from the binds profile
+(pooled caches are attached per container instead) and, in the same run,
+`ensure_pool_dirs` renames the old loose cache content into
+`slots/slot-0`. Nothing in this checkout settles what a container that was
+already Running at that moment then sees, because it depends on whether
+Incus hot-unplugs a disk device dropped from a profile of a running
+container. Both answers are bad, which is why `apply` tells the user to
+restart rather than making a claim:
+
+- if Incus **does** hot-unplug, the container loses `~/.gradle` immediately
+  and a build running in it starts failing;
+- if Incus **does not**, the container keeps a mount pointing at the pool
+  *root*, whose contents were just moved into `slots/slot-0` — so a live
+  build writes fresh loose content straight into the pool root, and the
+  next `ensure_pool_dirs` refuses it as "both pool slots and loose cache
+  content".
+
+Record what you actually observe here.
+
+```bash
+# A container of a repo whose gradle cache is not yet pooled, left Running,
+# with `pooled_caches` about to turn pooling on (or a pre-pooling install):
+incus list <prefix>-apply-race-test --format csv -c s
+# expect: RUNNING
+
+jb apply                     # DECLINE the restart prompt when it asks
+# expect: the "a pooled cache attaches when a container next boots" hint
+
+incus config device show <prefix>-apply-race-test | grep shared-gradle
+# record: is the old profile-level shared mount still on the container?
+jb exec apply-race-test -- ls ~/.gradle
+# record: contents, empty, or an error?
+
+# Then check whether the pool root got polluted behind apply's back:
+ls <shared_dir>/caches/gradle
+# expect (if it did): loose entries alongside `slots`/`by-container`, and
+# `jailbee doctor` reporting "pool roots not migrated: gradle"
+
+jb restart apply-race-test   # the documented fix, either way
+jb pool ls gradle
+# expect: a slot allocated to apply-race-test
 ```

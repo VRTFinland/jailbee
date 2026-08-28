@@ -71,12 +71,12 @@ timeout, fail. This is what cache pooling exists to prevent: `gradle` and
 its own private slot instead of one shared mount. If it's still happening,
 `jailbee pool ls gradle` (or `m2`) tells you whether the cache is actually
 pooled in this repo — it errors "No pooled cache named ..." if it isn't,
-which means either a `pooled_caches: {gradle: false}` (or `m2: false`)
-override, or a repo that predates this feature and hasn't run
-`jailbee apply` since upgrading (a container already running when the pool
-is created keeps its old shared mount until it next restarts — restart it
-too). Run `jailbee apply`, then re-check `jailbee pool ls gradle` /
-`jailbee pool ls m2` for a slot per running container.
+which means a `pooled_caches: {gradle: false}` (or `m2: false`) override.
+A pooled cache attaches when a container next boots, so a container that
+was already running when the pool was created needs a restart before it
+uses its own slot. Run `jailbee apply`, restart the affected containers,
+then re-check `jailbee pool ls gradle` / `jailbee pool ls m2` for a slot
+per running container.
 
 See [`pooled_caches`](config.md#pooled_caches).
 
