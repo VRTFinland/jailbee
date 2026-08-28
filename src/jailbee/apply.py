@@ -49,6 +49,10 @@ class ApplyResult:
     # failed. Reported and skipped rather than aborting the sweep — see
     # `run_apply`'s port-forward loop.
     port_failures: list[tuple[str, str]] = field(default_factory=list)
+    # Pools whose root still holds both slots and loose cache content after
+    # `preflight_pools` had its chance to ask. No container using one of
+    # these can boot, so `run_apply` skips the restart offer entirely.
+    unresolved_pools: list[str] = field(default_factory=list)
 
     @property
     def fully_successful(self) -> bool:
@@ -208,13 +212,20 @@ def run_apply(
     _ensure_user_shared_dirs(cfg)
     _ensure_integration_shared_dirs(cfg)
 
-    from jailbee.pool import ensure_pools, pools_for
+    from jailbee.pool import pools_for, preflight_pools
 
-    # strict=False: a polluted pool root must not abort `apply` before the
-    # profiles, the ACL and the port forwards are written — otherwise one
-    # directory needing hand-cleaning wedges every later `jailbee apply`.
-    # `jailbee doctor` reports the unmigrated root, so nothing is lost.
-    ensure_pools(cfg, strict=False)
+    # `apply` is the command the user runs from a terminal, so it is where a
+    # polluted pool root gets offered a resolution rather than a lecture.
+    # What it must never do is abort: the profiles, the ACL and the port
+    # forwards still have to be written, or one cache directory wedges every
+    # later `jailbee apply`.
+    #
+    # `--yes` is documented as "skip restart confirmation" — it does not
+    # extend to relocating a user's cache content unasked, so it passes
+    # `confirm=None` and the root is reported, not moved.
+    unresolved_pools = preflight_pools(
+        cfg, confirm=None if assume_yes else (confirm_fn or default_confirm)
+    )
 
     if pools_for(cfg):
         info(
@@ -357,6 +368,17 @@ def run_apply(
     restarted: list[str] = []
     restart_failures: list[tuple[str, str]] = []
     should_restart = bool(profiles_changed) and bool(running_names) and not no_restart
+    if should_restart and unresolved_pools:
+        # Every boot runs `pool.allocate_startup` -> `ensure_pool_dirs`, so
+        # with a root still polluted each restart raises the very PoolError
+        # the user was just shown — once per container. Don't offer what
+        # cannot work.
+        warn(
+            f"{len(running_names)} running container(s) need a restart, but pool "
+            f"{', '.join(unresolved_pools)} is unresolved — a restart would fail "
+            f"on it. Resolve it, then re-run `jailbee apply`."
+        )
+        should_restart = False
     if should_restart and not assume_yes:
         prompt = (
             f"\n{len(running_names)} running container(s) need restart "
@@ -387,6 +409,7 @@ def run_apply(
         offline_migrated=offline_migrated,
         ports_changed=ports_changed,
         port_failures=port_failures,
+        unresolved_pools=unresolved_pools,
     )
 
 

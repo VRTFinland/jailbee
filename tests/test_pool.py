@@ -345,6 +345,156 @@ def test_ensure_pool_dirs_is_idempotent(tmp_path):
     assert not (p.slots_dir / "slot-0").exists()
 
 
+# ---- Resolving a polluted pool root ----
+
+
+def _yes(_msg: str) -> bool:
+    return True
+
+
+def _no(_msg: str) -> bool:
+    return False
+
+
+def test_resolve_loose_moves_the_entries_to_a_sibling_and_unblocks(tmp_path):
+    """The whole point: after resolving, `ensure_pool_dirs` stops refusing.
+
+    The guard is binary — the root must hold only `RESERVED_ENTRIES` — so
+    getting the entries *out* of the root is what unblocks it, deleting
+    them is not required.
+    """
+    cfg = _cfg(tmp_path)
+    p = _pool(tmp_path)
+    (p.slots_dir / "slot-0").mkdir(parents=True)
+    (p.root / "daemon" / "8.5").mkdir(parents=True)
+    (p.root / "gradle.properties").write_text("token=secret")
+
+    aside = pool.resolve_loose(p, confirm=_yes)
+
+    assert aside is not None
+    assert aside.parent == p.root.parent
+    assert aside.name.startswith("gradle.loose-")
+    assert (aside / "daemon" / "8.5").is_dir()
+    assert (aside / "gradle.properties").read_text() == "token=secret"
+    assert not (p.root / "daemon").exists()
+    assert not (p.root / "gradle.properties").exists()
+
+    pool.ensure_pool_dirs(cfg, p)  # no longer raises
+
+
+def test_resolve_loose_declined_leaves_everything_alone(tmp_path):
+    p = _pool(tmp_path)
+    (p.slots_dir / "slot-0").mkdir(parents=True)
+    (p.root / "daemon").mkdir(parents=True)
+
+    assert pool.resolve_loose(p, confirm=_no) is None
+    assert (p.root / "daemon").is_dir()
+
+
+def test_resolve_loose_never_touches_the_pool_layout(tmp_path):
+    """`slots/`, `by-container/` and `.lock` are the pool itself. Moving
+    them aside would strand every container's slot."""
+    p = _pool(tmp_path)
+    (p.slots_dir / "slot-0").mkdir(parents=True)
+    p.by_container_dir.mkdir(parents=True)
+    p.lock_path.touch()
+    (p.root / "daemon").mkdir()
+
+    aside = pool.resolve_loose(p, confirm=_yes)
+
+    assert aside is not None
+    assert sorted(e.name for e in aside.iterdir()) == ["daemon"]
+    assert (p.slots_dir / "slot-0").is_dir()
+    assert p.by_container_dir.is_dir()
+    assert p.lock_path.is_file()
+
+
+def test_resolve_loose_is_a_no_op_on_a_clean_root(tmp_path):
+    """Nothing loose means nothing to ask about — `preflight_pools` calls
+    this for every pool on every `apply`, so the common case must not
+    prompt."""
+    p = _pool(tmp_path)
+    p.slots_dir.mkdir(parents=True)
+    p.by_container_dir.mkdir(parents=True)
+
+    def _explode(_msg: str) -> bool:
+        raise AssertionError("must not prompt when the root is clean")
+
+    assert pool.resolve_loose(p, confirm=_explode) is None
+
+
+def test_resolve_loose_ignores_a_root_with_no_slot_0(tmp_path):
+    """`ensure_pool_dirs` migrates that case by itself. Prompting there
+    would ask the user to move aside a cache we are about to adopt."""
+    p = _pool(tmp_path)
+    p.slots_dir.mkdir(parents=True)
+    (p.root / "caches").mkdir()
+
+    def _explode(_msg: str) -> bool:
+        raise AssertionError("must not prompt when slot-0 is free")
+
+    assert pool.resolve_loose(p, confirm=_explode) is None
+
+
+def test_resolve_loose_picks_a_free_name_when_one_is_taken(tmp_path, mocker):
+    """Two resolutions inside the same second must not collide — the
+    second would otherwise move its entries into the first's directory."""
+    p = _pool(tmp_path)
+    (p.slots_dir / "slot-0").mkdir(parents=True)
+    (p.root / "daemon").mkdir()
+    mocker.patch("jailbee.pool._loose_stamp", return_value="20260828-174021")
+
+    first = pool.resolve_loose(p, confirm=_yes)
+    (p.root / "daemon").mkdir()
+    second = pool.resolve_loose(p, confirm=_yes)
+
+    assert first is not None and second is not None
+    assert first != second
+    assert first.name == "gradle.loose-20260828-174021"
+    assert second.name == "gradle.loose-20260828-174021.1"
+
+
+def test_preflight_pools_resolves_every_polluted_root(tmp_path):
+    cfg = _cfg_gradle(tmp_path)
+    pools = pool.pools_for(cfg)
+    for p in pools:
+        _pollute(p)
+
+    assert pool.preflight_pools(cfg, confirm=_yes) == []
+    for p in pools:
+        assert p.by_container_dir.is_dir()
+
+
+def test_preflight_pools_reports_what_it_could_not_resolve(tmp_path):
+    """The name is what `apply` needs to suppress a restart that would
+    fail, and what `new` needs to refuse before creating anything."""
+    cfg = _cfg_gradle(tmp_path)
+    pools = pool.pools_for(cfg)
+    assert len(pools) > 1  # otherwise "only the polluted one" proves nothing
+    _pollute(pools[0])
+
+    assert pool.preflight_pools(cfg, confirm=_no) == [pools[0].name]
+    for later in pools[1:]:
+        assert later.slots_dir.is_dir()
+
+
+def test_preflight_pools_without_a_confirm_fn_never_prompts(tmp_path):
+    """`confirm=None` is the non-interactive path (no TTY, background
+    worker): report, change nothing."""
+    cfg = _cfg_gradle(tmp_path)
+    pools = pool.pools_for(cfg)
+    _pollute(pools[0])
+
+    assert pool.preflight_pools(cfg, confirm=None) == [pools[0].name]
+    assert (pools[0].root / "caches").is_dir()
+
+
+def test_preflight_pools_is_clean_on_a_healthy_config(tmp_path):
+    cfg = _cfg_gradle(tmp_path)
+
+    assert pool.preflight_pools(cfg, confirm=_no) == []
+
+
 def test_unique_bytes_counts_a_shared_inode_once(tmp_path):
     p = _pool(tmp_path)
     a = p.slots_dir / "slot-0"

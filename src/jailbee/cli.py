@@ -586,8 +586,15 @@ def apply(
     for name, err in result.port_failures:
         error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
 
-    if result.fully_successful:
-        _record_upgrade_action(cfg, "apply")
+    # Unconditional: `run_apply` raises if the config-writing steps fail, so
+    # returning at all means profiles, ACL, /etc/hosts and the dockerd proxy
+    # now match the repo's config — which is the only question the upgrade
+    # advice asks. A container that refused to restart, a port already in
+    # use, or a pool root needing hand-resolution are real failures (hence
+    # the exit code below), but each is reported on its own and re-reported
+    # by `jailbee doctor`. Gating the watermark on them left the `jb ls`
+    # hint nagging about an `apply` that had in fact run.
+    _record_upgrade_action(cfg, "apply")
 
     if not result.fully_successful:
         raise typer.Exit(1)
@@ -1207,6 +1214,11 @@ def new_cmd(
     if refresh_result.status == "partial":
         warn(f"Some egress hostnames failed to resolve: {refresh_result.error}")
 
+    # Before either path creates anything: a polluted cache pool root would
+    # otherwise stop `new_container` half-way, with the container already
+    # created and its GUI sockets and port forwards attached.
+    _preflight_cache_pools(cfg)
+
     if run_in_background:
         from datetime import datetime as _dt
 
@@ -1298,6 +1310,37 @@ def new_cmd(
         raise typer.Exit(_attach_tmux(cfg, incus, created))
     if attach_mode == "shell":
         raise typer.Exit(_attach_shell(cfg, incus, created))
+
+
+def _preflight_cache_pools(cfg: "Config") -> None:
+    """Bring every cache pool root into a usable state, or exit 2.
+
+    Runs before anything is created or booted. `pool.ensure_pool_dirs`
+    refuses a root holding both `slots/slot-0` and loose cache content, and
+    every boot path reaches it — `new_container` through `allocate_startup`,
+    `start`/`restart` through `boot_container`. Neither has a handler above
+    it, so the refusal used to surface as a traceback, and in `new` only
+    after the container had been created and its devices attached.
+
+    Prompting needs a terminal: without one (a script, the detached
+    `_new-worker` / `_boot-worker`) it reports and changes nothing rather
+    than relocating a user's cache content on an answer nobody gave. That is
+    also why this runs in the *foreground* command, before the background
+    fork — same reasoning as `_preflight_background_new`.
+    """
+    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee.pool import preflight_pools
+    from jailbee.tui import default_confirm
+
+    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    if not unresolved:
+        return
+    error(
+        f"Cache pool {', '.join(unresolved)} cannot be used until its root holds "
+        "only the pool layout. Re-run in a terminal to be offered a move, or "
+        "move the loose entries out of the pool root yourself. Nothing was created."
+    )
+    raise typer.Exit(2)
 
 
 def _preflight_background_new(
@@ -2307,6 +2350,7 @@ def start(
         cfg, background=background, no_background=no_background
     )
     incus, name = _resolve_existing(cfg, name)
+    _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
             cfg,
@@ -2384,6 +2428,7 @@ def restart(
         cfg, background=background, no_background=no_background
     )
     incus, name = _resolve_existing(cfg, name)
+    _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
             cfg,

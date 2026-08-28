@@ -69,9 +69,20 @@ def run_init(
     if not cfg.claude.enabled:
         info("Claude integration disabled (claude.enabled=false) — skipping subdir")
 
-    from jailbee.pool import ensure_pools
+    # `init` gets the same offer `apply` does — it is equally a terminal
+    # command — but keeps its strict semantics: a fresh repo whose pool root
+    # is polluted and stays that way is a situation to stop on, not to warn
+    # past. `cli.init` renders the `PoolError` as a plain error line.
+    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee.pool import PoolError, preflight_pools
+    from jailbee.tui import default_confirm
 
-    ensure_pools(cfg)
+    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    if unresolved:
+        raise PoolError(
+            f"cache pool {', '.join(unresolved)} holds both pool slots and loose "
+            f"cache content. Move the loose entries out of the pool root, then re-run."
+        )
 
     if cfg.ssh.enabled and cfg.ssh.seed_from_host:
         ssh_target = cfg.shared_dir / "ssh"

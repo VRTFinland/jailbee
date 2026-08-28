@@ -183,9 +183,17 @@ def test_fully_successful_apply_records_an_observed_watermark(mocker: MockerFixt
     assert rows[0].apply_observed is True
 
 
-def test_partly_failed_apply_records_no_watermark(mocker: MockerFixture) -> None:
-    """A run with restart failures did part of its job — it must not silence
-    the advice."""
+def test_partly_failed_apply_still_records_the_watermark(mocker: MockerFixture) -> None:
+    """A restart failure must not keep the upgrade hint nagging forever.
+
+    The advice asks one question: has `apply` run since the release that
+    changed what `apply` writes. By the time `run_apply` returns, profiles,
+    ACL, /etc/hosts and the dockerd proxy have all been written — new
+    containers are correct. A container that refused to come back up is a
+    separate failure, reported on its own line and by `jailbee doctor`, and
+    it still makes the command exit 1. It used to also suppress the
+    watermark, so `jb ls` went on advising an `apply` the user had run.
+    """
     from sqlmodel import Session, select
 
     from jailbee.db import get_engine
@@ -202,8 +210,28 @@ def test_partly_failed_apply_records_no_watermark(mocker: MockerFixture) -> None
     assert result.exit_code == 1
     with Session(get_engine()) as session:
         rows = list(session.exec(select(RepoUpgradeState)).all())
-    # `apply` never reads the advice, so it is the only thing that could have
-    # written this table — and `_isolate_state_dir` gives every test its own
-    # `state.sqlite`. Nothing at all is the honest invariant: dropping the
-    # `fully_successful` guard makes `record` insert a row here.
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].apply_observed is True
+
+
+def test_apply_blocked_on_a_pool_still_records_the_watermark(mocker: MockerFixture) -> None:
+    """Same reasoning for the case that prompted this: an unresolved pool
+    root suppresses the restarts, but the config was written all the same."""
+    from sqlmodel import Session, select
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RepoUpgradeState
+
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(profiles_changed=["p-binds"], unresolved_pools=["gradle"]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    with Session(get_engine()) as session:
+        rows = list(session.exec(select(RepoUpgradeState)).all())
+    assert len(rows) == 1
+    assert rows[0].apply_observed is True

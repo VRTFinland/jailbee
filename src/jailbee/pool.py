@@ -20,12 +20,13 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import IO
 
 from jailbee.config import CONTAINER_USERNAME, Config, PoolSpec
 from jailbee.incus import Incus, IncusError
-from jailbee.tui import info, warn_plain
+from jailbee.tui import ConfirmFn, info, warn_plain
 
 
 class PoolError(Exception):
@@ -148,13 +149,106 @@ def ensure_pool_dirs(cfg: Config, pool: Pool) -> None:
         if slot0.exists():
             raise PoolError(
                 f"{pool.root} holds both pool slots and loose cache content "
-                f"({', '.join(sorted(p.name for p in legacy))}). Move or delete "
-                f"the loose entries by hand, then re-run."
+                f"({', '.join(sorted(p.name for p in legacy))}). Run `jailbee apply`, "
+                f"which offers to move the loose entries aside."
             )
         slot0.mkdir()
         for entry in legacy:
             shutil.move(str(entry), str(slot0 / entry.name))
         info(f"Migrated the existing {pool.name} cache into {slot0}")
+
+
+def _loose_entries(pool: Pool) -> list[Path]:
+    """Root entries that are cache content rather than the pool layout."""
+    if not pool.root.is_dir():
+        return []
+    return [p for p in pool.root.iterdir() if p.name not in RESERVED_ENTRIES]
+
+
+def _loose_stamp() -> str:
+    """Timestamp for the moved-aside directory. Patched in tests."""
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def resolve_loose(pool: Pool, *, confirm: ConfirmFn) -> Path | None:
+    """Offer to move a polluted pool root's loose entries out of the way.
+
+    `ensure_pool_dirs` refuses when the root holds both `slots/slot-0` and
+    loose cache content, because it cannot know which is the real cache.
+    That guard is binary — the root must hold nothing but
+    `RESERVED_ENTRIES` — so getting the entries *out* is what unblocks it.
+    Moving beats deleting: a pool root is a cache directory, but `~/.gradle`
+    also holds `gradle.properties` and `init.d/`, and `rm -rf` would take
+    those with it. The sibling directory is not mounted into any container
+    (`SharedCache` mounts `<shared_dir>/<host_subpath>` one at a time), so
+    it just sits there until the user looks at it.
+
+    Returns the directory the entries were moved to, or None when there
+    was nothing to resolve or the user declined. Silent and side-effect
+    free in every case `ensure_pool_dirs` handles by itself — a root with
+    no `slot-0` is migrated, not a problem, and must not prompt.
+    """
+    if not (pool.slots_dir / "slot-0").exists():
+        return None
+    loose = _loose_entries(pool)
+    if not loose:
+        return None
+
+    names = ", ".join(sorted(p.name for p in loose))
+    stamp = _loose_stamp()
+    aside = pool.root.parent / f"{pool.root.name}.loose-{stamp}"
+    n = 1
+    while aside.exists():
+        aside = pool.root.parent / f"{pool.root.name}.loose-{stamp}.{n}"
+        n += 1
+
+    warn_plain(
+        f"pool {pool.name}: {pool.root} holds both pool slots and loose "
+        f"cache content ({names}). Until that is resolved, no container "
+        f"using this pool can boot."
+    )
+    if not confirm(f"Move the loose entries aside to {aside}?"):
+        return None
+
+    aside.mkdir(parents=True)
+    for entry in loose:
+        shutil.move(str(entry), str(aside / entry.name))
+    info(
+        f"Moved {len(loose)} loose {pool.name} entr"
+        f"{'y' if len(loose) == 1 else 'ies'} to {aside} — "
+        f"delete it once you are sure nothing in it is worth keeping."
+    )
+    return aside
+
+
+def preflight_pools(cfg: Config, *, confirm: ConfirmFn | None) -> list[str]:
+    """Bring every pool root into a usable state, asking where allowed.
+
+    The single entry point for commands that start in a terminal — `apply`,
+    `init`, `new`, `start`, `restart` — called *before* they create or boot
+    anything. `confirm=None` is the non-interactive path (no TTY, the
+    detached `new` worker): report, change nothing.
+
+    Returns the names of the pools still unusable afterwards. Callers use
+    that to refuse cleanly instead of failing halfway: `apply` suppresses a
+    restart that would only raise `PoolError` again, and `new` exits having
+    created nothing.
+
+    `allocate`, `allocate_startup` and `gui` deliberately do NOT call this.
+    They keep raising `PoolError` as the backstop — reaching it means a
+    root was polluted between this preflight and the boot.
+    """
+    unresolved: list[str] = []
+    for p in pools_for(cfg):
+        if confirm is not None:
+            resolve_loose(p, confirm=confirm)
+        try:
+            ensure_pool_dirs(cfg, p)
+        except PoolError as e:
+            unresolved.append(p.name)
+            if confirm is None:
+                warn_plain(f"pool {p.name}: {e}")
+    return unresolved
 
 
 def ensure_pools(cfg: Config, *, strict: bool = True) -> None:
