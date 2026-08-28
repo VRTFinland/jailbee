@@ -1969,3 +1969,33 @@ def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_c
 
     assert "dup@x.com~<label>.json" in detail
     assert "rename it to" not in detail
+
+
+def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The same-holder case must win even when the plain name is also taken:
+    telling a reader to park a live grant under a free name would give one
+    refresh-token lineage two files, which is exactly the harm the
+    same-holder check exists to prevent."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("other-stored"), encoding="utf-8")
+    stage = store / "dup@x.com.json.activating"
+    stage.write_text(_staged_grant("live-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("live-lineage"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "delete it" in detail
+    assert "dup@x.com~<label>.json" not in detail
+    assert "keep both" not in detail

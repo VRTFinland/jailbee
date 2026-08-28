@@ -218,15 +218,7 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
     results: list[CheckResult] = []
     for stage in stages:
         home = stage.with_name(stage.name[: -len(suffix)])
-        if home.exists():
-            detail = (
-                f"an interrupted switch left {stage}, but the name it came from "
-                f"({home.name}) is already taken by another stored login — "
-                "renaming over it would destroy that one. Compare the two and "
-                "delete whichever you do not want, or keep both by moving the "
-                f"staging file to a free name of the form {home.stem}~<label>.json."
-            )
-        elif claude_pool.holds_same_login(stage, live):
+        if claude_pool.holds_same_login(stage, live):
             detail = (
                 f"an interrupted switch left {stage}, and that login is the one "
                 f"live in {claude_pool.holder_dir(cfg)} right now — the switch had "
@@ -234,6 +226,14 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
                 "leftover second copy of a live grant, so delete it; renaming it "
                 "into the store is the one move that would put that login in two "
                 "files."
+            )
+        elif home.exists():
+            detail = (
+                f"an interrupted switch left {stage}, but the name it came from "
+                f"({home.name}) is already taken by another stored login — "
+                "renaming over it would destroy that one. Compare the two and "
+                "delete whichever you do not want, or keep both by moving the "
+                f"staging file to a free name of the form {home.stem}~<label>.json."
             )
         else:
             detail = (

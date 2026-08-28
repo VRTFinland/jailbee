@@ -294,5 +294,7 @@ def test_rm_speaks_the_shared_live_account_refusal(repo, mocker):
     result = runner.invoke(app, ["claude", "rm", "me@x.com", "--yes"])
 
     assert result.exit_code == 2
-    assert "run `jailbee claude park` first" in claude_pool.live_account_refusal("me@x.com")
-    assert "run `jailbee claude park` first" in result.output
+    # Equality with the shared wording, not a substring both happen to
+    # contain: a re-inlined literal that merely echoes one phrase from it
+    # would still pass a substring check, but not this one.
+    assert claude_pool.live_account_refusal("me@x.com") in result.output
