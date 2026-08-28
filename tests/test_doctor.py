@@ -1762,3 +1762,61 @@ def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatc
     assert len(results) == 1
     assert results[0].ok is False
     assert "/login" in results[0].detail or "claude use" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A store holding nothing but a staging file is the one case where an
+    "empty" pool is not silent: that file is a login nothing else names."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    assert str(stage) in results[0].detail
+    assert "rename it to orphan@x.com.json" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The orphan is reported in addition to the ordinary pool line, not
+    instead of it."""
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 2
+    healthy = [r for r in results if r.ok]
+    failed = [r for r in results if not r.ok]
+    assert len(healthy) == 1
+    assert "live@x.com" in healthy[0].detail
+    assert len(failed) == 1
+    assert str(stage) in failed[0].detail
+    assert "rename it to orphan@x.com.json" in failed[0].detail

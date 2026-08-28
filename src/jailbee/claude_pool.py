@@ -19,13 +19,17 @@ directory about what the directory contains.
 config home's `.claude.json`, never from the credential. The credential file
 itself is parsed only to carry the machine-shared sibling keys across a switch
 (see `compose_credential`) — `claudeAiOauth` is moved, never read, logged or
-transmitted. One exception: recovering an orphaned staging file (see
-`_adopt_orphaned_stages`) compares a staging file's `claudeAiOauth` block
-against every credential the pool already holds — the live one and every
-parked slot — because the config home's identity is allowed to lag the
-credential beside it and a name-based check cannot see that. The comparison
-result — equal or not — is all that leaves that function; the value itself is
-still never logged, rendered or transmitted.
+transmitted.
+
+**An interrupted switch is reported, not healed.** A hard kill inside
+`switch`'s staging window leaves `<name>.json.activating` in the store, a file
+`parked_slots()` does not list. Renaming it home automatically would require
+answering "does this grant already exist somewhere else?", and it cannot be
+answered from here: the store is host-wide while one `switch` sees one
+holder's live credential. A wrong answer gives one refresh-token lineage two
+refreshers and silently kills a login, which is the one outcome this module
+exists to prevent. `jailbee doctor` names the file and the rename that
+recovers it instead; nothing here moves, adopts or deletes it.
 """
 
 from __future__ import annotations
@@ -149,10 +153,14 @@ def read_identity(home: Path) -> Identity | None:
     Every failure — absent, unreadable, torn, or missing the block — is None.
     Callers treat an unidentified account as a fact to report, not an error:
     a fresh group has no identity anywhere until something has run.
+
+    `UnicodeDecodeError` is in the caught set because it is a `ValueError`, not
+    an `OSError`: a write torn mid-character makes `read_text` raise it, and
+    that is the same "unreadable file" fact as a torn JSON document.
     """
     try:
         data = json.loads(identity_file(home).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
         return None
@@ -542,24 +550,6 @@ def _move_file(src: Path, dest: Path) -> None:
         raise
 
 
-def _login_of(path: Path) -> dict[str, Any] | None:
-    """The `claudeAiOauth` block of a credential file, for identity comparison.
-
-    Read only to answer "are these two files the same grant?" — a question the
-    slot name cannot answer, because a config home's `oauthAccount` is allowed
-    to lag the credential beside it. Never logged, never rendered, never
-    returned to anything that displays it.
-    """
-    try:
-        data = _credential_object(path.read_text(encoding="utf-8"))
-    except OSError:
-        return None
-    if data is None:
-        return None
-    block = data.get("claudeAiOauth")
-    return block if isinstance(block, dict) else None
-
-
 def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identity | None]:
     """Every slot for this holder, live last-resolved identity alongside."""
     identity = live_identity(found, prefer=cfg.container_prefix)
@@ -568,57 +558,6 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], Identi
     if live is not None:
         slots.append(live)
     return sorted(slots, key=lambda s: (not s.live, s.name)), identity
-
-
-def _adopt_orphaned_stages(cfg: Config) -> None:
-    """Restore staging files a killed `switch` left behind.
-
-    `switch` renames its target to `<name>.json.activating` before anything
-    else moves. A hard kill in that window leaves a file `parked_slots()`
-    cannot see — a login lost with nothing naming it. Renaming it home is safe
-    only when it is the *only* copy of that grant.
-
-    Names cannot answer that question. A config home's `oauthAccount` is
-    allowed to lag the credential beside it, so a stage can hold a grant that
-    is live, or one that has since been parked under a lagging account's name.
-    The grant itself is compared instead — against the live credential and
-    against every stored slot.
-
-    Every unreadable file refuses adoption rather than allowing it: a stage
-    left in place is a file a human can recover, while a wrongly adopted one
-    is two refreshers on one lineage and a login that dies at the next
-    rotation. A stage that fails the guards is never deleted.
-    """
-    stages = sorted(store_dir().glob("*.json.activating"))
-    if not stages:
-        return
-
-    held: list[dict[str, Any]] = []
-    live_path = live_credential_path(cfg)
-    if live_path.exists():
-        live_grant = _login_of(live_path)
-        if live_grant is None:
-            log.debug("live credential at %s is unreadable; adopting nothing", live_path)
-            return
-        held.append(live_grant)
-    for slot in parked_slots():
-        grant = _login_of(slot.path)
-        if grant is None:
-            log.debug("stored slot %s is unreadable; adopting nothing", slot.path)
-            return
-        held.append(grant)
-
-    for stage in stages:
-        home = stage.with_name(stage.name[: -len(".activating")])
-        if home.exists():
-            log.debug("a slot already holds this name, leaving %s", stage)
-            continue
-        grant = _login_of(stage)
-        if grant is None or grant in held:
-            log.debug("staging file is unreadable or already held, leaving %s", stage)
-            continue
-        stage.replace(home)
-        held.append(grant)
 
 
 def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
@@ -635,6 +574,11 @@ def invalidate_identity(home: Path) -> bool:
     or written; it is **never** overwritten in that case, because a torn
     `.claude.json` still holds the user's projects and MCP servers and an
     `or {}` here would erase them.
+
+    `UnicodeDecodeError` is caught alongside the rest for the reason
+    `read_identity` gives, and matters more here: this runs from inside
+    `switch` *after* the credential files have moved, so an escaping exception
+    would report a failed switch that had already landed.
     """
     path = identity_file(home)
     try:
@@ -648,7 +592,7 @@ def invalidate_identity(home: Path) -> bool:
                 return True
             del data["oauthAccount"]
             _atomic_write(path, json.dumps(data, indent=2))
-    except (ClaudeLockTimeout, OSError, json.JSONDecodeError):
+    except (ClaudeLockTimeout, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
 
@@ -727,9 +671,13 @@ def switch(
     The target is renamed out of the store *before* anything else moves, so no
     failure path can leave one grant in two files. On any error both files go
     back where they were.
+
+    A hard kill — which no `except` can catch — is the one thing that leaves
+    the staging file behind. It stays exactly where it is: `jailbee doctor`
+    names it and the rename that recovers it (see the module docstring for why
+    this is reported rather than repaired).
     """
     found, unreachable = members(cfg, gcfg)
-    _adopt_orphaned_stages(cfg)
     slots, identity = _slots_for(cfg, found)
     target = resolve_ref(ref, slots)
     if target.live:

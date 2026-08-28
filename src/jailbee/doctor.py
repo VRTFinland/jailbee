@@ -173,23 +173,63 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     return [p for p in prefixes if p != exclude]
 
 
+def _orphaned_stage_checks() -> list[CheckResult]:
+    """One failed check per staging file an interrupted `jailbee claude use`
+    left in the store.
+
+    `claude_pool.switch` renames its target to `<name>.json.activating` before
+    anything else moves, so a hard kill in that window leaves a login in a file
+    `parked_slots()` does not list — invisible to `jailbee claude ls`, and
+    invisible here too unless something goes looking for it.
+
+    Reported, never repaired. Renaming it back is safe only if that grant is
+    not already live somewhere, and the store is host-wide while any one
+    command sees one holder — jailbee cannot answer that, but the person
+    reading this can. Naming the file and the exact `mv` is the whole recovery
+    path; the risk of a wrong automatic rename is a silently dead login.
+    """
+    from jailbee import claude_pool
+
+    suffix = ".activating"
+    try:
+        stages = sorted(claude_pool.store_dir().glob(f"*.json{suffix}"))
+    except OSError:  # an unreadable store is _check_claude_credentials' business
+        return []
+    return [
+        CheckResult(
+            "claude account pool",
+            False,
+            f"an interrupted switch left {stage}; if that login is still "
+            f"wanted, rename it to {stage.name[: -len(suffix)]} — jailbee will "
+            "not move it for you, because it cannot tell from here whether "
+            "that login is already live in another repo's holder.",
+        )
+        for stage in stages
+    ]
+
+
 def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
     """Report the parked-login store and which account this holder is on.
 
     Silent when the store is empty: the pool is optional, and reporting an
     unused feature on every run is noise — the same rule
-    `_check_claude_credentials` follows for a repo that shares nothing.
+    `_check_claude_credentials` follows for a repo that shares nothing. An
+    orphaned staging file is the exception, and the reason it is collected
+    before the early return: it is the one case where a store that lists no
+    slots is nevertheless holding a login.
 
-    The one failure it reports is a holder with parked logins and no live one,
-    which is what a `jailbee claude park` leaves behind until someone logs in
-    or switches. Not a broken state, but one worth naming, because the symptom
-    inside a container is "Not logged in" with no explanation.
+    The other failure it reports is a holder with parked logins and no live
+    one, which is what a `jailbee claude park` leaves behind until someone logs
+    in or switches. Not a broken state, but one worth naming, because the
+    symptom inside a container is "Not logged in" with no explanation.
     """
     from jailbee import claude_pool
 
+    orphans = _orphaned_stage_checks()
+
     parked = claude_pool.parked_slots()
     if not parked:
-        return []
+        return orphans
 
     try:
         found, _ = claude_pool.members(cfg, gcfg)
@@ -206,10 +246,11 @@ def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
                 False,
                 f"{count}, but {holder} holds no live login — run "
                 "`jailbee claude use <account>`, or `/login` in a container.",
-            )
+            ),
+            *orphans,
         ]
     live = claude_pool.slug_for(identity) if identity is not None else "an unidentified account"
-    return [CheckResult("claude account pool", True, f"live: {live} ({count})")]
+    return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:

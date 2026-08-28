@@ -103,6 +103,17 @@ def test_read_identity_is_none_on_a_missing_or_torn_file(tmp_path: Path) -> None
     assert claude_pool.read_identity(home) is None
 
 
+def test_read_identity_is_none_on_a_torn_multibyte_sequence(tmp_path: Path) -> None:
+    """A write torn mid-character makes `read_text` raise `UnicodeDecodeError`,
+    which is a `ValueError` — not covered by the `OSError`/`JSONDecodeError`
+    pair. An unreadable config home is a fact to report, never a traceback."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".claude.json").write_bytes(b'{"oauthAccount": {"emailAddress": "caf\xc3')
+
+    assert claude_pool.read_identity(home) is None
+
+
 def test_slug_lowercases_and_truncates_the_org() -> None:
     slug = claude_pool.slug_for(Identity("Me@Corp.COM", "A1B2C3D4-5678-90ab"))
     assert slug == "me@corp.com#a1b2c3d4"
@@ -712,6 +723,19 @@ def test_invalidate_identity_reports_a_config_it_cannot_read(tmp_path: Path) -> 
     assert (home / ".claude.json").read_text() == '["not", "an", "object"]'
 
 
+def test_invalidate_identity_reports_a_torn_multibyte_config(tmp_path: Path) -> None:
+    """Same `UnicodeDecodeError` hole as `read_identity`, but reached from
+    inside `switch` *after* the credential files have moved: a raise here would
+    report a failed switch that had in fact already landed."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    torn = b'{"oauthAccount": {"emailAddress": "caf\xc3'
+    (home / ".claude.json").write_bytes(torn)
+
+    assert claude_pool.invalidate_identity(home) is False
+    assert (home / ".claude.json").read_bytes() == torn
+
+
 def test_invalidate_identity_is_true_when_there_is_nothing_to_clear(tmp_path: Path) -> None:
     home = tmp_path / "claude"
     home.mkdir()
@@ -728,64 +752,6 @@ def test_switch_leaves_no_staging_file_behind(tmp_path: Path, monkeypatch) -> No
     claude_pool.switch(cfg, GlobalConfig(), "new@corp.com")
 
     assert list(claude_pool.store_dir().glob("*.activating")) == []
-
-
-def test_switch_adopts_a_stage_a_killed_switch_left_behind(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """A kill between the staging rename and the write leaves a file
-    `parked_slots()` cannot see. The next switch must find it, not lose it."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
-    store.mkdir(parents=True)
-    (store / "orphan@x.com.json.activating").write_text(_cred(), encoding="utf-8")
-    cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-
-    change = claude_pool.switch(cfg, GlobalConfig(), "orphan@x.com")
-
-    assert change.activated == "orphan@x.com"
-    assert list(store.glob("*.activating")) == []
-
-
-def test_switch_leaves_a_stage_alone_when_that_login_is_already_stored(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Adopting would create a second copy of one grant. jailbee never deletes
-    a credential on its own, so the stale stage stays for a human."""
-    kept = _park(tmp_path, "dup@x.com", monkeypatch)
-    store = claude_pool.store_dir()
-    (store / "dup@x.com.json.activating").write_text(_cred(), encoding="utf-8")
-    _park(tmp_path, "other@x.com", monkeypatch)
-    cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-
-    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
-
-    assert (store / "dup@x.com.json.activating").exists()
-    assert kept.exists()
-
-
-def test_switch_leaves_a_stage_alone_when_its_grant_is_already_live(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """A kill after the credential was written leaves a stage whose grant is
-    already live, while every config home still names the previous account.
-    Adopting it on the name alone would make one login two files."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
-    store.mkdir(parents=True)
-    grant = json.dumps({"claudeAiOauth": {"accessToken": "t", "refreshToken": "shared"}})
-    (store / "new@x.com.json.activating").write_text(grant, encoding="utf-8")
-    _park(tmp_path, "other@x.com", monkeypatch)
-    cfg = _cfg(tmp_path)
-    _holder_with(cfg, grant)                      # the interrupted switch already landed it
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@x.com"})
-
-    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
-
-    assert (store / "new@x.com.json.activating").exists()
-    assert not (store / "new@x.com.json").exists()
 
 
 def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
@@ -821,62 +787,31 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
     assert not live_path.exists()
 
 
-def test_switch_leaves_a_stage_alone_when_its_grant_is_already_stored(
+def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The identity lag can park a grant under another account's name, so a
-    stage must be compared against the store's contents, not its names."""
+    """A stage a killed switch left behind is reported by `jailbee doctor`, not
+    healed here. Renaming it home is the one move that can put one grant in two
+    files: the store is host-wide, so the grant may be live in another holder
+    this call cannot see. Leaving it costs a file on disk and nothing else."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     store = claude_pool.store_dir()
     store.mkdir(parents=True)
-    shared = json.dumps({"claudeAiOauth": {"accessToken": "t", "refreshToken": "shared"}})
-    (store / "new@x.com.json.activating").write_text(shared, encoding="utf-8")
-    (store / "old@x.com.json").write_text(shared, encoding="utf-8")   # parked under the lagging name
-    _park(tmp_path, "other@x.com", monkeypatch)
-    cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-
-    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
-
-    assert (store / "new@x.com.json.activating").exists()
-    assert not (store / "new@x.com.json").exists()
-
-
-def test_switch_adopts_nothing_when_the_live_credential_is_unreadable(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """An unreadable live credential could be any grant, including the stage's.
-    Refusing costs a file on disk; adopting could kill a login."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
-    store.mkdir(parents=True)
-    (store / "orphan@x.com.json.activating").write_text(_cred(), encoding="utf-8")
-    _park(tmp_path, "other@x.com", monkeypatch)
-    cfg = _cfg(tmp_path)
-    _holder_with(cfg, '{"claudeAiOauth": {"accessTok')     # torn
-
-    claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
-
-    assert (store / "orphan@x.com.json.activating").exists()
-    assert not (store / "orphan@x.com.json").exists()
-
-
-def test_switch_still_adopts_a_stage_that_is_the_only_copy(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """The refusals must not strand a login: a stage whose grant appears
-    nowhere else is still adopted."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
-    store.mkdir(parents=True)
-    (store / "orphan@x.com.json.activating").write_text(
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text(
         json.dumps({"claudeAiOauth": {"accessToken": "o", "refreshToken": "only"}}),
         encoding="utf-8",
     )
+    _park(tmp_path, "other@x.com", monkeypatch)
     cfg = _cfg(tmp_path)
     claude_pool.holder_dir(cfg).mkdir(parents=True)
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "orphan@x.com")
+    change = claude_pool.switch(cfg, GlobalConfig(), "other@x.com")
 
-    assert change.activated == "orphan@x.com"
-    assert list(store.glob("*.activating")) == []
+    # The switch itself completes normally...
+    assert change.activated == "other@x.com"
+    # ...and the stage is neither adopted nor deleted.
+    assert stage.read_text() == json.dumps(
+        {"claudeAiOauth": {"accessToken": "o", "refreshToken": "only"}}
+    )
+    assert not (store / "orphan@x.com.json").exists()
