@@ -1568,10 +1568,20 @@ def destroy_container(
             show_progress=False,
         )
 
-    # Release every pooled cache slot before deleting.
-    from jailbee.pool import release_all
+    # Release every pooled cache slot before deleting. Best-effort: a
+    # leaked slot is self-healing — pool._reconcile drops the
+    # by-container/<name> symlink for a container that no longer exists,
+    # so the next allocate/list_slots/prune reclaims it on its own. The
+    # cost of swallowing a failure here is a slot that stays marked
+    # allocated until the next pool operation; the cost of not
+    # swallowing it is a container the user asked to destroy but that
+    # never gets deleted.
+    try:
+        from jailbee.pool import release_all
 
-    release_all(cfg, incus, name)
+        release_all(cfg, incus, name)
+    except Exception:
+        pass
 
     # Clean refs/jailbee/<short>/* on the host. Best-effort: a failure here
     # (git missing, repo broken) must not block destroy — leftover refs

@@ -3980,6 +3980,31 @@ def test_destroy_releases_every_pool(tmp_path, mocker):
     incus.delete.assert_called_once_with("x", force=True)
 
 
+def test_destroy_deletes_even_when_pool_release_raises(tmp_path, mocker):
+    """A pool release failure (e.g. an IncusError from a stale slot device)
+    must not abort destroy: the user asked for the container to go away,
+    and a leaked slot is self-healing (the next allocate/list_slots/prune
+    reconciles it), while an undestroyable container is not.
+    """
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Stopped",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    mocker.patch("jailbee.pool.release_all", side_effect=IncusError("boom"))
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    incus.delete.assert_called_once_with("x", force=True)
+
+
 def test_destroy_container_cleans_gie_refs(tmp_path, mocker):
     """Destroy must clean refs/jailbee/<short>/* on the host so the
     refspecs created by `gie git fetch` don't accumulate after containers are
