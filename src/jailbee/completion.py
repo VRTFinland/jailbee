@@ -206,7 +206,7 @@ def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
     if loaded is None:
         return []
     cfg, _incus = loaded
-    return [p.name for p in pool_mod.pools_for(cfg)]
+    return [p.name for p in pool_mod.pools_for(cfg) if p.name.startswith(incomplete)]
 
 
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:

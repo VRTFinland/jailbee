@@ -664,6 +664,16 @@ def test_chrome_pool_ls_alias_still_works(tmp_path, mocker):
     assert "deprecated" in result.stdout.lower()
 
 
+def test_chrome_pool_ls_alias_keeps_its_help_text():
+    """The alias's --format/--fields options must keep the help strings and
+    --format completion the pre-generalisation `chrome-pool ls` had — a fix
+    round found them dropped from the delegating alias's own Option()s."""
+    result = runner.invoke(app, ["chrome-pool", "ls", "--help"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.stdout
+    assert "Output format: table (default) or json." in result.stdout
+    assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
+
+
 def test_ls_without_dot_jailbee_config_exits_with_error(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 

@@ -691,9 +691,10 @@ class SharedCache(BaseModel):
     pool: PoolSpec | None = None
 
 
-# Copy (not moved — chrome_pool.py keeps its own copy until Task 5 deletes
-# that module) of `chrome_pool._CACHE_RELATIVE`: regenerable Chrome cache
-# subtrees wiped when a pool slot is released.
+# Regenerable Chrome cache subtrees, relative to a pool slot: excluded from
+# seeding a fresh slot and wiped when a slot is released. Lives here (not in
+# pool.py) because it's part of the "chrome-profile" POOL_PRESETS entry
+# below, alongside the other builtin presets' path lists.
 _CHROME_WIPE_PATHS = (
     "Default/Cache",
     "Default/Code Cache",

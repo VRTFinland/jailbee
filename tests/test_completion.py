@@ -160,6 +160,43 @@ def test_complete_branch_empty_outside_a_repo(mocker):
     assert completion.complete_branch(_ctx(), "") == []
 
 
+# ---- pool names -------------------------------------------------------
+
+
+def test_complete_pool_names_filters_by_what_was_typed(completion_repo, mocker):
+    """Must narrow by prefix like every sibling completer (`complete_branch`,
+    `complete_container`) — offering every pool regardless of what was typed
+    would suggest `chrome-profile` for a user who typed `gr`."""
+    from jailbee.config import PoolSpec
+    from jailbee.pool import Pool
+
+    cfg, _incus = completion_repo
+    mocker.patch(
+        "jailbee.pool.pools_for",
+        return_value=[
+            Pool(name="gradle", root=cfg.repo_root, container_path="~/.gradle", spec=PoolSpec()),
+            Pool(
+                name="chrome-profile",
+                root=cfg.repo_root,
+                container_path="~/.config/google-chrome",
+                spec=PoolSpec(),
+            ),
+        ],
+    )
+    assert completion.complete_pool_names(_ctx(), "gr") == ["gradle"]
+    assert completion.complete_pool_names(_ctx(), "") == ["gradle", "chrome-profile"]
+
+
+def test_complete_pool_names_empty_outside_a_repo(mocker):
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.paths.find_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    assert completion.complete_pool_names(_ctx(), "") == []
+
+
 # ---- snapshot tags --------------------------------------------------------
 
 

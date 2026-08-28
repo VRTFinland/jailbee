@@ -7594,8 +7594,25 @@ app.add_typer(chrome_pool_app, hidden=True)
 
 @chrome_pool_app.command("ls")
 def chrome_pool_ls_cmd(
-    fmt: Annotated[str, typer.Option("--format", "-o")] = "table",
-    fields: Annotated[str | None, typer.Option("--fields")] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Deprecated: use `jailbee pool ls chrome-profile`."""
