@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, and reviewing PRs with `jailbee new --pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/dashboard", "how do I use gie", "gie new/shell/git/net/dashboard" (`gie` is jailbee's deprecated pre-1.0 command alias), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "review this PR in a container", "luo kontti tälle branchille", "vie/tuo muutokset kontista". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -10,9 +10,11 @@ on one Linux host. Each environment is an **Incus system container** cloned from
 prebuilt "golden image", carrying its own backend, frontend, Docker daemon, IDE,
 and browser — no port/name/schema collisions between branches.
 
-`gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 1.1.0), but don't teach it — use `jailbee`
-(or `jb`) in every command you write or suggest.
+`gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
+1.1.0** and no longer exists — always use `jailbee` (or `jb`). If a user types
+`gie`, tell them the command is now `jailbee`; if a repo still keeps its config
+in `.gie/`, that directory is still read (deprecated, removed in 2.0.0) and the
+fix is `git mv .gie .jailbee`.
 
 This skill is for **using** an already-configured repo (one that has
 `.jailbee/config.yaml` and where `jailbee init` + `jailbee base build` have already run). If
@@ -70,7 +72,8 @@ jailbee destroy feat-foo --force
 
 `jailbee dashboard` is the live, cross-repo version of `jailbee ls` — an
 auto-refreshing TUI where you navigate containers and press Enter to act
-(shell/ide/chrome/restart/stop/destroy). Reach for it when juggling several
+(shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
+"Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).
 `jailbee gui` (== `jailbee dashboard --gui`) opens the same dashboard as a graphical Qt
 window instead of a terminal TUI. Its **View** menu switches between a wide
@@ -237,9 +240,33 @@ scripting.
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). The stacked-PR tool: when a parent PR merges to `main`, retarget
   its dependent container from the parent branch onto `main`.
-- `jailbee submodule checkout [<name>] [-b <branch>]` — put submodules back on the
-  superproject's branch when they land on a detached HEAD after clone/push/pull.
-  No name → fixes the host repo; a name → fixes that container.
+- `jailbee submodule checkout [<name>] [-b <branch>] [--submodules-only]` — put the
+  tree on one branch, superproject and submodules, when they land on a detached
+  HEAD after clone/push/pull. No name → the host repo; a name → that container.
+  On the host, `-b <branch>` checks that branch out in the superproject first and
+  then aligns the submodules to it, so jumping the whole tree back to `master` is
+  one command; `--submodules-only` keeps the superproject where it is. A
+  container's branch is its identity, so `-b` never switches it.
+
+**Recipe — merging several containers through one.** Three features built in
+parallel become one branch without resolving anything on the host, which is the
+one place with no tests, no lint gate and no agent:
+
+```bash
+jailbee git checkout feat-a          # host HEAD → feat/a, taken from its container
+jailbee git push feat-c --current    # feat/a into container c, merged into its branch
+#   conflict? resolve inside container c, run the gates there, commit the merge
+jailbee git checkout feat-b          # repeat per feature
+jailbee git push feat-c --current
+git checkout main
+jailbee git pull feat-c --current    # all three land on main at once
+```
+
+`--current` is load-bearing: `push`'s default source is the container's *base*
+branch, so without it you would send `main` into c. The action must be a merge
+or rebase — `plain` transports the ref without applying it, so no conflict ever
+appears. Containers a and b survive the last pull and are destroyed by hand.
+Full version with the cleanup rules: [Git bridge](../../git-bridge.md#merging-several-containers-through-one).
 
 ## Network modes — `jailbee net`
 
@@ -266,6 +293,173 @@ allowlist to "fix" a failing push; switch to loose for the op instead. `jailbee 
 refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 `jailbee net status` shows the refresh timer + per-repo pools.
 
+## Egress overrides — `jailbee net egress`
+
+For a host a container needs that isn't in `.jailbee/config.yaml`'s
+`egress_allow`, and doesn't belong there (a one-off, not something the
+whole team needs), add it without touching the config:
+
+```bash
+jailbee net egress add pypi.org feat-foo   # this container only
+jailbee net egress add pypi.org --repo     # every container of this repo, this host
+jailbee net egress ls feat-foo             # what applies, and where each entry came from
+jailbee net egress rm pypi.org feat-foo    # undo it
+```
+
+Three facts that matter when explaining this:
+
+- **Additive only.** An override can widen the strict-mode allowlist, never
+  narrow it — `config.yaml` is always the floor. `rm` refuses an entry that
+  exists only in `config.yaml`, pointing at the file instead.
+- **Container scope is the default**, and dies with the container (stored
+  in its own label). `--repo` is the wider, explicit opt-in: every
+  container of the repo, on this host only.
+- **Host-local, not committed** either way — never shared with the team,
+  never seen by a reviewer or CI. That's also the risk: see
+  [docs/security.md](../../security.md#egress-overrides) before suggesting
+  one as a substitute for adding to `config.yaml`. If a host turns out to
+  be needed permanently, `jailbee net egress export` prints a paste-over
+  replacement for the config's `egress_allow:` key.
+
+Also available as the short root alias `jailbee egress add|rm|ls|export`.
+Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
+
+## The Claude login is often shared between repos — `claude_credentials`
+
+Several repos on one host can share a **single Claude Code login**, and on a
+recently set-up host they usually do: a `global.yaml` written by
+`jailbee config init --global` ships `claude_credentials.group: default`, which
+puts every repo on that host in one group. Hosts whose `global.yaml` predates
+that key, or that set `group: null`, keep one login per repo.
+
+Only the *credential* is shared. Each repo keeps its own `~/.claude`, so
+project history, MCP config, sessions and skills never cross repos. Inside a
+container of a member repo:
+
+- `~/.claude` is this repo's own config home, as always
+- `~/.claude-creds` is the **shared** directory, holding `.credentials.json`
+  and the rotation lock, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` points at it
+- this repo's own `~/.claude/.credentials.json` does **not** exist — joining
+  the group moved it out
+
+You can tell from inside a container with `echo
+$CLAUDE_SECURESTORAGE_CONFIG_DIR`: set means this repo is in a group, empty
+means it keeps its own login.
+
+**To change which account the group uses:** `/login` inside any member
+container writes straight into the shared directory, and every other member
+picks the new account up on its next Claude Code start. If the account is
+already stored from an earlier `jailbee claude park`, `jailbee claude use
+<email>` (see below) switches the whole group to it without a fresh login.
+
+**"Why did my Claude account change?"** Almost always: someone ran `/login` in
+a container of *another* repo in the same group. Point the user at the host —
+`jailbee doctor` there names this repo's group and lists its other member
+repos, and prints nothing at all when the repo shares no credential.
+
+**Joining or leaving a group** is a host-side edit to `claude_credentials` in
+`~/.config/jailbee/global.yaml` followed by `jailbee apply` in each affected
+repo. Two things about that are worth warning a user about before they run it:
+
+- Joining **moves** this repo's credential into the group directory. If the
+  group already holds a login and this repo has one too, `apply` asks which to
+  keep and deletes the other — the two are independent grants, so the survivor
+  is unaffected, but the loser is gone and needs a fresh `/login` to come back.
+- Leaving does **not** restore anything. The join moved the credential out, so
+  a repo that leaves has no credential at all and needs one `/login`.
+
+Neither is reversible by jailbee, and neither can be run from inside a
+container — there is no `jb` binary there.
+
+## Switching which Claude account is in use — `jailbee claude`
+
+A *holder* is whatever directory a repo's containers read `.credentials.json`
+from: the credential group directory when `claude_credentials` puts the repo in
+a group, otherwise the repo's own config home. One holder has at most one live
+login; every other stored login sits parked in a host-wide store.
+
+```bash
+jailbee claude ls                  # what is stored, and which one is live here
+jailbee claude use me@work.com     # switch this holder to a stored login
+jailbee claude park                # store the current one; next `claude` asks /login
+jailbee claude rm old@work.com     # delete a stored login for good
+```
+
+Four things worth knowing:
+
+- **A switch is holder-wide.** In a credential group, every member repo moves
+  with it. `jailbee claude ls` names the repos that share the holder.
+- **No restart.** Claude Code re-reads the credential when the file's mtime
+  changes, so a session that is open right now picks the new account up on its
+  next turn. The account shown by `/status` can lag until the session restarts;
+  authentication does not.
+- **Adding an account is `park` then `/login`.** There is no `add`: only a
+  browser login creates a credential, and it lands in the holder by itself.
+  Logging in as an account that is *already* parked is fine — the two grants
+  are independent, so the new one is stored under a name with a `~<timestamp>`
+  suffix (`me@work.com~20260828-104233`). Pass that full name to `use`/`rm`
+  when a bare email is reported as ambiguous.
+- **A login is never copied.** Every operation moves the file, because two
+  copies of one login share a refresh-token lineage and the first rotation
+  silently kills the other. That is also why `rm` is permanent.
+
+If a container says "Not logged in" straight after a switch, run
+`jailbee doctor` on the host: a holder with parked logins and no live one is
+what a `park` leaves behind.
+
+A login that has sat parked for a long time can also come back dead — Anthropic
+can revoke the grant, and JailBee never contacts the token endpoint, so it
+cannot tell in advance. The symptom is a `/login` prompt in the container right
+after a switch that reported success. Logging in there fixes it, and the new
+credential lands in the holder as usual.
+
+## Port forwarding — `jailbee port`
+
+A forward is an Incus proxy device wired directly into (or out of) the
+container's network namespace — it bypasses the network ACL by construction,
+so it works identically in **both** `strict` and `loose`, and doesn't need
+`net loose` to set up or to use. `jailbee net status` prints an active
+forward's own section ("Port forwards: N on M container(s) — the network ACL
+does not see these"), separate from the allowlist/TTL info above.
+
+The single rule that makes every invocation unambiguous: **the positional
+argument is always the container-side port**, in both verbs, and
+`--host-port` always names the host side. There is no `HOST:CONTAINER` colon
+syntax anywhere.
+
+The verb names the side a service becomes **available** on — not which end
+opens the TCP connection. Those are opposite ends of the same forward, in
+both directions:
+
+- `jailbee port to-container PORT [NAME] [--host-port N] [--proto tcp|udp]`
+  — a **host** service becomes reachable **inside** the container. The
+  container listens on PORT; Incus's proxy connects out to
+  `--host-port`/host on the host. This is the adb case: the host runs the
+  adb server on `127.0.0.1:5037`, `jailbee port to-container 5037 <name>`
+  makes plain `adb devices` work inside the container, and the *container*
+  is the one that opens the outward connection even though the command name
+  says "to-container".
+- `jailbee port to-host PORT [NAME] [--host-port N|auto] [--proto tcp|udp]`
+  — the mirror: a **container** service becomes reachable **on the host**.
+  The host listens (on PORT, unless `--host-port` says otherwise);
+  `--host-port auto` asks Incus/the OS for a free host port and prints the
+  one it picked. The *host* opens the connection inward, even though the
+  command name says "to-host".
+- `jailbee port ls [NAME]` — list forwards; with no NAME, every container of
+  the repo. It lists **every** proxy device on the container, including one
+  added by hand with plain `incus config device add` — that one shows up
+  with source `other` rather than `config`/`ad-hoc`.
+- `jailbee port rm HANDLE [NAME]` — HANDLE is a device name, a `host_ports`
+  config entry's `name`, or a container-side port number (rejected as
+  ambiguous if more than one forward uses that port).
+
+Config-declared forwards (the `host_ports:` block in `.jailbee/config.yaml`
+— see the jailbee-repo-setup skill) are always the to-container direction
+and apply to every container of the repo. `jailbee port to-host` has no
+config equivalent by design — it's per-container and ad hoc, because a host
+listener is a machine-wide resource that containers of the same repo would
+otherwise fight over.
+
 ## Other day-to-day commands
 
 - **Shell / run:** `jailbee shell <name>` (interactive, lands in the clone),
@@ -273,7 +467,9 @@ refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
   (one-off, e.g. `jailbee exec feat-foo -- pnpm test`). If `<name>` is omitted where a
   TTY exists, you get a picker.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
-  autostart. `jailbee destroy <name> --force`, or `jailbee destroy --all` (whole repo,
+  autostart, and both take `--background`/`-b` to detach that run (see
+  [Background operations](#background-operations)). `jailbee destroy <name>
+  --force`, or `jailbee destroy --all` (whole repo,
   one confirmation), or `jailbee destroy` with no args for an interactive checkbox.
   Add `--background`/`-b` to detach. Before the usual confirmation, JailBee
   assesses what destroying would discard — a dirty working tree, a changed
@@ -299,13 +495,22 @@ refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 - **GUI:** `jailbee ide <name>` (JetBrains; `--app webstorm` to override), `jailbee chrome
   <name> [URL]`. Both require the matching `jetbrains`/`chrome` blocks enabled
   (usually in `~/.config/jailbee/global.yaml`). One JetBrains IDE runs at a time
-  (shared profile); Chrome is per-container (`jailbee chrome-pool ls`/`prune`).
+  (shared profile); Chrome is per-container, from a cache pool slot
+  (`jailbee pool ls`/`prune chrome-profile`; the old `jailbee chrome-pool
+  ls`/`prune` spelling still works, deprecated).
+- **Cache pools:** `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` — any
+  cache configured with `pooled_caches`/`SharedCache.pool` (Gradle and Maven by
+  default) gets one private slot per container instead of one cache shared
+  by all of them, because those tools take a lock on the cache directory that
+  a shared mount serialised across containers. Omit `NAME` for every pool.
+  `ls`'s footer total is deduplicated (hardlinked files counted once); the
+  per-slot sizes above it are not, and over-report when slots share files.
 - **Snapshots:** `jailbee snapshot create <name> <tag>` / `restore <name> <tag>` /
   `ls` / `delete` — cheap save/rollback of a container's state.
 - **Optional mounts:** `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` to
   attach/detach an `optional_mounts` entry (e.g. `aws`) on a live container.
 - **Housekeeping:** `jailbee disk-usage`, `jailbee prune` (stopped containers >30 days),
-  `jailbee doctor` (host-level diagnostics), `jailbee apply` (re-push config — profiles,
+  `jailbee doctor` (host + repo diagnostics), `jailbee apply` (re-push config — profiles,
   ACL, /etc/hosts, dockerd proxy — after editing `.jailbee/config.yaml`; idempotent).
 - **Background jobs:** `jailbee job ls [--all-repos]` (in-flight/failed jobs with
   phase, pid, age, error, log path), `jailbee job log <name> [--follow]` (print or
@@ -315,8 +520,9 @@ refresh` re-resolves the allowlist hostnames (useful after a CDN rotates IPs);
 
 ## Shell completion
 
-`jailbee --install-completion` installs Typer's completion script (once per
-shell; restart it after). Beyond commands/flags, TAB dynamically completes:
+`jailbee setup` installs the completion scripts for both `jailbee` and `jb`
+(once per machine; restart the shell after). Beyond commands/flags, TAB
+dynamically completes:
 
 - container names, on every command that takes one
 - branch names, on `jailbee new` and `jailbee retarget`
@@ -329,19 +535,28 @@ offers nothing rather than erroring.
 
 ## Background operations
 
-`jailbee new` and `jailbee destroy` block until done (minutes for `new`). Add
-`--background`/`-b` to detach and get the shell back immediately:
+`jailbee new`, `jailbee destroy`, `jailbee start` and `jailbee restart` block
+until done (minutes for `new`; for the boot commands it is the autostart run
+afterwards that takes the time). Add `--background`/`-b` to detach and get the
+shell back immediately:
 
 ```bash
 jailbee new feat/foo --background      # returns at once; track with `jailbee ls`
+jailbee restart feat-foo -b            # reboot + autostart, detached
 ```
 
 `jailbee ls` shows a **JOB** column with the live phase (`creating` → `cloning` →
-`autostart`, or `destroying` / `failed`); it clears when the container is ready.
+`autostart`, or `starting` → `autostart` for a boot, or `destroying` / `failed`);
+it clears when the container is ready.
 A failed background job leaves the container intact for inspection (`jailbee shell`,
 then destroy). `jailbee shell`/`tmux` on an in-flight container **wait** for it to
-finish, then attach. Make it the default with `new.background: true` /
-`destroy.background: true` in config; `--no-background` forces one-off foreground.
+finish, then attach — for a create and a boot alike, the wait ends early at
+`autostart`, when the container is up and the steps are visible in tmux. Make it
+the default with `new.background: true` / `destroy.background: true` /
+`boot.background: true` (one key for both `start` and `restart`) in config;
+`--no-background` forces one-off foreground.
+A background boot refuses to start while another job for that container is
+still live: two workers would interleave their autostart steps.
 `--attach shell`/`--attach tmux`, `--tmux`, `--shell` force foreground
 (overriding `new.background`) and conflict with an explicit `--background`;
 `--attach none` / `--no-attach` don't force foreground and combine fine with it.
@@ -350,6 +565,9 @@ A `failed` job is a database record, not a container state — the container
 (if one exists) is left running untouched. `jailbee job ls` shows the recorded
 error and worker log path; `jailbee job clear <name>` is how the record is
 acknowledged (the dashboards expose the same action as "Clear failed job").
+A failed *boot* record clears itself: the next `jailbee start`/`jailbee restart`
+that completes supersedes that boot and drops the row. A failed create's record
+does not — the container's setup never finished, so it stays until acknowledged.
 
 ## Reviewing a pull request
 
@@ -369,6 +587,14 @@ Neither step needs `jailbee net loose`: `jailbee git push --pr` fetches the PR h
 **host** and moves it in over the bridge, and `jailbee pr` publishes host-side too.
 The first `jailbee pr` asks for confirmation and records it (`user.jailbee.pr_adopted`);
 `--yes` skips the prompt for non-interactive use.
+
+`git push --pr` needs the container named explicitly (it reads the container's
+own `user.jailbee.pr` label, so there is nothing for a picker to offer), but the
+action flag is optional: without it the merge/rebase/plain choice follows
+`push.default_action`, which is `ask` by default — a prompt on a TTY, an error
+off one. Both dashboards carry it as **"Refresh from PR head"**, shown only on a
+review container (a PR JailBee opened from the container's own branch has its
+head downstream of the container, so refreshing could only be a no-op).
 
 `jailbee new --pr` never touches your branches: the head is fetched into JailBee's own
 `refs/jailbee/pr/<N>/head` and the container's clone is checked out at that exact
@@ -431,6 +657,61 @@ unless you pass `--description` (regenerate with Claude), `--title`/`--body`, or
 accept the prompt — which is offered only for a PR JailBee itself created.
 `--force` force-pushes (with lease) a rebased/amended branch.
 
+The generation reads the branch's commits and cumulative diff, plus
+`.github/pull_request_template.md`, the spec or issue the branch implements, and
+`CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`. It runs on `claude.ai_pr_model`
+(default `sonnet`; `null` inherits the container's default model). A repo can
+state its own PR conventions in `claude.pr_prompt` — those instructions outrank
+JailBee's generic guidance about the title and body.
+
+It is explicitly told **not** to run the project's tests, build, linters or
+installers, and to describe how the change was tested from the commits and the
+CI config instead — the run has a fixed budget while a test suite's cost belongs
+to the repository. `claude.ai_pr_timeout` (default 600 s) bounds the whole run;
+on expiry `jailbee pr` warns and falls back to a placeholder title/body, which
+you can replace later with `jailbee pr --description`. Raise the timeout for a
+large tree, or when `claude.pr_prompt` asks for slower work.
+
+## Publishing a submodule PR — `jailbee submodule pr`
+
+The counterpart of `jailbee pr` for work done **inside a submodule**. A
+submodule is its own GitHub repository, so it needs its own PR — `jailbee pr`
+only ever publishes the superproject branch. One PR per run; the two commands
+don't depend on each other.
+
+```bash
+jailbee submodule pr feat-foo              # auto-target, draft PR
+jailbee submodule pr feat-foo libs/foo     # explicit submodule (path is top-relative)
+jailbee submodule pr feat-foo --ready      # mark ready for review
+jailbee submodule pr feat-foo --open       # just open it in the browser
+```
+
+Without a path, the submodule with commits ahead of its own base is targeted
+automatically; several ahead lists them and asks you to name one (two
+submodules are two repositories and two PRs). None ahead is reported as a
+plain fact, not an error.
+
+The key thing to know: the signal is the submodule's **own** base anchor
+(pinned when the container was created), not the superproject's gitlink diff
+`jailbee ls` shows. So if you've committed inside the submodule but haven't
+yet committed the gitlink bump in the superproject, `jailbee submodule pr`
+still sees exactly the commits to publish — `jailbee ls`'s AHEAD column would
+read zero for the same container. That gap is reported as information, never
+an error.
+
+Base and head branch names come from the submodule's **own** git data, not
+the superproject's: base is `--base` > the submodule's `.gitmodules` entry >
+its own `<remote>/HEAD` > `main`; head is `--as` > Claude's proposal > the
+branch the commits came from. The chosen head is remembered per submodule
+path, so re-running updates that PR instead of opening a second one. Note
+that `--branch/-b` means something different here than in `jailbee pr`: it
+selects which branch to read **from the submodule**, and is the escape hatch
+for a detached submodule.
+
+When the container also has a superproject PR, a successful run notes the
+merge order as information only: merge the submodule PR first, so the
+superproject PR's gitlink bump then points at a merged commit.
+
 ## Using `gh` / `git push` to GitHub from inside a container
 
 `gh` is baked into every container. For it to authenticate, the `github` block
@@ -453,6 +734,21 @@ What you can still do from inside:
   install-time changes).
 - For host-side bridge actions (`jailbee git pull`, `jailbee destroy`, `jailbee net loose`, …),
   describe what you need and let the host operator run it — you can't from here.
+
+## Checking what an agent preset resolved to
+
+`jailbee config show` prints the merged effective config, including the
+resolved `agents:` block — preset fields filled in whether or not the
+repo's own config mentions them:
+
+```bash
+jailbee config show | less   # look for the `agents:` block
+```
+
+That's the way to answer "what did enabling `codex`/`claude`/… actually
+turn on" instead of re-deriving it from the preset source by hand.
+Configuring a new agent, not just inspecting one already on, is the
+**jailbee-repo-setup** skill's job.
 
 ## When to point elsewhere
 

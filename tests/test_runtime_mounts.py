@@ -335,3 +335,42 @@ def test_detach_reraises_other_errors():
         assert "being deleted" in str(e)
     else:
         raise AssertionError("Expected IncusError to propagate")
+
+
+def test_attach_mounts_the_shared_socket_dirs_read_only(monkeypatch):
+    """The gnupg and pulse devices are *directory* mounts straight into the
+    host's own /run/user/<uid>, and the golden image enables linger — so the
+    container runs its own `systemd --user`. Its `gpg-agent.socket` /
+    `pulseaudio.socket` unlink and re-create the socket files they listen on,
+    which kills the host's agent ("socket file has been removed - shutting
+    down") and leaves the container's agent — with no smartcard access, so no
+    YubiKey keys for anyone — answering on the shared socket.
+
+    Read-only makes that unlink EROFS. Connecting to a unix socket needs no
+    writable filesystem, so agent forwarding is unaffected, and the host stays
+    free to re-create its sockets: the mount is read-only from the container's
+    side only.
+    """
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    cfg = _cfg()
+    uid = cfg.container_user.uid
+    incus = MagicMock()
+    incus.exec.return_value = f"{uid}\n"
+
+    attach_runtime_devices(
+        cfg,
+        incus,
+        "feat-smoke",
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+        sleep_fn=MagicMock(),
+    )
+
+    added = {c.args[1]: c.args[3] for c in incus.config_device_add.call_args_list}
+    assert added["gpg-socket"]["readonly"] == "true"
+    assert added["pulse-socket"]["readonly"] == "true"
+    # wayland-0 and bus are single-file mounts: unlinking a bind-mount point
+    # returns EBUSY, so the container cannot clobber them and a read-only
+    # flag would only risk breaking a writer we haven't thought of.
+    assert "readonly" not in added["wayland-socket"]
+    assert "readonly" not in added["dbus-socket"]

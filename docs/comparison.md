@@ -58,7 +58,7 @@ Concretely, that means the container behaves like a Linux box you own:
 | Run the repo's existing `docker-compose.yml` | Works unmodified — the container runs **its own Docker daemon** (`security.nesting`). No project renaming, no port remapping, no adapter for your stack. |
 | Run an Android emulator or a KVM VM | Declare `host_devices: [{ path: /dev/kvm }]` and it's there. Same for `/dev/net/tun`, a USB device, whatever the repo needs. |
 | Sign a commit with the key on your YubiKey | The host **gpg-agent's socket** is shared into the container and `SSH_AUTH_SOCK` points at it, so `git commit -S` and `ssh` work inside while the private key stays on the host — and the touch is still yours to give. |
-| Drive a phone plugged into your laptop | Bind-mount the host adb server's socket and set `ADB_SERVER_SOCKET`; `adb` inside the container then sees the host's devices. [Recipe](project-config.md#sharing-host-sockets). |
+| Drive a phone plugged into your laptop | Declare `host_ports: [{ name: adb, port: 5037 }]` and plain `adb devices` inside the container sees whatever the host has plugged in — no `ADB_SERVER_SOCKET`, no second adb server. [Recipe](project-config.md#talking-to-android-devices-over-adb). |
 | Run systemd services | It has systemd. |
 | Test your stack in a real browser | `jailbee chrome <name>` launches Chrome **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
 | Use a JetBrains IDE against the code | `jailbee ide <name>`, same passthrough. |

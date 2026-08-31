@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 from pathlib import Path
 
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 from jailbee.dashboard import RepoGroup
 from jailbee.git_status import GitStatus
@@ -108,7 +108,9 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     worker = mock_worker_cls.return_value
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     # persist_on_close() (in run()'s `finally`) also calls save_gui_state —
     # patch it too so it doesn't try to open a real session on the sentinel.
@@ -140,6 +142,9 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     ]
     assert len(collapsed_targets) == 1
 
+    columns_targets = [c.args[0] for c in window.columnsChanged.connect.call_args_list]
+    assert len(columns_targets) == 1
+
 
 def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
     """Regression test for the threading bug: worker signals emitted from a
@@ -150,25 +155,20 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
     off the GUI thread.
     """
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     main_thread = QThread.currentThread()
     handled_on: list[QThread] = []
 
     window = mocker.Mock()
 
-    def _set_groups(_groups: object, *, now: object, columns: object) -> None:
-        # `columns` is a required keyword here on purpose: if `on_groups`
-        # ever stopped forwarding it to `window.set_groups`, this mock
-        # would raise instead of silently tolerating the omission (which
-        # is exactly what a default value here would do).
+    def _set_groups(_groups: object, *, now: object) -> None:
         handled_on.append(QThread.currentThread())
 
     window.set_groups.side_effect = _set_groups
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.5,
         git_interval=10.0,
@@ -214,14 +214,13 @@ def test_wire_delivers_interval_and_force_to_a_real_worker_thread(qtbot, mocker)
     helper ``run()`` uses — so production and test wiring are identical.
     """
     groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
-    mocker.patch("jailbee.qtui.refresh.gather_rows", return_value=groups)
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
 
     window = MainWindow(git_enabled=True, interval=0.5)
     qtbot.addWidget(window)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        config_paths=[Path("/repo/.gie/config.yaml")],
         cwd_config=Path("/repo/.gie/config.yaml"),
         interval=0.5,
         git_interval=10.0,
@@ -264,7 +263,6 @@ def test_controller_persists_on_layout_change(mocker):
     window.current_layout.return_value = "table"
     window.table_header_state.return_value = "Zm9v"
     window.current_card_style.return_value = "compact"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -285,13 +283,122 @@ def test_controller_persist_is_noop_without_engine(mocker):
     save.assert_not_called()
 
 
+def test_on_collapsed_changed_persists_view_state(mocker):
+    """A fold change must write `view_prefs`, columns and folded set alike —
+    not `gui_state`, which is `_persist`'s row."""
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    save_gui = mocker.patch("jailbee.db.gui_state.save_gui_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "state")
+    window.collapsed_repos.return_value = {"p", "q"}
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_collapsed_changed()
+
+    save_view.assert_called_once()
+    engine_arg, frontend_arg, state_arg = save_view.call_args.args
+    assert engine_arg is mocker.sentinel.engine
+    assert frontend_arg == "qt"
+    assert state_arg.columns == ("name", "state")
+    assert state_arg.folded == frozenset({"p", "q"})
+    # The two writers must never clobber each other's row.
+    save_gui.assert_not_called()
+
+
+def test_on_columns_changed_persists_view_state(mocker):
+    """The Columns menu's toggle must also land in `view_prefs`, carrying
+    whatever the window's own folded set currently is."""
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "ip")
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_columns_changed()
+
+    save_view.assert_called_once()
+    _engine_arg, frontend_arg, state_arg = save_view.call_args.args
+    assert frontend_arg == "qt"
+    assert state_arg.columns == ("name", "ip")
+    assert state_arg.folded == frozenset()
+
+
+def test_on_columns_changed_repaints_immediately(mocker):
+    """A column toggle must reach the table right away, not on whatever the
+    next refresh tick happens to push — with "Off (manual)" refresh, that
+    tick may never come, and the Columns menu would look completely inert.
+    This fails if on_columns_changed goes back to only persisting."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    groups = [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "ip")
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+    controller.on_groups(groups)  # populate self._latest, as a real refresh would
+    window.set_groups.reset_mock()
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_called_once()
+    assert window.set_groups.call_args.args[0] == groups
+
+
+def test_on_columns_changed_does_not_repaint_before_any_refresh(mocker):
+    """Before the first `on_groups`, `_latest` is empty — nothing to repaint,
+    and `window.set_groups` must not be called with a bogus empty snapshot."""
+    mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name",)
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_columns_changed()
+
+    window.set_groups.assert_not_called()
+
+
+def test_persist_view_state_is_noop_without_engine(mocker):
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+
+    controller.on_collapsed_changed()
+    controller.on_columns_changed()
+
+    save_view.assert_not_called()
+
+
+def test_on_layout_changed_does_not_touch_view_prefs(mocker):
+    """The mirror of `test_on_collapsed_changed_persists_view_state`: window
+    layout persistence must never write the `view_prefs` row."""
+    mocker.patch("jailbee.db.gui_state.save_gui_state")
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.current_layout.return_value = "table"
+    window.table_header_state.return_value = None
+    window.current_card_style.return_value = "compact"
+    controller = qapp.AppController(
+        window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
+    )
+
+    controller.on_layout_changed("table")
+
+    save_view.assert_not_called()
+
+
 def test_persist_on_close_writes_snapshot(mocker):
     save = mocker.patch("jailbee.db.gui_state.save_gui_state")
     window = mocker.Mock()
     window.current_layout.return_value = "cards"
     window.table_header_state.return_value = "AAAA"
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = {"gisgro"}
     controller = qapp.AppController(
         window, mocker.Mock(), interval=5.0, engine=mocker.sentinel.engine, paused=True
     )
@@ -302,10 +409,9 @@ def test_persist_on_close_writes_snapshot(mocker):
     assert state.refresh_interval == 5.0
     assert state.refresh_paused is True
     assert state.card_style == "grid"
-    assert state.collapsed_repos == '["gisgro"]'
 
 
-def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
+def test_persist_writes_card_style(qtbot, mocker):
     """Round-trips through a real in-memory engine (not a mocked
     save_gui_state) to exercise the actual GuiState(...) construction in
     _persist, mirroring test_db_gui_state.py's _engine() helper."""
@@ -321,19 +427,16 @@ def test_persist_writes_card_style_and_collapsed(qtbot, mocker):
     controller = qapp.AppController(window, mocker.Mock(), interval=3.0, engine=engine)
 
     window._switch_card_style("grid")
-    window.card_view.set_collapsed({"gisgro"})
-    controller.on_collapsed_changed()
+    controller.on_card_style_changed("grid")
 
     saved = load_gui_state(engine)
     assert saved.card_style == "grid"
-    assert saved.collapsed_repos == '["gisgro"]'
 
 
 def test_on_card_style_changed_persists(mocker):
     save = mocker.patch("jailbee.db.gui_state.save_gui_state")
     window = mocker.Mock()
     window.current_card_style.return_value = "grid"
-    window.collapsed_repos.return_value = set()
     controller = qapp.AppController(
         window, mocker.Mock(), interval=3.0, engine=mocker.sentinel.engine
     )
@@ -343,19 +446,19 @@ def test_on_card_style_changed_persists(mocker):
     save.assert_called_once()
     _engine_arg, state_arg = save.call_args.args
     assert state_arg.card_style == "grid"
-    assert state_arg.collapsed_repos == "[]"
 
 
-def test_run_restores_card_style_and_collapsed_repos(mocker):
+def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
     mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
-    window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(
@@ -363,7 +466,6 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
             refresh_interval=7.0,
             refresh_paused=False,
             card_style="grid",
-            collapsed_repos='["a", "b"]',
         ),
     )
     mocker.patch("jailbee.db.gui_state.save_gui_state")
@@ -372,10 +474,11 @@ def test_run_restores_card_style_and_collapsed_repos(mocker):
 
     _args, kwargs = mock_window_cls.call_args
     assert kwargs["card_style"] == "grid"
-    window.card_view.set_collapsed.assert_called_once_with({"a", "b"})
 
 
-def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
+def test_run_restores_enabled_columns_and_folded_repos(mocker):
+    """`run()` must seed the window's Columns menu and the card view's fold
+    state from the Qt front-end's own `view_prefs` row — not from the TUI's."""
     mocker.patch("jailbee.qtui.app.QApplication")
     mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
@@ -384,19 +487,32 @@ def test_run_decodes_malformed_collapsed_repos_as_empty_set(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
     mocker.patch(
-        "jailbee.db.gui_state.load_gui_state",
-        return_value=GuiState(collapsed_repos="not-json"),
+        "jailbee.qtui.app.seed_view_state",
+        return_value=ViewState(columns=("name", "ip"), folded=frozenset({"repo-a"})),
     )
+    mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     mocker.patch("jailbee.db.gui_state.save_gui_state")
 
-    qapp.run(mocker.Mock(), None, interval=None, git_interval=10.0, no_git=False)
+    qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
 
-    window.card_view.set_collapsed.assert_called_once_with(set())
+    _args, kwargs = mock_window_cls.call_args
+    assert kwargs["enabled_columns"] == ("name", "ip")
+    window.card_view.set_collapsed.assert_called_once_with({"repo-a"})
 
 
-def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
+def _controller_with_group(
+    mocker,
+    tmp_path,
+    *,
+    loose_ttl_default="5m",
+    push_action_default="ask",
+    push_source_default="base",
+    base_branch=None,
+    pr_number=None,
+):
     """An AppController holding one snapshot row, so on_action can resolve a config."""
     from jailbee.dashboard import RepoGroup
     from jailbee.lifecycle import ContainerInfo
@@ -410,6 +526,8 @@ def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
         network="strict",
         ip=None,
         memory_limit=None,
+        base_branch=base_branch,
+        pr_number=pr_number,
     )
     config_path = tmp_path / ".gie" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -434,6 +552,8 @@ def _controller_with_group(mocker, tmp_path, *, loose_ttl_default="5m"):
             config_path=config_path,
             containers=[ci],
             loose_ttl_default=loose_ttl_default,
+            push_action_default=push_action_default,
+            push_source_default=push_source_default,
         )
     ]
     return controller
@@ -585,6 +705,215 @@ def test_on_action_net_strict_does_not_open_a_duration_dialog(mocker, tmp_path):
     get_item.assert_not_called()
 
 
+def test_on_action_git_diff_opens_an_output_window_instead_of_spawning(mocker, tmp_path):
+    """`git diff` exists for the text it prints: a detached Popen would throw
+    that away, so the verb must go to the output window instead."""
+    controller = _controller_with_group(mocker, tmp_path)
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch.object(qapp.subprocess, "Popen")
+
+    controller.on_action("git diff", "p-foo")
+
+    popen.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert argv[:4] == ["jailbee", "git", "diff", "p-foo"]
+    assert open_output.call_args.args[1] == "jailbee git diff p-foo"
+
+
+def _stub_dialog(mocker, attr, answers, *, accepted=True):
+    """Patch a prompt dialog class in app's namespace; return the class mock."""
+    cls = mocker.patch(f"jailbee.qtui.app.{attr}")
+    cls.return_value.exec.return_value = (
+        QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+    )
+    cls.return_value.answers.return_value = answers
+    return cls
+
+
+def test_on_action_git_push_with_pinned_config_asks_nothing(mocker, tmp_path):
+    """A repo that pinned both `push:` defaults has already answered. Asking
+    anyway — and passing the answer as a flag — would override its policy."""
+    controller = _controller_with_group(
+        mocker, tmp_path, push_action_default="merge", push_source_default="base"
+    )
+    dialog = mocker.patch("jailbee.qtui.app.PushOptionsDialog")
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push", "p-foo")
+
+    dialog.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert not {"--merge", "--rebase", "--plain", "--from", "--current"} & set(argv)
+
+
+def test_on_action_git_push_asks_when_the_config_says_ask(mocker, tmp_path):
+    """`push.default_action` defaults to 'ask', and the detached child has no
+    stdin to answer with — so the GUI asks and passes the answer as a flag."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(
+        mocker, tmp_path, push_action_default="ask", base_branch="main"
+    )
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None))
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push", "p-foo")
+
+    assert dialog.call_args.kwargs["ask_action"] is True
+    assert dialog.call_args.kwargs["ask_source"] is False
+    assert dialog.call_args.kwargs["base_branch"] == "main"
+    assert open_output.call_args.args[0][-1] == "--rebase"
+
+
+def test_on_action_git_push_cancelled_dispatches_nothing(mocker, tmp_path):
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(mocker, tmp_path, push_action_default="ask")
+    _stub_dialog(
+        mocker, "PushOptionsDialog", PushAnswers(action="merge", source=None), accepted=False
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("git push", "p-foo")
+
+    open_output.assert_not_called()
+    popen.assert_not_called()
+
+
+def test_on_action_pr_refresh_never_asks_for_a_source(mocker, tmp_path):
+    """`--pr` fixes the source to the PR head and the CLI rejects `--from` /
+    `--current` alongside it, so answering that question would be a usage
+    error — even in a repo whose `push.default_source` is 'ask'."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(
+        mocker,
+        tmp_path,
+        push_action_default="ask",
+        push_source_default="ask",
+        base_branch="main",
+        pr_number=42,
+    )
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="rebase", source=None))
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    assert dialog.call_args.kwargs["ask_action"] is True
+    assert dialog.call_args.kwargs["ask_source"] is False
+    assert dialog.call_args.kwargs["title"] == "Refresh 'p-foo' from PR #42"
+    argv = open_output.call_args.args[0]
+    assert argv[:5] == ["jailbee", "git", "push", "--pr", "p-foo"]
+    assert not {"--from", "--current"} & set(argv)
+    assert argv[-1] == "--rebase"
+
+
+def test_on_action_pr_refresh_with_a_pinned_action_asks_nothing(mocker, tmp_path):
+    """The source question is the only one 'ask' would still have left open,
+    and `--pr` has already answered it — so no dialog is worth showing."""
+    controller = _controller_with_group(
+        mocker,
+        tmp_path,
+        push_action_default="merge",
+        push_source_default="ask",
+        pr_number=42,
+    )
+    dialog = mocker.patch("jailbee.qtui.app.PushOptionsDialog")
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    dialog.assert_not_called()
+    argv = open_output.call_args.args[0]
+    assert not {"--merge", "--rebase", "--plain", "--from", "--current"} & set(argv)
+
+
+def test_on_action_pr_refresh_without_a_known_number_stays_honest(mocker, tmp_path):
+    """The menu only offers this on a container with a PR, but the dispatch is
+    by verb string — an unknown number must not become a fabricated one."""
+    from jailbee.qtui.prompts import PushAnswers
+
+    controller = _controller_with_group(mocker, tmp_path, push_action_default="ask")
+    dialog = _stub_dialog(mocker, "PushOptionsDialog", PushAnswers(action="merge", source=None))
+    mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git push --pr", "p-foo")
+
+    assert dialog.call_args.kwargs["title"] == "Refresh 'p-foo' from its PR head"
+
+
+def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):
+    from jailbee.qtui.prompts import PrAnswers
+
+    controller = _controller_with_group(mocker, tmp_path)
+    dialog = _stub_dialog(
+        mocker,
+        "PrOptionsDialog",
+        PrAnswers(ready=True, regenerate=False, confirm_foreign=True),
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("pr", "p-foo")
+
+    dialog.assert_called_once()
+    assert open_output.call_args.args[0][-2:] == ["--ready", "--yes"]
+
+
+def test_on_action_pr_cancelled_dispatches_nothing(mocker, tmp_path):
+    from jailbee.qtui.prompts import PrAnswers
+
+    controller = _controller_with_group(mocker, tmp_path)
+    _stub_dialog(
+        mocker,
+        "PrOptionsDialog",
+        PrAnswers(ready=None, regenerate=False, confirm_foreign=False),
+        accepted=False,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("pr", "p-foo")
+
+    open_output.assert_not_called()
+    popen.assert_not_called()
+
+
+def test_git_pull_confirmation_names_the_host_branch_and_not_destruction(mocker, tmp_path):
+    """`git pull` writes to the *host* repo, which a menu entry does not convey
+    — but it destroys nothing, so it must not inherit destroy's wording."""
+    controller = _controller_with_group(mocker, tmp_path, base_branch="main")
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git pull", "p-foo")
+
+    open_output.assert_not_called()  # declined
+    text = question.call_args.args[2]
+    assert "p-foo" in text
+    assert "main" in text
+    assert "destroy" not in text.lower()
+    assert question.call_args.args[4] == QMessageBox.StandardButton.No  # default button
+
+
+def test_git_pull_confirmation_accepted_opens_the_output_window(mocker, tmp_path):
+    controller = _controller_with_group(mocker, tmp_path, base_branch="main")
+    mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    )
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git pull", "p-foo")
+
+    argv = open_output.call_args.args[0]
+    assert argv[:4] == ["jailbee", "git", "pull", "p-foo"]
+    assert "--force" not in argv
+
+
 def test_destroy_at_risk_shows_the_summary_with_cancel_defaulted(mocker, tmp_path):
     controller = _controller_with_group(mocker, tmp_path)
     controller._latest[0].containers[0].git_status = GitStatus(
@@ -729,7 +1058,9 @@ def test_run_uses_persisted_interval_when_cli_none(mocker):
     mocker.patch("jailbee.qtui.app.RefreshWorker")
     mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
     from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
 
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
     mocker.patch(
         "jailbee.db.gui_state.load_gui_state",
         return_value=GuiState(layout="table", refresh_interval=7.0, refresh_paused=False),

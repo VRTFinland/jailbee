@@ -43,10 +43,20 @@ class ApplyResult:
     # Containers moved off the removed `<prefix>-net-offline` profile by
     # this run. Empty on every apply after the first one.
     offline_migrated: list[str] = field(default_factory=list)
+    # Containers whose port forwards this run added, replaced or removed.
+    ports_changed: list[str] = field(default_factory=list)
+    # (container, message) for containers whose port-forward reconciliation
+    # failed. Reported and skipped rather than aborting the sweep — see
+    # `run_apply`'s port-forward loop.
+    port_failures: list[tuple[str, str]] = field(default_factory=list)
+    # Pools whose root still holds both slots and loose cache content after
+    # `preflight_pools` had its chance to ask. No container using one of
+    # these can boot, so `run_apply` skips the restart offer entirely.
+    unresolved_pools: list[str] = field(default_factory=list)
 
     @property
     def fully_successful(self) -> bool:
-        return not self.restart_failures
+        return not self.restart_failures and not self.port_failures
 
 
 def _profile_differs(incus: Incus, name: str, new_yaml: str) -> bool:
@@ -137,16 +147,19 @@ def run_apply(
     confirm_fn: ConfirmFn | None = None,
 ) -> ApplyResult:
     """Apply current config to profiles, ACL, and live container state."""
+    from jailbee import egress_scope
     from jailbee.lifecycle import short_name
-    from jailbee.tui import info
+    from jailbee.tui import info, warn
 
     info("Applying configuration...")
 
-    # Resolve everything that could fail outside Incus before we mutate
-    # anything. Either of these raises and apply aborts cleanly with no
-    # partial profile / ACL update.
+    # Resolve the mirror's endpoint + CA before we mutate anything. Both are
+    # best-effort: each warns and yields None rather than raising, so `apply`
+    # proceeds without mirror wiring (nothing else it does depends on the
+    # mirror, and a user whose mirror is down may be running `apply` to repair
+    # something unrelated).
     info("Refreshing egress pool + ACL + /etc/hosts...")
-    mirror_endpoint = _compute_mirror_endpoint_or_abort(incus, gcfg)
+    mirror_endpoint = _mirror_endpoint_or_warn(cfg, incus, gcfg)
     mirror_ca_pem = _read_mirror_ca_or_warn(gcfg) if mirror_endpoint else None
 
     with Session(get_engine()) as session:
@@ -171,8 +184,6 @@ def run_apply(
 
         raise IncusError(refresh_result.error or "ACL write failed")
     if refresh_result.status == "partial":
-        from jailbee.tui import warn
-
         warn(f"Some hostnames failed to resolve: {refresh_result.error}")
 
     if refresh_result.added or refresh_result.removed:
@@ -201,10 +212,31 @@ def run_apply(
     _ensure_user_shared_dirs(cfg)
     _ensure_integration_shared_dirs(cfg)
 
+    from jailbee.pool import pools_for, preflight_pools
+
+    # `apply` is the command the user runs from a terminal, so it is where a
+    # polluted pool root gets offered a resolution rather than a lecture.
+    # What it must never do is abort: the profiles, the ACL and the port
+    # forwards still have to be written, or one cache directory wedges every
+    # later `jailbee apply`.
+    #
+    # `--yes` is documented as "skip restart confirmation" — it does not
+    # extend to relocating a user's cache content unasked, so it passes
+    # `confirm=None` and the root is reported, not moved.
+    unresolved_pools = preflight_pools(
+        cfg, confirm=None if assume_yes else (confirm_fn or default_confirm)
+    )
+
+    if pools_for(cfg):
+        info(
+            "A pooled cache attaches when a container next boots — restart any "
+            "container that was running just now (`jailbee restart <name>`) "
+            "before trusting it to use its own slot."
+        )
+
     # Refresh jailbee's bundled skills in the shared ~/.claude/skills so existing
     # containers pick up a newer jailbee without recreation. Non-fatal.
     from jailbee.claude_skills import sync_jailbee_skills
-    from jailbee.tui import warn
 
     try:
         sync_jailbee_skills(cfg)
@@ -247,8 +279,62 @@ def run_apply(
     docker_proxy_reapplied: list[str] = []
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
 
+    containers = _list_containers(cfg, incus)
+
+    from jailbee.ports import PortError, list_forwards, reconcile_config_ports
+
+    # One `incus list` for every container's forwards, instead of one per
+    # container inside the loop below — `reconcile_config_ports`'s `forwards`
+    # kwarg exists for exactly this caller.
+    port_forwards_by_container = list_forwards(incus, [ci.name for ci in containers])
+
     running_names: list[str] = []
-    for ci in _list_containers(cfg, incus):
+    ports_changed: list[str] = []
+    port_failures: list[tuple[str, str]] = []
+    for ci in containers:
+        # Reconcile forwards first, and for stopped containers too: a proxy
+        # device on a stopped container takes effect on its next boot, so
+        # skipping it would leave drift that only shows up later. This is
+        # unconditional — even an empty `host_ports` must still clean up a
+        # stale `port-cfg-*` device left behind after an entry is deleted.
+        #
+        # A translated failure here is reported and the sweep continues,
+        # rather than aborting `jailbee apply` outright: this loop exists to
+        # reconcile every container of the repo, and one container refusing a
+        # proxy device (e.g. something already listening on its container-side
+        # port) must not block the profile/ACL/hosts work already done this
+        # run for the rest. Mirrors `restart_failures` below.
+        try:
+            port_result = reconcile_config_ports(
+                cfg,
+                incus,
+                ci.name,
+                forwards=port_forwards_by_container.get(ci.name, []),
+            )
+        except PortError as e:
+            # Collected, not printed here: `cli.py`'s `apply` command reports
+            # `port_failures` the same way it reports `restart_failures`, and
+            # `fully_successful` (which gates the process exit code) already
+            # accounts for it.
+            port_failures.append((ci.name, str(e)))
+        else:
+            if port_result.changed:
+                info(
+                    f"  Port forwards on {short_name(cfg, ci.name)}: "
+                    f"+{len(port_result.added)} ~{len(port_result.replaced)} "
+                    f"-{len(port_result.removed)}"
+                )
+                ports_changed.append(ci.name)
+
+        # Re-materialise from the label so a profile change cannot leave a
+        # stale local `eth0` behind. Unconditional — for every container,
+        # not just running ones: `incus config device override`/`set` work
+        # on a stopped instance too, and skipping it here left a stopped
+        # container's NIC frozen on whatever ACL/bridge was current the
+        # last time it happened to be running, forever. Only the
+        # `/etc/hosts` step below genuinely needs the container up.
+        egress_scope.apply_container_acl(cfg, incus, ci.name, mode=ci.network or "strict")
+
         if ci.state != "Running":
             continue
         running_names.append(ci.name)
@@ -275,9 +361,24 @@ def run_apply(
             apply_docker_proxy(incus, ci.name, mirror_ca_pem, mirror_port)
             docker_proxy_reapplied.append(ci.name)
 
+    orphans = _sweep_orphan_extra_acls(cfg, incus)
+    if orphans:
+        info(f"Removed {len(orphans)} orphan egress ACL(s): {', '.join(orphans)}")
+
     restarted: list[str] = []
     restart_failures: list[tuple[str, str]] = []
     should_restart = bool(profiles_changed) and bool(running_names) and not no_restart
+    if should_restart and unresolved_pools:
+        # Every boot runs `pool.allocate_startup` -> `ensure_pool_dirs`, so
+        # with a root still polluted each restart raises the very PoolError
+        # the user was just shown — once per container. Don't offer what
+        # cannot work.
+        warn(
+            f"{len(running_names)} running container(s) need a restart, but pool "
+            f"{', '.join(unresolved_pools)} is unresolved — a restart would fail "
+            f"on it. Resolve it, then re-run `jailbee apply`."
+        )
+        should_restart = False
     if should_restart and not assume_yes:
         prompt = (
             f"\n{len(running_names)} running container(s) need restart "
@@ -306,7 +407,45 @@ def run_apply(
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,
+        ports_changed=ports_changed,
+        port_failures=port_failures,
+        unresolved_pools=unresolved_pools,
     )
+
+
+def _sweep_orphan_extra_acls(cfg: Config, incus: Incus) -> list[str]:
+    """Delete this repo's per-container extra ACLs whose container is gone.
+
+    The `user.jailbee.egress_extra` label dies with its container, but the ACL
+    is a standalone Incus object. `destroy_container` deletes it on the happy
+    path; this covers an interrupted destroy and a container removed with
+    `incus delete` directly.
+
+    Scoped to this repo's own containers by construction: only names derived
+    from a `<prefix>-<something>-extra` container are considered — a non-empty
+    component is required between the prefix and the suffix, so the
+    degenerate `<prefix>-extra` (no container name at all) is never swept.
+    That means another repo's ACLs and a hand-made ACL, including one
+    literally named `<prefix>-extra`, are never touched.
+    """
+    from jailbee import egress_scope
+
+    live = {c["name"] for c in incus.list_containers()}
+    expected = {egress_scope.extra_acl_name(name) for name in live}
+    prefix = f"{cfg.container_prefix}-"
+    suffix = "-extra"
+
+    deleted: list[str] = []
+    for acl in incus.network_acl_list():
+        if not acl.startswith(prefix) or not acl.endswith(suffix):
+            continue
+        if len(acl) <= len(prefix) + len(suffix):
+            continue  # no container-name component between prefix and suffix
+        if acl in expected:
+            continue
+        incus.network_acl_delete(acl)
+        deleted.append(acl)
+    return deleted
 
 
 def _apply_acl_with_nft_quirk(incus: Incus, name: str, acl_yaml: str) -> None:
@@ -329,13 +468,28 @@ def _ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
     ensure_acl_attached_to_bridge(cfg, incus)
 
 
-def _compute_mirror_endpoint_or_abort(incus: Incus, gcfg: GlobalConfig) -> tuple[str, int] | None:
-    """Resolve mirror endpoint, return None if disabled. Aborts on ValueError."""
-    if not gcfg.docker_registry_mirror.enabled:
+def _mirror_endpoint_or_warn(
+    cfg: Config, incus: Incus, gcfg: GlobalConfig
+) -> tuple[str, int] | None:
+    """Resolve the mirror endpoint, or None when unwanted / unavailable.
+
+    Warns rather than aborting: `apply` re-applies profiles, ACL, ports and
+    container state, none of which depend on the mirror, and a user whose
+    mirror is down may well be running `apply` to repair something else.
+    Symmetric with `_read_mirror_ca_or_warn` below.
+    """
+    from jailbee.docker_daemon import mirror_wanted
+    from jailbee.tui import warn
+
+    if not mirror_wanted(cfg, gcfg):
         return None
     from jailbee.docker_daemon import compute_mirror_endpoint
 
-    return compute_mirror_endpoint(incus, gcfg)
+    try:
+        return compute_mirror_endpoint(incus, gcfg)
+    except ValueError as e:
+        warn(f"{e} Skipping mirror wiring this run.")
+        return None
 
 
 def _read_mirror_ca_or_warn(gcfg: GlobalConfig) -> str | None:
@@ -378,12 +532,12 @@ def _restart_one(
     )
     from jailbee.hosts import apply_hosts
     from jailbee.lifecycle import (
+        boot_container,
         container_repo_dir,
         current_network_mode,
-        restart_container,
     )
 
-    restart_container(cfg, incus, name)
+    boot_container(cfg, incus, name, restart=True)
     if current_network_mode(cfg, incus, name) == "strict":
         apply_hosts(cfg, incus, name, mirror_endpoint=mirror_endpoint)
     repo_dir = container_repo_dir(cfg, incus, name)

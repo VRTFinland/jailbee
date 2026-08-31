@@ -127,7 +127,7 @@ def test_load_global_config_passes_through_overlay_keys(tmp_path):
     cfg, _ = load_global_config(path)
 
     # No raise; host-level defaults apply.
-    assert cfg.docker_registry_mirror.enabled is True
+    assert cfg.docker_registry_mirror.enabled == "auto"
 
 
 def test_load_global_config_empty_file_returns_defaults(tmp_path):
@@ -148,11 +148,6 @@ def test_docker_registry_mirror_defaults_to_port_3128():
 def test_docker_registry_mirror_defaults_to_rpardini_image():
     gcfg = GlobalConfig()
     assert gcfg.docker_registry_mirror.image == "rpardini/docker-registry-proxy:0.6.5"
-
-
-def test_docker_registry_mirror_enabled_defaults_to_true():
-    gcfg = GlobalConfig()
-    assert gcfg.docker_registry_mirror.enabled is True
 
 
 def test_docker_registry_mirror_accepts_overrides(tmp_path):
@@ -259,3 +254,52 @@ def test_global_config_issues_reraises_a_host_level_schema_error(tmp_path):
 
     with pytest.raises(ConfigError):
         global_config_issues(path)
+
+
+def test_mirror_enabled_defaults_to_auto():
+    """The default is docker-detection, not force-on. Non-Docker users must
+    not need the mirror container at all."""
+    assert GlobalConfig().docker_registry_mirror.enabled == "auto"
+
+
+@pytest.mark.parametrize("raw,expected", [("auto", "auto"), ("true", True), ("false", False)])
+def test_mirror_enabled_accepts_auto_and_bools(tmp_path, raw, expected):
+    path = tmp_path / "global.yaml"
+    path.write_text(f"docker_registry_mirror:\n  enabled: {raw}\n")
+    gcfg, warnings = load_global_config(path)
+    assert gcfg.docker_registry_mirror.enabled == expected
+    assert warnings == []
+
+
+def test_mirror_enabled_rejects_other_strings(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text("docker_registry_mirror:\n  enabled: sometimes\n")
+    with pytest.raises(ConfigError):
+        load_global_config(path)
+
+
+def test_global_config_parses_claude_credentials(tmp_path):
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text(
+        "claude_credentials:\n  group: work\n  repos:\n    side: personal\n    solo: null\n"
+    )
+
+    gcfg, warnings = load_global_config(path)
+
+    assert warnings == []
+    assert gcfg.claude_credentials.group == "work"
+    assert gcfg.claude_credentials.repos == {"side": "personal", "solo": None}
+
+
+def test_claude_credentials_is_a_host_level_key():
+    """It must never reach the Config layer's `deep_merge`: `Config` has
+    `extra='forbid'` and no such field, so an unsplit key would make every
+    load fail for anyone who sets it."""
+    from jailbee.config import _HOST_LEVEL_KEYS, _split_host_keys
+
+    assert "claude_credentials" in _HOST_LEVEL_KEYS
+    host, config_level = _split_host_keys({"claude_credentials": {"group": "work"}, "gpg": {}})
+    assert "claude_credentials" in host
+    assert "claude_credentials" not in config_level

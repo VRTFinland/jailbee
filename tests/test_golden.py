@@ -4,7 +4,7 @@ import base64
 import re
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -16,8 +16,12 @@ from jailbee.golden import (
     find_all_archived_images,
     find_archived_images,
     gather_golden_usage,
+    repo_uses_docker,
+    resolved_snippet_names,
+    resolved_snippet_paths,
 )
 from jailbee.incus import IncusError
+from jailbee.stopping import CLEAN_STOP_BUDGET
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -357,6 +361,52 @@ def test_build_deletes_container_when_provisioning_fails():
     incus.delete.assert_called_once_with(expected, force=True)
 
 
+def test_build_survives_a_build_container_that_will_not_shut_down():
+    """A stuck shutdown must not discard a finished provisioning run.
+
+    incusd gives an unqualified `incus stop` 600s and then fails with
+    `Failed shutting down instance … context deadline exceeded`. The build
+    container is about to be published and deleted, so its rootfs is all
+    that matters: pull the plug and carry on rather than throw the build
+    away at the last step.
+    """
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    expected = f"{cfg.container_prefix}-base-build"
+
+    def stop(name, **kwargs):
+        if kwargs.get("force"):
+            return None
+        raise IncusError(
+            f"`incus stop {name}` failed (exit 1): Error: Failed shutting down "
+            'instance, status is "Running": context deadline exceeded'
+        )
+
+    incus.stop.side_effect = stop
+
+    build_golden_image(cfg, incus)
+
+    incus.publish.assert_called_once()
+    assert incus.stop.call_args_list[-1] == call(expected, force=True)
+    # The clean attempt must be time-bounded, not left on incusd's 600s.
+    assert incus.stop.call_args_list[0].kwargs.get("timeout")
+
+
+def test_build_stop_asks_for_a_clean_shutdown_first():
+    """A healthy container is shut down properly — no gratuitous power cut."""
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+
+    build_golden_image(cfg, incus)
+
+    expected = f"{cfg.container_prefix}-base-build"
+    incus.stop.assert_called_once_with(expected, timeout=CLEAN_STOP_BUDGET)
+
+
 def test_build_removes_orphan_container_before_launch():
     """Recover from a previous failed build that left the container
     behind: detect on entry and delete before launching the new one.
@@ -470,10 +520,10 @@ def test_build_stages_user_install_d_from_xdg_config_home(
 ):
     """The user's install.d must be read where the rest of jailbee writes it.
 
-    `global_config.default_global_config_path()` and `jailbee migrate` both
-    honour `XDG_CONFIG_HOME`; a hardcoded `~/.config/jailbee/install.d` would
-    silently ignore every snippet of a user who sets that variable — and the
-    migrator would have moved theirs to a directory this never looks in.
+    `global_config.default_global_config_path()` honours `XDG_CONFIG_HOME`, so
+    a hardcoded `~/.config/jailbee/install.d` here would silently ignore every
+    snippet belonging to a user who sets that variable — with no error, just
+    provisioning that quietly skips their customisations.
     """
     xdg_config = tmp_path / "xdg-config"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
@@ -722,3 +772,99 @@ def test_provisioning_failure_still_deletes_the_build_container():
 
     assert incus.delete.called
     assert incus.delete.call_args.kwargs.get("force") is True
+
+
+def _repo_cfg(tmp_path, make_cfg, **overrides):
+    """A Config whose repo_root has a real `.jailbee/config.yaml`.
+
+    `repo_config_dir_name` picks the directory by the *file's* presence, so an
+    empty directory is not enough — without the file, a repo snippet written
+    under `.jailbee/install.d/` would be looked for under `.gie/install.d/`.
+    """
+    repo_root = tmp_path / "repo"
+    (repo_root / ".jailbee").mkdir(parents=True)
+    (repo_root / ".jailbee" / "config.yaml").write_text("")
+    return make_cfg(repo_root, **overrides)
+
+
+def test_resolved_snippet_names_sees_stack_docker(tmp_path, make_cfg):
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"stacks": {"docker": True}})
+    assert "docker" in resolved_snippet_names(cfg)
+
+
+def test_resolved_snippet_names_sees_enable_snippets_escape_hatch(tmp_path, make_cfg):
+    """`golden.stacks` is sugar over `enable_snippets`; both must be visible."""
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"enable_snippets": ["50-docker"]})
+    assert "docker" in resolved_snippet_names(cfg)
+
+
+def test_resolved_snippet_names_sees_a_repo_owned_snippet(tmp_path, make_cfg):
+    cfg = _repo_cfg(tmp_path, make_cfg)
+    snippet = cfg.repo_root / ".jailbee" / "install.d" / "50-docker.sh"
+    snippet.parent.mkdir(parents=True)
+    snippet.write_text("#!/bin/bash\n")
+    assert "docker" in resolved_snippet_names(cfg)
+
+
+def test_resolved_snippet_names_honours_disable_snippets(tmp_path, make_cfg):
+    cfg = _repo_cfg(
+        tmp_path,
+        make_cfg,
+        golden={"stacks": {"docker": True}, "disable_snippets": ["docker"]},
+    )
+    assert "docker" not in resolved_snippet_names(cfg)
+
+
+def test_resolved_snippet_paths_empty_when_provision_script_overrides(tmp_path, make_cfg):
+    """A custom provision script stages no install.d snippets at all."""
+    script = tmp_path / "custom-install.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    cfg = _repo_cfg(
+        tmp_path,
+        make_cfg,
+        golden={"provision_script": str(script), "stacks": {"docker": True}},
+    )
+    assert resolved_snippet_paths(cfg) == []
+
+
+def test_repo_uses_docker_falls_back_to_the_stack_bool_with_provision_script(tmp_path, make_cfg):
+    """install.d is bypassed, so the sugar bool is the only signal left."""
+    script = tmp_path / "custom-install.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    cfg = _repo_cfg(
+        tmp_path,
+        make_cfg,
+        golden={"provision_script": str(script), "stacks": {"docker": True}},
+    )
+    assert repo_uses_docker(cfg) is True
+
+
+def test_repo_uses_docker_false_for_a_plain_repo(tmp_path, make_cfg):
+    assert repo_uses_docker(_repo_cfg(tmp_path, make_cfg)) is False
+
+
+def test_repo_uses_docker_sees_extra_apt_packages(tmp_path, make_cfg):
+    """`docker.io` from the archive lands in the image via 05-extra-apt.sh
+    without the `docker` snippet ever resolving."""
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["curl", "docker.io"]})
+    assert repo_uses_docker(cfg) is True
+
+
+def test_repo_uses_docker_sees_extra_apt_packages_with_a_provision_script(tmp_path, make_cfg):
+    """extra_apt_packages is independent of install.d, so the signal survives
+    the branch where a custom provision script replaces install.sh."""
+    script = tmp_path / "custom-install.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    cfg = _repo_cfg(
+        tmp_path,
+        make_cfg,
+        golden={"provision_script": str(script), "extra_apt_packages": ["docker-ce"]},
+    )
+    assert repo_uses_docker(cfg) is True
+
+
+def test_repo_uses_docker_ignores_unrelated_extra_apt_packages(tmp_path, make_cfg):
+    """The prefix test must not fire on packages that merely mention docker
+    late in the name."""
+    cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["golang-docker-dev"]})
+    assert repo_uses_docker(cfg) is False

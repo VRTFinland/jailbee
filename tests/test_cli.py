@@ -9,13 +9,28 @@ from typer.testing import CliRunner
 from jailbee.cli import app
 from jailbee.config import load_config
 from jailbee.lifecycle import ResolvedContainer
+from tests.conftest import make_config
 
 FIXTURES = Path(__file__).parent / "fixtures"
+runner = CliRunner()
+
+
+def _fake_pool(name: str):
+    from jailbee.config import PoolSpec
+    from jailbee.pool import Pool
+
+    return Pool(name=name, root=Path("/tmp/x"), container_path="/home/dev/x", spec=PoolSpec())
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """Drive the real console script in a subprocess.
+
+    Spawns `jailbee`, the primary of the two entry points `pyproject.toml`
+    declares. This is the only place the suite depends on a script name being
+    installed, which is what caught the removal of the pre-1.0 `gie` alias.
+    """
     return subprocess.run(
-        ["uv", "run", "gie", *args],
+        ["uv", "run", "jailbee", *args],
         capture_output=True,
         text=True,
         check=False,
@@ -43,7 +58,7 @@ def test_version_flag() -> None:
 def test_help() -> None:
     result = run_cli("--help")
     assert result.returncode == 0
-    assert "gie" in result.stdout.lower() or "gisgro" in result.stdout.lower()
+    assert "jailbee" in result.stdout.lower()
 
 
 def test_cli_init_no_longer_has_reapply_flag() -> None:
@@ -104,6 +119,25 @@ def test_config_validate_passes_with_a_valid_global_column_block(tmp_path, monke
     )
 
     assert result.exit_code == 0, result.stdout
+
+
+def test_config_validate_keeps_bracketed_text_in_a_validator_message(tmp_path) -> None:
+    """A validation message's square brackets must survive to the terminal.
+
+    `host_ports`'s name rule quotes its regex, `[a-z0-9][a-z0-9-]*`. Printed
+    through `error` (Rich markup on), Rich reads each bracket group as a style
+    tag and silently deletes it, so the user is told the name "must match *" —
+    the rule the message exists to state, gone. `error_plain` is what keeps it.
+    """
+    repo = _setup_repo_with_columns(tmp_path, "host_ports:\n  - name: ADB\n    port: 5037\n")
+
+    result = CliRunner().invoke(
+        app, ["config", "validate", "--config", str(repo / ".jailbee" / "config.yaml")]
+    )
+
+    assert result.exit_code == 1
+    # stderr, not stdout: `error`/`error_plain` print to `tui.err_console`.
+    assert "[a-z0-9][a-z0-9-]*" in result.stderr
 
 
 def test_config_validate_fails_on_a_repo_column_typo(tmp_path) -> None:
@@ -296,74 +330,130 @@ def test_net_help() -> None:
     assert "loose" in result.stdout
 
 
-def test_chrome_pool_ls_renders_table(tmp_path, mocker):
-    """`gie chrome pool ls` lists all slots with state."""
-    from typer.testing import CliRunner
+def test_pool_ls_lists_every_pool(tmp_path, mocker):
+    """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
+    from jailbee.pool import SlotInfo
 
-    from jailbee.chrome_pool import SlotInfo
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[_fake_pool("gradle")])
     mocker.patch(
-        "jailbee.chrome_pool.list_slots",
+        "jailbee.pool.list_slots",
         return_value=[
             SlotInfo(
+                pool="gradle",
                 name="slot-0",
                 path=tmp_path / "slot-0",
-                container="feat-foo",
-                login_data_mtime=100.0,
-                size_bytes=1024,
-            ),
-            SlotInfo(
-                name="slot-1",
-                path=tmp_path / "slot-1",
-                container=None,
-                login_data_mtime=None,
-                size_bytes=512,
-            ),
+                container="c1",
+                warmth_mtime=None,
+                size_bytes=10,
+            )
         ],
     )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=10)
+    result = runner.invoke(app, ["pool", "ls"])
+    assert result.exit_code == 0
+    assert "gradle" in result.stdout
+    assert "slot-0" in result.stdout
 
-    runner = CliRunner()
-    result = runner.invoke(app, ["chrome-pool", "ls"])
+
+def test_pool_ls_rejects_an_unknown_pool_name(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[])
+    result = runner.invoke(app, ["pool", "ls", "nosuch"])
+    assert result.exit_code == 2
+    assert "nosuch" in result.output
+
+
+def test_pool_ls_with_name_filters_to_that_pool(tmp_path, mocker):
+    """A NAME that does match narrows to that one pool's slots via `pool.get`."""
+    from jailbee.pool import SlotInfo
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("gradle"))
+    mocker.patch(
+        "jailbee.pool.list_slots",
+        return_value=[
+            SlotInfo(
+                pool="gradle",
+                name="slot-0",
+                path=tmp_path / "slot-0",
+                container=None,
+                warmth_mtime=None,
+                size_bytes=10,
+            )
+        ],
+    )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=10)
+    result = runner.invoke(app, ["pool", "ls", "gradle"])
     assert result.exit_code == 0, result.stdout
     assert "slot-0" in result.stdout
-    assert "slot-1" in result.stdout
-    assert "feat-foo" in result.stdout
 
 
-def test_chrome_pool_ls_format_json(tmp_path, mocker):
+def test_pool_ls_format_json(tmp_path, mocker):
     import json as _json
 
-    from typer.testing import CliRunner
+    from jailbee.pool import SlotInfo
 
-    from jailbee.chrome_pool import SlotInfo
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[_fake_pool("gradle")])
     mocker.patch(
-        "jailbee.chrome_pool.list_slots",
+        "jailbee.pool.list_slots",
         return_value=[
             SlotInfo(
+                pool="gradle",
                 name="slot-0",
                 path=tmp_path / "slot-0",
                 container="feat-foo",
-                login_data_mtime=100.0,
+                warmth_mtime=None,
                 size_bytes=1024,
             ),
         ],
     )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=1024)
 
-    result = CliRunner().invoke(
-        app, ["chrome-pool", "ls", "--format", "json", "--fields", "slot,container,size_bytes"]
+    result = runner.invoke(
+        app,
+        ["pool", "ls", "--format", "json", "--fields", "pool,slot,container,size_bytes"],
     )
     assert result.exit_code == 0, result.stdout
     data = _json.loads(result.stdout)
-    assert data == [{"slot": "slot-0", "container": "feat-foo", "size_bytes": 1024}]
+    assert data == [
+        {"pool": "gradle", "slot": "slot-0", "container": "feat-foo", "size_bytes": 1024}
+    ]
+
+
+def test_pool_ls_prints_total_footer(tmp_path, mocker):
+    """The dedup total (`unique_bytes`, summed over selected pools) is the
+    only place the real on-disk figure appears — per-slot sizes double-count
+    hardlinked content."""
+    from jailbee.pool import SlotInfo
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch(
+        "jailbee.pool.pools_for",
+        return_value=[_fake_pool("gradle"), _fake_pool("chrome-profile")],
+    )
+    mocker.patch(
+        "jailbee.pool.list_slots",
+        return_value=[
+            SlotInfo(
+                pool="gradle",
+                name="slot-0",
+                path=tmp_path / "slot-0",
+                container=None,
+                warmth_mtime=None,
+                size_bytes=99999,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.pool.unique_bytes", return_value=2048)
+    result = runner.invoke(app, ["pool", "ls"])
+    assert result.exit_code == 0, result.stdout
+    assert "total on disk (deduplicated)" in result.stdout
+    # unique_bytes mocked to 2048 per pool, 2 selected pools -> 4096 -> "4.0 KB".
+    # Not 99999 (the fabricated, deliberately wrong, per-slot size_bytes) —
+    # the footer must come from unique_bytes(), never from summing SlotInfo.
+    assert "4.0 KB" in result.stdout
 
 
 def test_disk_usage_table_includes_total_footer(tmp_path, mocker):
@@ -532,20 +622,56 @@ def test_snapshot_ls_format_json_empty_returns_empty_list(tmp_path, mocker):
     assert _json.loads(result.stdout) == []
 
 
-def test_chrome_pool_prune_reports_count(tmp_path, mocker):
-    from typer.testing import CliRunner
-
-    from jailbee.cli import app
-
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.chrome_pool.prune", return_value=3)
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["chrome-pool", "prune"])
+def test_pool_prune_sums_across_multiple_pools(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch(
+        "jailbee.pool.pools_for",
+        return_value=[_fake_pool("gradle"), _fake_pool("chrome-profile")],
+    )
+    prune = mocker.patch("jailbee.pool.prune", side_effect=[2, 3])
+    result = runner.invoke(app, ["pool", "prune"])
     assert result.exit_code == 0, result.stdout
-    assert "3" in result.stdout
+    assert "Pruned 5 free slots" in result.stdout
+    assert prune.call_count == 2
+
+
+def test_pool_prune_rejects_an_unknown_pool_name(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.pools_for", return_value=[])
+    result = runner.invoke(app, ["pool", "prune", "nosuch"])
+    assert result.exit_code == 2
+    assert "nosuch" in result.output
+
+
+def test_chrome_pool_alias_still_works(tmp_path, mocker):
+    """The old `chrome-pool prune` name keeps working, as a deprecated alias."""
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    prune = mocker.patch("jailbee.pool.prune", return_value=0)
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("chrome-profile"))
+    result = runner.invoke(app, ["chrome-pool", "prune"])
+    assert result.exit_code == 0
+    assert "deprecated" in result.stdout.lower()
+    prune.assert_called_once()
+
+
+def test_chrome_pool_ls_alias_still_works(tmp_path, mocker):
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_config(tmp_path))
+    mocker.patch("jailbee.pool.get", return_value=_fake_pool("chrome-profile"))
+    mocker.patch("jailbee.pool.list_slots", return_value=[])
+    mocker.patch("jailbee.pool.unique_bytes", return_value=0)
+    result = runner.invoke(app, ["chrome-pool", "ls"])
+    assert result.exit_code == 0, result.stdout
+    assert "deprecated" in result.stdout.lower()
+
+
+def test_chrome_pool_ls_alias_keeps_its_help_text():
+    """The alias's --format/--fields options must keep the help strings and
+    --format completion the pre-generalisation `chrome-pool ls` had — a fix
+    round found them dropped from the delegating alias's own Option()s."""
+    result = runner.invoke(app, ["chrome-pool", "ls", "--help"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.stdout
+    assert "Output format: table (default) or json." in result.stdout
+    assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
 
 
 def test_ls_without_dot_jailbee_config_exits_with_error(tmp_path, monkeypatch):
@@ -1084,7 +1210,8 @@ def test_tmux_command_attaches_to_session(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False  # default; explicit so select_window isn't called
+    # No autostart agents, so select_window isn't called.
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1125,7 +1252,7 @@ def test_tmux_command_creates_session_if_missing(mocker):
     from jailbee.incus import IncusError
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1154,7 +1281,7 @@ def test_tmux_command_propagates_exit_code(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = False
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 1
@@ -1169,14 +1296,19 @@ def test_tmux_command_propagates_exit_code(mocker):
 
 
 def test_tmux_command_focuses_claude_window_when_autostart(mocker):
-    """When claude.autostart is on, `gie tmux` selects the claude
-    window before attaching so users land in it directly."""
+    """When an agent has autostart on, `gie tmux` selects that agent's
+    window (the last one when several autostart) before attaching so
+    users land in it directly."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
+    from jailbee.config import AutostartStep
 
     cfg = mocker.MagicMock()
-    cfg.claude.autostart = True
+    mocker.patch(
+        "jailbee.autostart.agent_autostart_steps",
+        return_value=[AutostartStep(name="claude", run="exec claude", background=True)],
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1264,329 +1396,341 @@ def test_tmux_without_force_defaults_false(mocker):
     assert resolve.call_args.kwargs.get("force") is False
 
 
-def test_resolve_attachable_keyboard_interrupt_warns(mocker, tmp_path):
-    """Ctrl-C during background job wait exits 1 and emits a warning."""
-    import typer
+def _mock_attach_guard(mocker, *, exists=True, wait_error=None, row=None, tty=True):
+    """Mock what `_resolve_attachable` reaches for; return its `Incus` instance.
 
-    from jailbee import cli
-
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=KeyboardInterrupt,
-    )
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.tui.console")
-    warn = mocker.patch("jailbee.cli.warn")
-
-    cfg = mocker.MagicMock()
-    with pytest.raises(typer.Exit) as exc_info:
-        cli._resolve_attachable(cfg, "feat-bg")
-    assert exc_info.value.exit_code == 1
-    warn.assert_called_once()
-
-
-def test_resolve_attachable_force_bypasses_failed_op(mocker):
-    """force=True on a `failed` op warns and returns instead of exiting."""
-    from jailbee import cli
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    row = mocker.MagicMock(
-        phase="failed", pid=999, error_msg="Autostart step 'warmup' failed: exit code 1"
-    )
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    wait = mocker.patch("jailbee.lifecycle.wait_for_background_ready")
-    warn = mocker.patch("jailbee.cli.warn")
-    info = mocker.patch("jailbee.cli.info")
-
-    cfg = mocker.MagicMock()
-    _incus, name = cli._resolve_attachable(cfg, "feat-bg", force=True)
-
-    assert name == "myrepo-feat-bg"
-    wait.assert_not_called()
-    warn.assert_called_once()
-    # Points the user at the command to acknowledge the dead job.
-    assert any("jailbee job clear feat-bg" in str(c.args[0]) for c in info.call_args_list)
-
-
-def test_resolve_attachable_force_bypasses_dead_worker(mocker):
-    """force=True on a non-terminal op whose worker died still warns + returns."""
-    from jailbee import cli
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    row = mocker.MagicMock(phase="cloning", pid=999, error_msg=None)
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    mocker.patch("jailbee.background.worker_alive", return_value=False)
-    mocker.patch("jailbee.lifecycle.wait_for_background_ready")
-    warn = mocker.patch("jailbee.cli.warn")
-
-    cfg = mocker.MagicMock()
-    _incus, name = cli._resolve_attachable(cfg, "feat-bg", force=True)
-
-    assert name == "myrepo-feat-bg"
-    warn.assert_called_once()
-
-
-def test_resolve_attachable_force_no_op_row_is_silent(mocker):
-    """force=True with no background job row attaches with no warning (the
-    foreground-failure / healthy case)."""
-    from jailbee import cli
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
-    wait = mocker.patch("jailbee.lifecycle.wait_for_background_ready")
-    warn = mocker.patch("jailbee.cli.warn")
-
-    cfg = mocker.MagicMock()
-    _incus, name = cli._resolve_attachable(cfg, "feat-bg", force=True)
-
-    assert name == "myrepo-feat-bg"
-    wait.assert_not_called()
-    warn.assert_not_called()
-
-
-def test_resolve_attachable_force_refuses_when_the_container_does_not_exist(mocker):
-    """`--force` skips the job guard, not the container.
-
-    A create that failed before `incus init` leaves a job row and no container;
-    "attaching anyway" to that used to raise a raw IncusError traceback.
+    ``wait_error`` is what `wait_for_background_ready` raises — a ValueError
+    for a failed/stale job, a KeyboardInterrupt for Ctrl-C, None for a wait
+    that succeeds. ``tty`` drives the stdin check the confirmation is gated on
+    (pytest's captured stdin is not a TTY, so tests that want the prompt must
+    say so).
     """
-    import typer
-
-    from jailbee import cli
-
     incus = mocker.MagicMock()
-    incus.exists.return_value = False
+    incus.exists.return_value = exists
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     mocker.patch(
         "jailbee.lifecycle.resolve_container_for_interactive",
         return_value="myrepo-feat-bg",
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    row = mocker.MagicMock(phase="failed", pid=4242, error_msg="Aborted: declined ...")
     mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    err = mocker.patch("jailbee.cli.error")
+    mocker.patch("jailbee.tui.console")
+    mocker.patch("jailbee.lifecycle.wait_for_background_ready", side_effect=wait_error)
+    mocker.patch("jailbee.cli.sys.stdin.isatty", return_value=tty)
+    return incus
+
+
+def _failed_job_row(mocker, *, phase="failed", pid=999, error_msg="boom"):
+    return mocker.MagicMock(phase=phase, pid=pid, error_msg=error_msg)
+
+
+def test_resolve_attachable_ready_job_never_asks(mocker):
+    """The healthy path is untouched: no warning, no prompt, just the name."""
+    from jailbee import cli
+
+    _mock_attach_guard(mocker)
+    warn = mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
+
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert name == "myrepo-feat-bg"
+    warn.assert_not_called()
+    confirm.assert_not_called()
+
+
+def test_resolve_attachable_failed_job_attaches_after_confirmation(mocker):
+    """A failed job over a running container is a warning + a prompt, not a
+    refusal: the container is exactly where the user needs to look."""
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background creation of 'feat-bg' failed: boom"),
+        row=_failed_job_row(mocker),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
     info = mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
 
-    cfg = mocker.MagicMock()
-    with pytest.raises(typer.Exit) as exc_info:
-        cli._resolve_attachable(cfg, "feat-bg", force=True)
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
-    assert exc_info.value.exit_code == 1
-    assert "nothing to attach to" in err.call_args[0][0]
-    # Says why, and how to get rid of the leftover record.
+    assert name == "myrepo-feat-bg"
+    assert "failed: boom" in warn.call_args[0][0]
+    confirm.assert_called_once()
     hints = " ".join(str(c.args[0]) for c in info.call_args_list)
-    assert "Aborted: declined" in hints
     assert "jailbee job clear feat-bg" in hints
 
 
-def test_resolve_attachable_force_missing_container_without_a_job_row(mocker):
-    """Same refusal, no job explanation to give."""
+def test_resolve_attachable_failed_job_declined_exits(mocker):
+    """Answering no to the prompt is still a clean Exit 1."""
     import typer
 
     from jailbee import cli
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background creation of 'feat-bg' failed: boom"),
+        row=_failed_job_row(mocker),
     )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
-    err = mocker.patch("jailbee.cli.error")
-    info = mocker.patch("jailbee.cli.info")
+    mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
 
-    cfg = mocker.MagicMock()
     with pytest.raises(typer.Exit) as exc_info:
-        cli._resolve_attachable(cfg, "feat-bg", force=True)
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+    assert exc_info.value.exit_code == 1
+    confirm.assert_called_once()
+
+
+def test_resolve_attachable_force_skips_the_confirmation(mocker):
+    """`--force` no longer unlocks the attach — it only skips the question."""
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background creation of 'feat-bg' failed: boom"),
+        row=_failed_job_row(mocker),
+    )
+    mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
+
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg", force=True)
+
+    assert name == "myrepo-feat-bg"
+    confirm.assert_not_called()
+
+
+def test_resolve_attachable_without_a_tty_skips_the_confirmation(mocker):
+    """No TTY (a script, a detached dashboard child) means `typer.confirm`
+    would read EOF and abort the attach the caller explicitly asked for."""
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background creation of 'feat-bg' failed: boom"),
+        row=_failed_job_row(mocker),
+        tty=False,
+    )
+    mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
+
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert name == "myrepo-feat-bg"
+    confirm.assert_not_called()
+
+
+def test_resolve_attachable_never_hints_at_force(mocker):
+    """The old escape hatch is gone; nothing should still advertise it."""
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background creation of 'feat-bg' failed: boom"),
+        row=_failed_job_row(mocker),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
+    info = mocker.patch("jailbee.cli.info")
+    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    cli._resolve_attachable(mocker.MagicMock(), "feat-bg", attach_cmd="tmux")
+
+    printed = " ".join(str(c.args[0]) for c in [*warn.call_args_list, *info.call_args_list])
+    assert "--force" not in printed
+
+
+def test_resolve_attachable_dead_worker_attaches_after_confirmation(mocker):
+    """A non-terminal phase whose worker vanished is recoverable the same way."""
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("background worker for 'feat-bg' is gone (last phase: cloning)"),
+        row=_failed_job_row(mocker, phase="cloning", error_msg=None),
+    )
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert name == "myrepo-feat-bg"
+    confirm.assert_called_once()
+
+
+def test_resolve_attachable_live_destroy_job_is_not_offered(mocker):
+    """A destroy whose worker is still running is not a broken job to inspect —
+    attaching to a container mid-teardown helps nobody."""
+    import typer
+
+    from jailbee import cli
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=ValueError("'feat-bg' is being destroyed"),
+        row=_failed_job_row(mocker, phase="starting", error_msg=None),
+    )
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    err = mocker.patch("jailbee.cli.error")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
     assert exc_info.value.exit_code == 1
-    assert "nothing to attach to" in err.call_args[0][0]
-    info.assert_not_called()
+    confirm.assert_not_called()
+    assert "being destroyed" in err.call_args[0][0]
 
 
-def test_resolve_attachable_without_force_still_fails_on_failed_op(mocker):
-    """Regression: force=False keeps the fail-fast guard (Exit 1)."""
+def test_resolve_attachable_failed_job_without_a_container_exits(mocker):
+    """A create that died before `incus init` has nothing to attach to; say so
+    and point at the leftover job record instead of prompting."""
     import typer
 
     from jailbee import cli
 
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.tui.console")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=ValueError("background creation of 'feat-bg' failed: ..."),
+    _mock_attach_guard(
+        mocker,
+        exists=False,
+        wait_error=ValueError("background creation of 'feat-bg' failed: declined"),
+        row=_failed_job_row(mocker, error_msg="declined"),
     )
     err = mocker.patch("jailbee.cli.error")
+    info = mocker.patch("jailbee.cli.info")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
 
-    cfg = mocker.MagicMock()
     with pytest.raises(typer.Exit) as exc_info:
-        cli._resolve_attachable(cfg, "feat-bg", force=False)
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
     assert exc_info.value.exit_code == 1
-    err.assert_called_once()
+    confirm.assert_not_called()
+    assert "failed: declined" in err.call_args[0][0]
+    hints = " ".join(str(c.args[0]) for c in info.call_args_list)
+    assert "jailbee job clear feat-bg" in hints
 
 
-def test_resolve_attachable_failure_hints_force_when_container_exists(mocker):
-    """When the wait fails on a failed op but the container is up, the error
-    is followed by a --force hint naming the command the user ran."""
+def test_resolve_attachable_keyboard_interrupt_offers_the_running_container(mocker):
+    """Ctrl-C out of the wait, container already up: offer to look inside it
+    anyway — this is the escape hatch `--force` used to be."""
+    from jailbee import cli
+
+    _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
+    warn = mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert name == "myrepo-feat-bg"
+    warn.assert_called_once()
+    confirm.assert_called_once()
+
+
+def test_resolve_attachable_keyboard_interrupt_names_a_create(mocker):
+    """The wording tells the user what they walked away from."""
+    from jailbee import cli
+    from jailbee.db.models import JOB_CREATE
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=KeyboardInterrupt,
+        row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_CREATE),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert "still being created" in warn.call_args[0][0]
+
+
+def test_resolve_attachable_keyboard_interrupt_names_a_boot(mocker):
+    """A background `jailbee restart` is not a creation — an interrupted wait
+    over one must not tell the user their container is being built."""
+    from jailbee import cli
+    from jailbee.db.models import JOB_BOOT
+
+    _mock_attach_guard(
+        mocker,
+        wait_error=KeyboardInterrupt,
+        row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_BOOT),
+    )
+    warn = mocker.patch("jailbee.cli.warn")
+    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+
+    cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+
+    assert "still booting" in warn.call_args[0][0]
+
+
+def test_resolve_attachable_keyboard_interrupt_declined_exits(mocker):
     import typer
 
     from jailbee import cli
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = True
-    mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.tui.console")
-    row = mocker.MagicMock(phase="failed", pid=999, error_msg="boom")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=ValueError("background creation of 'feat-bg' failed: boom"),
-    )
-    mocker.patch("jailbee.cli.error")
-    info = mocker.patch("jailbee.cli.info")
+    _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
+    mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
 
-    cfg = mocker.MagicMock()
-    with pytest.raises(typer.Exit):
-        cli._resolve_attachable(cfg, "feat-bg", attach_cmd="shell")
-
-    hint = info.call_args[0][0]
-    assert "jailbee shell feat-bg --force" in hint
+    with pytest.raises(typer.Exit) as exc_info:
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
+    assert exc_info.value.exit_code == 1
+    confirm.assert_called_once()
 
 
-def test_resolve_attachable_failure_no_hint_when_container_absent(mocker):
-    """No --force hint when the container never came up (e.g. clone failed
-    before creation) — forcing an attach would just fail again."""
+def test_resolve_attachable_keyboard_interrupt_still_asks_under_force(mocker):
+    """Ctrl-C is an explicit cancel, so `--force` must not answer it. Without
+    this the dashboard (which always passes `--force`) would turn a cancelled
+    wait into an attach to a half-built container."""
     import typer
 
     from jailbee import cli
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.tui.console")
-    row = mocker.MagicMock(phase="failed", pid=999, error_msg="boom")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=ValueError("background creation of 'feat-bg' failed: boom"),
-    )
-    mocker.patch("jailbee.cli.error")
-    info = mocker.patch("jailbee.cli.info")
+    _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
+    mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
 
-    cfg = mocker.MagicMock()
     with pytest.raises(typer.Exit):
-        cli._resolve_attachable(cfg, "feat-bg", attach_cmd="shell")
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg", force=True)
+    confirm.assert_called_once()
 
-    info.assert_not_called()
 
-
-def test_resolve_attachable_failure_no_hint_when_error_already_has_force(mocker):
-    """When the error text already carries a --force hint (a freshly-rendered
-    autostart failure), don't print a duplicate."""
+def test_resolve_attachable_keyboard_interrupt_without_a_tty_exits(mocker):
+    """Nobody is there to say yes, and Ctrl-C already said no."""
     import typer
 
     from jailbee import cli
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = True
-    mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.tui.console")
-    row = mocker.MagicMock(phase="failed", pid=999, error_msg="...")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=ValueError(
-            "background creation of 'feat-bg' failed: ...\n"
-            "  Inspect the failed window:  gie tmux myrepo-feat-bg --force"
-        ),
-    )
-    mocker.patch("jailbee.cli.error")
-    info = mocker.patch("jailbee.cli.info")
+    _mock_attach_guard(mocker, wait_error=KeyboardInterrupt, tty=False)
+    mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
 
-    cfg = mocker.MagicMock()
-    with pytest.raises(typer.Exit):
-        cli._resolve_attachable(cfg, "feat-bg", attach_cmd="tmux")
+    with pytest.raises(typer.Exit) as exc_info:
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
-    info.assert_not_called()
+    assert exc_info.value.exit_code == 1
+    confirm.assert_not_called()
 
 
-def test_resolve_attachable_failure_hints_on_stale_embedded_msg(mocker):
-    """A pre-`--force` stored error_msg mentions the command without --force;
-    the guard is --force-based, so we still add our hint (regression against
-    matching the bare command name)."""
+def test_resolve_attachable_keyboard_interrupt_without_a_container_exits(mocker):
+    """Nothing exists yet, so there is nothing to offer — warn and exit."""
     import typer
 
     from jailbee import cli
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = True
-    mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch(
-        "jailbee.lifecycle.resolve_container_for_interactive",
-        return_value="myrepo-feat-bg",
-    )
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-bg")
-    mocker.patch("jailbee.tui.console")
-    row = mocker.MagicMock(phase="failed", pid=999, error_msg="...")
-    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
-    mocker.patch(
-        "jailbee.lifecycle.wait_for_background_ready",
-        side_effect=ValueError(
-            "background creation of 'feat-bg' failed: ...\n"
-            "  Inspect the failed window:  gie tmux myrepo-feat-bg"  # no --force (stale)
-        ),
-    )
-    mocker.patch("jailbee.cli.error")
-    info = mocker.patch("jailbee.cli.info")
+    _mock_attach_guard(mocker, exists=False, wait_error=KeyboardInterrupt)
+    warn = mocker.patch("jailbee.cli.warn")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
 
-    cfg = mocker.MagicMock()
-    with pytest.raises(typer.Exit):
-        cli._resolve_attachable(cfg, "feat-bg", attach_cmd="tmux")
+    with pytest.raises(typer.Exit) as exc_info:
+        cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
-    assert "jailbee tmux feat-bg --force" in info.call_args[0][0]
+    assert exc_info.value.exit_code == 1
+    confirm.assert_not_called()
+    assert "jailbee ls" in warn.call_args[0][0]
 
 
 def test_shell_without_name_auto_picks_single_container(mocker, tmp_path):
@@ -1645,6 +1789,65 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
 
     assert result.exit_code == 0, result.stdout
     incus_mock.return_value.start.assert_called_once_with("myrepo-feat-only")
+
+
+def test_stop_bounds_the_clean_shutdown(mocker, tmp_path):
+    """`jb stop` must not sit silently on incusd's 600s shutdown budget."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code == 0, result.stdout
+    incus_mock.return_value.stop.assert_called_once_with(
+        "myrepo-feat-bar", timeout=CLEAN_STOP_BUDGET
+    )
+
+
+def test_stop_reports_a_container_that_will_not_shut_down(mocker, tmp_path):
+    """No silent force: the user's container may hold unsaved work."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.incus import IncusError
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+    incus_mock.return_value.exec.return_value = ""
+    incus_mock.return_value.console_log.return_value = ""
+    incus_mock.return_value.stop.side_effect = IncusError(
+        "`incus stop myrepo-feat-bar` failed (exit 1): Error: Failed shutting down "
+        'instance, status is "Running": context deadline exceeded'
+    )
+
+    result = CliRunner().invoke(app, ["stop", "feat-bar"])
+
+    assert result.exit_code != 0
+    # `entry.main` (bypassed by CliRunner) is what prints an IncusError for
+    # the user; what matters here is that the message it will print names a
+    # way forward instead of just echoing incus's deadline.
+    assert isinstance(result.exception, IncusError)
+    message = str(result.exception)
+    assert "--force" in message
+    assert "incus console --show-log myrepo-feat-bar" in message
+    assert mocker.call("myrepo-feat-bar", force=True) not in (
+        incus_mock.return_value.stop.call_args_list
+    )
 
 
 def test_shell_with_explicit_name_still_works(mocker, tmp_path):
@@ -1794,12 +1997,41 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
 
     incus.exec_interactive.assert_called_once_with(
         "myrepo-feat-x",
-        ["bash", "-c", "cd /home/dev/myrepo && exec claude"],
+        ["bash", "-lc", "cd /home/dev/myrepo && exec claude"],
         uid=os.getuid(),
         gid=os.getgid(),
         env={"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev"},
         init_groups=True,
     )
+
+
+def test_exec_uses_a_login_shell_so_local_bin_is_on_path(mocker, tmp_path):
+    """`jailbee exec X -- claude` found no binary under a non-login `bash -c`.
+
+    `incus exec` supplies a bare default PATH and per-user tools live in
+    ~/.local/bin, which only `/etc/profile.d/local-bin.sh` adds — so the
+    command's own documented example failed with "command not found".
+    `jailbee shell` and the PR-text bridge both already use a login shell.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus = incus_mock.return_value
+    incus.exists.side_effect = lambda n: n == "myrepo-feat-x"
+    incus.exec_interactive.return_value = 0
+
+    result = CliRunner().invoke(app, ["exec", "feat-x", "--", "claude", "--version"])
+    assert result.exit_code == 0, result.stdout
+
+    argv = incus.exec_interactive.call_args.args[1]
+    assert argv[:2] == ["bash", "-lc"]
 
 
 def test_exec_cwd_home(mocker, tmp_path):
@@ -1896,6 +2128,7 @@ def test_new_cmd_forwards_mirror_endpoint_to_lifecycle(tmp_path, mocker):
     from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -2434,6 +2667,7 @@ def test_init_resolves_mirror_endpoint_and_calls_run_init(tmp_path, mocker):
     from jailbee.cli import app
 
     repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
     mocker.patch(
         "jailbee.cli._resolve_config_path",
         return_value=repo / ".jailbee" / "config.yaml",
@@ -2786,7 +3020,7 @@ def test_cli_config_show_effective_reflects_claude_auto_shared_caches(
 
     assert result.exit_code == 0, result.stdout + (result.stderr or "")
     assert "name: claude" in result.stdout
-    assert "name: claude-json" in result.stdout
+    assert "name: claude-json" not in result.stdout
 
 
 def test_cli_config_show_repo_layer_does_not_inject_auto_entries(tmp_path, monkeypatch):
@@ -2804,6 +3038,60 @@ def test_cli_config_show_repo_layer_does_not_inject_auto_entries(tmp_path, monke
     assert result.exit_code == 0
     assert "api.anthropic.com" not in result.stdout
     assert "code.claude.com" not in result.stdout
+
+
+def test_cli_config_show_includes_resolved_agents(tmp_path, monkeypatch, mocker):
+    """The override story requires seeing what a preset resolved to: a user
+    enabling `agents.codex` must be able to see the preset's install command
+    and egress host in `config show`, not just `enabled: true`."""
+    runner = CliRunner()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: myrepo\nagents:\n  codex:\n    enabled: true\n"
+    )
+    (tmp_path / ".git").mkdir()
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    result = runner.invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.stdout + (result.stderr or "")
+    assert "npm i -g @openai/codex" in result.stdout
+    assert "api.openai.com:443" in result.stdout
+
+
+def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude(
+    tmp_path, monkeypatch, mocker
+):
+    """Pins a deliberate shape, closing a regression from an earlier task:
+    `Config.claude` became a read-only property, so it no longer appears in
+    `model_dump()` — settings now live only under `agents.claude`, and that
+    entry must keep ClaudeAgentConfig's own fields (e.g. `plugins_enabled`),
+    not just the fields shared with the generic `AgentConfig` base."""
+    runner = CliRunner()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: myrepo\nagents:\n  claude:\n    enabled: true\n"
+    )
+    (tmp_path / ".git").mkdir()
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    result = runner.invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.stdout + (result.stderr or "")
+    # Line-exact checks, not a full yaml.safe_load(result.stdout): the
+    # leading "# Effective config (merged from global + <path>)" header is
+    # printed through Rich and can word-wrap onto a second, un-commented
+    # physical line for a long tmp_path, which breaks a whole-document parse
+    # (pre-existing quirk of `info()`, unrelated to this change).
+    raw_lines = result.stdout.splitlines()
+    assert "claude:" not in raw_lines  # no top-level (unindented) `claude:` key
+    stripped_lines = [line.strip() for line in raw_lines]
+    assert "plugins_enabled: true" in stripped_lines
+    assert "install_jailbee_skills: true" in stripped_lines
 
 
 def test_cli_fetch_invokes_sync(mocker, tmp_path):
@@ -3686,6 +3974,96 @@ def test_net_status_shows_loose_ttl_section(tmp_path, mocker):
     assert "--no-revert" in result.stdout
 
 
+def test_net_status_lists_port_forwards(tmp_path, mocker):
+    """`jailbee net status` names every active forward and says they bypass the ACL."""
+    from sqlmodel import create_engine
+
+    from jailbee.db import _ensure_schema
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+    )
+    _ensure_schema(engine)
+    mocker.patch("jailbee.db.get_engine", return_value=engine)
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(stdout="active\n", returncode=0),
+    )
+
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "myrepo-feat-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+            "state": None,
+            "config": {"user.jailbee.mode": "clone"},
+            "devices": {
+                "port-cfg-adb": {
+                    "type": "proxy",
+                    "bind": "instance",
+                    "listen": "tcp:127.0.0.1:5037",
+                    "connect": "tcp:127.0.0.1:5037",
+                },
+            },
+        },
+    ]
+
+    result = CliRunner().invoke(app, ["net", "status"])
+    assert result.exit_code == 0, result.stdout
+    out = result.stdout + (result.stderr or "")
+    assert "Port forwards: 1 on 1 container(s) — the network ACL does not see these" in out
+    assert "feat-x" in out
+    assert "to-container" in out
+    assert "127.0.0.1:5037" in out
+    assert "(config)" in out
+
+
+def test_net_status_omits_the_forward_section_when_there_are_none(tmp_path, mocker):
+    """No forwards → no section at all, rather than an empty header."""
+    from sqlmodel import create_engine
+
+    from jailbee.db import _ensure_schema
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+    )
+    _ensure_schema(engine)
+    mocker.patch("jailbee.db.get_engine", return_value=engine)
+    mocker.patch(
+        "subprocess.run",
+        return_value=mocker.Mock(stdout="active\n", returncode=0),
+    )
+
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "myrepo-feat-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+            "state": None,
+            "config": {"user.jailbee.mode": "clone"},
+            "devices": {"root": {"type": "disk", "path": "/"}},
+        },
+    ]
+
+    result = CliRunner().invoke(app, ["net", "status"])
+    assert result.exit_code == 0, result.stdout
+    assert "Port forwards" not in result.stdout
+
+
 def test_git_diff_invokes_committed_by_default(tmp_path, mocker):
     repo = _setup_repo(tmp_path, "myrepo")
     mocker.patch(
@@ -3766,6 +4144,47 @@ def test_git_diff_stat_flag_passes_through(tmp_path, mocker):
 
     CliRunner().invoke(app, ["git", "diff", "feat", "--stat"])
     assert diff_mock.call_args.kwargs["stat_only"] is True
+
+
+def test_git_diff_color_flag_overrides_tty_detection(tmp_path, mocker):
+    """`jailbee dashboard` pipes the diff into a pager, which makes stdout a
+    pipe and would silence the colour the pager is there to render."""
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(mocker.MagicMock(), "myrepo-feat"),
+    )
+    diff_mock = mocker.patch("jailbee.sync.diff_from_container", return_value="")
+
+    CliRunner().invoke(app, ["git", "diff", "feat", "--color"])
+    assert diff_mock.call_args.kwargs["color"] is True
+
+    CliRunner().invoke(app, ["git", "diff", "feat", "--no-color"])
+    assert diff_mock.call_args.kwargs["color"] is False
+
+
+def test_git_diff_without_the_flag_follows_stdout(tmp_path, mocker):
+    """CliRunner's stdout is not a TTY, so the default must resolve to False —
+    the behaviour every existing caller already had."""
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(mocker.MagicMock(), "myrepo-feat"),
+    )
+    diff_mock = mocker.patch("jailbee.sync.diff_from_container", return_value="")
+
+    CliRunner().invoke(app, ["git", "diff", "feat"])
+    assert diff_mock.call_args.kwargs["color"] is False
 
 
 def test_ls_renders_base_and_git_columns(tmp_path, mocker):
@@ -4560,6 +4979,35 @@ def test_net_strict_clears_loose_labels(tmp_path, mocker):
     unset_keys = [c.args[1] for c in incus.config_unset.call_args_list]
     assert "user.jailbee.loose_until" in unset_keys
     assert "user.jailbee.loose_revert_to" in unset_keys
+
+
+def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):
+    """`jailbee new --network loose` with the mirror down succeeds by design,
+    so `net strict` is where a Docker repo first meets a broken dockerd — and
+    the only place that can still name the remedy."""
+    _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"golden": {"stacks": {"docker": True}}},
+        pre_mode="loose",
+    )
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    # Rich hard-wraps the warning, so compare on collapsed whitespace.
+    flat = " ".join(result.stdout.split())
+    assert "Registry mirror unavailable" in flat
+    assert "jailbee registry up && jailbee apply" in flat
+
+
+def test_net_strict_is_silent_when_the_repo_does_not_want_the_mirror(tmp_path, mocker):
+    """The warning must be gated on `mirror_wanted`, not on the endpoint alone,
+    or every non-Docker repo gets it on every `net strict`."""
+    _setup_net_test(tmp_path, mocker, pre_mode="loose")
+    result = CliRunner().invoke(app, ["net", "strict", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "registry up" not in result.stdout
 
 
 def test_net_loose_already_loose_preserves_revert_to(tmp_path, mocker):
@@ -6450,6 +6898,122 @@ def test_cli_push_silent_when_fetch_failure_did_not_matter(mocker):
     assert "couldn't find remote ref" not in result.output
 
 
+def _push_result_with_local_branch(status, *, old_oid="old1234567", branch="main"):
+    """A plain PushResult carrying one `ff_container_branch` outcome."""
+    from jailbee.sync import LocalBranchUpdate, PushResult
+
+    return PushResult(
+        source=branch,
+        source_ref=f"refs/heads/{branch}",
+        container_ref=f"refs/jailbee/host/{branch}",
+        old_oid=None,
+        new_oid="new7654321",
+        local_branch=LocalBranchUpdate(
+            branch=branch,
+            status=status,
+            old_oid=old_oid,
+            new_oid="new7654321",
+        ),
+    )
+
+
+def test_cli_push_reports_a_fast_forwarded_container_branch(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("fast-forwarded"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "old1234" in result.output
+    assert "new7654" in result.output
+
+
+def test_cli_push_reports_a_created_container_branch(mocker):
+    """A clone of a host whose HEAD was `main` has no local `dev` until now."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("created", old_oid=None, branch="dev"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "dev" in result.output
+    assert "new7654" in result.output
+
+
+def test_cli_push_warns_about_a_diverged_container_branch(mocker):
+    """Container-only commits on the pushed branch are kept — and said out loud."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("diverged"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "diverged" in result.output
+    assert "old1234" in result.output
+
+
+def test_cli_push_warns_when_the_container_branch_update_failed(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch("failed"),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "stale" in result.output
+
+
+@pytest.mark.parametrize("status", ["up-to-date", "checked-out"])
+def test_cli_push_stays_silent_about_a_benign_container_branch(status, mocker):
+    """Nothing to do is nothing to say — these two are the common case."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    cfg = _push_cfg_factory(action="plain", source="default-branch")
+    _stub_push_cli(mocker, cfg)
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=_push_result_with_local_branch(status),
+    )
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "local 'main'" not in result.output
+
+
 def test_cli_push_pr_and_from_are_mutex(mocker):
     from typer.testing import CliRunner
 
@@ -6821,6 +7385,186 @@ def test_new_worker_failure_marks_op_failed(make_cfg, tmp_path, monkeypatch, moc
         ops = background.list_jobs(s, cfg.container_prefix)
     assert ops[name].phase == background.PHASE_FAILED
     assert "clone exploded" in (ops[name].error_msg or "")
+
+
+def _drop_job_table() -> None:
+    """Delete the `background_op` table under a live process, the way a
+    concurrently running older jailbee used to (`drop_all` + `create_all` on
+    meeting a newer database). The engine is already bootstrapped and cached
+    by then, so nothing recreates the table for the rest of the process."""
+    from jailbee.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.exec_driver_sql("DROP TABLE background_op")
+
+
+def test_new_worker_survives_a_reset_job_table(make_cfg, tmp_path, monkeypatch, mocker):
+    """A vanished job table costs the phase updates, not the container."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    name = f"{cfg.container_prefix}-feat-foo"
+
+    def _create(_cfg, _incus, _opts, *, on_phase=None, confirm_fn=None):
+        assert on_phase is not None
+        on_phase("creating")
+        on_phase("cloning")
+        return name
+
+    nc_mock = mocker.patch("jailbee.lifecycle.new_container", side_effect=_create)
+    fin_mock = mocker.patch("jailbee.cli._finalize_new")
+
+    import json
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.lifecycle import NewContainerOptions
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=name,
+            container_prefix=cfg.container_prefix,
+            branch="feat/foo",
+            pid=1,
+            log_path="/l",
+            now=datetime.now(UTC),
+        )
+    _drop_job_table()
+
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=True,
+    )
+    job = background.op_to_job(opts, container_name=name, log_path="/l")
+    job_file = tmp_path / "job.json"
+    job_file.write_text(json.dumps(job))
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job_file)])
+
+    # The container was created and finalised; only the bookkeeping was lost,
+    # and it says so once per failed write instead of raising.
+    assert result.exit_code == 0, result.output
+    nc_mock.assert_called_once()
+    fin_mock.assert_called_once()
+    combined = result.output + (result.stderr or "")
+    assert "could not record phase 'creating'" in combined
+    assert "no such table" in combined
+
+
+def test_new_worker_reports_its_own_failure_when_the_job_table_is_gone(
+    make_cfg, tmp_path, monkeypatch, mocker
+):
+    """A real failure still exits 1 — not replaced by a bookkeeping traceback."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    mocker.patch(
+        "jailbee.lifecycle.new_container",
+        side_effect=RuntimeError("clone exploded"),
+    )
+
+    import json
+
+    from jailbee import background
+    from jailbee.lifecycle import NewContainerOptions
+
+    name = f"{cfg.container_prefix}-feat-foo"
+    _drop_job_table()
+
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=True,
+    )
+    job = background.op_to_job(opts, container_name=name, log_path="/l")
+    job_file = tmp_path / "job.json"
+    job_file.write_text(json.dumps(job))
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job_file)])
+
+    assert result.exit_code == 1
+    # typer.Exit, i.e. the worker's own controlled exit — not the OperationalError
+    # `fail_job` would otherwise have raised out of the except block.
+    assert isinstance(result.exception, SystemExit)
+    combined = result.output + (result.stderr or "")
+    assert "clone exploded" in combined
+    assert "could not mark the job failed" in combined
+
+
+def test_new_background_survives_a_missing_job_table(make_cfg, tmp_path, monkeypatch, mocker):
+    """The foreground has already spawned the worker: a failed insert warns."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "myrepo"
+    (repo / ".git").mkdir(parents=True)
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=mocker.MagicMock(docker_registry_mirror=mocker.MagicMock(enabled=False)),
+    )
+    mocker.patch("jailbee.git.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.egress_pool.register_repo")
+    refresh = mocker.MagicMock()
+    refresh.status = "ok"
+    mocker.patch("jailbee.egress_pool.refresh_pool", return_value=refresh)
+    _stub_preflight(mocker, cfg)
+
+    popen_mock = mocker.patch("jailbee.cli.subprocess.Popen")
+    fake_proc = mocker.MagicMock()
+    fake_proc.pid = 9999
+    popen_mock.return_value = fake_proc
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    # The foreground's own egress refresh is stubbed, so the engine is first
+    # created (and bootstrapped) by the job insert — drop the table after a
+    # deliberate warm-up so the cached engine cannot recreate it.
+    from jailbee.db import get_engine
+
+    get_engine()
+    _drop_job_table()
+
+    result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
+
+    assert result.exit_code == 0, result.output
+    popen_mock.assert_called_once()
+    combined = result.output + (result.stderr or "")
+    assert "could not record the new job row" in combined
+    assert "is being created in the background" in combined
 
 
 _PREFLIGHT_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -7497,255 +8241,6 @@ def test_new_worker_injects_a_declining_confirm_fn(tmp_path, mocker):
     assert confirm_fn("anything?") is False
 
 
-def test_migrate_dry_run_prints_the_plan_and_changes_nothing(mocker):
-    """--dry-run must short-circuit even when there IS work to do.
-
-    A plan built from `MigrationPlan(blockers=())` is also `is_empty`, so
-    the command's early `return` would fire on that branch alone — deleting
-    `or dry_run` from `if plan.is_empty or dry_run: return` would not fail
-    that version of this test. Use a non-empty, unblocked plan instead, so
-    --dry-run is the only thing keeping this test passing.
-    """
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    stop_timers = mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-    confirm = mocker.patch("typer.confirm")
-
-    result = CliRunner().invoke(app, ["migrate", "--dry-run"])
-
-    assert result.exit_code == 0
-    assert "relabel app-feat" in result.output
-    execute.assert_not_called()
-    confirm.assert_not_called()
-    # --dry-run promises to change nothing at all; a stopped timer is a change.
-    stop_timers.assert_not_called()
-
-
-def test_migrate_exits_nonzero_when_blocked(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    mocker.patch(
-        "jailbee.migrate.build_plan",
-        return_value=MigrationPlan(blockers=("containers on the loose bridge: app-feat",)),
-    )
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert "BLOCKED" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_prompts_and_aborts_when_declined(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate"], input="n\n")
-
-    assert result.exit_code == 1
-    assert "Apply this migration?" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_yes_flag_skips_prompt_and_executes(mocker):
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    stop_timers = mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    # No input= provided — if the prompt were reached, CliRunner would see
-    # empty stdin and the command would abort instead of executing.
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 0, result.output
-    assert "Apply this migration?" not in result.output
-    execute.assert_called_once()
-    # Moving the data directory invalidates the absolute disk sources stored
-    # in each repo's profiles; `jailbee apply` is what rewrites them.
-    assert "jailbee apply" in result.output
-    # Stopped before the plan was built, not after: a refresh tick landing
-    # between `build_plan` and the move recreates the destination and aborts
-    # a migration that was about to succeed.
-    stop_timers.assert_called_once()
-
-
-def test_migrate_reports_an_incomplete_step_without_a_traceback(mocker):
-    """A step that can't finish must exit 1 with its own message.
-
-    Typer installs no global handler, so an exception escaping the command
-    reaches the user as a raw traceback and hides the fact that the rest of
-    the migration did complete.
-    """
-    from jailbee.cli import app
-    from jailbee.migrate import ContainerRelabel, IncompleteMigrationError, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        relabels=(ContainerRelabel(name="app-feat", keys=("user.gie.branch",), repo_dir=None),),
-        migrate_bridge=True,
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    mocker.patch(
-        "jailbee.migrate.execute_plan",
-        side_effect=IncompleteMigrationError("gie-loose is still in use by: container legacy-box"),
-    )
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert "legacy-box" in result.output
-    assert "Migration complete" not in result.output
-
-
-def test_migrate_asks_before_deleting_a_populated_destination(mocker):
-    """The destination holds state, so the user gets a say — and a decline
-    leaves the machine exactly as it was."""
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate"], input="n\n")
-
-    assert result.exit_code == 1
-    assert "Delete /s/jailbee?" in result.output
-    assert "state.sqlite" in result.output
-    execute.assert_not_called()
-
-
-def test_migrate_passes_the_approved_destination_to_execute(mocker):
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    # First "y" approves the deletion, second confirms the migration itself.
-    result = CliRunner().invoke(app, ["migrate"], input="y\ny\n")
-
-    assert result.exit_code == 0, result.output
-    assert execute.call_args.kwargs["approved_removals"] == frozenset({Path("/s/jailbee")})
-
-
-def test_migrate_never_asks_about_an_empty_destination(mocker):
-    """Nothing to lose means nothing to ask about — this is the `make
-    install` case, and a prompt there would be noise on every host."""
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(src=Path("/s/gie"), dst=Path("/s/jailbee"), entries=(), is_empty=True),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 0, result.output
-    assert "Delete" not in result.output
-    assert execute.call_args.kwargs["approved_removals"] == frozenset()
-
-
-def test_migrate_yes_refuses_to_consent_to_deleting_state(mocker):
-    """`--yes` means "skip the confirmation", not "lose state unattended".
-
-    Without this, a scripted `jailbee migrate --yes` would delete a
-    populated destination with no one watching — the one outcome the
-    consent path exists to prevent.
-    """
-    from pathlib import Path
-
-    from jailbee.cli import app
-    from jailbee.migrate import DirConflict, DirMove, MigrationPlan
-
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.migrate.stop_refresh_timers")
-    plan = MigrationPlan(
-        dir_moves=(DirMove(src=Path("/s/gie"), dst=Path("/s/jailbee")),),
-        dir_conflicts=(
-            DirConflict(
-                src=Path("/s/gie"),
-                dst=Path("/s/jailbee"),
-                entries=("state.sqlite",),
-                is_empty=False,
-            ),
-        ),
-    )
-    mocker.patch("jailbee.migrate.build_plan", return_value=plan)
-    execute = mocker.patch("jailbee.migrate.execute_plan")
-
-    result = CliRunner().invoke(app, ["migrate", "--yes"])
-
-    assert result.exit_code == 1
-    assert "--yes cannot consent" in result.output
-    execute.assert_not_called()
-
-
 def test_registry_up_drives_a_live_status_line(mocker, tmp_path):
     """The CLI must feed `registry_up`'s steps into the spinner.
 
@@ -7839,3 +8334,155 @@ def test_base_build_reports_a_provisioning_failure_without_a_traceback(mocker):
     # Rich wraps at the terminal width, so match a fragment that cannot wrap.
     assert "Unable to locate" in result.output
     assert "Traceback" not in result.output
+
+
+def test_new_cmd_aborts_in_strict_when_the_mirror_is_down(tmp_path, mocker):
+    """strict + Docker: the mirror is the container's only route to Docker
+    Hub, so creating the container anyway would produce a silently broken
+    `docker pull`.
+
+    Note: the mocked message here is the realistic one `compute_mirror_endpoint`
+    actually raises (CA already includes its own "registry up" hint, so the
+    old, pre-gating code aborted on this exact input too). This test does not
+    distinguish old from new gating behaviour — it only guards against a
+    future regression that relaxes the strict abort. The gating behaviour
+    itself (Docker-stack detection, strict vs. loose) is proven by the loose
+    test and the no-docker-stack test below.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: strict\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError(
+            "jailbee-registry-mirror container not found. Run 'jailbee registry up' first."
+        ),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    # `tui.error` prints to err_console (stderr) and this typer version's
+    # CliRunner keeps the streams apart — hence the repo idiom from
+    # tests/test_cli_port.py:134.
+    assert "registry up" in result.stdout + (result.stderr or "")
+    new_container.assert_not_called()
+
+
+def test_new_cmd_warns_but_continues_in_loose_when_the_mirror_is_down(tmp_path, mocker):
+    """loose pulls go direct, so the mirror is only a cache there."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "golden:\n  stacks:\n    docker: true\ndefaults:\n  network: loose\n"
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    opts = new_container.call_args.args[2]
+    assert opts.mirror_endpoint is None
+    assert opts.mirror_ca_path is None
+
+
+def test_new_cmd_skips_the_mirror_preflight_without_a_docker_stack(tmp_path, mocker):
+    """The whole point: a repo with no Docker never touches the mirror, so a
+    missing mirror container is not its problem."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("{}\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+        ),
+    )
+    compute = mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint")
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "myrepo-feat-x"
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.stdout
+    compute.assert_not_called()
+    assert new_container.call_args.args[2].mirror_endpoint is None
+
+
+def test_init_cmd_warns_instead_of_aborting_when_the_mirror_is_down(tmp_path, mocker):
+    """`init` is documented to run before `registry up`, and the ACL's mirror
+    rule is added by the next `apply` / refresh anyway."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    (repo / ".jailbee" / "config.yaml").write_text("golden:\n  stacks:\n    docker: true\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    run_init = mocker.patch("jailbee.init_command.run_init")
+    # Left unmocked, install_systemd_units writes real unit files into
+    # ~/.config/systemd/user/ and runs systemctl against the developer's
+    # session — see the comment in test_init_resolves_mirror_endpoint_and_calls_run_init.
+    mocker.patch("jailbee.init_command.install_systemd_units")
+    mocker.patch("jailbee.egress_pool.register_repo")
+
+    result = CliRunner().invoke(app, ["init"])
+
+    assert result.exit_code == 0, result.stdout
+    run_init.assert_called_once()
+    assert run_init.call_args.kwargs["mirror_endpoint"] is None

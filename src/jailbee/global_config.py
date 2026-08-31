@@ -2,8 +2,8 @@
 
 Stored at $XDG_CONFIG_HOME/jailbee/global.yaml (default
 ~/.config/jailbee/global.yaml). Optional file — if absent, defaults are used.
-Carries `docker_registry_mirror`, `loose_auto_revert`, and the `ls` /
-`dashboard` column preferences.
+Carries `docker_registry_mirror`, `loose_auto_revert`, `claude_credentials`,
+and the `ls` / `dashboard` column preferences.
 
 Per-repo configuration lives in <repo>/.jailbee/config.yaml — see config.py.
 """
@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
+    ClaudeCredentials,
     ColumnConfig,
     ConfigError,
     LooseAutoRevert,
@@ -50,7 +51,14 @@ class DockerRegistryMirror(BaseModel):
     port: int = 3128
     data_dir: PathExpanded = None  # type: ignore[assignment]
     image: str = "rpardini/docker-registry-proxy:0.6.5"
-    enabled: bool = True
+    # bool-first ordering follows the `Stacks.java: bool | str` idiom for
+    # three-valued keys in this codebase; pydantic binds YAML `true`/`false`
+    # to bool either way here, since `Literal["auto"]` cannot accept a bool.
+    # `auto` (the default) defers to the repo — see `docker_daemon.mirror_wanted`
+    # for the signals. An explicit `true` forces the mirror on for every repo
+    # on the host, which is what releases up to and including 1.1.0 did
+    # unconditionally.
+    enabled: bool | Literal["auto"] = "auto"
 
     def model_post_init(self, __context: object) -> None:
         # Default is computed (uses Path.home()), so we set it post-init.
@@ -71,6 +79,9 @@ class GlobalConfig(BaseModel):
     ls: ColumnConfig = Field(default_factory=ColumnConfig)
     dashboard: ColumnConfig = Field(
         default_factory=lambda: ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE)),
+    )
+    claude_credentials: ClaudeCredentials = Field(
+        default_factory=ClaudeCredentials,
     )
 
 
@@ -175,4 +186,13 @@ def global_config_issues(path: Path) -> list[str]:
     from jailbee.config import validate_column_blocks
 
     gcfg = _load_unsanitized(path)
-    return validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
+    issues = validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
+    if "dashboard" in gcfg.model_fields_set:
+        issues.append(
+            "global.dashboard: deprecated and ignored — the dashboards remember "
+            "their own columns now (press F2 in `jailbee dashboard`, or View ▸ "
+            "Columns in the GUI). This block is imported into each dashboard's own "
+            "settings the first time you open that dashboard after upgrading; it "
+            "can be deleted once you have opened both the TUI and the GUI."
+        )
+    return issues

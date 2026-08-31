@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from sqlmodel import Session, select
 from jailbee.config import Config
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
+from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
 from jailbee.network import acl_name
@@ -75,8 +77,241 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
-def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
-    """Run all diagnostic checks. Returns list of results."""
+def _check_upgrade_advice(cfg: Config) -> CheckResult:
+    """Report whether this repo owes a `base build` or an `apply`.
+
+    The hint on `ls` / `new` / `shell` is easy to scroll past; this is the
+    place a user can always come back to. Failure to read the state DB is
+    reported as OK-with-a-caveat rather than a failed check: an unreadable
+    bookkeeping row is not a diagnosis about the user's setup.
+
+    Pending advice, by contrast, *is* a failed check — deliberately, and not
+    up for relitigation: doctor's vocabulary is ok / not-ok, and an owed base
+    build is genuinely something to act on. The consequence is accepted with
+    it: after a release that carries an `UPGRADE_NOTES` entry, `jailbee
+    doctor` exits non-zero for every user of that release until they run the
+    action, including in scripts and CI that treat the exit code as a
+    host-health verdict.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import __version__
+    from jailbee.db import get_engine
+    from jailbee.upgrade import advice_lines
+
+    try:
+        with Session(get_engine()) as session:
+            lines = advice_lines(
+                session,
+                cfg.container_prefix,
+                __version__,
+                now=datetime.now(UTC),
+            )
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        return CheckResult("upgrade actions", True, f"state could not be read ({e})")
+
+    if not lines:
+        return CheckResult("upgrade actions", True, "nothing pending")
+    return CheckResult("upgrade actions", False, "\n".join(lines))
+
+
+def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report the shared Claude credential directory, if this repo uses one.
+
+    Silent for a repo that shares nothing — the default, and reporting an
+    absent optional feature on every `doctor` run is noise.
+
+    The one failure it can report is a half-finished join: the group directory
+    holds no credential while this repo's config home still does, which means
+    `jailbee apply` has not run since `claude_credentials` was configured.
+    Until it does, the container mounts an empty directory and Claude Code
+    answers "Not logged in".
+
+    Member repos come from the registry: the mapping is one host-local object,
+    so no other repo's config needs loading to resolve it.
+    """
+    from jailbee import claude_pool
+
+    group_dir = cfg.claude_credentials_dir
+    if group_dir is None:
+        return []
+
+    assert cfg.shared_dir is not None  # set by load_config
+    group = claude_pool.group_name(cfg)
+    assert group is not None  # group_dir is not None, so neither is this
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
+        return [
+            CheckResult(
+                "claude shared credential",
+                False,
+                f"group `{group}` at {group_dir} holds no credential, but this "
+                f"repo still has one at {repo_cred} — run `jailbee apply` to "
+                f"move it in.",
+            )
+        ]
+
+    members = _credential_group_members(gcfg, group, exclude=cfg.container_prefix)
+    detail = f"group `{group}` at {group_dir}"
+    if members:
+        detail += f" — shared with: {', '.join(members)}"
+    return [CheckResult("claude shared credential", True, detail)]
+
+
+def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -> list[str]:
+    """Registered repos resolving to `group`, sorted, excluding `exclude`.
+
+    `exclude` is the calling repo's own `container_prefix` — telling a repo
+    it shares the group with itself would be wrong, not just noisy. Empty if
+    state is unreadable.
+
+    A bookkeeping read, not a diagnosis (see `_check_upgrade_advice`): an
+    unreadable registry says nothing about whether the credential join
+    itself is healthy, so it degrades this check's "shared with" listing
+    to empty rather than failing the check. The matching rule itself lives
+    in `claude_pool.group_member_prefixes`, which raises — the degradation
+    is this caller's policy, not the rule's.
+    """
+    from jailbee.claude_pool import group_member_prefixes
+
+    try:
+        prefixes = group_member_prefixes(gcfg, group)
+    except Exception:  # a bookkeeping read is not a diagnosis
+        return []
+    return [p for p in prefixes if p != exclude]
+
+
+def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
+    """One failed check per staging file an interrupted `jailbee claude use`
+    left in the store.
+
+    `claude_pool.switch` renames its target to `<name>.json.activating` before
+    anything else moves, so a hard kill in that window leaves a login in a file
+    `parked_slots()` does not list — invisible to `jailbee claude ls`, and
+    invisible here too unless something goes looking for it.
+
+    Reported, never repaired. Renaming it back is safe only if that grant is
+    not already live somewhere, and the store is host-wide while any one
+    command sees one holder — jailbee cannot answer that in general, but the
+    person reading this can. Naming the file and the exact `mv` is the whole
+    recovery path; the risk of a wrong automatic rename is a silently dead
+    login.
+
+    **The rename is only advised when the destination name is free.** It need
+    not be: after the kill, a fresh `/login` as the same account followed by
+    `jailbee claude park` lands on exactly `<name>.json`, because nothing was
+    occupying it. `mv` would then overwrite a newer, different grant without a
+    word — one login destroyed by following this very message. When the name is
+    taken, the two files are named and the choice is left to the reader, with
+    the non-destructive option (a free, disambiguated name) spelled out.
+
+    **The same-holder case is settled here rather than caveated.** A kill
+    between the credential write and the staging unlink — the likeliest window
+    of the three, because the write is the slow part — leaves the grant live in
+    *this* holder. `cfg` is in hand, so that comparison is free, and it matters:
+    a careful reader told only that the grant "may be live in another repo"
+    checks the other repos, finds nothing, renames, and ends up with one
+    refresh-token lineage in two files. The remaining caveat covers what is
+    genuinely unknowable from here — another holder, or another name.
+    """
+    from jailbee import claude_pool
+
+    suffix = ".activating"
+    try:
+        stages = sorted(claude_pool.store_dir().glob(f"*.json{suffix}"))
+    except OSError:  # an unreadable store is _check_claude_credentials' business
+        return []
+
+    live = claude_pool.live_credential_path(cfg)
+    results: list[CheckResult] = []
+    for stage in stages:
+        home = stage.with_name(stage.name[: -len(suffix)])
+        if claude_pool.holds_same_login(stage, live):
+            detail = (
+                f"an interrupted switch left {stage}, and that login is the one "
+                f"live in {claude_pool.holder_dir(cfg)} right now — the switch had "
+                "already written it before it was killed. The staging file is a "
+                "leftover second copy of a live grant, so delete it; renaming it "
+                "into the store is the one move that would put that login in two "
+                "files."
+            )
+        elif home.exists():
+            detail = (
+                f"an interrupted switch left {stage}, but the name it came from "
+                f"({home.name}) is already taken by another stored login — "
+                "renaming over it would destroy that one. Compare the two and "
+                "delete whichever you do not want, or keep both by moving the "
+                f"staging file to a free name of the form {home.stem}~<label>.json."
+            )
+        else:
+            detail = (
+                f"an interrupted switch left {stage}; if that login is still "
+                f"wanted, rename it to {home.name} — jailbee will not move it "
+                "for you, because it cannot tell from here whether that login "
+                "is already parked under another name, or already live in "
+                "another repo's holder."
+            )
+        results.append(CheckResult("claude account pool", False, detail))
+    return results
+
+
+def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report the parked-login store and which account this holder is on.
+
+    Silent when the store is empty: the pool is optional, and reporting an
+    unused feature on every run is noise — the same rule
+    `_check_claude_credentials` follows for a repo that shares nothing. An
+    orphaned staging file is the exception, and the reason it is collected
+    before the early return: it is the one case where a store that lists no
+    slots is nevertheless holding a login.
+
+    The other failure it reports is a holder with parked logins and no live
+    one, which is what a `jailbee claude park` leaves behind until someone logs
+    in or switches. Not a broken state, but one worth naming, because the
+    symptom inside a container is "Not logged in" with no explanation.
+    """
+    from jailbee import claude_pool
+
+    orphans = _orphaned_stage_checks(cfg)
+
+    parked = claude_pool.parked_slots()
+    if not parked:
+        return orphans
+
+    try:
+        found, _ = claude_pool.members(cfg, gcfg)
+        identity = claude_pool.live_identity(found, prefer=cfg.container_prefix)
+    except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
+        identity = None
+
+    holder = claude_pool.holder_dir(cfg)
+    count = f"{len(parked)} parked"
+    if not (holder / ".credentials.json").exists():
+        return [
+            CheckResult(
+                "claude account pool",
+                False,
+                f"{count}, but {holder} holds no live login — run "
+                "`jailbee claude use <account>`, or `/login` in a container.",
+            ),
+            *orphans,
+        ]
+    live = claude_pool.slug_for(identity) if identity is not None else "an unidentified account"
+    return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
+
+
+def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
+    """Run all diagnostic checks. Returns list of results.
+
+    `gcfg=None` means the same defaults `load_global_config` returns for an
+    absent `global.yaml`, so tests that do not care about host config need not
+    build one.
+    """
+    if gcfg is None:
+        gcfg = GlobalConfig()
+
     results: list[CheckResult] = []
 
     # 1. incus binary. Every check below that talks to Incus hangs off this:
@@ -116,6 +351,13 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             )
         )
 
+    # 2a. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
+    # no Incus (it is a bookkeeping read against the state DB), so it lives
+    # here rather than behind the `incus_available` gate below.
+    results.append(_check_upgrade_advice(cfg))
+    results.extend(_check_claude_credentials(cfg, gcfg))
+    results.extend(_check_claude_pool(cfg, gcfg))
+
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
         results.append(
@@ -135,8 +377,8 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             CheckResult(
                 "Incus-dependent checks",
                 False,
-                "skipped — profiles, ACL, bridge, registry mirror and pre-1.0 "
-                "state all need the `incus` binary",
+                "skipped — profiles, ACL, bridge, registry mirror and port "
+                "forwards all need the `incus` binary",
             )
         )
 
@@ -189,15 +431,22 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     expected = [
         "caches/pnpm-store",
         "caches/gradle",
-        "chrome-pool/slots",
     ]
     if cfg.jetbrains.enabled:
         expected.append("jetbrains-config")
         if cfg.jetbrains.share_idea:
             expected.append("jetbrains-idea")
-    if cfg.claude.enabled:
-        expected.append("claude")
-        expected.append("claude-install")
+    from jailbee.agents import enabled_agent_specs
+
+    for spec in enabled_agent_specs(cfg):
+        expected.extend(spec.dir_subpaths)
+
+    # Pool roots are reported on their own row, not folded into `expected`:
+    # every way a pool root can be wrong is fixed by `jailbee apply`, while
+    # the generic "missing" row advises `jailbee init` — which errors once
+    # profiles exist, i.e. on every upgrade path. See `_check_pool_roots`.
+    results.extend(_check_pool_roots(cfg))
+
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
         results.append(
@@ -227,7 +476,19 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
             )
 
     # 7. Docker registry mirror status (Incus-hosted)
-    if incus_available:
+    from jailbee.docker_daemon import mirror_skip_reason
+
+    skip_reason = mirror_skip_reason(cfg, gcfg)
+    if skip_reason is not None:
+        # Reported rather than omitted: the user should see that the gate
+        # decided something, and which of the two reasons it was — "no docker"
+        # would be a lie to someone who wrote `enabled: false`, a case the gate
+        # never checks the repo for. (When the mirror *is* wanted but Incus is
+        # missing, the line does drop out below; the "Incus-dependent checks"
+        # result above names the mirror explicitly, so the reason is still on
+        # screen exactly once.)
+        results.append(CheckResult("registry mirror", True, f"not needed — {skip_reason}"))
+    elif incus_available:
         try:
             rstatus = registry_status(incus)
         except IncusError as e:
@@ -319,29 +580,64 @@ def run_checks(cfg: Config, incus: Incus) -> list[CheckResult]:
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
 
-    # 11. Pre-1.0 leftovers. Dropped in 1.1.0 with the migrator itself.
-    # Tests the old state directly rather than asking the migrator for a plan:
-    # a plan describes what the migrator is willing to do, so anything it
-    # refuses (e.g. a directory whose target already exists) would read as
-    # clean here — precisely the state a user most needs told about.
-    if incus_available:
-        from jailbee.migrate import MIGRATION_GUIDE, leftovers
+    # 10b. Post-install steps `jailbee setup` owns. Plain file checks, so they
+    # sit outside the `incus_available` gate — and a missing one is silent
+    # otherwise: the first-run hint fires once and then never again.
+    results.extend(_check_user_setup(cfg))
 
+    # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
+    # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
+    # console script, the /etc/hosts sentinel, the data symlink — was removed
+    # in 1.1.0, so there is no host state left to inspect and no `jailbee
+    # migrate` to recommend. This is a plain file check, which is why it sits
+    # outside the `incus_available` gate the removed version needed.
+    if (cfg.repo_root / ".gie" / "config.yaml").is_file():
+        results.append(
+            CheckResult(
+                "legacy repo config",
+                False,
+                "reading .gie/config.yaml, deprecated and removed in 2.0.0 — "
+                "run `git mv .gie .jailbee` in this repo",
+            )
+        )
+    else:
+        results.append(CheckResult("legacy repo config", True, "none"))
+
+    # 12. Config-declared forwards that never got attached — the container
+    # predates the entry, or an `apply` was skipped. Only meaningful when the
+    # repo declares any. Needs the `incus` binary like every other check in
+    # this block, so it lives inside the same gate — otherwise a host with no
+    # Incus and a declared `host_ports` got a second, redundant red line for
+    # a cause the "Incus-dependent checks" line above already reported once.
+    if incus_available and cfg.host_ports:
+        from jailbee.lifecycle import list_containers as _list_infos
+        from jailbee.ports import entry_device, list_forwards
+
+        wanted = {entry_device(e)[0] for e in cfg.host_ports}
+        missing_forwards: list[str] = []
         try:
-            stale = leftovers(incus)
-        except Exception as e:  # broad catch: diagnostics must never abort
-            results.append(CheckResult("pre-1.0 gie state", False, f"could not inspect: {e}"))
+            infos = _list_infos(cfg, incus)
+            # One `incus list` for every container's forwards, instead of one
+            # per container — `list_forwards` exists for exactly this.
+            by_container = list_forwards(incus, [ci.name for ci in infos])
+            for ci in infos:
+                present = {f.device for f in by_container.get(ci.name, [])}
+                for device in sorted(wanted - present):
+                    missing_forwards.append(f"{ci.name}:{device}")
+        except Exception as e:
+            results.append(CheckResult("port forwards", False, f"could not inspect: {e}"))
         else:
-            legacy_config = (cfg.repo_root / ".gie" / "config.yaml").is_file()
-            if not stale and not legacy_config:
-                results.append(CheckResult("pre-1.0 gie state", True, "none"))
-            else:
-                hint = "run `jailbee migrate`"
-                if legacy_config:
-                    hint += " and `git mv .gie .jailbee` in this repo"
-                detail = f"found: {'; '.join(stale)} — {hint}" if stale else f"found — {hint}"
+            if missing_forwards:
                 results.append(
-                    CheckResult("pre-1.0 gie state", False, f"{detail}; see {MIGRATION_GUIDE}")
+                    CheckResult(
+                        "port forwards",
+                        False,
+                        f"not attached: {', '.join(missing_forwards)} — run `jailbee apply`",
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult("port forwards", True, f"{len(wanted)} declared, all attached")
                 )
 
     return results
@@ -467,6 +763,115 @@ def _parse_key_users_for_uid(path: Path, uid: int) -> tuple[int | None, int | No
     return None, None
 
 
+def _unit_exec_start_path(unit: str) -> str | None:
+    """The binary `unit`'s ExecStart runs, or None when there is no unit.
+
+    systemd renders the property as
+    ``{ path=/x/jailbee ; argv[]=/x/jailbee net refresh ; ... }``; the first
+    ``path=`` is the executable. Absent or unparseable means "no unit to
+    check" — an uninstalled unit, or a systemd too old for `show --value`.
+    """
+    proc = subprocess.run(
+        ["systemctl", "--user", "show", unit, "--property=ExecStart", "--value"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"path=([^ ;]+)", proc.stdout)
+    return match[1] if match else None
+
+
+def _net_refresh_binary_check() -> CheckResult | None:
+    """Compare the refresh unit's ExecStart against the `jailbee` on PATH.
+
+    `init_command.install_systemd_units` resolves `which("jailbee")` once, at
+    install time, bakes it into the unit, and rewrites the unit only when its
+    rendered content changes. A path that later stops being the current
+    install therefore sticks: the timer goes on running *that* binary every
+    minute, unprompted. Old code executing on a schedule is how the state
+    database was silently reset before the schema check was made
+    non-destructive, and the same firing carries `loose_revert`, so a stale
+    unit also means TTL auto-revert quietly stops honouring `jailbee net
+    loose --for`.
+
+    Returns None — no check row — when there is nothing to compare: no unit
+    (the timer check above already reports that, and doctor should not argue
+    one cause twice) or no `jailbee` on PATH (a `uv run` dev invocation with
+    no global install is not a broken unit).
+    """
+    unit_bin = _unit_exec_start_path("jailbee-net-refresh.service")
+    path_bin = shutil.which("jailbee")
+    if unit_bin is None or path_bin is None:
+        return None
+    if Path(unit_bin).resolve() == Path(path_bin).resolve():
+        return CheckResult(name="net refresh binary", ok=True, detail=unit_bin)
+    return CheckResult(
+        name="net refresh binary",
+        ok=False,
+        detail=(
+            f"timer runs {unit_bin} but PATH has {path_bin} — the timer has been "
+            "running a different install (old code on a schedule, and its TTL "
+            "auto-revert with it); run `jailbee init` to rewrite the unit"
+        ),
+    )
+
+
+def _check_pool_roots(cfg: Config) -> list[CheckResult]:
+    """One row for the cache pool roots, or none when nothing is pooled.
+
+    Deliberately separate from the `shared_dir tree` row. Every way a pool
+    root can be wrong — never created, or still holding a pre-pooling
+    cache — is fixed by `jailbee apply`, whereas the generic missing-dir
+    row advises `jailbee init`, which errors once profiles exist. Folding
+    pool subdirs into that row therefore gave the wrong advice on exactly
+    the upgrade path pooling introduced.
+
+    `pool.RESERVED_ENTRIES` is imported rather than re-spelled so this
+    classification cannot drift from what `ensure_pool_dirs` migrates.
+    """
+    from jailbee.pool import RESERVED_ENTRIES, pools_for
+
+    pools = pools_for(cfg)
+    if not pools:
+        return []
+
+    unmigrated: list[str] = []
+    uncreated: list[str] = []
+    for pool in pools:
+        if pool.root.is_dir() and any(e.name not in RESERVED_ENTRIES for e in pool.root.iterdir()):
+            unmigrated.append(pool.name)
+        elif not (pool.slots_dir.is_dir() and pool.by_container_dir.is_dir()):
+            uncreated.append(pool.name)
+
+    problems: list[str] = []
+    if unmigrated:
+        problems.append(f"still holding a pre-pooling cache: {', '.join(unmigrated)}")
+    if uncreated:
+        problems.append(f"layout not created: {', '.join(uncreated)}")
+    if problems:
+        # `jailbee apply` fixes both: it migrates a root whose `slots/slot-0`
+        # is free, and offers to move the loose entries aside when it is not.
+        # Before that offer existed this advice was a dead end for the second
+        # case — `apply` would warn and leave the root exactly as it found it.
+        return [
+            CheckResult(
+                "cache pool roots",
+                False,
+                f"{'; '.join(problems)} — run `jailbee apply`, which migrates the "
+                f"cache or offers to move it aside",
+            )
+        ]
+    return [
+        CheckResult(
+            "cache pool roots",
+            True,
+            f"{len(pools)} pooled: {', '.join(p.name for p in pools)}",
+        )
+    ]
+
+
 def _check_egress_pool(cfg: Config) -> list[CheckResult]:
     """Doctor checks for the egress pool refresh subsystem.
 
@@ -493,10 +898,13 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
             detail=(
                 timer_state
                 if timer_state == "active"
-                else f"{timer_state} — run `jailbee init` to install/enable"
+                else f"{timer_state} — run `jb setup` to install/enable"
             ),
         )
     )
+    binary_check = _net_refresh_binary_check()
+    if binary_check is not None:
+        results.append(binary_check)
 
     with Session(get_engine()) as session:
         state = session.get(RefreshState, cfg.container_prefix)
@@ -534,6 +942,50 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
             detail=f"{len(pool_rows)} IPs across {len(hostnames)} hostnames",
         )
     )
+    return results
+
+
+def _check_user_setup(cfg: Config) -> list[CheckResult]:
+    """Report the `jailbee setup` steps missing on this machine.
+
+    The refresh timer is deliberately absent: `_check_egress_pool` already
+    reports it, and it can say more (whether it is *running*, and whether its
+    `ExecStart` still points at this `jailbee`) than a file check could.
+    """
+    from jailbee.setup_command import completions_status, detect_shell, skills_status
+
+    results: list[CheckResult] = []
+
+    shell = detect_shell()
+    if shell is None:
+        results.append(
+            CheckResult(
+                name="shell completions",
+                ok=True,
+                detail="shell not detected — skipped (`jb setup --shell ...` to force)",
+            )
+        )
+    else:
+        status = completions_status([shell])
+        results.append(
+            CheckResult(
+                name="shell completions",
+                ok=status.installed,
+                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
+            )
+        )
+
+    # Only the host's own Claude reads these, so with the integration off
+    # their absence is a preference, not a fault.
+    if cfg.claude.enabled:
+        status = skills_status()
+        results.append(
+            CheckResult(
+                name="claude skills (host)",
+                ok=status.installed,
+                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
+            )
+        )
     return results
 
 

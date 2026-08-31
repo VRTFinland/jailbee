@@ -178,6 +178,7 @@ def test_apply_hosts_reads_live_acl_when_no_entries():
     """Default path: query incus.network_acl_show, mirror its destinations."""
     cfg = _make_cfg(["github.com"])
     incus = MagicMock()
+    incus.network_acl_exists.return_value = False
     incus.network_acl_show.return_value = _acl_yaml(_allowlisted("github.com", ["140.82.121.4"]))
 
     apply_hosts(cfg, incus, "myrepo-feat-x")
@@ -258,23 +259,56 @@ def test_apply_hosts_script_strips_existing_block():
     assert "BEGIN jailbee-managed allowlist" in script
     assert "END jailbee-managed allowlist" in script
     assert "awk" in script
-
-
-def test_apply_hosts_strips_both_current_and_legacy_blocks(mocker, tmp_path):
-    """Containers provisioned before the rename still carry a `gie-managed`
-    block; the strip program must recognise it too, or `net refresh` would
-    append a second block instead of replacing the first."""
-    cfg = _make_cfg(["github.com"])
-    incus = MagicMock()
-    entries = [EgressEntry(destinations=["1.2.3.4"], port=None, description="example.com")]
-
-    apply_hosts(cfg, incus, "myrepo-feat-x", entries=entries)
-
-    script = incus.exec.call_args.args[1][2]
+    # Anchored: an unanchored pattern would also match a sentinel quoted
+    # inside a user-written comment further down /etc/hosts.
     assert "^# BEGIN jailbee-managed allowlist" in script
     assert "^# END jailbee-managed allowlist" in script
-    assert "^# BEGIN gie-managed allowlist" in script
-    assert "^# END gie-managed allowlist" in script
+
+
+def test_apply_hosts_pins_the_containers_own_extras(make_cfg, tmp_path, mocker):
+    from jailbee.egress import EgressEntry
+    from jailbee.hosts import apply_hosts
+    from jailbee.network import allowlist_acl_yaml, extra_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = True
+
+    def _show(name: str) -> str:
+        if name == "myrepo-feat-extra":
+            return extra_acl_yaml(
+                name,
+                [EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")],
+            )
+        return allowlist_acl_yaml(
+            cfg,
+            [EgressEntry(destinations=["1.1.1.1"], port=None, description="github.com")],
+        )
+
+    incus.network_acl_show.side_effect = _show
+
+    apply_hosts(cfg, incus, "myrepo-feat")
+
+    script = incus.exec.call_args[0][1][2]
+    assert "1.1.1.1 github.com" in script
+    assert "10.0.5.7 nexus.corp" in script
+
+
+def test_apply_hosts_skips_the_extra_acl_when_absent(make_cfg, tmp_path, mocker):
+    from jailbee.egress import EgressEntry
+    from jailbee.hosts import apply_hosts
+    from jailbee.network import allowlist_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = False
+    incus.network_acl_show.return_value = allowlist_acl_yaml(
+        cfg, [EgressEntry(destinations=["1.1.1.1"], port=None, description="github.com")]
+    )
+
+    apply_hosts(cfg, incus, "myrepo-feat")
+
+    incus.network_acl_show.assert_called_once()
 
 
 # ---- apply_hosts: mirror_endpoint -------------------------------------------
@@ -351,13 +385,11 @@ def test_clear_hosts_does_not_resolve_hostnames(mocker):
     gai.assert_not_called()
 
 
-def test_clear_hosts_strips_the_legacy_block_too():
-    """`clear_hosts` must also strip a pre-rename `gie-managed` block, not
-    just the current `jailbee-managed` one."""
+def test_clear_hosts_strips_the_managed_block():
     incus = MagicMock()
 
     clear_hosts(_make_cfg(["github.com"]), incus, "myrepo-feat-x")
 
     script = incus.exec.call_args.args[1][2]
-    assert "^# BEGIN gie-managed allowlist" in script
     assert "^# BEGIN jailbee-managed allowlist" in script
+    assert "^# END jailbee-managed allowlist" in script

@@ -9,6 +9,20 @@ the sections below expand on the ones that need host changes.
 
 ## Common problems
 
+### "Run `jb base build` in this repo to pick these up"
+
+`jailbee ls`, `jailbee new` and `jailbee shell` print a short block on stderr,
+and `jailbee doctor` reports the same thing as its `upgrade actions` check,
+when the version of JailBee you just upgraded to changed something a golden
+image or a set of Incus profiles already on your machine does not have yet.
+Neither is rebuilt automatically, so the hint names what changed and the one
+command that picks it up — run it in the repo it appeared in.
+
+It is only a hint: nothing is blocked, and everything keeps working off the
+old image or profiles meanwhile. But it repeats on every one of those commands
+until the action has actually run to completion — a `jailbee apply` that
+reported a failed restart or port forward has not, and will not clear it.
+
 ### Containers get no IPv4 address
 
 A new container's `IPV4` column in `jailbee ls` / `incus list` stays empty, or
@@ -45,7 +59,26 @@ be installed. Re-run step 2 of the install and restart Incus: see
 - "Only one IDEA at a time" → the JetBrains profile is shared across
   containers, so a second IDEA won't open while one is running. Chrome runs
   per-container (`jailbee chrome`); inspect its profile pool with
-  `jailbee chrome-pool ls`.
+  `jailbee pool ls chrome-profile` (`jailbee chrome-pool ls` still works too).
+
+### Gradle (or Maven) builds hang on "Waiting to acquire ... lock"
+
+**Cause:** two containers of the same repo built against the same
+`~/.gradle` (or `~/.m2`) at once, and Gradle/Maven's own inter-process file
+lock on the cache directory made the second build wait — or, past its
+timeout, fail. This is what cache pooling exists to prevent: `gradle` and
+`m2` are pooled by default (`pooled_caches`), which gives each container
+its own private slot instead of one shared mount. If it's still happening,
+`jailbee pool ls gradle` (or `m2`) tells you whether the cache is actually
+pooled in this repo — it errors "No pooled cache named ..." if it isn't,
+which means a `pooled_caches: {gradle: false}` (or `m2: false`) override.
+A pooled cache attaches when a container next boots, so a container that
+was already running when the pool was created needs a restart before it
+uses its own slot. Run `jailbee apply`, restart the affected containers,
+then re-check `jailbee pool ls gradle` / `jailbee pool ls m2` for a slot
+per running container.
+
+See [`pooled_caches`](config.md#pooled_caches).
 
 ### `git push` / `gh` fails inside a container
 

@@ -83,10 +83,81 @@ when you need to push or use `gh`, temporarily switch to loose with
 with `jailbee net strict <name>`. This keeps unattended agent runs from
 producing surprise pushes.
 
+### Port forwards
+
+A port forward (`host_ports` in config, or an ad hoc `jailbee port
+to-container`/`jailbee port to-host`) is a deliberate hole through the
+boundary `net strict` otherwise enforces. It works because the traffic
+**never traverses the bridge the network ACL is attached to**: each forward
+is one Incus `proxy` device, and Incus's forkproxy connects directly into
+(or out of) the container's network namespace rather than sending packets
+over the NIC. The ACL — applied in `strict` mode only — is deny-by-default
+on both egress and ingress (see `src/jailbee/network.py`), so neither
+direction of a forward is filtered by it.
+
+Both directions matter, and each bypasses a different half of that
+default-deny: a `to-container` forward (the `host_ports` case, e.g. the adb
+recipe in [project-config.md](project-config.md#talking-to-android-devices-over-adb))
+lets the container reach a host service that the egress deny would
+otherwise have blocked. A `to-host` forward lets something on the host
+reach into the container — traffic the ingress deny would otherwise have
+blocked. The `to-host` direction does **not** give the container any new
+outbound reach: the host is the one initiating the connection, into a port
+the container is already listening on.
+
+It is opt-in either way — a forward exists only because it is declared in
+`host_ports` or because someone ran `jailbee port`. `jailbee net status`
+lists every active forward alongside the strict-mode summary, so the real
+boundary — ACL plus whatever forwards are open — can be read off one
+command, and `jailbee doctor` separately reports `host_ports` entries that
+are declared in config but missing from a running container.
+
+## Egress overrides
+
+`jailbee net egress add` widens a container's, or a repo's, strict-mode
+allowlist **without passing code review**. That is the point of the feature
+and also its risk: unlike `egress_allow` in `.jailbee/config.yaml`, an
+override is never seen by a teammate, a reviewer, or CI — it lives in the
+container's own `user.jailbee.egress_extra` label (container scope, the
+default) or in host-local state (`--repo`, applying to every container of
+the repo on this machine).
+
+The mitigation is visibility, not a prompt: `jailbee net egress ls` shows
+every applicable entry and where it came from (`config`, `repo-override`,
+`container`), and `jailbee net status` lists the overrides for **the repo
+whose checkout you run it from** — both host-local sections that never leave
+the machine, so they can only be read by someone who already has a shell
+there. `jailbee net status` (like its other sections) is cwd-scoped, not a
+host-wide audit: to see another repo's overrides, run it from that repo's
+checkout. `--repo` is the wider of the two scopes; the flag itself is the
+confirmation that the change is repo-wide rather than one container.
+
+Overrides are **additive only**. Neither scope can revoke what
+`config.yaml` grants — `jailbee net egress rm` refuses an entry that exists
+only in the config file, pointing at it instead — so a repo cannot be
+quietly narrowed on one developer's machine. `jailbee net egress export`
+prints the whole `egress_allow:` key with host-local overrides folded in,
+for pasting over the config to promote a durable one into git; the
+overrides it just promoted can then be dropped with `jailbee net egress
+rm` now that `config.yaml` covers them.
+
+**No container can grant itself egress.** A container holds no `jailbee`
+binary and no access to the host's Incus socket, so code inside it —
+including an agent, and including the untrusted head checked out by
+`jailbee new --pr` for review — cannot reach these commands. That is the
+first question a security reviewer should ask, and the answer is
+structural, not policy: there is nothing to invoke. This is unrelated to
+the `branch_config` escalation gate, which weighs what a branch's
+*committed* autostart configuration is allowed to grant itself on
+`jailbee new`; `jailbee net egress` is the operator, at a host shell,
+typing a command.
+
 ## Limitations
 
 - Linux host only
-- One IDEA at a time across containers (shared JetBrains profile). Chrome
-  runs per-container with its own profile slot, seeded from the most recent
-  slot — see `jailbee chrome-pool ls` / `jailbee chrome-pool prune` to inspect or clean.
+- One IDEA at a time across containers (shared JetBrains profile). Chrome,
+  Gradle and Maven run per-container from their own pool slot instead,
+  seeded from the most recent slot — see `jailbee pool ls` /
+  `jailbee pool prune` to inspect or clean (`jailbee chrome-pool ls/prune`
+  is a deprecated alias scoped to Chrome).
 - NVIDIA GPU passthrough requires extra setup (not covered by `jailbee init`)

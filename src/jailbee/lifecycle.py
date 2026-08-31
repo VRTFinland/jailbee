@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.resources
 import os
 import re
 import sys
@@ -39,6 +38,7 @@ from jailbee.profiles import (
     profile_names,
 )
 from jailbee.retry import with_remote_retry
+from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
@@ -439,7 +439,12 @@ def wait_for_background_ready(
         if row.op_kind == background.JOB_DESTROY and background.worker_alive(row.pid):
             raise ValueError(f"'{short}' is being destroyed")
         if row.phase in background.TERMINAL_PHASES:
-            verb = "destroy" if row.op_kind == background.JOB_DESTROY else "creation"
+            # An unknown kind (a row written by a newer jailbee) falls back to
+            # "creation", the kind that predates the column.
+            verb = {
+                background.JOB_DESTROY: "destroy",
+                background.JOB_BOOT: "boot",
+            }.get(row.op_kind, "creation")
             raise ValueError(
                 f"background {verb} of '{short}' failed: {row.error_msg or 'unknown error'}"
             )
@@ -449,7 +454,7 @@ def wait_for_background_ready(
             on_phase(row.phase)
             last_phase = row.phase
         if (
-            row.op_kind == background.JOB_CREATE
+            row.op_kind in background.ATTACHABLE_OP_KINDS
             and row.phase in background.ATTACHABLE_CREATE_PHASES
         ):
             return
@@ -883,6 +888,32 @@ def new_container(
         f"→ Creating '{short_name(cfg, name)}' from base image "
         f"'{opts.from_base}' ({branch_note})..."
     )
+    # Migrate a legacy `<shared_dir>/claude.json` before the container exists.
+    # `jailbee base build` is global and `jailbee apply` is per-repo, so a repo
+    # that hasn't been re-`apply`ed yet would otherwise never run this: the
+    # destination wouldn't exist, Claude Code would onboard from scratch and
+    # write a fresh file there, and a later `jailbee apply` no-ops once that
+    # destination exists — orphaning the real, pre-move file for good.
+    #
+    # Here rather than after the clone (where it used to sit) because it
+    # rewrites `<prefix>-binds`: doing that before `incus init` means this
+    # container is created from an already-correct profile, and the write
+    # lands before anything in this run can fail half-way.
+    if cfg.claude.enabled:
+        from jailbee.init_command import (
+            ensure_claude_config_dir,
+            ensure_claude_credentials_env,
+            migrate_claude_json,
+        )
+
+        migrate_claude_json(cfg, incus)
+        # The other half of that migration: retiring the device without
+        # `CLAUDE_CONFIG_DIR` in place leaves Claude Code reading a
+        # container-local `$HOME/.claude.json`, i.e. onboarding from scratch
+        # in every container until the user happens to run `jailbee apply`.
+        ensure_claude_config_dir(cfg, incus)
+        ensure_claude_credentials_env(cfg, incus)
+
     _phase("creating")
     incus.init(opts.from_base, name)
     incus.profile_assign(
@@ -988,6 +1019,29 @@ def new_container(
 
     ensure_device_groups(cfg, incus, name)
 
+    # Attach the repo's `host_ports` forwards (Incus proxy devices) before
+    # autostart, so a step can use a forwarded host service — an adb command
+    # or a database client is exactly the case this exists for. Proxy devices
+    # hotplug, so this needs no restart.
+    if cfg.host_ports:
+        from jailbee.ports import PortError, attach_config_ports
+
+        # Warn and continue rather than let this abort `new_container`: the
+        # container is already created and started at this point, so it is
+        # usable regardless, and `jailbee apply` will attach the forward on
+        # its next run (`reconcile_config_ports` treats a missing `port-cfg-*`
+        # device the same as any other drift).
+        try:
+            attached = attach_config_ports(cfg, incus, name)
+        except PortError as e:
+            warn_plain(
+                f"Could not attach port forward(s) to {short_name(cfg, name)}: {e}\n"
+                f"  The container is usable; run `jailbee apply` to retry the forward."
+            )
+        else:
+            if attached:
+                info(f"Attached {len(attached)} port forward(s) to {short_name(cfg, name)}")
+
     # Pin /etc/hosts for strict profile so the container's resolver sees
     # the ACL'd IPs before autostart's first network use. Must run after
     # `incus.start` because `apply_hosts` uses `incus exec`.
@@ -1052,12 +1106,21 @@ def new_container(
     if not opts.mount:
         _attach_under_repo_shared_caches(cfg, incus, name)
 
-    # Ensure the latest Claude is in place before autostart execs it.
-    # Runs whenever claude.enabled (manual launches benefit too); no-op
-    # otherwise. Must come after mounts are attached (the claude-install
-    # shared cache provides ~/.local/share/claude) and after the network
-    # ACL warm-up, so the installer/update can reach downloads.claude.ai.
-    _ensure_claude_in_container(cfg, incus, name)
+    # Pooled caches (Gradle, Maven, ...) attach as per-container devices.
+    # Must run in both clone and --mount mode (unlike the block above,
+    # which is clone-only) and must precede autostart, which may run a
+    # build that expects its cache slot already mounted.
+    from jailbee.pool import allocate_startup
+
+    allocate_startup(cfg, incus, name)
+
+    # Install/update every enabled agent before autostart execs them. Must
+    # come after mounts are attached (each agent's shared cache, e.g.
+    # claude-install, provides its persistent store) and after the network
+    # ACL warm-up, so installers/updaters can reach their egress hosts.
+    from jailbee.agents import ensure_agents
+
+    ensure_agents(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
     # Sync jailbee's own skills into the shared ~/.claude/skills so the
     # in-container Claude understands jailbee and can help with .jailbee/config.yaml
@@ -1072,7 +1135,7 @@ def new_container(
 
     # GH_TOKEN injection is auto-enabled infrastructure, not a user autostart
     # command — write it regardless of --no-autostart so `gh` works in every
-    # container (mirrors _ensure_claude_in_container above). No-op when the
+    # container (mirrors the agent install/update above). No-op when the
     # github integration is off or no token applies.
     #
     # Deliberately `cfg`, not `effective_cfg`: this is jailbee's own step, and
@@ -1184,11 +1247,19 @@ def _under_repo_shared_caches(cfg: Config) -> list[tuple[SharedCache, str]]:
     under /home/<user>/<container_prefix>/.
 
     The resolved path (with ``~`` expanded) is returned alongside the
-    cache so the caller doesn't repeat the expansion.
+    cache so the caller doesn't repeat the expansion. Pooled entries
+    (``cache.pool is not None``) are excluded: they're attached per
+    container by `pool.allocate` (see `pool.allocate_startup` in
+    `new_container`), and attaching them again here as a plain
+    ``shared-<name>`` device would reintroduce the cross-container
+    sharing pooling exists to remove. Mirrors the skip in
+    `profiles.binds_profile_yaml`.
     """
     home = f"/home/{CONTAINER_USERNAME}"
     result: list[tuple[SharedCache, str]] = []
     for cache in cfg.effective_shared_caches():
+        if cache.pool is not None:
+            continue
         path = (
             cache.container_path.replace("~", home, 1)
             if cache.container_path.startswith("~")
@@ -1227,39 +1298,6 @@ def _attach_under_repo_shared_caches(cfg: Config, incus: Incus, name: str) -> No
                 "path": path,
             },
         )
-
-
-def _ensure_claude_in_container(cfg: Config, incus: Incus, name: str) -> None:
-    """Install/relink/update Claude Code inside `name` before autostart.
-
-    No-op unless `claude.enabled`. The shared `claude-install` mount
-    (`~/.local/share/claude`) holds the version store; this runs the
-    bundled `ensure-claude.sh`, which full-installs when the store is
-    empty, repoints this container's `~/.local/bin/claude` symlink, and
-    runs `claude update` when `claude.auto_update` is true.
-
-    Non-fatal: a failure (offline, network ACL miss, installer error) is
-    logged and swallowed so `jailbee new` still completes — the container
-    just keeps whatever Claude (if any) the shared store currently has.
-    """
-    if not cfg.claude.enabled:
-        return
-
-    script = importlib.resources.files("jailbee.provision").joinpath("ensure-claude.sh").read_text()
-    home = f"/home/{CONTAINER_USERNAME}"
-    try:
-        incus.exec(
-            name,
-            ["bash", "-c", script],
-            uid=cfg.container_user.uid,
-            gid=cfg.container_user.gid,
-            env={
-                "HOME": home,
-                "JAILBEE_CLAUDE_AUTO_UPDATE": "true" if cfg.claude.auto_update else "false",
-            },
-        )
-    except Exception as e:  # non-fatal: never block container creation
-        warn(f"Claude install/update step failed (continuing): {e}")
 
 
 def _clone_repo_in_container(
@@ -1442,13 +1480,23 @@ def _wire_origin_and_tracking(
     )
 
 
-def restart_container(cfg: Config, incus: Incus, name: str) -> None:
-    """Restart a container, re-attaching GUI sockets in the right order.
+def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> None:
+    """Bring a container up, re-attaching GUI sockets in the right order.
 
-    Detach happens *before* the reboot so the four /run/user/<uid>/*
-    socket devices don't race with logind's tmpfs creation on next boot.
-    Attach happens after restart returns, by which time PID 1 + logind
-    are running. See the runtime_mounts module docstring.
+    The single boot path behind `jailbee start` (``restart=False``) and
+    `jailbee restart` (``restart=True``), foreground and background alike,
+    so all four share one ordering.
+
+    Detach happens *before* the boot so the four /run/user/<uid>/* socket
+    devices don't race with logind's tmpfs creation on next boot. Attach
+    happens after the boot returns, by which time PID 1 + logind are
+    running. See the runtime_mounts module docstring.
+
+    ``restart=True`` falls back to `incus start` on a stopped container,
+    where `incus restart` would error out ("The instance is already
+    stopped"): `jailbee restart` means "ensure running, then run autostart".
+    ``restart=False`` never reboots — a running container reaching
+    `incus start` fails, which is what `jailbee start` should report.
     """
     from jailbee.runtime_mounts import (
         attach_runtime_devices,
@@ -1461,8 +1509,14 @@ def restart_container(cfg: Config, incus: Incus, name: str) -> None:
             state = raw.get("status", "Stopped")
             break
 
+    # Idempotent: this is also how a container created before pooling
+    # existed acquires its slot.
+    from jailbee.pool import allocate_startup
+
+    allocate_startup(cfg, incus, name)
+
     detach_runtime_devices(cfg, incus, name)
-    if state == "Running":
+    if restart and state == "Running":
         incus.restart(name)
     else:
         incus.start(name)
@@ -1477,7 +1531,7 @@ def destroy_container(
     force: bool,
     on_phase: Callable[[str], None] | None = None,
 ) -> None:
-    """Stop (if running), release Chrome pool slot, clean refs/jailbee/*, and delete.
+    """Stop (if running), release pooled cache slots, clean refs/jailbee/*, and delete.
 
     ``on_phase``, if given, is invoked with ``"stopping"`` before
     ``incus.stop`` (only when the container is running) and ``"deleting"``
@@ -1499,12 +1553,39 @@ def destroy_container(
 
     if state == "Running":
         _phase("stopping")
-        incus.stop(name, force=force)
+        # The clean shutdown here is a courtesy — `incus delete --force`
+        # below would kill the container regardless — so give it a bounded
+        # budget and pull the plug if it expires rather than leaving the
+        # user's destroy wedged for incusd's ten minutes.
+        #
+        # show_progress=False: the dashboard and the Qt UI call this with an
+        # `on_phase` reporter while their own Rich Live display is up.
+        stop_container(
+            incus,
+            name,
+            force=force,
+            force_fallback=True,
+            show_progress=False,
+        )
 
-    # Release Chrome pool slot before deleting
-    from jailbee.chrome_pool import release as chrome_pool_release
+    # Release every pooled cache slot before deleting. Best-effort: a
+    # leaked slot is self-healing — pool._reconcile drops the
+    # by-container/<name> symlink for a container that no longer exists,
+    # so the next allocate/list_slots/prune reclaims it on its own. The
+    # cost of swallowing a failure here is a slot that stays marked
+    # allocated until the next pool operation; the cost of not
+    # swallowing it is a container the user asked to destroy but that
+    # never gets deleted.
+    #
+    # Say so, though: silently swallowing meant a signature mismatch or
+    # any other breakage in `release_all` stopped pooling with no
+    # user-visible sign at all.
+    try:
+        from jailbee.pool import release_all
 
-    chrome_pool_release(cfg, incus, name)
+        release_all(cfg, incus, name)
+    except Exception as e:
+        warn(f"Could not release pooled cache slots for '{name}' (continuing): {e}")
 
     # Clean refs/jailbee/<short>/* on the host. Best-effort: a failure here
     # (git missing, repo broken) must not block destroy — leftover refs
@@ -1523,6 +1604,21 @@ def destroy_container(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    # After the instance is gone, never before: Incus refuses to delete an
+    # ACL still referenced by an instance NIC. The label died with the
+    # container; this is the ACL it left behind.
+    #
+    # Best-effort: the container is already gone at this point, so an ACL
+    # deletion failure must not turn a successful destroy into a reported
+    # failure. `apply._sweep_orphan_extra_acls` is the safety net that
+    # reclaims it later.
+    from jailbee import egress_scope
+
+    try:
+        egress_scope.drop_container_acl(incus, name)
+    except IncusError as e:
+        warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
 
     # Drop any background job tracking row so `jailbee ls` stops showing it.
     # Best-effort: a DB hiccup must not turn a successful destroy into a
@@ -1600,6 +1696,15 @@ def switch_network(
         raise ValueError(f"Container '{name}' has no network profile attached — cannot switch.")
 
     incus.profile_assign(name, new_profiles)
+
+    # Re-materialise the container's own egress ACL for the new mode. This
+    # MUST run on every switch: `apply_container_acl` owns the local `eth0`
+    # override, and a local device shadows whichever net profile was just
+    # assigned — leaving a strict override in place would pin a "loose"
+    # container to incusbr0 with the allowlist still enforced.
+    from jailbee import egress_scope
+
+    egress_scope.apply_container_acl(cfg, incus, name, mode=mode)
 
     # Keep /etc/hosts in sync with the new profile. Strict mode pins
     # allowlisted hostnames so the container sees the same IPs the ACL
@@ -2000,12 +2105,12 @@ def ls_field_specs(
             cell=lambda c: c.ip or "-",
             json=lambda c: c.ip,
             # `jailbee apply` writes /etc/hosts entries, so the address is
-            # rarely what you reach a container by — it costs 15 columns in
-            # every `ls` to answer a question most runs never ask. Still on
-            # by default in the dashboards, where a glance is free, and in
-            # JSON, where scripts depend on it.
+            # rarely what you reach a container by — it costs 15 columns to
+            # answer a question most views never ask. Off in the dashboards
+            # too, so the two default sets differ in exactly one column
+            # (`mem`); enable it in the dashboard settings UI or ask for it
+            # with `--fields ip`. Still on in JSON, where scripts depend on it.
             default_table=False,
-            default_dashboard=True,
         ),
         table_format.FieldSpec(
             name="memory_limit",

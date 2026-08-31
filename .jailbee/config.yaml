@@ -2,8 +2,11 @@
 # All keys are optional — delete a key to use the built-in default.
 # See docs/config.md for the full reference.
 #
-# Dogfood scope: Python dev loop (uv sync, pytest, ruff, mypy) + git push/pull.
-# Out of scope: running `jailbee new`/`jailbee init` inside the container.
+# Dogfood scope: Python dev loop (uv sync, pytest, ruff, mypy) + git push/pull,
+# plus driving jailbee itself against the nested Incus daemon that
+# .jailbee/install.d/75-incus.sh bakes in. Running `jailbee init`/`jailbee new`
+# inside the container used to be listed here as out of scope; recording the
+# website's workflow clips is exactly that, so it is in scope now.
 # Quickstart:
 #   jailbee new --net loose feat/dogfood   # loose so on_create can `uv sync` deps
 #   jailbee net strict feat-dogfood        # tighten egress for normal dev
@@ -74,8 +77,19 @@ egress_allow: []
 
 # Container resource defaults applied at create time.
 defaults:
-  memory: 4GiB             # Python-only repo — modest footprint
-  cpu: 4
+  # 4GiB/4 fit a Python dev loop and nothing else. Recording the website's
+  # workflow clips runs jailbee against the nested Incus daemon
+  # (.jailbee/install.d/75-incus.sh): a golden image build, then three or four
+  # branch containers up at once, each with a dev server and a Claude session
+  # in it. That does not fit in 4GiB. 8 of the host's 16 cores keeps the
+  # nested image build from crawling without starving the host.
+  #
+  # Applied per container at create time — lifecycle.py sets limits.memory and
+  # limits.cpu during `jailbee new`, not through the profile. So a new
+  # container picks this up with no `jailbee apply`, and containers that
+  # already exist keep the limits they were created with.
+  memory: 12GiB
+  cpu: 8
   network: strict          # strict | loose
   storage_pool: default
 
@@ -98,6 +112,12 @@ golden:
   # website's terminal demos (website/demo/render.sh). The third, vhs itself,
   # plus a system Chrome, are installed by .jailbee/install.d/65-vhs.sh —
   # neither can come from apt here, and that snippet explains why.
+  #
+  # Nor does the nested Incus daemon used to verify jailbee's device and
+  # command generation against a real daemon from inside a container: that is
+  # .jailbee/install.d/75-incus.sh, which installs `incus-base` instead of
+  # `incus` (the metapackage drags in qemu for VM support) and leaves the
+  # units disabled. docs/manual-testing.md carries the rig recipe.
   #
   # Nothing else website-related belongs in this list either. ImageMagick is
   # installed by .jailbee/install.d/70-imagemagick.sh, because it needs

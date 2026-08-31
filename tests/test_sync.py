@@ -2165,6 +2165,245 @@ def test_push_to_container_no_base_refspec_when_source_not_base(mocker, make_cfg
 
 
 # ----------------------------------------------------------------------
+# Fast-forwarding the container's own refs/heads/<source>
+#
+# The transport writes only the refs/jailbee/* namespace, so a container's
+# local `dev` stayed at whatever the clone had — making an in-container
+# `git rebase dev` silently use a stale base. `ff_container_branch` advances
+# it, strictly fast-forward and best-effort.
+# ----------------------------------------------------------------------
+
+_FAILED = object()
+"""Sentinel for `_container_git_stub`: this git subcommand exits non-zero."""
+
+
+def _container_git_stub(outputs):
+    """Build an `incus.exec` side_effect dispatching on the git subcommand.
+
+    Keys are the first git argument after `git -C <dir>` (e.g. "rev-parse").
+    A string value is that command's stdout; `_FAILED` makes it exit
+    non-zero, which the real `Incus.exec` surfaces as `IncusError`.
+    Unlisted subcommands return empty stdout.
+    """
+    from jailbee.incus import IncusError
+
+    def side_effect(container, cmd, **kwargs):
+        sub = cmd[3] if len(cmd) > 3 else ""
+        out = outputs.get(sub, "")
+        if out is _FAILED:
+            raise IncusError(f"git {sub} exited non-zero")
+        return out
+
+    return side_effect
+
+
+def _git_calls(incus_mock):
+    """The git argv of every incus.exec call, minus the leading `git -C <dir>`."""
+    return [call.args[1][3:] for call in incus_mock.exec.call_args_list]
+
+
+def test_ff_container_branch_creates_the_branch_when_absent(mocker):
+    """A clone of a host whose HEAD was `main` has no local `dev` at all."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    # `rev-parse --verify --quiet` exits non-zero on a ref that doesn't resolve.
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": _FAILED}
+    )
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "created"
+    assert result.old_oid is None
+    assert result.new_oid == "new1"
+    assert ["update-ref", "refs/heads/dev", "new1"] in _git_calls(incus)
+
+
+def test_ff_container_branch_fast_forwards_with_a_compare_and_swap(mocker):
+    """The 3-arg update-ref form: a concurrent container-side commit can't be clobbered."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n"}
+    )
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "fast-forwarded"
+    assert result.old_oid == "old1"
+    assert ["merge-base", "--is-ancestor", "old1", "new1"] in _git_calls(incus)
+    assert ["update-ref", "refs/heads/dev", "new1", "old1"] in _git_calls(incus)
+
+
+def test_ff_container_branch_reports_up_to_date_without_writing(mocker):
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "new1\n"}
+    )
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "up-to-date"
+    assert not [c for c in _git_calls(incus) if c[0] == "update-ref"]
+
+
+def test_ff_container_branch_skips_the_checked_out_branch(mocker):
+    """`receive.denyCurrentBranch` aside, moving HEAD's branch would desync the worktree.
+
+    This is the dev-basella-oleva-dev-kontti case and the `jb push --pr` case
+    (a PR container's branch *is* the head ref, cli.py:1016). `--merge`
+    already handles both with its --ff-only merge.
+    """
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub({"symbolic-ref": "dev\n"})
+
+    result = ff_container_branch(
+        incus, "p-dev", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "checked-out"
+    assert _git_calls(incus) == [["symbolic-ref", "--quiet", "--short", "HEAD"]]
+
+
+def test_ff_container_branch_refuses_to_rewind_a_diverged_branch(mocker):
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "merge-base": _FAILED}
+    )
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "diverged"
+    assert result.old_oid == "old1"
+    assert not [c for c in _git_calls(incus) if c[0] == "update-ref"]
+
+
+def test_ff_container_branch_reports_a_failed_update_ref(mocker):
+    """A lost CAS race (someone committed on dev mid-push) must not read as success."""
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = _container_git_stub(
+        {"symbolic-ref": "feat/foo\n", "rev-parse": "old1\n", "update-ref": _FAILED}
+    )
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "failed"
+
+
+def test_ff_container_branch_survives_a_dead_container(mocker):
+    """Never raises: a refresh problem must not fail the surrounding push."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import ff_container_branch
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("container is not running")
+
+    result = ff_container_branch(
+        incus, "p-feat-foo", "/home/dev/repo", branch="dev", new_oid="new1", uid=1000
+    )
+
+    assert result.status == "failed"
+
+
+def test_push_to_container_fast_forwards_the_pushed_local_branch(mocker, make_cfg, tmp_path):
+    """Wiring: the transport reports what happened to the container's own branch."""
+    from jailbee.sync import push_to_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    def container_git(container, cmd, **kwargs):
+        args = cmd[3:]
+        if args[0] == "symbolic-ref":
+            return "feat/foo\n"
+        if args[0] == "rev-parse":
+            return {
+                "refs/jailbee/host/main": "prior-host-oid\n",
+                "refs/heads/main": "container-main\n",
+            }.get(args[3], "")
+        return ""
+
+    incus.exec.side_effect = container_git
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
+    mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: "host-oid" if ref == "refs/heads/main" else None,
+    )
+    mocker.patch("jailbee.sync.git.push_url")
+
+    result = push_to_container(cfg, incus, "feat-foo")
+
+    assert result.local_branch is not None
+    assert result.local_branch.branch == "main"
+    assert result.local_branch.status == "fast-forwarded"
+    assert result.local_branch.old_oid == "container-main"
+    assert result.local_branch.new_oid == "host-oid"
+
+
+def test_push_to_container_survives_a_failed_local_branch_update(mocker, make_cfg, tmp_path):
+    """The ref bookkeeping is best-effort — a failure must not fail the push."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_to_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    def container_git(container, cmd, **kwargs):
+        if cmd[3] == "update-ref":
+            raise IncusError("update-ref: cannot lock ref")
+        return ""
+
+    incus.exec.side_effect = container_git
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
+    mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="host-oid")
+    mocker.patch("jailbee.sync.git.push_url")
+
+    result = push_to_container(cfg, incus, "feat-foo")
+
+    assert result.new_oid == "host-oid"
+    assert result.local_branch is not None
+    assert result.local_branch.status == "failed"
+
+
+# ----------------------------------------------------------------------
 # Source-ref preference: origin/<source> vs refs/heads/<source>
 #
 # A host `refs/heads/<base>` only moves on `git pull`; `git fetch` updates
@@ -2381,7 +2620,13 @@ def _exec_dispatcher(responses):
     """Build an incus.exec side_effect from a {key: value-or-callable-or-exc} dict.
 
     Keys: status, merge_head, rebase_merge, rebase_apply, head_branch,
-    rev_parse_gie, rev_parse_head, rev_list_count, merge, rebase, reset.
+    rev_parse_gie, rev_parse_local, rev_parse_head, rev_list_count,
+    merge_base, update_ref, merge, rebase, reset.
+
+    The rev_parse_local / merge_base / update_ref trio belongs to
+    `ff_container_branch`; their defaults ("" = success, empty stdout) make it
+    read the container's `refs/heads/<source>` as absent and create it.
+
     Values may be:
     - a string (returned as stdout),
     - an Exception (raised),
@@ -2403,8 +2648,14 @@ def _exec_dispatcher(responses):
             key = "head_branch"
         elif "rev-list" in joined:
             key = "rev_list_count"
+        elif "update-ref" in cmd:
+            key = "update_ref"
+        elif "merge-base" in cmd:
+            key = "merge_base"
         elif "rev-parse" in joined and "refs/jailbee/host" in joined:
             key = "rev_parse_gie"
+        elif "rev-parse" in joined and "refs/heads/" in joined:
+            key = "rev_parse_local"
         elif "rev-parse" in joined and "HEAD" in joined:
             key = "rev_parse_head"
         elif "ls-files" in cmd:
@@ -4649,6 +4900,68 @@ def test_publish_defaults_to_container_branch(mocker, make_cfg, tmp_path):
     assert result.publish_name == "feat/foo"
 
 
+def test_publish_runs_the_hook_before_the_push(mocker, make_cfg, tmp_path):
+    """`on_before_push` fires after the fetch and *before* the push.
+
+    That order is the whole point: `git push` inherits its output and prints
+    nothing until the remote answers, so the caller's report of the fetch has
+    to reach the terminal first — otherwise a push blocked on remote
+    authentication is indistinguishable from a hung fetch.
+    """
+    from jailbee import sync
+    from jailbee.sync import FetchResult, PublishResult
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    fetch = FetchResult(
+        branch="dev-1", old_oid="old", new_oid="new", base_oid="old", commits_added=1
+    )
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=fetch)
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-dev-1")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.sync._container_status_dirty", return_value=True)
+    order: list[str] = []
+    mocker.patch("jailbee.git.push_to_remote", side_effect=lambda *a, **k: order.append("push"))
+    seen: list[PublishResult] = []
+
+    def hook(result: PublishResult) -> None:
+        order.append("hook")
+        seen.append(result)
+
+    result = sync.publish_branch_from_container(
+        cfg, incus, "dev-1", publish_name="user/nice", on_before_push=hook
+    )
+
+    assert order == ["hook", "push"]
+    assert seen[0] is result  # the same object, already fully resolved
+    assert seen[0].publish_name == "user/nice"
+    assert seen[0].dirty is True
+    assert seen[0].fetch is fetch
+
+
+def test_publish_runs_the_hook_even_when_the_push_fails(mocker, make_cfg, tmp_path):
+    """The fetch report belongs on screen above the push error, not lost with it."""
+    from jailbee import sync
+    from jailbee.git import GitError
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        return_value=f"{cfg.container_prefix}-feat-foo",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    _stub_publish_fetch(mocker)
+    mocker.patch("jailbee.sync.git.push_to_remote", side_effect=GitError("git push failed"))
+    hook = mocker.MagicMock()
+
+    with pytest.raises(sync.SyncError):
+        sync.publish_branch_from_container(cfg, incus, "feat-foo", on_before_push=hook)
+
+    hook.assert_called_once()
+
+
 # ---- retarget ------------------------------------------------------------
 
 
@@ -5189,6 +5502,84 @@ def test_checkout_submodules_on_host_branch_override_wins(mocker, make_cfg, tmp_
     assert resolved == "feat/x"
     gc.assert_not_called()
     upd.assert_called_once_with(cfg.repo_root, branch="feat/x")
+
+
+def test_checkout_submodules_on_host_does_not_switch_by_default(mocker, make_cfg, tmp_path):
+    """The superproject stays where it is unless the caller asks for the switch."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    co = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.submodules.report_submodule_branches", return_value=[])
+
+    sync.checkout_submodules_on_host(cfg, branch="feat/x")
+
+    co.assert_not_called()
+
+
+def test_checkout_submodules_on_host_switches_superproject_before_aligning(
+    mocker, make_cfg, tmp_path
+):
+    """The superproject checkout must land first: it is what rewrites the
+    gitlinks that the submodule alignment then checks out."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    order: list[str] = []
+    co = mocker.patch(
+        "jailbee.sync.git.checkout_branch", side_effect=lambda *a, **k: order.append("checkout")
+    )
+    upd = mocker.patch(
+        "jailbee.sync.submodules.update_submodules_on_host",
+        side_effect=lambda *a, **k: order.append("align"),
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.report_submodule_branches", return_value=[("lib", "feat/x")]
+    )
+
+    resolved, report = sync.checkout_submodules_on_host(
+        cfg, branch="feat/x", switch_superproject=True
+    )
+
+    assert order == ["checkout", "align"]
+    co.assert_called_once_with(cfg.repo_root, "feat/x")
+    upd.assert_called_once_with(cfg.repo_root, branch="feat/x")
+    assert (resolved, report) == ("feat/x", [("lib", "feat/x")])
+
+
+def test_checkout_submodules_on_host_switch_resolves_current_branch(mocker, make_cfg, tmp_path):
+    """With no override the switch targets the branch already checked out —
+    a no-op checkout, but it must not target something else."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
+    co = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.submodules.report_submodule_branches", return_value=[])
+
+    sync.checkout_submodules_on_host(cfg, switch_superproject=True)
+
+    co.assert_called_once_with(cfg.repo_root, "feat/foo")
+
+
+def test_checkout_submodules_on_host_switch_failure_skips_alignment(mocker, make_cfg, tmp_path):
+    """A refused checkout (dirty tree, unknown branch) must not leave the
+    submodules aligned to a branch the superproject is not on."""
+    from jailbee import git, sync
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch(
+        "jailbee.sync.git.checkout_branch",
+        side_effect=git.GitError("git checkout failed (exit 1)"),
+    )
+    upd = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    with pytest.raises(sync.SyncError, match="feat/x"):
+        sync.checkout_submodules_on_host(cfg, branch="feat/x", switch_superproject=True)
+
+    upd.assert_not_called()
 
 
 def test_checkout_submodules_in_container_places_and_reports(mocker, make_cfg, tmp_path):
@@ -5940,3 +6331,236 @@ def test_plan_push_fetch_failure_note_suppressed_when_source_is_local_only(
 
     assert not any("could not read from remote" in n for n in plan.notes)
     assert not any("fetch" in n for n in plan.notes)
+
+
+# --- .git/index.lock contention ------------------------------------------
+#
+# A container-side `git merge` / `rebase` / `reset --hard` fails outright when
+# another git process in the container holds `.git/index.lock`. Observed in the
+# wild: `jailbee git push --merge` died with "Unable to create
+# '/home/dev/<repo>/.git/index.lock': File exists" and succeeded on an
+# immediate retry — the lock was transient, held by a concurrent git.
+
+_LOCK_STDERR = (
+    "`incus exec c --user 53023 -- git -C /home/dev/repo merge` failed (exit 1): "
+    "error: Unable to create '/home/dev/repo/.git/index.lock': File exists.\n"
+    "\n"
+    "Another git process seems to be running in this repository"
+)
+
+
+def _lock_error():
+    from jailbee.incus import IncusError
+
+    return IncusError(_LOCK_STDERR)
+
+
+def test_index_lock_held_recognises_gits_lock_message():
+    assert sync._index_lock_held(_lock_error()) is True
+
+
+def test_index_lock_held_ignores_unrelated_failures():
+    from jailbee.incus import IncusError
+
+    assert sync._index_lock_held(IncusError("CONFLICT (content): Merge conflict in a.txt")) is False
+
+
+def _failing_then_ok(exc_factory, attempts):
+    """Dispatcher value: raise `exc_factory()` until `attempts` is long enough."""
+
+    def value():
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise exc_factory()
+        return ""
+
+    return value
+
+
+def test_push_and_merge_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": _failing_then_ok(_lock_error, attempts),
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    sleep = mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_merge(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "container-head-oid"
+    assert len(attempts) == 2, "the locked merge must be retried, not reported as a failure"
+    assert sleep.call_count == 1, "a retry must back off, not spin"
+
+
+def test_push_and_merge_reports_a_stuck_index_lock_without_the_raw_exec_dump(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.incus import IncusError
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    def always_locked():
+        attempts.append(1)
+        raise _lock_error()
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": always_locked,
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    with pytest.raises(SyncError) as excinfo:
+        push_and_merge(cfg, incus, "feat-foo")
+
+    assert len(attempts) == sync._INDEX_LOCK_ATTEMPTS
+    message = str(excinfo.value)
+    assert "another git process" in message
+    assert "/home/dev/repo/.git/index.lock" in message
+    assert "jailbee shell feat-foo" in message
+    assert "incus exec" not in message, "the raw exec command line is noise, not a diagnosis"
+
+
+def test_push_and_rebase_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_rebase
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "rebase": _failing_then_ok(_lock_error, attempts),
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_rebase(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "container-head-oid"
+    assert len(attempts) == 2
+
+
+def test_push_and_reset_retries_while_the_index_lock_is_held(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_reset
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    attempts: list[int] = []
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "main\n",
+            "rev_parse_gie": "",
+            "rev_parse_head": "old-branch-oid\n",
+            "rev_list_count": "0\n",
+            "reset": _failing_then_ok(_lock_error, attempts),
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.time.sleep")
+
+    result = push_and_reset(cfg, incus, "feat-foo")
+
+    assert result.head_oid == "old-branch-oid"
+    assert len(attempts) == 2
+
+
+def test_container_status_preflight_does_not_take_the_index_lock(mocker):
+    """`git status --porcelain` refreshes and rewrites the index, so the
+    read-only dirty-tree preflight both takes the lock and fails on one held
+    by someone else. GIT_OPTIONAL_LOCKS=0 removes both halves.
+    """
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+    env = incus.exec.call_args.kwargs.get("env") or {}
+    assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+def test_container_status_preflight_is_bounded_by_a_timeout(mocker):
+    """The probe must not be able to hang forever.
+
+    `jailbee pr` runs it between the container fetch and the push, where an
+    `incus exec` that never returns leaves the terminal silent after git's
+    fetch output — the most misleading place in the flow to stall.
+    """
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+    assert incus.exec.call_args.kwargs.get("timeout") == sync._STATUS_PROBE_TIMEOUT_S
+    assert sync._STATUS_PROBE_TIMEOUT_S > 0
+
+
+def test_container_status_preflight_timeout_becomes_a_sync_error(mocker):
+    """A timed-out probe reports as a SyncError, carrying incus's own detail."""
+    from jailbee.incus import IncusTimeoutError
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusTimeoutError("`incus exec c ...` timed out after 60s")
+    with pytest.raises(sync.SyncError, match="timed out after 60s"):
+        sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)

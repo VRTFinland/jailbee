@@ -1,6 +1,6 @@
 [project]
 name = "jailbee"
-version = "1.0.0"
+version = "1.2.2"
 description = "Manage isolated per-branch development environments using Incus system containers"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -49,7 +49,6 @@ gui = ["PySide6>=6.7"]
 [project.scripts]
 jailbee = "jailbee.entry:main"
 jb = "jailbee.entry:main"
-gie = "jailbee.entry:main"   # pre-1.0 alias; removed in 1.1.0
 
 [project.urls]
 Homepage = "https://jailbee.gisgro.io"
@@ -83,6 +82,17 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "RUF"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
+
+[tool.pytest.ini_options]
+# Pinned rather than left to discovery. `website/demo/substrate/` is a
+# committed miniature application — the repo the workflow videos are recorded
+# against — and it has a `tests/` directory of its own that needs FastAPI and
+# its own package layout. Bare `pytest` from the repo root would collect it and
+# fail on the import. Discovery previously skipped it only because that tree
+# lived under a dot-directory; naming the path makes it deliberate. Passing an
+# explicit path still overrides this, so `pytest website/demo/substrate` inside
+# a container works as expected.
+testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]
 # The sdist is a build input, not a mirror of the repo. It carries the package

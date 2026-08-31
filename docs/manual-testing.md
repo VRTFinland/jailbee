@@ -342,6 +342,46 @@ jailbee destroy feat-delfg --force --no-background   # forces foreground
 #  drop only the record: `jailbee job clear <name>`.)
 ```
 
+## `jailbee restart --background` smoke test
+
+> Host-only. Verifies the detached boot worker + `jailbee ls` JOB tracking.
+> State is in the SQLite `background_op` table (`op_kind='boot'`). Use a
+> container whose `on_start` steps take long enough to observe.
+
+```bash
+jailbee new feat/bootsmoke
+jailbee restart feat-bootsmoke --background
+# expect: "🔁 'feat-bootsmoke' is restarting in the background (pid N) ..."
+jailbee ls          # JOB column: starting, then autostart, then clears
+jailbee job ls      # KIND column shows `boot` while it runs
+
+# The attach wait ends at `autostart`, not at completion:
+jailbee restart feat-bootsmoke --background
+jailbee tmux feat-bootsmoke   # returns as soon as the container is back up
+
+# Second boot over a live one is refused (run both within the same run):
+jailbee restart feat-bootsmoke --background
+jailbee restart feat-bootsmoke --background 2>&1 | grep -i "already has a background job"
+
+# `start` reuses the same worker without the reboot:
+jailbee stop feat-bootsmoke
+jailbee start feat-bootsmoke --background
+# expect: "🔁 'feat-bootsmoke' is starting in the background (pid N) ..."
+
+# Config default + override:
+printf 'boot:\n  background: true\n' >> .jailbee/config.yaml
+jailbee restart feat-bootsmoke                  # backgrounds without the flag
+jailbee restart feat-bootsmoke --no-background  # forces foreground
+# remove the boot: block from .jailbee/config.yaml afterwards
+
+# Failure path: break an on_start step, then
+jailbee restart feat-bootsmoke --background
+jailbee ls          # JOB=failed; the container itself is up
+jailbee job ls      # error message + worker log path
+jailbee shell feat-bootsmoke   # warns about the failed job, offers to attach anyway
+jailbee job clear feat-bootsmoke
+```
+
 ## `jailbee tmux`/`shell` wait-for-background smoke test
 
 > Host-only. Verifies attach commands block until a backgrounded
@@ -359,33 +399,44 @@ jailbee new feat/waitsmoke2 --background
 jailbee shell            # no name → picker lists feat-waitsmoke2 with JOB=cloning/...
 # pick it → waits, then opens the shell.
 
-# Failure path: a backgrounded op that fails surfaces in the wait.
-jailbee new feat/waitfail nonexistent-base --background
+# Failure path: an autostart step fails, so the container is created and
+# running but the job row is `failed`. The attach reports it and offers to go
+# in anyway — no flag needed. Works on shell/tmux/ide/chrome.
+jailbee new feat/waitfail --background   # let it fail in an autostart step
 jailbee tmux feat-waitfail
-# expect: "background creation of 'feat-waitfail' failed: ..." and exit 1.
-# When the container is up (autostart failed), the error is followed by a
-# hint naming the command you ran, e.g.:
-#   "  Inspect it anyway with:  jailbee tmux feat-waitfail --force"
-
-# --force escape hatch: after an autostart step fails, the container is left
-# created and running, so --force attaches anyway to inspect it. (Only the
-# `failed` job row was blocking the plain attach.) Works on shell/tmux/ide/chrome.
-jailbee new feat/waitforce --background   # let it fail in an autostart step
-jailbee tmux feat-waitforce --force
-# expect: "⚠ 'feat-waitforce': background creation failed (...) — attaching anyway."
-#         then the tmux session with the failed window.
+# expect: "⚠ background creation of 'feat-waitfail' failed: ...",
+#         "  The container itself is up — 'jailbee tmux' can still reach it."
+#         "  Once you're done, clear the stale job record: jailbee job clear feat-waitfail"
+#         then "Continue anyway? [Y/n]" — Enter drops you into the tmux
+#         session with the failed window. Answering `n` exits 1.
 # (The job row stays `failed` until you acknowledge it:
-#    jailbee job clear feat-waitforce
+#    jailbee job clear feat-waitfail
 #  — the container is left alone. `jailbee job ls` shows the recorded error and
-#  the worker log path first; `jailbee job log feat-waitforce` prints the log.)
+#  the worker log path first; `jailbee job log feat-waitfail` prints the log.)
 
-# --force does not bypass the container's existence: when the create failed
-# before `incus init` there is nothing to attach to.
+# --force only skips the question, so scripts and the dashboards don't stall.
+# A non-interactive stdin (a script, a cron job) is treated the same way.
+jailbee tmux feat-waitfail --force        # same warning, no prompt
+
+# From the dashboard, `t`/`s`/`i`/`c` (and the Enter menu) dispatch with
+# --force: the JOB column already showed `failed`.
+jailbee dashboard                         # highlight feat-waitfail, press t
+
+# Nothing to attach to: when the create failed before `incus init` there is no
+# container, so the attach refuses without asking.
 jailbee new feat/nosuchbase nonexistent-base --background   # fails before creating
-jailbee tmux feat-nosuchbase --force
-# expect: "✗ 'feat-nosuchbase': no such container — there is nothing to attach
-#          to.", the creation error that explains it, and the
-#          `jailbee job clear feat-nosuchbase` hint. Exit 1, no traceback.
+jailbee tmux feat-nosuchbase
+# expect: "✗ background creation of 'feat-nosuchbase' failed: ...", the
+#          "Nothing was created; clear the job record: jailbee job clear
+#          feat-nosuchbase" hint, exit 1, no prompt and no traceback.
+
+# Ctrl-C out of a healthy wait, once the container exists: same offer.
+jailbee new feat/waitslow --background
+jailbee tmux feat-waitslow                # Ctrl-C while the spinner runs
+# expect: "⚠ 'feat-waitslow' is still being created in the background — its
+#          setup is unfinished." then "Attach anyway? [y/N]" — defaulting to
+#          no, and asked even under --force, because Ctrl-C means cancel.
+#          Before the container exists you get the "check `jailbee ls`" exit.
 
 jailbee destroy --all --force
 ```
@@ -1248,7 +1299,7 @@ git reset --hard HEAD~1   # drop the local "host: bump submodule" commit
 
 ## `jailbee submodule checkout` smoke test
 
-> Host-only. Aligns submodules to a branch locally (no host<->container transport).
+> Host-only. Puts the tree on a branch locally (no host<->container transport).
 
 ```bash
 # Host repo: detach a submodule, then re-align it to the current branch.
@@ -1260,9 +1311,20 @@ jailbee submodule checkout
 #         "Submodules aligned to 'feat/align-smoke'."
 git -C <submodule-path> branch --show-current   # -> feat/align-smoke
 
-# Explicit branch override.
+# -b switches the superproject too: one command for the whole tree.
+git branch feat/other
 jailbee submodule checkout -b feat/other
+git branch --show-current                       # -> feat/other  (superproject moved)
 git -C <submodule-path> branch --show-current   # -> feat/other
+
+# --submodules-only keeps the superproject put (the pre-1.2 behaviour).
+jailbee submodule checkout -b feat/align-smoke --submodules-only
+git branch --show-current                       # -> feat/other  (unchanged)
+git -C <submodule-path> branch --show-current   # -> feat/align-smoke
+
+# A refused superproject checkout aligns nothing.
+jailbee submodule checkout -b no/such/branch    # expect: exit 1, git's own error
+git -C <submodule-path> branch --show-current   # -> feat/align-smoke (untouched)
 
 # Container target (aligns the container's submodules to its branch).
 jailbee new feat/submod-align
@@ -1275,6 +1337,46 @@ git checkout --detach
 jailbee submodule checkout 2>&1 | grep "detached HEAD"
 git checkout main && git branch -D feat/align-smoke
 ```
+
+## `jailbee submodule pr` smoke test
+
+> Host-only. Requires a superproject with a submodule that has a GitHub remote
+> of its own, and `gh auth login` on the host for that remote. This is the one
+> part of the feature no unit test can cover: the real push goes to a real
+> GitHub submodule remote.
+
+```bash
+jailbee new feat-sub
+jailbee shell feat-sub
+# inside container, inside the submodule:
+cd ~/SampleApp/libs/foo
+echo "submodule pr smoke" > sub.txt && git add . && git commit -m "feat: submodule pr smoke"
+exit
+
+jailbee submodule pr feat-sub
+# expect: transport summary, git push output, then
+#         "Draft PR #<N> created for 'libs/foo': https://github.com/..."
+gh pr view <N> --repo <submodule-org>/<submodule-repo>   # base is the submodule's own default branch
+git -C libs/foo log --oneline <base>..<head>             # only the submodule commits, nothing from the superproject
+incus config get <prefix>-feat-sub user.jailbee.sub_pr    # → {"libs/foo": {"pr": <N>, ...}}
+
+# Re-run: updates the same PR rather than opening a second one (the recorded
+# head name is what protects this).
+jailbee shell feat-sub
+cd ~/SampleApp/libs/foo && echo more > more.txt && git add . && git commit -m "more" && exit
+jailbee submodule pr feat-sub
+# expect: "PR #<N> updated — head moved..." — same PR number as above
+gh pr list --repo <submodule-org>/<submodule-repo> --head <head>   # exactly one open PR
+
+# --open opens it in the browser without touching anything.
+jailbee submodule pr feat-sub --open
+
+jailbee destroy feat-sub --force
+```
+
+Two submodules with commits ahead is worth checking too: `jailbee submodule
+pr feat-sub` with no `<path>` should list both candidates and exit 2 asking
+you to name one.
 
 ## `jailbee new` clone source (`new.clone_from` / `new.autofetch`) smoke test
 
@@ -1502,19 +1604,106 @@ jailbee destroy feat-pickersmoke --force
 # From any repo (or none): launch the live view.
 jailbee dashboard
 # expect: alternate-screen TUI, one section per repo with its containers,
-#         a highlighted row, and a footer "↑/↓ move · Enter actions · r refresh · q quit".
+#         a highlighted row, and a footer hint line reading (at minimum)
+#         "↑/↓ (j/k) move · Enter menu · Space fold · t tmux · s shell ·
+#          r refresh · F2 / S settings · h / ? help · q quit".
 
 # Create activity in another terminal and watch it appear within a few seconds:
 jailbee new feat/dashsmoke --background
 # expect: the feat-dashsmoke row appears with a JOB phase, then clears when ready.
 
 # Navigate + act:
-#  ↑/↓ (or j/k) to move the highlight (skips repo headers, spans repos)
+#  ↑/↓ (or j/k) to move the highlight (spans repos; repo headers are cursor
+#       stops now, not skipped — see the folding recipe below)
 #  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
-#           start/destroy when Stopped). Pick "Open shell" -> lands in the
-#           container; exit -> returns to the dashboard, which refreshes.
+#           start/destroy when Stopped). It opens inline BELOW the table —
+#           expect the container rows to stay on screen and keep refreshing
+#           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
+#           Pick "Open shell" -> lands in the container; exit -> returns to the
+#           dashboard, which refreshes.
+#           On an orphan (view-only) row, Enter opens nothing and prints a
+#           yellow note in the panel footer for ~2.5s instead of going silent.
+#  t -> attaches tmux for the highlighted container without the menu; exit ->
+#       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR,
+#       P = create/update the PR, u = update from base, d = show the diff.
+#       On a row that does not offer the action (Stopped container, IDE/Chrome
+#       disabled in that repo's config, no PR, orphan row) expect NO dispatch
+#       and a yellow footer note naming the key and the reason.
+
+# Workflow entries (the menu block above tmux/shell). Make a commit inside the
+# container first, so there is something for git pull and git diff to show:
+jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git commit -am wip'
+#  d (or the "Show diff (git diff)" entry) -> the diff opens in $PAGER
+#     (less -R) WITH colour, not as a plain scroll-past dump; q in less returns
+#     to the dashboard with the table intact.
+#  u ("Update from base (git push)") -> in a repo with push.default_action:
+#     ask, the CLI's own merge/rebase picker appears (the TUI hands over the
+#     real terminal); after it finishes, expect a
+#     "── press Enter to return to the dashboard ──" line and the output still
+#     readable until you press Enter.
+#  "Send commits to host (git pull)" -> same pause behaviour. On a container
+#     with nothing ahead of its base, expect the entry to be ABSENT from the
+#     menu (and `git pull` to have no quick key at all — by design).
+#  "Job log" -> present only while a job row exists; on a live background job
+#     it follows the worker log (Ctrl-C ends it), on a finished one it prints
+#     once. Not bound to a quick key.
+#  A --mount container offers none of pr/git push/git pull/git diff (no clone
+#     of its own): jailbee new feat/mnt --mount, then Enter on that row.
+#  h (or ?) -> keybinding help below the table; h again or Esc closes it.
+#              Pressing h with the action menu open swaps the menu for help.
 #  r -> forces an immediate full refresh (incl. git status)
-#  q (or Ctrl-C) -> quits, restoring the terminal
+#  q -> quits (closes the action menu or help first, if open)
+#  Ctrl-C -> always quits, restoring the terminal, even with an overlay open
+
+# Folding a repo group:
+#  Space on a repo header -> the header collapses to "▸ <prefix> (N)" and its
+#     container rows disappear; Space again (▾) unfolds and the rows return.
+#  Space on any container row inside a group -> same fold/unfold, no need to
+#     move the cursor up to the header first.
+#  Enter on a header -> same effect as Space (mirrors the Qt card view's
+#     clickable header); confirm it does NOT open the action menu.
+#  Fold a group, then jailbee new inside it in another terminal -> the new
+#     container's row stays hidden until you unfold; the header's count goes
+#     up regardless.
+#  Fold every group -> confirm the panel title still reports the total
+#     container count plus an "N folded" note, and the cursor still has
+#     somewhere to land (the headers).
+
+# The settings overlay (F2 or S):
+jailbee dashboard
+#  F2 -> opens a panel below the table: "Fields" and "Repos" tabs, ↑/↓ move,
+#     Space toggles, Tab switches tabs, Esc closes. Changes apply and persist
+#     immediately -- there is no OK/Cancel; watch the live table update
+#     behind the panel as you toggle a column.
+#  S -> opens the same overlay. Terminals disagree on what F2 sends (some
+#     send nothing usable over SSH/tmux); if F2 does nothing on your setup,
+#     S is the reliable fallback -- try both once so you know which works
+#     for your terminal.
+#  On the Fields tab, toggle a column off then back on -> the table's header
+#     row and every container row gain/lose that column immediately.
+#  Toggle "pr" on with no PR container present -> column does not appear in
+#     the table; the overlay row for it carries a dim
+#     "(shown only when it applies)" note explaining why, rather than
+#     looking like a bug.
+#  Try to turn off the last enabled column -> refused (the checkbox stays
+#     checked); there is no such thing as a table with zero columns.
+#  Switch to the Repos tab (Tab) -> toggle a repo's fold state from here too;
+#     confirm it matches what Space does from the live table.
+#  A field vocabulary this long does not fit under a normal terminal height:
+#     confirm the panel shows only a window of rows around the cursor (not
+#     all ~20+ fields at once), with a dim "↑ N more" / "↓ N more" line when
+#     rows are hidden above/below, and that moving to the very last field
+#     scrolls it into view rather than losing it off the bottom.
+#  Esc -> closes the overlay, back to the plain table.
+
+# TUI and GUI settings are independent:
+#  With the TUI dashboard open, toggle a column or fold a repo in its
+#     overlay. Then, in another terminal, run `jailbee gui` and check
+#     View ▸ Columns and the card view's fold state: neither reflects what
+#     you just did in the TUI. Change something in the GUI, close it,
+#     reopen the TUI dashboard (or press F2 again) -- the TUI's own state is
+#     still exactly what you left it. Each front-end has its own row in
+#     state.sqlite's view_prefs table.
 
 # Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
 # (WT/AHEAD/↑/MERGE) update every ~10s. Tune with -i / --git-interval, or
@@ -1583,9 +1772,232 @@ claude:
 YAML
 jailbee new feat/claude-c     # links to existing shared version, no `claude update`
 
+# The shared store is pruned by Claude's own updater, so a version another
+# container is pinned to can disappear under it. /etc/profile.d/jailbee-claude.sh
+# heals that at login — simulate it by pinning to a version that doesn't exist:
+jailbee shell feat-claude-a
+ln -sfn ~/.local/share/claude/versions/0.0.0 ~/.local/bin/claude
+exit
+jailbee shell feat-claude-a    # a fresh login shell repairs the launcher
+readlink ~/.local/bin/claude   # newest version in the store again, not 0.0.0
+claude --version
+exit
+
 jailbee destroy --all --force
 # Remove the claude.auto_update block from .jailbee/config.yaml afterwards.
 ```
+
+## Shared Claude credential groups (`claude_credentials`) smoke test
+
+Several repos on one host can share one Claude Code login by pointing
+`claude_credentials` in `~/.config/jailbee/global.yaml` at the same group
+name — see `.local/superpowers/specs/2026-08-27-claude-shared-credentials-design.md`
+for the design. The mechanism rests entirely on **undocumented observations
+of Claude Code 2.1.247**: that `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves the
+credential directory independently of `CLAUDE_CONFIG_DIR`, and that the OAuth
+refresh lock (`.oauth_refresh.lock`) is created inside that same directory.
+Nothing here is read from public documentation, and none of it is guaranteed
+to survive a future Claude Code release. The checks below are what stand in
+for a contract until it breaks.
+
+Needs a real Incus daemon and real Claude Code logins. Run the steps **in
+this order** — the happy path looks identical whether or not step 1's repair
+actually worked, so running it first would mask the one finding most likely to
+regress silently.
+
+Two repos, `SampleApp` and `SampleApp2` (any second checkout with its own
+`container_prefix` will do), both with
+`agents.claude.enabled: true`. Point both at the same group in
+`~/.config/jailbee/global.yaml`:
+
+```yaml
+claude_credentials:
+  group: worktest
+```
+
+1. **`jailbee new` before `jailbee apply` does not log the container out.**
+   This is Finding 2 of the 2026-08-27 review: the `jailbee new` repair for
+   `CLAUDE_SECURESTORAGE_CONFIG_DIR` used to fire unconditionally once the key
+   was absent, which — in a repo that had `claude_credentials` added but never
+   `apply`ed — wrote the env key to `<prefix>-base` while `<prefix>-binds`
+   still had no `claude-creds` device, so Claude Code resolved an unmounted
+   directory and reported "Not logged in" in every container of the repo. The
+   fix makes the repair wait for the device.
+
+   Starting from a repo that has **never** run `jailbee apply` since
+   `claude_credentials` was set (a fresh `jailbee init` followed by editing
+   `global.yaml`, or reuse a repo that predates this feature and add the key
+   now):
+
+   ```bash
+   cd SampleApp
+   incus profile show SampleApp-binds | grep -c claude-creds
+   # expect: 0 — apply has not run yet
+   jailbee new feat/creds-before-apply
+   jailbee shell feat-creds-before-apply
+   # inside: claude -p "hi"
+   ```
+
+   Expected: whatever this container's login state was before (logged in, or
+   asking for `/login`) — **not** a "Not logged in" for a container that was
+   previously authenticated via `<shared_dir>/claude`. That mount is
+   unaffected either way; only the new `.claude-creds` mount is missing.
+
+   ```bash
+   exit
+   jailbee apply
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: the device, now present
+   jailbee shell feat-creds-before-apply
+   # inside: claude -p "hi"
+   # expect: logged in as the group's account (or /login if the group has
+   #         no credential yet — see step 3)
+   exit
+   ```
+
+2. **Concurrent rotation from two different repos is mutually excluded.**
+   The one check that could invalidate the whole design. The primary lock
+   (`.oauth_refresh.lock`) lives inside the shared group directory and is
+   taken by every container that mounts it; the *legacy* sibling lock
+   (`${realpath(dir)}.lock`) is a sibling path outside the shared directory
+   and is therefore per-container, not shared. Exclusion depends entirely on
+   both sides taking the primary lock.
+
+   ```bash
+   jailbee shell <a SampleApp container>
+   # inside: start a long-running agentic prompt, don't wait for it to finish
+   # from another terminal, while it's still running:
+   jailbee shell <a SampleApp2 container>
+   # inside, concurrently: another long-running agentic prompt
+   ```
+
+   Watch `<xdg_data_home>/jailbee/claude-credentials/worktest/` on the host
+   for `.oauth_refresh.lock` and `.credentials.json` while both are running
+   (`watch -n1 'ls -la ...; stat .credentials.json'`). Expected: no corrupted
+   `.credentials.json` (valid JSON throughout, no truncation), and neither
+   container gets logged out. A torn write, or one side rotating the other's
+   token out from under it, is a real finding — it means the primary-lock
+   assumption is wrong and the design needs re-examining, not a workaround.
+
+3. **The happy path, both directions.**
+
+   Join with an existing login — the credential should *move*, not be
+   copied, and the container should stay authenticated:
+
+   ```bash
+   # before joining: SampleApp2 has its own login, group dir is empty
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json    # exists
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/ # empty or absent
+   # add claude_credentials to global.yaml for SampleApp2, then:
+   jailbee apply
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json    # gone
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json
+   # expect: present — the file moved, not copied
+   jailbee shell <a SampleApp2 container>
+   # inside: claude -p "hi" — expect still logged in, no re-auth
+   exit
+   ```
+
+   Leave, by removing the repo from `claude_credentials` (or setting it to
+   `null` under `repos:`) and re-running `jailbee apply`:
+
+   ```bash
+   jailbee apply
+   incus profile show SampleApp2-binds | grep -c claude-creds
+   # expect: 0 — device gone
+   incus profile show SampleApp2-base | grep -c CLAUDE_SECURESTORAGE_CONFIG_DIR
+   # expect: 0 — env key gone
+   jailbee shell <a SampleApp2 container>
+   # inside: claude -p "hi"
+   # expect: "Not logged in" — there is nothing to fall back to (see spec §8);
+   #         one /login here re-establishes this repo's own credential
+   exit
+   ```
+
+4. **A group rename only takes effect on `jailbee apply`.** The
+   container-side path (`~/.claude-creds`) is a constant; only the *source*
+   of the mount changes when the group name changes, and only `jailbee apply`
+   rewrites that source.
+
+   ```bash
+   # rename the group in global.yaml, e.g. worktest -> worktest2, but do NOT
+   # run `jailbee apply` yet
+   jailbee new feat/creds-after-rename
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: source still names the OLD group directory (.../worktest/)
+   jailbee doctor
+   # expect: reports the NEW group name (worktest2) as this repo's resolved
+   #         group — doctor and the actual mount disagree until `apply` runs
+   jailbee apply
+   incus profile show SampleApp-binds | grep claude-creds
+   # expect: source now names .../worktest2/
+   jailbee destroy feat-creds-after-rename --force
+   ```
+
+5. **The container's dev user can read the host `0700` group directory.**
+   Unlike every other shared-mount subdirectory, the group directory lives
+   outside `shared_dir` and is created `0700` on the host (deliberately: it
+   holds a live credential). This is reasoned from the existing `raw.idmap
+   uid<->uid` mapping on `<prefix>-base` — the same mechanism every other
+   host mount relies on — but has never been measured for a directory outside
+   `shared_dir` specifically.
+
+   ```bash
+   ls -la <xdg_data_home>/jailbee/claude-credentials/worktest/
+   # note the host owner/mode (0700, host user)
+   jailbee shell <a SampleApp container>
+   # inside:
+   ls -la ~/.claude-creds/
+   cat ~/.claude-creds/.credentials.json > /dev/null && echo "readable"
+   # expect: readable and writable as the container's dev user, same as any
+   #         other idmapped mount — no permission denied
+   exit
+   ```
+
+6. **Two credentials: the prompt, all three answers.** The case every host
+   that adopts a group after already logging in per-repo hits on the second
+   `jailbee apply` — this used to be a hard refusal thrown from the middle of
+   `run_apply`, leaving the profiles unwritten. Needs two *different* logins
+   to be worth running: the point is watching which account each container
+   reports afterwards, and two `/login`s to the same account are
+   indistinguishable here.
+
+   ```bash
+   # SampleApp is grouped and applied (its login is now the group's).
+   # Give SampleApp2 its own, different login, then point it at the group:
+   ls <shared_dir(SampleApp2)>/claude/.credentials.json               # exists
+   ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json  # exists
+   cd SampleApp2
+   jailbee apply
+   ```
+
+   Expected: a warning naming both paths, a hint printing the runnable
+   `claude_credentials.repos` block, then a three-row picker.
+
+   * **cancel** (or Ctrl-C) → exit 1 with the original refusal text; both
+     files still present and byte-identical. Verify with `md5sum` on both
+     before and after — "changes nothing" is the claim most worth checking.
+   * **the group's login** → `<shared_dir(SampleApp2)>/claude/.credentials.json`
+     is gone, the group's file is unchanged (same `md5sum` as before), and a
+     `jailbee shell` in a SampleApp2 container reports the *group's* account.
+   * **this repo's login** → the group file now has SampleApp2's old
+     `md5sum`, SampleApp2's copy is gone, and a container in **SampleApp**
+     (the other member) reports SampleApp2's account after a restart. That
+     re-points every member repo, which is the answer worth being sure about.
+
+   Finally, the no-TTY path, which must refuse rather than block:
+
+   ```bash
+   # restore a credential on both sides first, then:
+   jailbee apply < /dev/null
+   # expect: exit 1 with the refusal, no prompt rendered, both files intact
+   ```
+
+Afterwards, clean up: `jailbee destroy` the containers created above, remove
+`claude_credentials` from `global.yaml` if it was added only for this test,
+`jailbee apply` in each affected repo, and (if step 3's group directory was a
+throwaway) delete `<xdg_data_home>/jailbee/claude-credentials/worktest*/` by
+hand — jailbee never deletes a group directory automatically.
 
 ## GUI dashboard (`jailbee gui`)
 
@@ -1619,6 +2031,34 @@ Requires a real Incus daemon, at least one JailBee container, and PySide6
    (that's left to the window manager).
 9. Relaunch with `jailbee gui --interval 7`: the explicit flag should win over
    whatever cadence was persisted in step 8.
+
+### Workflow commands in the Qt dashboard
+
+The point of these checks is that nothing opens a terminal emulator and no
+output disappears. Use a container with a commit of its own (see the
+`git diff`/`git pull` recipes above).
+
+1. Right-click a running container → **Show diff (git diff)**. Expect a JailBee
+   window (not a terminal) with the diff in a monospace font, `exited 0` on its
+   status line, and a working **Copy** button. The dashboard behind it keeps
+   refreshing.
+2. Open a second output window while the first is up (e.g. **Job log** on a
+   container mid-`jailbee new`). Both should stay usable — the windows are
+   non-modal.
+3. On that live job, press **Stop**: the status line must say `stopped`, not
+   `exited 0`, and `pgrep -f "jailbee job log"` must find nothing afterwards.
+   Closing the window with the command still running must do the same.
+4. **Update from base (git push)** in a repo whose `push.default_action` is
+   `ask` → a dialog asks merge/rebase/plain first, then the output window shows
+   the push. **Cancel** in the dialog must dispatch nothing at all. In a repo
+   that pins `push.default_action`, expect no dialog.
+5. **Send commits to host (git pull)** → a confirmation naming the host branch
+   the merge lands on; declining dispatches nothing.
+6. **Create/update PR** → a dialog for draft/ready, description regeneration
+   and the existing-PR-head confirmation, then the output window (AI generation
+   takes a while — expect `running…` for a bit, not a frozen window).
+7. A `--mount` container offers none of these entries; a stopped one offers
+   only `start`/`destroy` (plus `Open PR` when it has a PR).
 
 ### Clearing a failed job from the dashboards
 
@@ -1853,4 +2293,904 @@ sha256sum ~/.local/share/jailbee/registry/ca/ca.crt
 # expect: identical hash
 jailbee registry status
 # expect: running
+```
+
+## Nested Incus probe rig (verifying device behaviour from inside a container)
+
+Every recipe above needs the host's daemon. This one does not: it brings up a
+second Incus daemon *inside* a JailBee container, so questions of the form
+"does Incus really accept these device properties, and what does it say when
+it doesn't?" can be answered without leaving the container. The unit suite is
+fully mocked by design, so this rig is the only place those answers come from.
+
+It works because JailBee's base profile already sets `security.nesting: true`
+(`profiles.base_profile_yaml`). `.jailbee/install.d/75-incus.sh` bakes the
+daemon into this repo's golden image with its units disabled, a `default` dir
+pool already created, root's subuid range capped so instances start without
+per-instance tuning, and the `dev` user in `incus-admin` so `incus` — and
+therefore `jailbee` — works without `sudo`. Two commands from a fresh
+container:
+
+```bash
+sudo systemctl start incus.service
+incus launch images:alpine/edge probe1
+incus list
+# expect: RUNNING, no IPv4/IPv6 beyond loopback (nothing here creates a NIC)
+```
+
+Starting the unit needs root; everything after it does not. If `incus` reports
+"You don't have the needed permissions to talk to the incus daemon", the shell
+predates the `incus-admin` grant — group membership is per-session, so reopen
+`jailbee shell`.
+
+A `cgroup2_devices ... Failed to load bpf program` line in the instance log is
+expected under nesting and harmless.
+
+With that up, a proxy device round-trip takes two commands. The "host" side is
+the JailBee container itself:
+
+```bash
+# host side: something to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+# instance listens, traffic lands on the host's service (the adb-style case)
+incus config device add probe1 probe-fwd proxy \
+    listen=tcp:127.0.0.1:5037 connect=tcp:127.0.0.1:5037 bind=instance
+incus exec probe1 -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response
+
+# the other direction: host listens, traffic lands on the instance's service
+incus exec probe1 -- sh -c \
+    'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
+incus config device add probe1 probe-pub proxy \
+    listen=tcp:127.0.0.1:18080 connect=tcp:127.0.0.1:8080 bind=host
+curl -s http://127.0.0.1:18080/
+# expect: OK
+```
+
+### Findings (Incus 6.0.5, 2026-08-18)
+
+Kept here because they are what the mocked tests are written against.
+
+- `bind=instance` is Incus's name; `bind=container` and `bind=guest` are both
+  accepted as LXD aliases and work — the device was accepted and the
+  instance's listener reached the host service exactly as with `instance` —
+  but the daemon stores whichever string it was given, so reads must treat
+  all three as the same thing.
+- `incus list --format json` returns each instance's `devices` and
+  `expanded_devices` maps, so reading forwards back needs no new wrapper
+  method — `Incus.list_containers()` already carries them.
+- Adding a device to a **stopped** instance succeeds and starts working on the
+  next boot; devices survive restarts.
+- `nat=true` is unusable for this purpose: instance-bound proxies are refused
+  outright (`Only host-bound proxies can use NAT`) and host-bound ones require
+  the connect address to be one of the instance's static IPs.
+- A forward whose target has nothing listening is added without complaint —
+  connections are refused at connect time, not at add time. So no pre-flight
+  check on the target service is needed, or possible.
+- Conflicts and typos, verbatim:
+  - duplicate device name → `The device already exists`
+  - **a port already taken on the side that must listen** → one of two strings,
+    for the one same cause. Usually `Failed to listen on 127.0.0.1:5037:
+    listen tcp 127.0.0.1:5037: bind: address already in use`; sometimes
+    `Failed to receive fd from listener process: Failed to receive file
+    descriptor via abstract unix socket`, when the forkproxy handshake is what
+    notices first. Both were produced against one occupied port in a single
+    session (2026-08-19), the first reproducibly, so **handling only one of
+    them is a bug** — see `ports._LISTEN_FAILURE_MARKERS`.
+
+    Neither string says *whose* port it is, and the address is no help:
+    `Failed to listen on 127.0.0.1:5037` names the **listen** side, which for
+    `bind=instance` is inside the instance. Only the forward's direction
+    disambiguates, which is why `ports._translate` takes a `direction`. Reading
+    that address as the host's is what made `to-container` answer a
+    container-side collision with "Host port 5037 is already in use — pick
+    another with `--host-port N`": advice that cannot help, since a
+    `to-container` forward's host end is a *connect* target where a listener is
+    exactly what is wanted.
+  - missing protocol prefix → `Unknown protocol type "127.0.0.1"`
+  - `udp:` listen with a `tcp:` connect → `Proxying from udp to non-udp
+    protocol is not supported`
+- An out-of-range port (`70000`) passes validation and fails only at device
+  start, so range checking belongs on JailBee's side.
+- IPv6 endpoints are stored byte-identically, brackets included. Adding a device
+  with `listen='tcp:[::1]:5099' connect='tcp:127.0.0.1:5037' bind=instance` and
+  reading back with `incus config device get` returned both values unchanged —
+  no normalisation of the bracket form. This matters because `ports._props_differ`
+  compares the rendered strings verbatim to detect drift; had Incus normalised,
+  every `jailbee apply` would see permanent drift and replace the device on every
+  run. The forward itself worked: `wget -qO- http://[::1]:5099/` from inside the
+  instance reached the host-side service.
+
+### What is not verified yet
+
+Running JailBee itself inside a container was open until 2026-08-25, when the
+[`.claude.json` relocation
+findings](#findings-nested-rig-2026-08-25) answered half of it:
+**`jailbee init` does work at nesting depth two.** It creates the shared-dir
+tree, runs the shared-state migrations, and writes both the `<prefix>-base` and
+`<prefix>-binds` profiles into the nested daemon — then stops at
+`incus network get incusbr0` failing, because nothing created a bridge. A
+subsequent `jailbee apply` fails at the missing `<prefix>-net-strict` profile.
+Create the bridge first (`incus network create incusbr0`) and `jailbee init`
+goes all the way: ACL, `jailbee-loose`, and both net profiles. `jailbee base
+build` publishes a golden image at this depth too, and `jailbee new` produces a
+working container — given the two prerequisites in [Prerequisites for a nested
+`jailbee new`](#prerequisites-for-a-nested-jailbee-new). What still does not
+work here is `jailbee apply`, which regenerates `<prefix>-base` with the
+`dri-*` render-node devices that nesting rejects.
+
+The `jailbee port` recipe below needs none of it — proxy devices are
+per-instance and want no profile, bridge or ACL — but anything that reconciles
+the *whole repo* does: against a daemon that was never `jailbee init`ed,
+`jailbee doctor` fails every profile/ACL/network/shared-dir check with "run
+`jailbee init`" (the checks above it — `incus binary`, `container_user`,
+`upstream remote` — pass, so a red `doctor` here says nothing about the
+install), and `jailbee apply` exits at `jailbee-registry-mirror container not
+found` long before its port-forward loop. Verified 2026-08-19.
+
+What is known about the rest:
+
+- A nested bridge comes up: `incus network create incusbr0` succeeds, dnsmasq
+  serves the range, nft masquerade rules are installed, and an instance on it
+  reaches the bridge gateway.
+- A DHCP lease did **not** arrive in a hotplugged instance (`udhcpc` hung);
+  static addressing on the same bridge worked, so this is a client/hotplug
+  detail rather than a broken bridge.
+- Egress *out* of the nested bridge was never actually tested: the container
+  it was tried in was in `strict` mode with an empty allowlist at the time, so
+  it had no egress of its own to forward. Re-test from a `loose` container
+  before drawing any conclusion.
+- Untouched beyond that: whether network ACLs enforce correctly two levels
+  deep, and whether `jailbee base build` can publish an image from inside a
+  container (that needs a full apt provision at nesting depth two).
+
+Tear the rig down when done; the pool is a plain directory under
+`/var/lib/incus`:
+
+```bash
+incus delete probe1 --force
+sudo systemctl stop incus.service
+```
+
+## `jailbee port` against the nested rig (exercising the real commands)
+
+The rig above talks to the nested daemon with raw `incus config device add`.
+This recipe exercises **`jailbee port`** itself against the same daemon:
+`Incus()` shells out to the `incus` CLI, and inside this container that CLI
+resolves to the nested daemon, so `jailbee port to-container`/`ls`/`rm` are
+exactly as real here as they are on the host.
+
+Bring the nested daemon up as above (only `sudo systemctl start
+incus.service` needs root — once that grant is in place, `incus` and
+`jailbee` both reach the nested daemon as the `dev` user; if a shell
+predates the grant, reopen `jailbee shell` rather than reaching for `sudo`
+on the commands below). Launch the instance named to this repo's
+`container_prefix` convention (`<container_prefix>-<name>`) so `jailbee`
+can resolve it by its short name:
+
+```bash
+incus launch images:alpine/edge <prefix>-probe
+
+# host side (this container, from jailbee's point of view): a service to reach
+python3 -m http.server 5037 --bind 127.0.0.1 &
+
+jailbee port to-container 5037 probe
+# expect: "... connecting to 127.0.0.1:5037 inside the container now reaches
+#          the host's 127.0.0.1:5037 (port-tc-tcp-5037)"
+jailbee port ls probe
+# expect: one row — HANDLE port-tc-tcp-5037, DIRECTION to-container, SOURCE ad-hoc
+
+incus exec <prefix>-probe -- wget -qO- http://127.0.0.1:5037/
+# expect: the host service's response (the http.server's directory listing)
+
+jailbee port rm 5037 probe
+jailbee port ls probe
+# expect: No port forwards.
+```
+
+`jailbee port ls` **with no container argument** lists the whole repo, and that
+path goes through `lifecycle.list_containers`, which selects on the
+`<prefix>-base` *profile* — not on the name prefix. A bare `images:alpine/edge`
+instance therefore shows nothing there however it is named, which is correct
+rather than a bug. Give it an empty stand-in profile to exercise the repo-wide
+path (and `jailbee ls`):
+
+```bash
+incus profile create <prefix>-base
+incus profile add <prefix>-probe <prefix>-base
+jailbee port ls          # expect: the probe's rows, titled "Port forwards for <prefix>"
+```
+
+The other direction, with real traffic — a service *inside* the instance
+reachable on the host. This is the half `host_ports` cannot declare, so the
+ad-hoc command is the only way to it:
+
+```bash
+# a service inside the instance
+incus exec <prefix>-probe -- sh -c \
+    'nohup sh -c "while true; do printf \"HTTP/1.0 200 OK\r\n\r\nOK\n\" | nc -l -p 8080 -s 127.0.0.1; done" >/dev/null 2>&1 &'
+
+jailbee port to-host 8080 probe --host-port 18080
+# expect: "... connecting to 127.0.0.1:18080 on the host now reaches
+#          127.0.0.1:8080 inside the container (port-th-tcp-8080)"
+curl -s http://127.0.0.1:18080/
+# expect: OK
+
+jailbee port to-host 8081 probe --host-port auto
+# expect: an OS-chosen high port in the success line; nothing listens on
+#         container 8081, and the device is still added — see the finding above
+jailbee port rm port-th-tcp-8081 probe
+```
+
+Negative case — the container-side port is already taken, which is the
+scenario JailBee's translation exists for. Note the host's own
+`http.server` is still on 5037, so this is exactly the case that used to be
+misdiagnosed as a host-port clash:
+
+```bash
+# Occupy port 5037 *inside* the instance first (its own listener, adb-style).
+incus exec <prefix>-probe -- sh -c 'nc -l -p 5037 -s 127.0.0.1 >/dev/null 2>&1 &'
+
+jailbee port to-container 5037 probe
+# expect JailBee's translated message, e.g.:
+#   "Could not open port 5037 inside <prefix>-probe — something is already
+#    listening on port 5037 inside the container. Stop it, or forward to a
+#    different container port."
+# NOT "Host port 5037 is already in use ... pick another with --host-port N",
+# and NOT either of Incus's two raw strings for this (see the finding above).
+
+incus exec <prefix>-probe -- pkill nc
+jailbee port to-container 5037 probe   # now succeeds
+jailbee port rm 5037 probe
+```
+
+The mirror image, to keep the two directions honest: with the host's 5037 taken
+and nothing listening inside the instance, `to-host` must blame the *host*.
+
+```bash
+jailbee port to-host 9000 probe --host-port 5037
+# expect: "Host port 5037 is already in use on the host. Pick another with
+#          `--host-port N`, or `--host-port auto`."
+```
+
+### The `host_ports` (declarative) half
+
+`jailbee apply` is the shipped entry point for this, and it cannot run here (it
+exits at the registry-mirror check — see "What is not verified yet" above). Its
+port work is one prefetched `list_forwards` plus a `reconcile_config_ports` per
+container, with `PortError` collected instead of raised, so driving that shape
+directly covers everything the wrapper does not:
+
+```bash
+# Put entries in .jailbee/config.yaml first, e.g.
+#   host_ports:
+#     - name: adb
+#       port: 5037
+python3 - <<'PY'
+from jailbee.config import load_config
+from jailbee.incus import Incus
+from jailbee.paths import find_repo_config
+from jailbee.ports import PortError, list_forwards, reconcile_config_ports
+
+cfg, incus = load_config(find_repo_config()), Incus()
+names = ["<prefix>-probe", "<prefix>-probe2"]
+prefetched = list_forwards(incus, names)
+for name in names:
+    try:
+        r = reconcile_config_ports(cfg, incus, name, forwards=prefetched.get(name, []))
+    except PortError as e:
+        print(name, "FAILED:", e)      # apply collects this into port_failures
+    else:
+        print(name, "+", r.added, "~", r.replaced, "-", r.removed)
+PY
+```
+
+Worth checking here, all confirmed 2026-08-19:
+
+- a second run reports nothing changed — including for an entry with IPv6
+  addresses, which is what the byte-identity finding above predicts
+- editing an entry replaces its device, deleting one removes it, and ad-hoc
+  (`port-tc-*`/`port-th-*`) plus hand-made devices are left alone throughout
+- `jailbee port rm adb` resolves a `host_ports` entry by name, and the next
+  reconcile puts it straight back
+- one container refusing a device does not stop the sweep: the other still
+  reconciles
+
+Teardown:
+
+```bash
+kill %1   # stop the python http.server
+incus delete <prefix>-probe --force
+incus profile delete <prefix>-base
+sudo systemctl stop incus.service
+```
+
+## `.claude.json` relocation smoke test
+
+Claude Code's global config moved from a file-level bind mount
+(`<shared_dir>/claude.json` → `~/.claude.json`) to living inside the existing
+`claude` directory mount (`<shared_dir>/claude/.claude.json` → `~/.claude`),
+via `CLAUDE_CONFIG_DIR=$HOME/.claude` exported from the golden image. Unit
+tests cover the relocate/seed helpers
+(`init_command._relocate_claude_json` / `_seed_claude_json`) and the
+`install.sh` env export in isolation — they mock the filesystem and never run
+a real Claude Code. Only a real login proves the *actual CLI* writes to the
+new path. This is the gate; there is no other verification of that claim.
+
+Requires `claude.enabled: true`, a real Incus daemon, and network access for
+`jailbee base build` + Claude Code's own login flow. Run the checks in order
+and write down each command's real output next to it — a plausible
+sounding "should work" is not evidence, and several of these steps look
+identical whether they passed or silently no-opped.
+
+> **Mostly verified already — see [Findings](#findings-nested-rig-2026-08-25)
+> at the end of this section.** On 2026-08-25 the whole pipeline (`init` →
+> `base build` → `new`) was run at nesting depth two from inside a JailBee
+> container, and Steps 1, 2, 4, 5 and the mechanism half of Step 6 all passed,
+> alongside a direct probe of the real `claude` binary. What no rig can supply
+> is a genuine Claude Code login, so "the CLI resumes rather than re-onboards"
+> is still an inference from verified parts rather than an observation. Run the
+> steps below on the host anyway if you want that last link.
+
+### 1. Upgrade path on a repo that already has state
+
+Start from a container built **before** this change, with a non-trivial
+`<shared_dir>/claude.json` (i.e. Claude Code has been logged in at least
+once). If convenient, leave a `claude` session running inside that old
+container in a `jailbee tmux <name>` pane — reused by Step 5 below.
+
+```bash
+ls -la <shared_dir>/claude.json
+# expect: a regular file, not a symlink; clearly bigger than the 3-byte
+# "{}\n" seed (a real config, from an actual login)
+sha256sum <shared_dir>/claude.json
+
+jailbee base build      # rebuilds the golden image with the CLAUDE_CONFIG_DIR export
+jailbee apply            # runs _relocate_claude_json then _seed_claude_json, updates <prefix>-binds
+
+ls -la <shared_dir>/claude.json
+# expect: "No such file or directory" — relocated, not copied
+ls -la <shared_dir>/claude/.claude.json
+sha256sum <shared_dir>/claude/.claude.json
+# expect: identical hash to the sha256sum taken above, before `jailbee apply`
+
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 0 — the file-level device is gone from the profile
+```
+
+### 1b. Upgrade path with `jailbee new` *before* `jailbee apply`
+
+The migration also runs from `jailbee new`, for a repo whose profiles are
+still the pre-upgrade ones — otherwise the fresh container onboards into
+`<shared_dir>/claude/.claude.json` and the real pre-move file is orphaned for
+good. `jailbee new` therefore retires the `shared-claude-json` device from
+`<prefix>-binds` before moving the file: without that the profile would keep
+pointing at a source that no longer exists, and Incus refuses every
+subsequent `start` / `profile assign` for the repo (nothing on this path
+rewrites the profile again, so it would not self-heal).
+
+Same starting point as Step 1 — a repo with a real `<shared_dir>/claude.json`
+and profiles written by the previous release — but **skip `jailbee apply`**:
+
+```bash
+sha256sum <shared_dir>/claude.json
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 1 — the pre-upgrade profile still declares the device
+
+jailbee base build
+jailbee new upgrade-probe        # no `jailbee apply` in between
+
+sha256sum <shared_dir>/claude/.claude.json
+# expect: identical hash to the one above — moved, not re-seeded
+incus profile show <prefix>-binds | grep -c claude-json
+# expect: 0 — retired by `jailbee new`
+
+# The point of the fix: a start after the move must still work.
+jailbee stop upgrade-probe
+jailbee start upgrade-probe
+# expect: starts, not `Missing source path ... for disk "shared-claude-json"`
+```
+
+### 1c. `jailbee new` with neither `base build` nor `apply` run
+
+The half that is easy to miss: retiring the device removes the only thing
+that made `.claude.json` shared, so `jailbee new` must also put
+`CLAUDE_CONFIG_DIR` on `<prefix>-base` — otherwise Claude Code resolves the
+container-local `$HOME/.claude.json` and onboards from scratch in every
+container, and in the repo's existing ones too (the profile rewrite drops the
+device from their expanded config as well).
+
+Same starting point as Step 1b, but skip **both** upgrade actions — this is
+the state a user is in immediately after upgrading the tool:
+
+```bash
+incus profile show <prefix>-base | grep -c CLAUDE_CONFIG_DIR
+# expect: 0 — the pre-upgrade base profile
+
+jailbee new upgrade-probe2       # no `jailbee base build`, no `jailbee apply`
+
+incus profile show <prefix>-base | grep CLAUDE_CONFIG_DIR
+# expect: environment.CLAUDE_CONFIG_DIR: /home/dev/.claude
+
+jailbee shell upgrade-probe2
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — the image predates the /etc/profile.d export,
+# so this can only be the base profile `jailbee new` just repaired
+ls -la ~/.claude/.claude.json
+# expect: the relocated file, mounted from <shared_dir>/claude
+claude
+# expect: resumes the existing login — no onboarding, no /login prompt
+exit
+```
+
+An already-migrated repo (the device retired by an earlier `jailbee new`,
+before this repair existed) is healed by the same run: `jailbee new`, or
+`jailbee apply`, whichever comes first.
+
+### 2. Fresh repo
+
+```bash
+# in a repo whose <shared_dir> does not exist yet
+jailbee init
+cat <shared_dir>/claude/.claude.json
+# expect: {}
+ls <shared_dir>/claude.json
+# expect: "No such file or directory" — never created
+```
+
+### 3. The variable actually relocates the file
+
+In a container built from the image produced by Step 1's `jailbee base
+build`:
+
+```bash
+jailbee new feat/claudereloc --no-clone --no-autostart
+jailbee shell feat-claudereloc
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — from BOTH the base profile's
+# `environment.CLAUDE_CONFIG_DIR` (every `incus exec`, this container's own
+# path too) and `/etc/profile.d/jailbee-env.sh` (this is a login shell).
+# Step 6 below isolates the profile source alone, on a container whose image
+# predates the `/etc/profile.d` export.
+claude
+# complete onboarding (fresh shared state) or resume (if state was carried
+# over), then exit the session
+exit
+
+ls -la <shared_dir>/claude/.claude.json
+# expect: mtime just updated by the run above
+ls <shared_dir>/claude.json 2>&1
+# expect: "No such file or directory" — Claude Code never wrote back to the
+# old path
+```
+
+### 4. State survives across containers of the repo
+
+```bash
+jailbee new feat/claudereloc2 --no-clone --no-autostart
+jailbee shell feat-claudereloc2
+claude
+# expect: no onboarding prompt
+/mcp
+# expect: the same MCP servers configured from the Step 3 container, if any
+exit
+```
+
+### 5. Live device removal
+
+Uses the old container from Step 1 (`<prefix>-<old-name>` below), with its
+`claude` session still running from before `jailbee apply` ran in that step.
+Note this only proves the *already-running* session survives — it holds its
+config in memory, so it looks fine whether or not a fresh start would work.
+Step 6 below is the check that actually distinguishes a pass from a failure.
+
+```bash
+incus config show <prefix>-<old-name> --expanded | grep -A2 claude-json
+# expect: no output — the device is gone from the running container's
+# expanded config, not just from the profile source
+```
+
+In the pane where `claude` has been running since before Step 1's `jailbee
+apply`, type something and confirm it still replies — expect it to still be
+responsive, with no crash, no restart and no session drop.
+
+### 6. Fresh `claude` in the old-image container, right after `jailbee apply`
+
+Same old container as Step 5 (`<prefix>-<old-name>`) — its *image* was never
+rebuilt, so it does not have the `/etc/profile.d/jailbee-env.sh` export. This
+is the positive check finding 1's fix makes possible: `jailbee apply` already
+put `CLAUDE_CONFIG_DIR` on the `<prefix>-base` profile, and Incus injects
+`environment.*` into every `incus exec` regardless of image contents or shell
+type — no rebuild, no re-create needed.
+
+```bash
+jailbee shell <old-name>
+echo $CLAUDE_CONFIG_DIR
+# expect: /home/dev/.claude — this container's image predates the
+# /etc/profile.d export, so this value can only be coming from the
+# <prefix>-base profile Step 1's `jailbee apply` just rewrote
+claude
+# expect: resumes the session relocated in Step 1 — no onboarding prompt.
+# This is the check that would have failed before finding 1's fix: the old
+# image's `claude` would have resolved $HOME/.claude.json (unmounted,
+# container-local) and re-onboarded from scratch.
+exit
+```
+
+Teardown:
+
+```bash
+jailbee destroy feat-claudereloc --force
+jailbee destroy feat-claudereloc2 --force
+```
+
+### Findings (nested rig, 2026-08-25)
+
+Run from inside a JailBee container against the nested Incus daemon
+(`sudo systemctl start incus.service`, see [Nested Incus probe
+rig](#nested-incus-probe-rig-verifying-device-behaviour-from-inside-a-container)),
+plus one probe of the real `claude` binary that needs no daemon at all.
+
+**The `CLAUDE_CONFIG_DIR` claim holds — Claude Code 2.1.245, real binary.**
+Two runs of `claude -p "hi"` under `env -i` with an isolated `HOME`, so
+neither could touch this container's own state:
+
+| | Files created |
+|---|---|
+| no `CLAUDE_CONFIG_DIR` | `$HOME/.claude.json` and `$HOME/.claude/` |
+| `CLAUDE_CONFIG_DIR=$HOME/.claude` | `$HOME/.claude/.claude.json`, and **no** `$HOME/.claude.json` |
+
+Both runs exited at `Not logged in · Please run /login`, which is far enough:
+the config file is written before the auth check. This is the claim the whole
+change rests on, and it was previously supported only by reading claude-swap's
+`paths.py`.
+
+**The base-profile env var reaches non-login shells.** A profile carrying only
+`environment.CLAUDE_CONFIG_DIR: /home/dev/.claude`, added to a plain
+`images:alpine/edge` instance:
+
+```
+incus exec probe1 -- env | grep -i claude
+# observed: CLAUDE_CONFIG_DIR=/home/dev/.claude
+incus exec probe1 -- sh -c 'echo "[$CLAUDE_CONFIG_DIR]"'
+# observed: [/home/dev/.claude]        <- the `gui.py` bash -c case
+incus config set probe1 environment.CLAUDE_CONFIG_DIR=/custom/override
+incus exec probe1 -- env | grep -i claude
+# observed: CLAUDE_CONFIG_DIR=/custom/override   <- instance config wins
+```
+
+No shell profile is sourced by `incus exec`, so this is the direct evidence
+that the export in `/etc/profile.d/jailbee-env.sh` is a fallback, not the
+mechanism — an IDE launched under `bash -c` gets the variable anyway.
+
+**Steps 1 and 2 pass end to end, against a real daemon.** `jailbee init` does
+work at nesting depth two (this was listed as an open question under the
+nested-rig section until now), far enough to write both profiles:
+
+- A repo seeded with a legacy `<shared_dir>/claude.json` → `jailbee init`
+  printed `✓ Moved …/claude.json → …/claude/.claude.json`, the destination's
+  content was byte-identical to the source's, and the old path was gone.
+- The stored `<prefix>-binds` profile contained exactly `shared-claude`,
+  `shared-claude-install` and `shared-ssh` — **no `shared-claude-json`**.
+- The stored `<prefix>-base` profile contained
+  `environment.CLAUDE_CONFIG_DIR: /home/dev/.claude`.
+- A fresh repo with no legacy file → `<shared_dir>/claude/.claude.json` seeded
+  as `{}`, and no `claude.json` at the old path.
+
+**The never-overwrite branch behaves and says so.** Re-creating a legacy
+`claude.json` alongside an existing destination and re-running produced a
+warning naming both paths and telling the user to merge by hand, and left
+both files untouched. This is the branch that would silently orphan a user's
+login if it ever moved a file over live state.
+
+`jailbee init` stops after the profiles with `incus network get incusbr0`
+failing — the nested daemon has no bridge — and `jailbee apply` then fails at
+the missing `<prefix>-net-strict` profile. Neither touches the claude paths,
+which run earlier; a nested rig simply cannot complete a repo's network setup.
+
+**The whole pipeline runs at nesting depth two.** With `incus network create
+incusbr0` done first, `jailbee init` completes — ACL, `jailbee-loose`, both net
+profiles — and `jailbee base build` publishes a golden image (~870 MiB, a full
+apt provision two levels deep). `jailbee new` then works, after two rig-only
+prerequisites; see [Prerequisites for a nested `jailbee
+new`](#prerequisites-for-a-nested-jailbee-new) below.
+
+**Steps 4 and 6 pass in real containers built from a real golden image.** In a
+`jailbee new` container:
+
+```
+incus exec <c> -- env | grep CLAUDE_CONFIG          # non-login: base profile
+# observed: CLAUDE_CONFIG_DIR=/home/dev/.claude
+incus exec <c> -- su - dev -c 'echo $CLAUDE_CONFIG_DIR'   # login: profile.d
+# observed: /home/dev/.claude
+incus exec <c> -- cat /home/dev/.claude/.claude.json
+# observed: the migrated content, byte-identical
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: No such file or directory
+```
+
+Both routes to the variable work independently — which is the point of having
+two. Cross-container (Step 4): a second `jailbee new` container read the same
+file, and a write from the first was immediately visible in the second.
+
+**Step 5, and one artifact worth knowing about.** Hot-removing the file device
+from the `<prefix>-binds` profile detaches the mount from the *running*
+container and leaves it otherwise healthy, shared dir intact. But it leaves
+behind a stub:
+
+```
+incus exec <c> -- ls -la /home/dev/.claude.json
+# observed: ---------- 1 root root 0 ... /home/dev/.claude.json
+```
+
+A zero-byte, mode-000, root-owned file, and it persists. It is inert while
+`CLAUDE_CONFIG_DIR` is set — nothing reads `$HOME/.claude.json` any more — but
+it is a concrete reason the CHANGELOG tells users to re-create containers after
+upgrading rather than only running `jailbee apply`.
+
+`jailbee apply` itself cannot finish in the nested rig: it regenerates
+`<prefix>-base` with the `dri-*` devices, which nesting rejects. The device
+removal above was therefore done directly, which is the same operation apply's
+profile rewrite performs.
+
+#### Prerequisites for a nested `jailbee new`
+
+Two host-container settings, both rig-only — neither is a JailBee bug:
+
+1. **`root:<uid>:1` in `/etc/subuid` and `/etc/subgid`.** JailBee's `raw.idmap`
+   identity-maps the host user's UID into the container so bind mounts stay
+   readable. At depth two, root's subuid range does not cover that UID and the
+   container refuses to start with `newuidmap: uid range [N-N+1) -> [N-N+1) not
+   allowed`. Append the line for your own `id -u`, then restart `incus.service`.
+2. **Remove the `dri-*` devices from `<prefix>-base`.** A nested container
+   rejects them with `The "mode" property may not be set when adding a device
+   to a nested container`. `profiles._host_render_nodes()` adds one per host
+   render node unconditionally, so they come back on every `jailbee apply`.
+
+**Still needs the host:** the one thing no rig can supply — a real Claude Code
+login, proving the CLI resumes an existing session at the new path rather than
+re-onboarding. Every mechanism that outcome depends on is verified above; only
+the end-to-end observation is missing. **Do not** copy a login into a rig
+container to fake it: two live copies of one credential rotate each other out,
+which is the failure that removed host-seeding in the first place.
+
+## Host gpg-agent survives a container boot smoke test
+
+Needs a host with `gpg.enabled: true` and a live agent — ideally a smartcard,
+since the failure mode is invisible without one. Before this fix, the *first*
+`jb restart` was enough to kill the host's agent for the rest of the session.
+
+```bash
+# Host baseline — note the agent PID and, with a card, the keys it offers.
+systemctl --user status gpg-agent.service | head -3
+pgrep -a gpg-agent
+ssh-add -l                            # cardno:... keys listed
+
+jb restart <container>
+
+# The device must be read-only. Without `readonly: "true"` here, the
+# container can still unlink the host's sockets.
+incus config device show <container> | grep -A4 'gpg-socket\|pulse-socket'
+
+# The host's agent must be the *same process* as before the restart, and
+# still offering the card's keys. A different PID (or none) means the
+# container's socket units clobbered the sockets again.
+pgrep -a gpg-agent
+ssh-add -l
+gpg-connect-agent 'SCD SERIALNO' /bye  # S SERIALNO D276...  OK
+
+# Nothing may be listening on the shared sockets from inside the container.
+incus exec <container> -- pgrep -a gpg-agent   # no output
+
+# Forwarding still works through the read-only mount (needs a card touch).
+jb exec <container> -- ssh -T git@github.com
+jb exec <container> -- git -C ~/<repo> commit -S --allow-empty -m 'signing smoke'
+```
+
+After a `jb base build`, also confirm the masking half landed — the units
+should report `masked`, and the container's user session should carry no
+failed units:
+
+```bash
+incus exec <container> -- systemctl --user --machine=dev@ is-enabled \
+    gpg-agent.socket dirmngr.socket pulseaudio.socket
+incus exec <container> -- systemctl --user --machine=dev@ --failed
+```
+
+Audio is the other half of the same fix: with `pulse-socket` read-only,
+`jb chrome` (or any GUI app) must still play sound from inside the container,
+and the host's own audio must survive the container's boot.
+
+## `jailbee claude` account pool smoke test
+
+Needs two Claude accounts. Everything below runs on the host.
+
+1. `jailbee claude ls` — one row, `live`, naming the account in use.
+2. `jailbee claude park` — the row moves to `parked`, and
+   `ls <holder>/.credentials.json` is gone.
+3. In a container of that holder, run `claude` and `/login` as the **second**
+   account. Back on the host, `jailbee claude ls` shows two rows and the new
+   one is `live`.
+4. **The hot-reload gate.** Leave an interactive `claude` running in a
+   container. On the host, `jailbee claude use <first account>`. Ask the
+   session a question **without restarting it**: it must answer. Then check
+   `/status` — a lagging account name there is expected and harmless; a
+   login prompt is not, and would mean the mtime hot-reload (spec §5.1) does
+   not hold on this Claude Code version.
+5. **The identity gate.** In each member repo's `<shared_dir>/claude/.claude.json`,
+   `oauthAccount` must be absent right after the switch and repopulated with
+   the *new* account's email after the next container run.
+6. **The concurrency gate.** With two containers of *different* repos in one
+   group both running Claude, switch on the host. Neither container may end
+   up on the old account, and no `.oauth_refresh.lock` may be left behind
+   (`ls -a <holder>`).
+7. `jailbee claude rm <parked account>` — confirms, then the row is gone.
+
+## Cache pool smoke test (`pool.py`, `pooled_caches`)
+
+`src/jailbee/pool.py`'s unit tests mock `subprocess`/Incus throughout, except
+`test_seed_really_hardlinks_link_paths_and_really_copies_the_rest` in
+`tests/test_pool.py`, which runs a real `rsync` against a `tmp_path` fixture
+(skipped if `rsync` isn't installed) and proves hardlinking in isolation.
+None of that proves the three things the feature actually exists for: that
+Gradle stops blocking on `Waiting to acquire ... lock` with two containers
+up, that migrating a real multi-gigabyte cache into `slot-0` behaves, and
+that Incus accepts the `<cache>-slot` disk device on a container that's
+already running. Needs a real Incus daemon and a repo with `golden.stacks:
+{java: true}` (or an equivalent `shared_caches`/`pooled_caches` setup).
+
+### 1. Real hardlinks across slots
+
+```bash
+jb new hardlink-test
+jb new hardlink-test-2
+# Run (or repeat) a Gradle build in each container first, so both slots
+# actually hold artifacts — a build against an empty cache has nothing to
+# hardlink and this check would pass vacuously.
+
+find <shared_dir>/caches/gradle/slots -name '*.jar' -links +1 | head
+# expect: non-empty — a jar with link count > 1 is the same inode in more
+# than one slot, i.e. actually shared rather than copied.
+
+jb pool ls gradle
+# expect: per-slot SIZE values that, summed, considerably overstate the
+# real footprint (each slot recounts every hardlinked jar); the printed
+# "total on disk (deduplicated)" footer is the number that matters — it
+# counts each inode once (see `pool.unique_bytes`) and should be close to
+# the size of one warm ~/.gradle, not N times that.
+```
+
+### 2. A second container's Gradle build no longer waits on the first
+
+This is the actual bug this feature fixes — reproduce it once against a
+repo predating the change (or with `pooled_caches: {gradle: false}`) before
+confirming the fix, or a passing run proves nothing:
+
+```bash
+# Baseline (pooling off): with a real ~/.gradle shared mount, start a build
+# with a long-held daemon/lock in one container...
+jb exec repro-a -- bash -c 'cd <repo> && ./gradlew build --no-daemon &
+                             sleep 2 && ./gradlew help' # or any two overlapping invocations
+# ...and a concurrent build in a second container of the same repo.
+jb exec repro-b -- ./gradlew build
+# expect (pooling off): the second build's output includes
+# "Waiting to acquire ... lock" and it stalls until the first releases it.
+
+# Now with pooling on (the default) for the same repo. `jailbee apply` only
+# creates the pool layout on disk — a pooled cache attaches when a container
+# next boots, so restart both to actually pick up a slot:
+jb apply
+jb restart repro-a
+jb restart repro-b
+jb pool ls gradle
+# expect: one slot per running container, no two containers sharing a slot
+
+jb exec repro-a -- ./gradlew build &
+jb exec repro-b -- ./gradlew build
+wait
+# expect: both complete without ever printing "Waiting to acquire ... lock" —
+# each container's Gradle daemon holds a lock on its own private slot.
+```
+
+### 3. Slot-0 migration on a multi-gigabyte cache
+
+Unit tests exercise `ensure_pool_dirs`'s migration against tiny synthetic
+directories; they can't show that moving a real, multi-gigabyte `~/.gradle`
+behaves — in particular that `shutil.move` (used because the pool root and
+the destination slot are on the same filesystem) is a rename and not a
+slow, space-doubling copy, and that nothing partially moves on failure.
+
+```bash
+# A repo with a real, multi-GB pre-pooling cache — either an existing repo
+# that's been building for a while, or seed one:
+du -sh <shared_dir>/caches/gradle       # note the size; should be several GB
+
+jailbee apply
+# expect: near-instant even for a multi-GB cache (same-filesystem rename,
+# not a copy) — time it if the size is large enough to notice a copy.
+# Console should print "Migrated the existing gradle cache into .../slot-0"
+
+du -sh <shared_dir>/caches/gradle/slots/slot-0
+# expect: same size as the pre-migration figure above — nothing lost
+
+ls <shared_dir>/caches/gradle
+# expect: only slots/, by-container/, .lock — no loose cache content left
+# directly under the pool root
+
+jailbee doctor
+# expect: no "pool roots not migrated" line for gradle
+```
+
+### 4. Incus accepts the pool device on an already-running container
+
+`boot_container` calls `allocate_startup` — which calls `incus config
+device add` — **before** it issues the actual `incus restart`, so the add
+happens against a container Incus still considers Running, not one that's
+already stopped. This ordering is the one part of the mechanism no mock can
+validate, since the unit tests fake the Incus client entirely.
+
+```bash
+# A container created before gradle pooling was turned on for this repo
+# (or with pooled_caches: {gradle: false} at creation time), left running:
+incus list <prefix>-live-attach-test --format csv -c s
+# expect: RUNNING
+jb pool ls gradle
+# expect: no slot for live-attach-test yet
+
+jb apply                    # picks up the config change, creates the pool layout
+jb restart live-attach-test # boot_container: allocate_startup runs while
+                             # the container is still Running, *then* restarts it
+
+incus config device show <prefix>-live-attach-test | grep -A3 gradle-slot
+# expect: a "disk" device named gradle-slot, source pointing at a real
+# slots/slot-N directory — added without Incus rejecting the live device add
+
+jb exec live-attach-test -- ls ~/.gradle
+# expect: the slot's contents visible inside the container after the restart
+```
+
+### 5. What a Running container sees between `apply` and its restart — OPEN QUESTION
+
+`jailbee apply` drops the pooled cache's bind mount from the binds profile
+(pooled caches are attached per container instead) and, in the same run,
+`ensure_pool_dirs` renames the old loose cache content into
+`slots/slot-0`. Nothing in this checkout settles what a container that was
+already Running at that moment then sees, because it depends on whether
+Incus hot-unplugs a disk device dropped from a profile of a running
+container. Both answers are bad, which is why `apply` tells the user to
+restart rather than making a claim:
+
+- if Incus **does** hot-unplug, the container loses `~/.gradle` immediately
+  and a build running in it starts failing;
+- if Incus **does not**, the container keeps a mount pointing at the pool
+  *root*, whose contents were just moved into `slots/slot-0` — so a live
+  build writes fresh loose content straight into the pool root, and the
+  next `ensure_pool_dirs` refuses it as "both pool slots and loose cache
+  content".
+
+Record what you actually observe here.
+
+```bash
+# A container of a repo whose gradle cache is not yet pooled, left Running,
+# with `pooled_caches` about to turn pooling on (or a pre-pooling install):
+incus list <prefix>-apply-race-test --format csv -c s
+# expect: RUNNING
+
+jb apply                     # DECLINE the restart prompt when it asks
+# expect: the "a pooled cache attaches when a container next boots" hint
+
+incus config device show <prefix>-apply-race-test | grep shared-gradle
+# record: is the old profile-level shared mount still on the container?
+jb exec apply-race-test -- ls ~/.gradle
+# record: contents, empty, or an error?
+
+# Then check whether the pool root got polluted behind apply's back:
+ls <shared_dir>/caches/gradle
+# expect (if it did): loose entries alongside `slots`/`by-container`, and
+# `jailbee doctor` reporting "pool roots not migrated: gradle"
+
+jb restart apply-race-test   # the documented fix, either way
+jb pool ls gradle
+# expect: a slot allocated to apply-race-test
 ```

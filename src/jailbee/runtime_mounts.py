@@ -42,6 +42,28 @@ WAYLAND_ONLY_DEVICES: frozenset[str] = frozenset({"wayland-socket"})
 # when ``gpg.enabled`` is false.
 GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket"})
 
+# Device names whose host source is a *directory* inside the host's own
+# /run/user/<uid>, mounted read-only.
+#
+# The container runs its own ``systemd --user`` (the golden image enables
+# linger, which is what provisions /run/user/<uid> in the first place). Its
+# gnupg and pulse socket units listen on paths *inside these mounts* and
+# unlink whatever file is already there before binding. On a writable mount
+# that unlink deletes the **host's** sockets: the host gpg-agent logs "socket
+# file has been removed - shutting down" and the container's agent — which
+# has no smartcard access — answers in its place, so the host silently loses
+# its YubiKey keys mid-session because a container rebooted. Read-only turns
+# that unlink into EROFS.
+#
+# Safe because connecting to a unix socket needs no writable filesystem, only
+# permission on the socket inode, and because read-only binds the container's
+# side alone: the host stays free to unlink and re-create its own sockets in
+# the directory, and the container sees the new ones.
+#
+# ``wayland-socket`` and ``dbus-socket`` are single-file mounts, where
+# unlinking the bind-mount point returns EBUSY — already protected.
+READONLY_DEVICES: frozenset[str] = frozenset({"gpg-socket", "pulse-socket"})
+
 
 def _devices_for_host(cfg: Config) -> dict[str, str]:
     """Subset of ``SOCKET_DEVICES`` that applies to this host and config.
@@ -110,12 +132,15 @@ def attach_runtime_devices(
     devices = _devices_for_host(cfg)
     for device_name, basename in devices.items():
         path = f"{runtime_dir}/{basename}"
+        device_config = {"source": path, "path": path}
+        if device_name in READONLY_DEVICES:
+            device_config["readonly"] = "true"
         try:
             incus.config_device_add(
                 name,
                 device_name,
                 "disk",
-                {"source": path, "path": path},
+                device_config,
             )
         except IncusError as e:
             # Most likely cause: device already exists from a previous

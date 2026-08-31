@@ -1,6 +1,8 @@
 # Getting started
 
-This assumes `jailbee` is installed (see [Installation](installation.md)).
+This assumes `jailbee` is installed and `jailbee setup` has been run — see
+[Installation](installation.md), whose last step is that command (shell
+completions, the egress-refresh timer, the Claude skills).
 
 ## Concepts
 
@@ -29,14 +31,17 @@ A quick mental model before the commands:
 - **Network modes.** Each container runs `strict` (kernel egress allowlist)
   or `loose` (open egress, auto-reverts) — switch with `jailbee net`.
 - **One shared state layer per repo.** Package-manager caches, the JetBrains
-  config, the Chrome profile pool, `~/.ssh` and Claude's login live in a
-  shared dir outside the containers, bind-mounted into every one of them.
-  It works across both axes: branches running *in parallel* share one warm
-  Gradle or pnpm cache and one set of tool settings — configure something in
-  one container and the others have it — and the state also survives
-  `jailbee destroy` / `jailbee new` cycles. It is a layer of its own, so
-  nothing a container does leaks into your host's own dotfiles. See
-  [`shared_caches`](config.md#shared_caches).
+  config, `~/.ssh` and Claude's login live in a shared dir outside the
+  containers. Most of it is bind-mounted into every container at once, so
+  branches running *in parallel* share one warm pnpm cache and one set of
+  tool settings — configure something in one container and the others have
+  it. A few caches that a tool locks — Gradle, Maven, and the Chrome profile
+  — instead give each container its **own** private copy, seeded from the
+  warmest existing one, so concurrent builds don't contend on one lock file.
+  Either way the state survives `jailbee destroy` / `jailbee new` cycles and
+  is a layer of its own, so nothing a container does leaks into your host's
+  own dotfiles. See [`shared_caches`](config.md#shared_caches) and
+  [`pooled_caches`](config.md#pooled_caches).
 
 ## Configure
 
@@ -84,9 +89,18 @@ can't leak via git.
 ```bash
 jailbee config validate         # verify your config is sane
 jailbee init                    # creates Incus profiles, ACL, jailbee-loose bridge, shared dirs
-jailbee registry up             # starts the host-level Docker registry mirror
+jailbee registry up             # Docker users only — see below
 jailbee base build              # builds the golden image (~10-15 min, one time)
 ```
+
+`jailbee registry up` is only for repos whose image contains Docker
+(`golden.stacks.docker`). Run it before your first strict-mode `jailbee new`:
+the strict egress allowlist has no registry hosts, so the mirror is the
+container's only route to Docker Hub — and a strict-mode `jailbee new` refuses
+to create the container until the mirror is up (in loose mode it warns and
+proceeds, since there the mirror is only a pull cache). Repos without Docker
+skip this step — `docker_registry_mirror.enabled` defaults to `auto` and never
+asks for the mirror container to exist.
 
 ## A typical day
 
@@ -139,30 +153,41 @@ instead of the agent's own judgement. You size the blast radius once, in
 the container's config — read-only mounts for what the build needs,
 sensitive `optional_mounts` left detached, `strict` egress — rather than
 adjudicating it one prompt at a time. JailBee has first-class support for
-[Claude Code](https://claude.com/claude-code) — turn it on in
-`~/.config/jailbee/global.yaml`:
+[Claude Code](https://claude.com/claude-code) — one of six shipped agent
+presets, and the only one exercised in production. The same `agents:`
+mechanism wires in any other terminal coding agent the same way; see
+[Generic agent support](agents.md) for the full list and how to add your
+own. Turn Claude Code on in `~/.config/jailbee/global.yaml`:
 
 ```yaml
-claude:
-  enabled: true
-  plugins_enabled: true
-  # autostart: true                                # launch claude on every container start
-  # command: claude --dangerously-skip-permissions # what the autostart window runs
+agents:
+  claude:
+    enabled: true
+    plugins_enabled: true
+    # autostart: true                                # launch claude on every container start
+    # command: claude --dangerously-skip-permissions # what the autostart window runs
 ```
 
 The template written by `jailbee config init --global` already contains
-this block with `enabled: true`, so if you took that path you have it
-already. Run `jailbee apply` after editing, then `jailbee new` a container.
+this `agents.claude` block with `enabled: true`, so if you took that path
+you have it already. Run `jailbee apply` after editing, then `jailbee new`
+a container.
+
+A top-level `claude:` block is still accepted and means the same thing, but
+defining both spellings at once is a `ConfigError` — so if you have an older
+`claude:` block, rename it rather than adding `agents.claude` alongside it.
 
 What turning it on gets you:
 
 - **Claude Code installed in every container**, from a version store shared
   across the repo's containers — no per-container download.
-- **One login, all containers.** `<shared_dir>/claude` and
-  `<shared_dir>/claude.json` are mounted as `~/.claude` / `~/.claude.json`,
-  so settings, MCP servers, agents and credentials are shared and survive
-  `jailbee destroy` / `jailbee new` cycles. Your *host* `~/.claude` is never
-  read — Claude runs its onboarding once, inside the first container.
+- **One login, all containers.** `<shared_dir>/claude` is mounted as
+  `~/.claude`, so settings, MCP servers, agents and credentials are shared
+  and survive `jailbee destroy` / `jailbee new` cycles. Claude Code's global
+  config (`.claude.json`) lives **inside** that mount: the golden image
+  exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+  `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Your *host* `~/.claude` is
+  never read — Claude runs its onboarding once, inside the first container.
 - **Strict mode still works.** The Anthropic API and CLI-update hosts are
   added to the egress allowlist automatically; `plugins_enabled` adds the
   GitHub + npm hosts the plugin marketplace and skills reach. You don't
@@ -171,7 +196,9 @@ What turning it on gets you:
   `jailbee-repo-setup` skills are copied into the shared skills directory,
   so the in-container Claude can drive `jailbee` commands for you.
 - **AI-written PRs.** `jailbee pr <name>` asks the in-container Claude for
-  the title, body, and branch name (`--no-ai` opts out per call).
+  the title, body, and branch name (`--no-ai` opts out per call). It runs on
+  Sonnet by default (`claude.ai_pr_model`), and follows your project's own
+  PR-writing rules if you state them in `claude.pr_prompt`.
 
 With `autostart: true`, every container comes up with Claude already
 running in a tmux window; `jailbee tmux <name>` drops you straight into it.

@@ -192,6 +192,58 @@ def test_choice_title_includes_conflict() -> None:
     assert "conflict" in title
 
 
+def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
+    """The picker mirrors `claude ls`'s split: the account column carries
+    `display_name` (no `#<org8>` inside it) and the org follows, padded so the
+    org column lines up across rows of differing email length."""
+    from pathlib import Path
+
+    from jailbee.claude_pool import Slot
+    from jailbee.tui import _claude_choice_title
+
+    long = Slot("a.long.address@example.com#c0ffee12", Path("/s/a.json"), live=False)
+    short = Slot("me@x.com#aaaabbbb", Path("/s/b.json"), live=False)
+    width = max(len(s.display_name) for s in (long, short))
+
+    long_title = _claude_choice_title(long, width)
+    short_title = _claude_choice_title(short, width)
+    assert long_title == "a.long.address@example.com  c0ffee12"
+    assert "#c0ffee12" not in long_title
+    # The short row's org starts at the same column as the long row's.
+    assert short_title.index("aaaabbbb") == long_title.index("c0ffee12")
+
+
+def test_claude_picker_omits_the_org_for_an_account_without_one() -> None:
+    from pathlib import Path
+
+    from jailbee.claude_pool import Slot
+    from jailbee.tui import _claude_choice_title
+
+    plain = Slot("me@personal.com", Path("/s/b.json"), live=False)
+    # Padded to a wider column, it would still carry no trailing whitespace:
+    # nothing follows the account when there is no organization.
+    assert _claude_choice_title(plain, 40) == "me@personal.com"
+
+
+def test_claude_picker_offers_the_slot_name_as_the_value(mocker) -> None:
+    """The picker's *value* must be the full slot name, not the shortened
+    display text — the name is what `claude use`/`rm` resolve."""
+    from pathlib import Path
+
+    from jailbee.claude_pool import Slot
+    from jailbee.tui import pick_claude_account
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "me@corp.com#c0ffee12"
+    slots = [Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False)]
+
+    result = pick_claude_account(slots, message="Switch this repo to:")
+
+    assert result == "me@corp.com#c0ffee12"
+    assert [c.value for c in select.call_args.kwargs["choices"]] == ["me@corp.com#c0ffee12"]
+    assert select.call_args.args[0] == "Switch this repo to:"
+
+
 def test_choice_widths_size_the_job_column_to_the_full_label(mocker) -> None:
     """The job column must widen for the '(worker gone)' suffix, not just the
     bare phase — otherwise `_format_choice_title` truncates the label it's
@@ -558,3 +610,61 @@ def test_status_with_elapsed_stops_its_ticker_on_exit(mocker):
         handle.update("still working")
 
     assert threading.active_count() == before
+
+
+def test_choose_shared_credential_returns_none_without_a_tty(mocker):
+    """`jailbee apply` in CI or under a pipe must refuse, not hang on stdin."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    select = mocker.patch("questionary.select")
+
+    assert choose_shared_credential(Path("/creds/work"), Path("/shared/claude"), "app") is None
+    select.assert_not_called()
+
+
+def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(mocker, capsys):
+    """The two credential choices plus the `repos:` route out of the group —
+    without the hint, a user who wants neither has no visible third option."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "group"
+
+    result = choose_shared_credential(
+        Path("/creds/work"), Path("/shared/claude/.credentials.json"), "SampleApp"
+    )
+
+    assert result == "group"
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert values == ["group", "repo", "cancel"]
+    out = capsys.readouterr()
+    combined = out.out + out.err
+    assert "claude_credentials" in combined
+    assert "global.yaml" in combined
+    # The block must be copy-pasteable: `repos` is keyed by container_prefix,
+    # and a placeholder there is the one part the user cannot fill in from
+    # the prompt alone.
+    assert "SampleApp: null" in combined
+
+
+@pytest.mark.parametrize("answer", [None, "cancel"])
+def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answer):
+    """questionary returns None on Ctrl-C and the sentinel on the `cancel`
+    row; a `value=None` Choice would instead hand back its own title."""
+    from pathlib import Path
+
+    from jailbee.tui import choose_shared_credential
+
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = answer
+
+    assert (
+        choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
+    )

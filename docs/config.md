@@ -45,7 +45,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `chrome.enabled` | global | Personal — turn on if you want `jailbee chrome` / auto-launch. Default `false`. |
 | `chrome.dark_mode` | global | Personal preference |
 | `chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`) |
-| `ls` / `dashboard` (column preference) | global | Which columns you want to see is personal; see [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns) |
+| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). `dashboard:` is deprecated — the dashboards keep their own view state instead, not a config block at either layer. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
@@ -74,13 +74,18 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Three top-level keys are read from `~/.config/jailbee/global.yaml` into
+Four top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
-`docker_registry_mirror` (see above), `ls` and `dashboard`. The two column
-blocks are merged field-by-field instead (repo block over global block) —
-the generic pipeline would *append* their `fields`/`hide` lists and
-concatenate the two layers' column lists rather than let one replace the
-other. See [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
+`docker_registry_mirror` (see above), `ls`, `dashboard` and
+`claude_credentials`. `ls`'s column block is merged field-by-field instead
+(repo block over global block) — the generic pipeline would *append* its
+`fields`/`hide` lists and concatenate the two layers' column lists rather
+than let one replace the other. `dashboard` is deprecated and is never
+merged this way — see
+[`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
+`claude_credentials` is resolved to the single computed field
+`Config.claude_credentials_dir` instead of being merged at all — see
+[`claude_credentials`](#claude_credentials) below.
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
 `dashboard:` values it shows come from the repo file only. Use `jailbee config
@@ -101,6 +106,15 @@ show --layer global` to see what the global file contributes.
 ## Provisioning snippets (`install.d/`)
 
 The golden image is provisioned by `src/jailbee/provision/install.sh`, which performs LXC/Incus plumbing (user creation, sudoers, SSH_AUTH_SOCK passthrough, bind-mount parents, linger) and then runs every executable in `/provision/install.d/*.sh` in lexical order.
+
+It also **masks Ubuntu's automatic apt machinery** in the image —
+`apt-daily{,-upgrade}.timer`, their services, and `unattended-upgrades`.
+A background upgrade in a branch container takes the dpkg lock out from
+under your own `apt-get`, and one still running at shutdown can block
+systemd long enough for a stop to time out. Containers get their updates
+from a rebuilt golden image (`jailbee base build`) instead; if you need the
+timers back in a particular repo, `systemctl unmask` them from an
+`install.d/` snippet.
 
 ### Resolution order
 
@@ -409,6 +423,73 @@ dev box where the host user already runs VMs this is the same trust boundary the
 already extend to their own account. Treat every `host_devices` entry as
 attack-surface-widening and list only what the repo's workflow needs.
 
+### `host_ports`
+
+Make a host service reachable **inside** every container of the repo — the
+classic case is an adb server: with the forward in place, plain `adb devices`
+works inside the container, and no `ADB_SERVER_SOCKET` juggling is needed,
+because the host's adb server already listens on `127.0.0.1:5037` by default.
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+Each entry becomes one Incus `proxy` device (named `port-cfg-<name>`): the
+container listens on `container_address:port`, and Incus's forkproxy connects
+to `host_address:host_port` on the host whenever something inside the
+container connects to that listener. So `port`/`container_address` name the
+container-side listener, and `host_port`/`host_address` name the host
+service it reaches.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Handle for this forward. Must match `[a-z0-9][a-z0-9-]*`, max 40 chars, unique within `host_ports`. Becomes the Incus device name `port-cfg-<name>` and the `jailbee port rm` key. |
+| `port` | int | required | Container-side port (1–65535) — what listens inside the container. |
+| `host_port` | int | `port` | Host-side port the container connects to. Set this when the container-side port and the host-side port differ. |
+| `proto` | `tcp` \| `udp` | `tcp` | Protocol. |
+| `host_address` | string | `127.0.0.1` | Host address the container connects to. Must be an IP literal — a hostname is rejected, because resolving one at device-add time would silently pin a single IP into the device. |
+| `container_address` | string | `127.0.0.1` | Container address the proxy listens on. Must also be an IP literal. |
+
+A worked example with the two ports differing — forwarding a host service on
+port 9000 to port 3000 inside the container:
+
+```yaml
+host_ports:
+  - { name: api, port: 3000, host_port: 9000 }
+```
+
+Here the container listens on `127.0.0.1:3000`; anything the container
+connects to at `3000` actually lands on the host's `127.0.0.1:9000`.
+
+**Only this direction is configurable.** A host-side listener is a
+machine-wide resource: if a repo's config declared one, every container of
+that repo would fight over the same host port, breaking the property that
+many branch containers of the same repo coexist. The reverse direction — a
+container service reachable on the host — is not something `host_ports`
+exposes at all; use `jailbee port to-host` per container instead (see
+[Commands](commands.md)). A `direction:`/`to_host:`/`bind:` key in a
+`host_ports` entry is rejected with this same explanation, not a generic
+"unknown field" error.
+
+**This is a hole through the `net strict` ACL's egress half by construction.** The
+forwarded traffic never traverses the bridge the ACL is attached to — Incus's
+forkproxy connects directly out of the container's network namespace to the
+host — so a `strict` container's default-deny ACL never sees it, on the
+egress side. (`jailbee port to-host`'s forwards are the ingress-side mirror of
+this same hole; `host_ports` only ever opens the egress one.) See
+[Security and limitations](security.md) for the full picture.
+
+Entries are attached when `jailbee new` creates a container, and reconciled
+by `jailbee apply`: an entry that's new is added, one whose properties
+changed is replaced, and one that's been deleted from the config is removed.
+There's no rebuild and no restart — proxy devices hotplug on a running
+container. Reconciliation only ever touches `port-cfg-*` devices; a forward
+you added by hand with `jailbee port` is never modified or removed by it.
+
+Layered like `host_mounts`/`host_devices`: per-repo entries append to global
+ones; `[]` resets.
+
 ### `shared_caches`
 
 The state layer every container of this repo has in common. Each entry is
@@ -419,6 +500,15 @@ container are visible in the next. The same mounts outlive
 `jailbee destroy` / `jailbee new`, and they live in `<shared_dir>` rather
 than in your host's dotfiles, so a container can write to them freely
 without touching your own setup.
+
+That "one cache, all containers" description is the plain shared-mount
+case. An entry whose `pool` resolves to non-`None` (see
+[`pooled_caches`](#pooled_caches) below) is not a shared mount at all: it
+is a per-container **pool slot**, seeded from the warmest existing slot
+rather than shared live. Gradle and Maven default to pooled, precisely
+because their tools take an inter-process lock on the cache directory —
+sharing one mount across containers meant one build's lock made every
+other container's build wait or fail.
 
 List of bind-mounted shared caches, each `{name, host_subpath, container_path}`.
 The host source is `<shared_dir>/<host_subpath>`; `container_path` may
@@ -442,12 +532,13 @@ the matching `golden.enable_snippets` entry.
 > they are appended by `Config.effective_shared_caches()` when
 > `jetbrains.enabled: true`. See `### jetbrains` below.
 >
-> The claude entries follow the same pattern — `claude-json` is a
-> **file-level** bind (`host_subpath` points to a regular file, not a
-> directory). Three claude rows are appended by
-> `Config.effective_shared_caches()` when `claude.enabled: true`:
-> `claude` → `~/.claude`, `claude-json` → `~/.claude.json`, and
-> `claude-install` → `~/.local/share/claude`. See `### claude` below.
+> The claude entries follow the same pattern. Two claude rows are appended
+> by `Config.effective_shared_caches()` when `claude.enabled: true`:
+> `claude` → `~/.claude` and `claude-install` → `~/.local/share/claude`.
+> Claude Code's global config (`.claude.json`) lives **inside** the shared
+> `~/.claude` mount: the golden image exports
+> `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
+> `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. See `### claude` below.
 
 `ssh` is seeded on first `jailbee init` from host `~/.ssh/` (`config`,
 `known_hosts`, `config.d/`) when `ssh.seed_from_host` is on (default).
@@ -463,6 +554,84 @@ SSH integration with `ssh.enabled: false`.
 Set `shared_caches: []` to disable, or override with your own list for
 non-JVM/Node stacks. `name` must match `[a-z0-9][a-z0-9-]*` and be
 unique. `container_path` must be absolute or start with `~`.
+
+An entry can carry its own `pool:` block instead of relying on
+`pooled_caches` below — see `SharedCache.pool` in the next section.
+
+### `pooled_caches`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. `chrome-profile: false` is also rejected: its host directory *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Use `chrome.enabled: false` to turn Chrome off. |
+
+A pooled cache is **not** mounted by the binds profile like the rest of
+`shared_caches`. Instead each container gets its own slot directory under
+`<shared_dir>/<host_subpath>/slots/`, attached as a per-container disk
+device named `<cache name>-slot` — allocated on `jailbee new` and on every
+boot (or on first use, for Chrome), released on `jailbee destroy`. This is
+what stops two containers from contending on one tool's lock files: Gradle
+and Maven both take an inter-process lock on their cache directory, so a
+build in one container used to block or fail while another container's
+build held it.
+
+A key absent from `pooled_caches` follows the preset's own `default_on`:
+
+| Preset | `default_on` | What's hardlinked (`link_paths`) |
+|---|---|---|
+| `gradle` | `true` | `caches/modules-2/files-2.1`, `wrapper/dists` |
+| `m2` | `true` | `repository` |
+| `chrome-profile` | `true` | none — SQLite + `Preferences` are rewritten in place |
+| `npm` | `false` | `_cacache` |
+| `pnpm-store` | `false` | `v3/files` |
+
+`pooled_caches` is a dict rather than a list specifically so
+`~/.config/jailbee/global.yaml` and a repo's `.jailbee/config.yaml` merge
+per key (the generic dict rule from [Merge rules](#merge-rules)) instead of
+one layer's list appending to the other's.
+
+A fresh slot is seeded by copying the warmest existing slot (the one whose
+`warmth_file` — or, absent that, whose directory — has the newest mtime).
+`link_paths` names subtrees hardlinked from the seed source instead of
+copied, so a multi-gigabyte artifact store (Gradle's module cache, Maven's
+`repository/`) costs close to nothing per extra container. **`link_paths`
+may only name subtrees whose files are written once and later deleted
+whole, never modified in place** — hardlinking a lock file, or a `.bin`
+that a tool rewrites in place, would restore exactly the cross-container
+sharing pooling exists to remove. `wipe_paths` and `stale_globs` are the
+other side of that same rule: content excluded from seeding and removed
+when a slot is released — regenerable bulk (Gradle's `daemon/` dir) and
+stale lock files an unclean exit left behind, respectively.
+
+To pool a cache with no builtin preset — including one of your own
+`shared_caches` entries — give that entry an explicit `pool:` block
+instead of a `pooled_caches` key:
+
+```yaml
+shared_caches:
+  - name: my-tool-cache
+    host_subpath: my-tool
+    container_path: ~/.cache/my-tool
+    pool:
+      link_paths: [blobs]
+      stale_globs: ["*.lock"]
+```
+
+**An explicit `pool:` block on a `shared_caches` entry always overrides
+`pooled_caches`** — even a `pooled_caches: {my-tool-cache: false}` key does
+not un-pool it. This is also true of the presets themselves: setting
+`pool:` on the `gradle`/`m2`/`chrome-profile`/`npm`/`pnpm-store` entries
+replaces their builtin `PoolSpec` outright rather than merging into it.
+
+`jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` inspect and clean
+pool slots — see [`commands.md`](commands.md). A pre-existing
+non-pooled cache is migrated automatically: `jailbee init` and
+`jailbee apply` move a cache sitting directly under the pool root into
+`slots/slot-0`, so the warm cache becomes the first seed source rather
+than being discarded. A pooled cache attaches to a container when that
+container next boots, so restart any container that was running during
+`jailbee apply` (`jailbee restart <name>`) before trusting it to be using
+its own slot; `jailbee doctor` flags a pool root that still needs
+migrating.
 
 ### Networks
 
@@ -527,6 +696,23 @@ runs offline-of-GitHub. The operational workflow — why this is the gate
 against unattended agents producing surprise pushes, and how to switch to
 loose-mode to push/fetch/run `gh` — is documented in
 [Security and limitations](security.md).
+
+**Widening the list without editing it.** This key is the committed,
+shared-by-everyone allowlist. `jailbee net egress add <entry> [<name>]`
+widens one container's copy of it, and `--repo` this host's copy of the
+repo's, without touching `config.yaml` — useful for a host that only one
+developer needs, or for trying an entry before proposing it to the team.
+Container-scoped entries live in the container's own
+`user.jailbee.egress_extra` label, die with the container and are materialised
+as the command runs; repo-scoped ones are host-local state, not in git, and go
+live on the next `jailbee apply`. Overrides are additive only: they can
+never narrow what this key grants, so reading `egress_allow` still tells you
+the minimum every container of the repo can reach — but not the maximum on a
+given machine, which is what `jailbee net egress ls` and `jailbee net status`
+report. `jailbee net egress export` prints the whole key back with the
+promotable overrides folded in, for when a temporary entry has earned its
+place here. See [Egress overrides](security.md#egress-overrides) for the
+security posture and [Commands](commands.md) for the flags.
 
 #### `loose_auto_revert`
 
@@ -647,13 +833,24 @@ typical developer setup, not a literal echo of the built-in defaults.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the host `/run/user/<uid>/gnupg` socket dir as the `gpg-socket` device, and set `SSH_AUTH_SOCK` in the base profile to the host gpg-agent's SSH socket. Disables the doctor `gpg-agent socket` check when `false`. |
+| `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the host `/run/user/<uid>/gnupg` socket dir as the `gpg-socket` device (read-only), and set `SSH_AUTH_SOCK` in the base profile to the host gpg-agent's SSH socket. Disables the doctor `gpg-agent socket` check when `false`. |
 
 When `enabled: true`, the host gpg-agent provides SSH authentication
 inside the container (YubiKey / GPG-SSH keys work transparently). The
 auto-added bind-mount can be overridden by adding a manual entry to
 `host_mounts` with `container: /home/dev/.gnupg` — the manual entry
 wins.
+
+The `gpg-socket` device is mounted **read-only**, and so is `pulse-socket`.
+Both are directories inside the host's *own* `/run/user/<uid>`, and the
+container runs its own `systemd --user`: its `gpg-agent.socket`,
+`dirmngr.socket` and `pulseaudio.socket` listen on paths inside those mounts
+and unlink whatever file is already there before binding — which would take
+the host's agent down (`socket file has been removed - shutting down`) on
+every container boot. Read-only makes that unlink `EROFS` while leaving the
+socket fully usable, since a unix-socket client needs no writable filesystem,
+and the host stays free to re-create its own sockets. The golden image also
+masks those user units, so the container does not even try.
 
 With `enabled: false` nothing gpg-related reaches the container: no
 `~/.gnupg` mount, no `gpg-socket` device, and no `SSH_AUTH_SOCK`. The
@@ -726,25 +923,81 @@ IDE restart.
 | `autostart` | bool | `false` | Launch Chrome after autostart steps. No-op if no graphical session, or when `enabled: false`. |
 | `host_path` | path \| null | `/opt/google/chrome` | Host path RO-mounted to `/opt/google/chrome`. The container-side path is hardcoded because `gui.open_chrome` invokes `/opt/google/chrome/google-chrome` directly. Override for non-standard installs (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with `container: /opt/google/chrome` wins. |
 
+### `agents`
+
+Generic hook for terminal coding agents — Claude Code plus five untested
+templates (`codex`, `gemini`, `aider`, `opencode`, `grok`), or one you define
+yourself. A mapping keyed by agent name, valid at both this file and
+`~/.config/jailbee/global.yaml`, and it merges over a shipped preset
+(deep-merge — see [Merge rules](#merge-rules) above) rather than needing
+every field spelled out. Full mechanism, the preset table, the "which paths
+to share" rule, and a worked example live in
+[Generic agent support](agents.md) — this entry is the schema reference.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch: gates the shared mount, the strict-mode egress add, install/update at `jailbee new` time, and the `jailbee doctor` shared-dir check. |
+| `autostart` | bool | `false` | Launch `command` in a background autostart tmux window. Requires `enabled: true`. |
+| `command` | string | `""` | The command line the autostart window execs; also the default source for `install_check`. Required when `enabled: true`. |
+| `install` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` fails. |
+| `install_check` | string \| null | `null` | Probe deciding install-vs-update. Defaults to `command -v <first token of command>`. |
+| `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
+| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
+| `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
+| `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. |
+| `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
+| `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
+
+An agent name that matches one of the six shipped presets is deep-merged
+over that preset (preset → global.yaml → repo, same append/reset rules as
+every other list field); any other name is used as-is with no preset base.
+`jailbee config validate` additionally rejects a name outside
+`[a-z0-9-]+`, `enabled: true` with an empty `command`, `autostart: true`
+without `enabled: true`, and a `shared` subpath that collides with a
+built-in shared subdir or with a different mount target another agent
+already claimed.
+
+```yaml
+agents:
+  codex:
+    enabled: true
+    autostart: true
+```
+
 ### `claude`
 
+**`agents.claude` is the preferred spelling of this block.** The top-level
+`claude:` key documented below is a supported **legacy alias** — moved to
+`agents.claude` at config-load time, before validation. Defining both
+`claude:` and `agents.claude` in the merged config is a `ConfigError`.
+Everything below applies identically under either spelling, and `claude`
+also carries the generic `agents` fields from the table above
+(`install`, `update`, `install_check`, `install_network`, `shared`,
+`egress_allow`, `env`) — not repeated here since they mean the same thing
+for every agent. See [Generic agent support](agents.md#9-claude) for the
+short version of this same note.
+
 Claude Code CLI integration. The schema default is disabled, so a repo
-with no `claude:` block anywhere gets no Claude Code. Opt-in belongs in
-`~/.config/jailbee/global.yaml` — and the template written by `jailbee
-config init --global` already carries `claude.enabled: true`, so the
-usual first-run path turns it on. Delete or flip that block to keep
-Claude Code out.
+with no `claude:`/`agents.claude` block anywhere gets no Claude Code.
+Opt-in belongs in `~/.config/jailbee/global.yaml` — and the template
+written by `jailbee config init --global` already carries
+`claude.enabled: true` (or `agents.claude.enabled: true`), so the usual
+first-run path turns it on. Delete or flip that block to keep Claude Code
+out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude`, `<shared_dir>/claude.json` → `~/.claude.json`, and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; `jailbee tmux <c>` lands in that window. `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. `claude.install_gie_skills` is accepted as a deprecated alias and stops working in 1.1.0. |
+| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
+| `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` when generating the PR text. Writing a description is a bounded job, and pinning it means the generation does not compete for the same budget as the coding work that just happened in the container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` omits the flag so the container's own default model applies. `haiku` works but has a smaller context window, so a large cumulative diff may not fit. Rejected at load if it is not a single whitespace-free token. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
+| `claude.pr_prompt` | string \| null | `null` | Project-specific PR-writing instructions, usually a YAML block scalar in a repo's `.jailbee/config.yaml`. Embedded in JailBee's own prompt as a delimited section that **outranks** the generic title/body guidance, so a project can dictate the shape of its descriptions — but it is placed before the JSON response contract, which it cannot override. Whitespace-only is treated as unset; capped at 20 000 characters. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
+| `claude.ai_pr_timeout` | int | `600` | Seconds `jailbee pr` gives the in-container Claude to produce the PR text before falling back to a placeholder. Generation is an agentic run, not one model call — it reads the log, the cumulative diff, the PR template, the branch's spec and the CI config across a dozen-plus turns, so the cost scales with the repository, not just with the diff. Measured in JailBee's own repo on a 21-file/+940 diff: 109 s. Raise it for a large tree, or when `claude.pr_prompt` asks for work that takes longer. Must be positive — to switch generation off use `claude.ai_pr_description: false`. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
 
 Example global config:
 
@@ -754,11 +1007,34 @@ claude:
   plugins_enabled: true
 ```
 
+### Encoding a project's PR standard
+
+`jailbee pr` already reads `.github/pull_request_template.md`, the spec or
+issue a branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`
+before writing anything. `claude.pr_prompt` is for the rules that live in
+none of those files — commit them to the repo's `.jailbee/config.yaml` so
+every container generates descriptions the same way:
+
+```yaml
+claude:
+  pr_prompt: |
+    Body sections, in this order and with these exact headings:
+      ## Why      — the user-visible problem, one paragraph, no implementation
+      ## What     — bullets, each naming the file or symbol it changed
+      ## Testing  — the commands you actually ran, verbatim
+    Never use the word "comprehensive". Link the Jira ticket from the branch
+    name as `[ABC-123](https://example.atlassian.net/browse/ABC-123)`.
+```
+
+These instructions win over JailBee's generic guidance where the two
+disagree, which is why the block cannot break generation: the response
+format Claude has to return is stated after it and stays JailBee's.
+
 The claude shared caches are not present in the `shared_caches:` default
 list — they are auto-added by `Config.effective_shared_caches()` when
 `claude.enabled` is `true`. Manual entries in `shared_caches:` with names
-`claude`, `claude-json`, or `claude-install` suppress the auto-add (same
-precedent as `effective_host_mounts`).
+`claude` or `claude-install` suppress the auto-add (same precedent as
+`effective_host_mounts`).
 
 ### `terminal` / `terminal.kitty`
 
@@ -999,6 +1275,17 @@ Errors:
 |---|---|---|---|
 | `background` | bool | `false` | Run `jailbee destroy` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. |
 
+### `boot`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `background` | bool | `false` | Run `jailbee start` and `jailbee restart` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. |
+
+One key covers both commands: what makes either slow is the autostart run that
+follows the boot, and it is the same run. A detached boot is refused while
+another background job for that container is still live — two of them would
+interleave their autostart steps.
+
 ### `after_new`
 
 | Key | Type | Default | Description |
@@ -1071,6 +1358,16 @@ the configured defaults. With `"ask"`, the command opens a `questionary`
 prompt; in a non-TTY environment, the command errors and points at the
 relevant config key.
 
+The dashboards follow the same rule from the other side. `jailbee dashboard`
+hands over the real terminal, so the `questionary` prompt appears exactly as it
+would on the command line. The Qt dashboard cannot — its child process has no
+stdin — so it asks in a dialog instead and passes the answer as a flag, and
+**only** for a key that is `"ask"`: pin `default_action` or `default_source` and
+the GUI stops asking about it. Its source dialog offers the container's recorded
+base branch and the host's checked-out branch, the two choices it can express
+without reading the host repo; for `"default-branch"`, set `default_source` in
+the config rather than answering per push.
+
 #### Why `push_from` defaults to `origin`
 
 `git fetch` updates `refs/remotes/origin/<branch>`; the local
@@ -1123,10 +1420,6 @@ Which columns `jailbee ls` and the dashboards show, by default.
 ls:
   fields: null      # explicit ordered list, or null for the built-in default
   hide: []          # subtractive; applies only when `fields` is null
-
-dashboard:
-  fields: null      # same shape as ls.fields
-  hide: [repo, full_name, git_status, created, ttl]   # dashboard's built-in default
 ```
 
 `fields`, when set, wins outright: naming a column is a request for exactly
@@ -1136,16 +1429,18 @@ with no container carrying one). `hide` is subtractive and only prunes the
 *built-in* default set — a dynamic rule such as `pr`'s "show only when
 something has one" still applies to a hidden-by-config column, unlike
 `fields`. This one rule is implemented once, in
-`table_format.apply_column_config`, and used by both `jailbee ls` and the
-dashboards.
+`table_format.apply_column_config`, and used by `jailbee ls`; the deprecated
+`dashboard:` block followed the same rule for its one-time import into
+`view_prefs` (see below).
 
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
-AHEAD ±, ↑, MERGE. The dashboards add IP and MEM, because a live number is
-worth its width in a view that refreshes and is a stale sample in one that
-does not. Both are reachable from `ls` with `--fields ip,mem` or an
-`ls.fields` list; conversely `dashboard.hide` prunes them from the
-dashboards. Four columns are dynamic and appear only when they have
+AHEAD ±, ↑, MERGE. The dashboards differ in exactly one column: they add MEM,
+because a live number is worth its width in a view that refreshes and is a
+stale sample in one that does not. IP is off in both — enable it in the
+dashboard settings UI, or ask for it from `ls` with `--fields ip`.
+
+Four columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
 in loose mode), `pr` (a container tracks a PR) and `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant).
@@ -1178,35 +1473,51 @@ Either way, `jailbee config validate` is where all three are still reported as
 errors, with the allowed set listed for the unknown-name case — the one
 command whose job is telling you what's wrong.
 
-Both blocks exist in `~/.config/jailbee/global.yaml` **and** in a repo's
+`ls:` exists in `~/.config/jailbee/global.yaml` **and** in a repo's
 `.jailbee/config.yaml`, merged the same field-by-field way as
 `loose_auto_revert`: the repo's block overrides the global one per field
 (setting only `hide` in the repo still inherits the global `fields`, and
-vice versa). Note these two keys are **not** part of the general
-deep-merge pipeline used by the rest of the file — that pipeline *appends*
-list values, which would concatenate the two `fields` lists instead of
+vice versa). Note the key is **not** part of the general deep-merge
+pipeline used by the rest of the file — that pipeline *appends* list
+values, which would concatenate the two `fields` lists instead of
 replacing one with the other. A repo block that names `fields` replaces the
 global list outright; `fields: null` in the repo discards the global list
 and restores the built-in default set. Column choice is a personal
 preference, so the normal home is `global.yaml`; a repo that sets the block
 does so for everyone working in that repo — deliberate, and rare.
 
-`hide` **replaces** the list it is set in, at either layer — it does not
-extend the built-in one. The `dashboard:` example above shows the built-in
-default (`[repo, full_name, git_status, created, ttl]`) because that is
-what you would otherwise be overwriting: writing `dashboard: {hide: [ip]}`
-hides IP *and brings REPO, FULL NAME, GIT STATUS, CREATED and TTL back into
-the table*. To hide one more column, copy the default list and append to it.
+`--fields` on the CLI beats both `ls:` blocks outright — this is a
+remembered preference, not a lock.
 
-`--fields` on the CLI beats both blocks outright — this is a remembered
-preference, not a lock.
+### The dashboards remember their own columns
 
-The dashboards (`jailbee dashboard`, `jailbee gui`) render **one shared table**
-across every registered repo, so a per-repo-group answer isn't possible.
-Both resolve their `dashboard:` block against the repo you launched from
-(the cwd's `.jailbee/config.yaml`), falling back to the global file when there
-is no cwd repo or its config fails to load — resolved once at startup, not
-re-resolved per refresh.
+`jailbee dashboard` and `jailbee gui` do **not** read a `dashboard:` block.
+Each remembers its own columns and its own folded repo groups, because a
+live view can own the state you are looking at:
+
+- In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
+  `Space` toggles, `Tab` switches between Fields and Repos, `Esc` closes.
+  Changes apply immediately — the table stays on screen behind the panel.
+- In the GUI, use **View ▸ Columns**.
+
+The two are independent on purpose: a wide Qt table and a narrow TUI is a
+supported setup. State lives in `state.sqlite`'s `view_prefs` table, one row
+per front-end — machine-written, so it stays out of your hand-edited config.
+
+Enabling a column means "show it when it has something to say": the four
+dynamic columns (`job`, `ttl`, `pr`, `mode`) still appear only when they
+apply, and the overlay marks them so. This differs from `ls --fields`, where
+naming a column forces it on — there a name is a one-shot request, here it is
+a standing preference.
+
+**`dashboard:` is deprecated.** The key is still accepted, so an existing
+config keeps loading, but it is ignored: it is imported into each
+front-end's own settings the first time you open that dashboard after
+upgrading, and can be deleted once both have been opened at least once.
+`jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` is
+imported this way — the setting is personal and applies in every repo, so a
+repo-level `dashboard:` block is reported and dropped rather than seeded.
+`ls:` is unaffected and still lives in config.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a
 hardcoded selection — name, state, `mode`/`base`/`network`, a job badge and
@@ -1309,12 +1620,16 @@ use gh" state.
 
 Optional. Host-global settings shared across all repos. It is the required
 home for the [`github`](#github) block (above) and the usual home for the
-opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `claude`).
-The keys unique to this file are the Docker registry mirror overrides:
+opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `agents`).
+`agents:` is valid at both layers, though — see [`agents`](#agents) above —
+and a repo entry merges over a global one, so a team default set globally
+can still be adjusted per repo.
+Two blocks are unique to this file: the Docker registry mirror overrides,
+and `claude_credentials` (below).
 
 ```yaml
 docker_registry_mirror:
-  enabled: true                                  # host-global kill switch
+  enabled: auto                                  # auto | true | false
   port: 3128                                     # rpardini default
   image: rpardini/docker-registry-proxy:0.6.5    # OCI image pin
   data_dir: ~/.local/share/jailbee/registry          # cache + CA storage
@@ -1322,13 +1637,110 @@ docker_registry_mirror:
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | Set `false` to skip all mirror-related work in `jailbee new` / `jailbee apply`. Mirror container lifecycle is unaffected (use `jailbee registry up/down`). |
+| `enabled` | `auto` | `auto` wires the mirror only into repos that ask for it: a golden image that would contain Docker (`golden.stacks.docker`, an `enable_snippets`/`install.d` `50-docker`, a `golden.extra_apt_packages` entry starting with `docker`, minus `disable_snippets`), a non-empty per-repo [`docker_registry_mirror.extra_registries`](#docker_registry_mirrorextra_registries), or `golden.stacks.ecr` (which stages a Docker credential helper). `true` forces it on, `false` skips all mirror-related work. **Both are host-global** — this file is host-level, so `true` set for one undetectable repo also re-imposes the strict-mode `jailbee new` abort on every other repo on the machine; `extra_registries` is the per-repo way to opt in. Mirror container lifecycle is unaffected either way (use `jailbee registry up/down`). |
 | `port` | `3128` | Port the rpardini proxy listens on inside the mirror container. |
 | `image` | `rpardini/docker-registry-proxy:0.6.5` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
 | `data_dir` | `~/.local/share/jailbee/registry` | Host directory bind-mounted into the mirror for cache + CA storage. |
 
+`auto` cannot see every route to Docker. A differently-named `install.d`
+snippet (`55-docker-ce.sh` resolves to the logical name `docker-ce`, not
+`docker`), a custom `golden.provision_script` that installs Docker without
+`golden.stacks.docker` being set, and Docker installed by hand inside a running
+container are all invisible to it. Those repos need `enabled: true` — or, for
+the first two, a declared stack and a golden-image rebuild.
+
+When a repo wants the mirror but the mirror container is stopped or missing,
+`jailbee init`, `jailbee apply` and the background egress refresh warn and
+continue — the ACL simply omits the mirror rule until a later run finds it
+running. `jailbee start` / `jailbee restart` never aborted on this and stay
+silent: they skip the `/etc/hosts` mirror pin without comment. `jailbee net
+strict` warns, since switching to strict is what removes the container's direct
+route to Docker Hub. Only `jailbee new` refuses, and only in strict mode: the
+default egress allowlist contains no registry hosts, so there the mirror is the
+container's only route to Docker Hub. In loose mode it is a pull cache, so
+`jailbee new` warns and proceeds.
+
+The remedy in every case is `jailbee registry up && jailbee apply`. Note that
+`apply` only re-pins `/etc/hosts` and re-installs the dockerd proxy on
+*running* containers, so a container that was stopped at the time is not fixed
+by it — start it and run `jailbee apply` again.
+
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).
+
+### `claude_credentials`
+
+Lets several repos on this host share one Claude Code login. Host-level
+only, like `docker_registry_mirror`: setting `claude_credentials` or the
+computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is
+rejected at load time, because a repo config is typically committed and a
+group name is a property of this one machine, not the team.
+
+```yaml
+claude_credentials:
+  group: work                    # default for every repo on this host
+  repos:                         # exceptions, keyed by container_prefix
+    my-side-project: personal
+    solo: null                   # opt this one repo out — keep its own credential
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `group` | `str \| None` | `None` (unset); `default` in a freshly generated `global.yaml` | Default credential group for every repo on the host. Absent means no sharing. |
+| `repos` | `dict[str, str \| None]` | `{}` | Per-repo override keyed by `container_prefix`. Wins over `group`, **including when the value is `null`** — that is the only way to keep one repo on its own credential while the rest of the host shares one. |
+
+A group name must match `[a-z0-9][a-z0-9-]*`: it becomes a directory name
+under `<xdg_data_home>/jailbee/claude-credentials/<group>/`.
+
+**New hosts share by default.** `jailbee config init --global` writes
+`claude_credentials: {group: default}` into the generated `global.yaml`, so
+every repo on a fresh host shares one login without any configuration: the
+first `/login` in any container lands in the group directory, and the next
+repo is already logged in. The *schema* default is still `None` — an
+existing `global.yaml` that predates the key keeps every repo on its own
+credential, and `write_global_template` refuses to overwrite an existing file
+without `--force`. That asymmetry is deliberate: turning sharing on for a
+host that already has several logged-in repos means answering the
+two-credential prompt below on every repo but the first, which is a
+migration, not a default. To opt a whole host out, set `group: null`.
+
+Only the *credential* is shared — each repo keeps its own `~/.claude`, so
+project history, MCP config, sessions and onboarding state never cross
+repos. See [Shared credential groups](agents.md#shared-credential-groups-claude_credentials)
+in `agents.md` for the mechanism.
+
+Joining a group requires `jailbee apply`: it creates the group directory
+(mode `0700`) and **moves** this repo's `.credentials.json` into it.
+
+If both the group directory and this repo already hold a credential, only
+one of the two logins can be shared and the other becomes unused, so
+`apply` asks which to keep:
+
+* **the group's login** — this repo's copy is deleted; the repo adopts the
+  account every other member already uses. This is the usual answer.
+* **this repo's login** — the group's copy is deleted and this repo's is
+  moved in, which re-points *every* member repo at this account.
+* **cancel** — nothing changes and `apply` aborts. To keep this repo on
+  its own login instead, add it under `repos:` as `null` (the prompt prints
+  the exact block) and re-run `apply`.
+
+The losing credential is deleted, not archived. The two are *independent*
+grants — two `/login`s to one account each mint their own refresh-token
+lineage — so removing one never disturbs the survivor, and a stale
+credential left in the shared tree is read by nothing. Restoring it means
+one `/login`. Without a TTY to ask on (a piped or CI `apply`), the prompt
+is skipped and `apply` refuses instead, changing nothing.
+
+Every *successful* join leaves
+this repo's own config home with no `.credentials.json` of its own — either
+it had none to begin with, or the move took it. There is no restore-on-leave:
+leaving a group (remove the key, re-run `apply`) unmounts the shared
+directory and the repo's config home is still empty, so the container finds
+no credential and needs one `/login`. This is deliberate — moving a
+credential back on leave would have to guess which of several repos that
+have been sharing it should get it, and a `/login` is cheap.
+`jailbee doctor` names the group, its directory, and the other member
+repos.
 
 If the file is absent, defaults apply silently. Invalid YAML → error.
 

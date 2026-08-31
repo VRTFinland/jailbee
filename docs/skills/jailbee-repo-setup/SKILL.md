@@ -1,6 +1,6 @@
 ---
 name: jailbee-repo-setup
-description: Use when configuring a new repository to work with `jailbee` — adding `.jailbee/config.yaml`, optional `install.d/` snippets, and `container_prefix`/host-mounts/egress/autostart adjustments. Trigger on phrases like "set up jailbee", "configure jailbee", "make this repo jailbee-compatible", "jailbee config", "set up gie", "configure gie", "make this repo gie-compatible", "gie config", "lisää gie-konfiguraatio" (`gie` is jailbee's deprecated pre-1.0 command alias), or whenever the user wants to run `jailbee new`/`jailbee shell` against a repo that doesn't yet have `.jailbee/config.yaml`. The skill inspects the repo's stack (package.json, pyproject.toml, pom.xml, Cargo.toml, Makefile, docker-compose, …) and generates a tailored config rather than the defaults-only template `jailbee config init` ships.
+description: Use when configuring a new repository to work with `jailbee` — adding `.jailbee/config.yaml`, optional `install.d/` snippets, and `container_prefix`/host-mounts/egress/autostart adjustments. Trigger on phrases like "set up jailbee", "configure jailbee", "make this repo jailbee-compatible", "jailbee config", "set up gie", "configure gie", "make this repo gie-compatible", "gie config", "lisää gie-konfiguraatio" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), or whenever the user wants to run `jailbee new`/`jailbee shell` against a repo that doesn't yet have `.jailbee/config.yaml`. The skill inspects the repo's stack (package.json, pyproject.toml, pom.xml, Cargo.toml, Makefile, docker-compose, …) and generates a tailored config rather than the defaults-only template `jailbee config init` ships.
 ---
 
 # JailBee repo setup
@@ -9,9 +9,11 @@ Goal: take any existing git repo and make `jailbee new <name>` work for it. The 
 
 This skill walks Claude through inspecting the repo, generating a tailored config, and (optionally) adding `install.d/` snippets for stack tools the bundled golden image doesn't cover.
 
-`gie` is the pre-1.0 name of this tool. It still works as a **deprecated**
-console-script alias (removed in 1.1.0), but don't teach it — use `jailbee`
-in every command you write or suggest.
+`gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
+1.1.0** and no longer exists — always use `jailbee` in every command you write
+or suggest. A repo whose config still lives in `.gie/` is still read
+(deprecated, removed in 2.0.0); when you touch such a repo, have the user run
+`git mv .gie .jailbee` first and write `.jailbee/config.yaml` from then on.
 
 ## Workflow
 
@@ -36,7 +38,7 @@ Walk the repo root and look at top-level manifest files. Don't recurse — sub-p
 | `Cargo.toml` | Rust | No first-class support — add `cargo` via `golden.extra_apt_packages: [cargo]` or write an `install.d/` snippet that installs rustup. |
 | `go.mod` | Go | No first-class support — `golden.extra_apt_packages: [golang-go]` or an `install.d/` snippet for a specific Go version. |
 | `Gemfile` | Ruby | `golden.extra_apt_packages: [ruby-full]` |
-| `docker-compose*.yml` | Containerized services | Don't add to JailBee config — the dev user runs compose inside the JailBee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true`. |
+| `docker-compose*.yml` | Containerized services | Don't add to JailBee config — the dev user runs compose inside the JailBee container directly. But: if compose references custom registries (e.g. `*.dkr.ecr.<region>.amazonaws.com`), add them to `docker_registry_mirror.extra_registries`; if it drives Docker itself, add `golden.stacks.docker: true`. Either key on its own turns the registry mirror on for the repo. |
 | `Makefile` | Conventional build entrypoints | Useful for autostart: targets like `make dev-env`, `make run` are good `autostart.on_create`/`on_start` candidates. |
 | `.nvmrc`, `.node-version`, `.tool-versions` | Version pins | Set `golden.stacks.node` to the pinned major. |
 
@@ -66,7 +68,13 @@ host_mounts:
   - { host: ~/.docker, container: /home/dev/.docker, readonly: true }   # if you need host docker auth
 ```
 
-Android repos: to let `adb` inside the container drive a device attached to the host, mount the host adb server's socket **read-write** and point the client at it (a read-only socket cannot be talked on). The host must run its adb server on that socket (`adb -L localfilesystem:$HOME/.android/adb.sock start-server`):
+Android repos, adb over a **unix socket**: if the host's adb server listens on
+a unix socket rather than its default TCP port, mount that socket
+**read-write** and point the client at it (a read-only socket cannot be
+talked on) — this is the one adb setup `host_ports` below cannot cover,
+since the config schema only forwards TCP/UDP. The host must run its adb
+server on that socket (`adb -L localfilesystem:$HOME/.android/adb.sock
+start-server`):
 
 ```yaml
 host_mounts:
@@ -95,6 +103,49 @@ autostart:
       run: "aws ecr get-login-password | docker login --password-stdin ..."
       mounts: [aws]
 ```
+
+### `host_ports` — forwarding a host TCP/UDP service into every container
+
+For a host service the container needs to reach over TCP/UDP — the adb
+server, a database, a media daemon, a device bridge — `host_ports` is
+usually simpler than a socket mount:
+
+```yaml
+host_ports:
+  - { name: adb, port: 5037 }
+```
+
+Full schema, one entry per forward:
+
+| Key | Required | Default | Notes |
+|---|---|---|---|
+| `name` | yes | — | `^[a-z0-9][a-z0-9-]*$`, max 40 chars, unique. Becomes the Incus device name and the `jailbee port rm <name>` key. |
+| `port` | yes | — | 1..65535. The **container**-side port — the container listens here. |
+| `host_port` | no | same as `port` | The host-side port Incus connects to. |
+| `proto` | no | `tcp` | `tcp` or `udp`. |
+| `host_address` | no | `127.0.0.1` | IP literal only — a hostname is rejected (it would have to be resolved once, at device-add time, and silently pinned). |
+| `container_address` | no | `127.0.0.1` | Same restriction. |
+
+Only the **to-container** direction (a host service reachable inside the
+container) is configurable here — a host-side listener is a machine-wide
+resource, so a repo declaring one in `host_ports` would make every branch
+container of that repo fight over the same host port, breaking the "many
+containers coexist" property the whole tool is built on. Config rejects
+`direction`/`to_host`/`bind` keys with that explanation. The mirror
+(a container service reachable on the host) is `jailbee port to-host`,
+run per container — see the jailbee-usage skill.
+
+Offer `host_ports` when the repo's stack suggests one: an Android project
+(the adb example above — the host's default adb server already listens on
+`127.0.0.1:5037`, so no `ADB_SERVER_SOCKET` override is needed once this
+forward exists), or any stack where the container needs a host-run service —
+a database, a media daemon, a device bridge — over TCP/UDP. It doesn't
+replace the `host_mounts` adb-socket recipe above for a host adb server that
+only ever speaks over a unix socket; `host_ports` can't forward those.
+
+Entries are attached when `jailbee new` creates a container and kept in sync
+by `jailbee apply` (added/replaced/removed to match the file) — no image
+rebuild, no container restart, on either command.
 
 ### `golden.extra_apt_packages` — repo-level system deps
 
@@ -148,6 +199,50 @@ Don't pin a version the repo doesn't actually require — bumping the golden ima
 `golden.python` is deprecated and ignored — the container's Python is always the base image's system `python3` (a function of `golden.ubuntu_version`). Need a different interpreter? Add the apt package via `golden.extra_apt_packages` (e.g. `python3.12`), and set `golden.stacks.python: true` if you also want the venv/pip bootstrap from `40-python.sh`.
 
 `golden.enable_snippets` + a bare `golden.java`/`golden.node` version pin remain available directly as the low-level path when `stacks` doesn't cover what you need — see [Stacks](references/config-schema.md#stacks-goldenstacks) in the config schema reference.
+
+### `agents` — turning on a coding agent in every container
+
+If the user wants a terminal coding agent installed and (optionally)
+auto-started in every container of this repo, add an `agents:` block.
+Six presets ship built in — `claude`, `codex`, `gemini`, `aider`,
+`opencode`, `grok` — each a starting point covering the install command,
+the shared auth/settings mount, and the egress hosts it needs. Turning one
+on is usually two lines:
+
+```yaml
+agents:
+  codex:
+    enabled: true
+    autostart: true
+```
+
+`claude` (Claude Code) is the only preset exercised in production; the
+other five are untested templates the user should verify and correct
+against the vendor's own docs before relying on them (package name,
+config paths, host list). Enabling one they don't already use, without
+double-checking those details, is worse than not enabling it.
+
+The **master switch and egress hosts usually belong in
+`~/.config/jailbee/global.yaml`**, not the per-repo file — an agent's
+login state is personal, same reasoning as the `gpg`/`ssh`/`jetbrains`
+master switches. A per-repo `agents:` block is for something the repo
+itself needs for everyone (e.g. pinning `install_network: loose` because
+this repo's package mirror isn't in strict-mode `egress_allow` yet), not
+for turning the agent on in the first place.
+
+Writing a custom (non-preset) agent follows the same shape — `enabled`,
+`command`, `install`/`update`, `shared`, `egress_allow`; see
+[`agents`](references/config-schema.md#agents) in the config schema
+reference for the full field table, and `docs/agents.md` in the JailBee
+repo for the worked examples and the "which paths to share" rule (auth
+and settings only — never a cache, history, log, or a generically-named
+file like `~/.env`).
+
+`claude` predates the generic mechanism and still accepts a legacy
+top-level `claude:` block as an alias for `agents.claude` — prefer
+`agents.claude` in anything you generate. Never write both `claude:` and
+`agents.claude` into the same layer stack; `jailbee config validate`
+rejects that combination with a `ConfigError`.
 
 ### `autostart.on_create` / `on_start` — what runs when a container appears
 
@@ -208,7 +303,10 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Entries must be bare `host[:port]` — no scheme, no path.
+Entries must be bare `host[:port]` — no scheme, no path. Setting this key is
+itself an opt-in to the registry mirror: with the default
+`docker_registry_mirror.enabled: auto`, a repo that names extra registries gets
+the mirror wired in even without `golden.stacks.docker`.
 
 ## When to add install.d snippets
 
@@ -294,8 +392,11 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - Reserved `provision_env` keys
 - Duplicate autostart step names within a trigger
 - Non-existent `optional_mounts` referenced from a step
+- Bad `host_ports` entries — name regex/length, an out-of-range port, a
+  non-IP `host_address`/`container_address`, or a `direction`/`to_host`/
+  `bind` key (only the to-container direction is configurable)
 
-`jailbee doctor` is host-level — failures there mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows.
+`jailbee doctor` is mostly host-level — failures there usually mean the user needs to fix host setup (see the JailBee README) before `jailbee init` works. They're not the skill's responsibility, but flag them so the user knows. The one exception is the `upgrade actions` check, which is per-repo and not a host problem: on a repo that has never been built it simply says a `jailbee base build` is owed, which is already the next step anyway.
 
 ## What this skill does NOT do
 
@@ -303,7 +404,7 @@ jailbee doctor                  # host-level (incus running, bridges, subuid, �
 - **Don't invent autostart commands.** Read the repo's README / Makefile / package.json scripts and use exactly what's documented.
 - **Don't add `github.com` to `egress_allow`.** That's a security boundary by design.
 - **Don't put personal credentials in the per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The per-repo file is committed to git and shared with the team.
-- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config.
+- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config. The same goes for `agents.<name>.enabled`/`claude.enabled` — an agent's login state is personal, so turn it on in global config unless the repo needs everyone to have that agent.
 
 ## Inside a JailBee container
 

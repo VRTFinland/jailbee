@@ -78,11 +78,57 @@ host_devices: []
 #   - { path: /dev/kvm }                          # Android emulator / KVM VMs
 #   - { source: /dev/bus/usb/001/004, path: /dev/bus/usb/001/004 }
 
+# Host services made reachable inside every container. Each entry becomes an
+# Incus proxy device: the container listens on `port`, and connections land on
+# `host_port` on the host. Only this direction is configurable — for the
+# reverse, use `jailbee port to-host` on one container.
+host_ports: []
+# host_ports:
+#   - { name: adb, port: 5037 }               # host adb server, same port
+#   - { name: db, port: 5432, host_port: 15432 }
+
+# Coding agents. Each entry is merged over a shipped preset, so enabling one
+# is usually two lines. Every preset field is overridable here — see
+# docs/agents.md. Presets: claude, codex, gemini, aider, opencode, grok.
+# Only `claude` is exercised in production; the others are untested templates
+# — package names, config paths and host lists are best-effort.
+#
+# When enabled, jailbee for each agent:
+#   - bind-mounts its config/auth paths from <shared_dir> so credentials
+#     survive container rebuilds and are shared between branches,
+#   - adds its hosts to the strict-mode egress allowlist,
+#   - installs it at `jailbee new` time (and updates it when auto_update),
+#   - launches it in the autostart tmux session when `autostart: true`,
+#   - includes its shared dirs in `jailbee doctor` checks.
+#
+# Commented out on purpose, like the `jetbrains` / `chrome` blocks above:
+# repo values win over global ones, so a live `enabled: false` here would
+# silently switch off an agent the user opted into in
+# ~/.config/jailbee/global.yaml. Opt in globally; override here only when the
+# repo needs to deviate.
+#
+# agents:
+#   claude:
+#     enabled: true
+#     # autostart: false
+#     # command: claude
+#   codex:
+#     enabled: true
+#     autostart: true
+#
+# Legacy: a top-level `claude:` block is still accepted and means the same as
+# `agents.claude`. Defining both is an error. Prefer `agents.claude`.
+
 # Egress allowlist applied in strict mode. Each entry is either a literal
 # IP/CIDR (e.g. 10.0.0.0/8) or a hostname optionally followed by :PORT
 # (e.g. github.com, archive.ubuntu.com:443). Hostnames are resolved to
 # IPv4 at ACL-apply time. The `loose` network mode ignores this list
 # (everything reachable).
+#
+# For a one-off host that should not be committed, use
+# `jailbee net egress add <host>` instead — it applies to one container (or,
+# with --repo, to this host's copy of the repo) and is not shared with the
+# team.
 egress_allow: []
 # Example:
 # egress_allow:
@@ -248,31 +294,78 @@ terminal:
     enabled: auto
     host_terminfo_path: null
 
-# Claude Code integration. When enabled, jailbee:
-#   - Mounts <shared_dir>/claude (RW shared cache) as the container's
-#     ~/.claude — credentials, settings, MCP, agents, skills, plugins
-#     are shared across every container in this repo.
-#   - Mounts <shared_dir>/claude.json (file-level shared cache) as the
-#     container's ~/.claude.json (Claude's identity/onboarding state).
-#   - Auto-extends strict-mode egress_allow with api.anthropic.com:443,
-#     code.claude.com:443, and downloads.claude.ai:443 (CLI self-update)
-#     — no need to list them by hand below.
-#   - When `plugins_enabled` is true (default), also auto-extends
-#     egress_allow with the GitHub + npm hosts Claude Code's plugin
-#     marketplace, skills and SessionStart hooks reach. Set to false
+# Coding agents. This is the personal, per-developer place to turn one on —
+# a repo's own .jailbee/config.yaml can also define `agents:` (and does, for
+# team defaults), and the two deep-merge (scalar override, list append). Each
+# entry here is itself merged over a shipped preset, so enabling one is
+# usually two lines (see `claude:` below, already flipped on as this file's
+# working example). Every preset field is overridable — see docs/agents.md.
+# Presets: claude, codex, gemini, aider, opencode, grok. Only `claude` is
+# exercised in production; the rest are untested templates — package names,
+# config paths and host lists are best-effort until someone corrects them.
+#
+# When an agent is enabled, jailbee, for that agent:
+#   - Mounts its config/auth paths from <shared_dir> as bind-mounts inside
+#     the container, so credentials and settings survive container rebuilds
+#     and are shared between branches. For `claude`: <shared_dir>/claude
+#     (RW shared cache) as ~/.claude — credentials, settings, MCP, agents,
+#     skills, plugins, and (seeded at <shared_dir>/claude/.claude.json)
+#     Claude's identity/onboarding state, read from ~/.claude/.claude.json
+#     via CLAUDE_CONFIG_DIR=~/.claude.
+#   - Auto-extends strict-mode egress_allow with that agent's hosts — no
+#     need to list them by hand below. For `claude`: api.anthropic.com:443,
+#     code.claude.com:443, and downloads.claude.ai:443 (CLI self-update).
+#     Claude-only: when `plugins_enabled` is true (default), also
+#     auto-extends egress_allow with the GitHub + npm hosts Claude Code's
+#     plugin marketplace, skills and SessionStart hooks reach; set to false
 #     to keep the API reachable while blocking marketplace traffic.
-#   - Creates an empty <shared_dir>/claude on `jailbee init` and includes
-#     it in `jailbee doctor` checks. No host ~/.claude is read; Claude Code
-#     runs its onboarding flow on first launch from a clean state.
-#   autostart: launch `claude` in the autostart tmux session on every
-#   container start. `jailbee tmux <c>` lands directly in the claude window.
-#   `command` is what that window executes; override to pass flags
-#   (e.g. "claude --dangerously-skip-permissions").
-claude:
-  enabled: true
-  plugins_enabled: true
-  # autostart: false
-  # command: claude
+#   - Installs it at `jailbee new` time (and updates it when `auto_update`,
+#     the default) and creates its empty shared-dir subpaths on
+#     `jailbee init`, checked by `jailbee doctor`. No host dotfiles are
+#     read — each agent runs its own onboarding/login flow from a clean
+#     state on first launch.
+#   - `autostart: true` launches the agent's `command` in the autostart
+#     tmux session on every container start; `jailbee tmux <c>` lands
+#     directly in that window. Override `command` to pass flags (e.g.
+#     "claude --dangerously-skip-permissions").
+agents:
+  claude:
+    enabled: true
+    plugins_enabled: true
+    # autostart: false
+    # command: claude
+  # codex:
+  #   enabled: true
+  #   autostart: true
+#
+# Legacy: a top-level `claude:` block is still accepted and means the same as
+# `agents.claude`. Defining both is an error. Prefer `agents.claude`.
+
+# Shared Claude credential group. Every repo on this host with `agents.claude`
+# enabled shares ONE login, stored at
+# <XDG_DATA_HOME>/jailbee/claude-credentials/<group>/ and bind-mounted into
+# every container as ~/.claude-creds. Only the *credential* is shared: each
+# repo keeps its own ~/.claude, so project history, MCP config and sessions
+# never cross repos. On a fresh host the first `/login` in any container lands
+# in the group directory, and every other repo is logged in from then on.
+#
+# Host-level only — this key is rejected in a repo's .jailbee/config.yaml,
+# because a group name is a property of *this machine's* working set: committed
+# to a repo it would apply to every teammate and name a directory that exists
+# on one machine only.
+#
+# `repos:` overrides the group per container_prefix; an explicit `null` keeps
+# one repo on its own credential. Edits take effect on the next `jailbee apply`
+# in each affected repo, which MOVES that repo's existing credential into the
+# group directory — and asks which login to keep when both sides already hold
+# one, since only one can be shared and the other becomes unused.
+# Set `group: null` to keep every repo on its own login (the behaviour of
+# hosts whose global.yaml predates this key). See docs/config.md#claude_credentials.
+claude_credentials:
+  group: default
+  # repos:
+  #   my-side-project: personal
+  #   experiment: null
 
 # GitHub CLI (gh) integration. When enabled, jailbee:
 #   - Auto-extends strict-mode egress_allow with api.github.com:443.
@@ -305,21 +398,30 @@ host_mounts:
     container: /home/dev/.gitconfig
     readonly: true
 
-# Extra egress endpoints needed by every repo. Defaults to none — the
-# claude block above auto-adds api.anthropic.com:443 + code.claude.com:443
-# + downloads.claude.ai:443 when claude.enabled (plus GitHub + npm when
-# claude.plugins_enabled),
+# Extra egress endpoints needed by every repo. Defaults to none — each enabled
+# agent in the `agents:` block above appends its own hosts (e.g. `claude` adds
+# api.anthropic.com:443 + code.claude.com:443 + downloads.claude.ai:443, plus
+# GitHub + npm when plugins_enabled),
 # and the jetbrains block auto-adds the JetBrains license / plugin /
 # CDN hosts when jetbrains.enabled (plus AI Assistant hosts when
 # jetbrains.ai_enabled). Add hostnames here only for endpoints not
 # covered by those blocks. Repo-level `egress_allow` appends.
+#
+# For a one-off host that should not be committed, use
+# `jailbee net egress add <host>` instead — it applies to one container (or,
+# with --repo, to this host's copy of the repo) and is not shared with the
+# team.
 egress_allow: []
 
 # Host-level docker registry mirror (host:port). See `jailbee registry up`.
 # This block is interpreted with the GlobalConfig schema (host-level),
 # NOT the per-repo DockerRegistryMirrorRepoConfig.
+# `enabled: auto` (the default) wires the mirror only into repos that ask for
+# it: an image that would contain Docker, a repo-level `extra_registries`, or
+# `golden.stacks.ecr`. Use `true` to force it on everywhere (it is host-global,
+# so that applies to every repo on this machine), `false` to disable.
 # docker_registry_mirror:
-#   enabled: true
+#   enabled: auto
 
 # Loose-mode auto-revert. When `jailbee net loose <c>` is invoked, the
 # container returns to its previous network mode after `after` elapses,

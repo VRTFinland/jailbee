@@ -12,6 +12,7 @@ from pathlib import Path
 from jailbee.config import Config
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE
+from jailbee.stopping import stop_container
 from jailbee.tui import info, status_with_elapsed, success, warn
 
 
@@ -200,6 +201,82 @@ def gather_golden_usage(incus: Incus, base_aliases: list[str]) -> list[GoldenIma
     ]
 
 
+def _resource_dir(name: str) -> Path:
+    """Coerce a bundled `jailbee.provision` subdirectory to a Path.
+
+    `importlib.resources` hands back a Traversable, which is not a Path under
+    zipimport. `resolve_snippets` tolerates a missing directory, so an
+    unusable resource degrades to "no snippets here" rather than an error.
+    """
+    trav = importlib.resources.files("jailbee.provision").joinpath(name)
+    try:
+        return Path(str(trav))
+    except TypeError:
+        return Path("/nonexistent")
+
+
+def resolved_snippet_paths(cfg: Config) -> list[Path]:
+    """The install.d snippets a golden build for `cfg` would run, in order.
+
+    Empty when `golden.provision_script` is set: that path replaces
+    install.sh wholesale and stages no snippets.
+
+    Shared by `build_golden_image` (which needs the files) and
+    `repo_uses_docker` (which needs their names), so "what would this repo's
+    image contain" has exactly one answer.
+    """
+    if cfg.golden.provision_script is not None:
+        return []
+
+    from jailbee.global_config import default_global_config_path
+    from jailbee.paths import repo_config_dir_name
+
+    # Derived from the global config path so `XDG_CONFIG_HOME` is honoured
+    # exactly as `global_config` does — hardcoding ~/.config would look in a
+    # directory that variable's user never writes.
+    user_install_d = default_global_config_path().parent / "install.d"
+    repo_install_d = cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
+    enabled = list(dict.fromkeys([*cfg.golden.enable_snippets, *cfg.golden.stacks.snippet_names()]))
+    return resolve_snippets(
+        bundled_dir=_resource_dir("install.d"),
+        user_dir=user_install_d,
+        repo_dir=repo_install_d,
+        disabled=cfg.golden.disable_snippets,
+        available_dir=_resource_dir("install.d.available"),
+        enabled=enabled,
+    )
+
+
+def resolved_snippet_names(cfg: Config) -> set[str]:
+    """Logical names ('docker', 'nodejs') of `resolved_snippet_paths(cfg)`."""
+    return {_logical_name(p.name) for p in resolved_snippet_paths(cfg)}
+
+
+def repo_uses_docker(cfg: Config) -> bool:
+    """Whether a golden image built for `cfg` would contain Docker.
+
+    Answers a question about *image content* only — whether the repo wants the
+    registry mirror is `docker_daemon.mirror_wanted`, which adds signals that
+    say nothing about what is installed.
+
+    Covers `golden.extra_apt_packages: [docker...]` (staged by the bundled
+    `05-extra-apt.sh`, so it is independent of install.d resolution and applies
+    with a `provision_script` too), `golden.stacks.docker`, the
+    `golden.enable_snippets` escape hatch, a user's or repo's own
+    `install.d/50-docker.sh`, and `disable_snippets` cancelling any of the
+    snippet-borne ones. A custom snippet under a different name
+    (`55-docker-ce.sh`) is invisible here — that is what
+    `docker_registry_mirror.enabled: true` is for.
+    """
+    # apt package names are validated lowercase (config.py `_APT_PACKAGE_NAME_RE`),
+    # so a plain prefix test covers docker.io / docker-ce / docker-compose-plugin.
+    if any(pkg.startswith("docker") for pkg in cfg.golden.extra_apt_packages):
+        return True
+    if cfg.golden.provision_script is not None:
+        return cfg.golden.stacks.docker
+    return "docker" in resolved_snippet_names(cfg)
+
+
 def build_golden_image(cfg: Config, incus: Incus) -> None:
     """Build the golden image from a fresh Ubuntu container.
 
@@ -269,45 +346,17 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
 
         # Stage user/repo install.d/ snippets when no provision_script override.
         if cfg.golden.provision_script is None:
-            from jailbee.global_config import default_global_config_path
-            from jailbee.paths import repo_config_dir_name
-
-            # Derived from the global config path so `XDG_CONFIG_HOME` is
-            # honoured exactly as `global_config` and `jailbee migrate` do —
-            # hardcoding ~/.config would look in a directory the migrator
-            # never writes for a user who sets that variable.
-            user_install_d = default_global_config_path().parent / "install.d"
-            repo_install_d = cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
-            bundled_install_d = importlib.resources.files("jailbee.provision").joinpath("install.d")
-            available_install_d = importlib.resources.files("jailbee.provision").joinpath(
-                "install.d.available"
-            )
-            # importlib.resources returns a Traversable; coerce to a Path
-            # for resolve_snippets. May not exist on disk (zipimport edge);
-            # resolve_snippets tolerates missing dirs.
-            try:
-                bundled_path = Path(str(bundled_install_d))
-            except TypeError:
-                bundled_path = Path("/nonexistent")
-            try:
-                available_path = Path(str(available_install_d))
-            except TypeError:
-                available_path = Path("/nonexistent")
-            enabled = list(dict.fromkeys([*cfg.golden.enable_snippets, *stacks.snippet_names()]))
             # Warn only on user-supplied enable_snippets names; stack-derived
             # names are always valid library entries and must not trigger
-            # spurious warnings.
-            unknown_enabled = resolve_available(available_path, cfg.golden.enable_snippets)[1]
+            # spurious warnings. This stays here rather than moving into
+            # resolved_snippet_paths: it is a build-time diagnostic, and
+            # `doctor` / `new` / `apply` must not print golden-build warnings.
+            unknown_enabled = resolve_available(
+                _resource_dir("install.d.available"), cfg.golden.enable_snippets
+            )[1]
             for name in unknown_enabled:
                 warn(f"golden.enable_snippets: no such snippet {name!r} — ignored")
-            snippets = resolve_snippets(
-                bundled_dir=bundled_path,
-                user_dir=user_install_d,
-                repo_dir=repo_install_d,
-                disabled=cfg.golden.disable_snippets,
-                available_dir=available_path,
-                enabled=enabled,
-            )
+            snippets = resolved_snippet_paths(cfg)
             if snippets:
                 info(f"Staging {len(snippets)} snippet(s) into /provision/install.d/")
                 incus.exec(build_container, ["mkdir", "-p", "/provision/install.d"])
@@ -356,8 +405,18 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
                 env=exec_env,
             )
 
-        info("Stopping build container")
-        incus.stop(build_container)
+        # A clean shutdown is a nicety here, not a requirement: what gets
+        # published is the filesystem, and the container is deleted moments
+        # later either way. So when the build container's init will not go
+        # down — a stuck apt-daily job, a process in D state — pull the plug
+        # and publish anyway. Failing here instead used to throw away a
+        # complete, successful provisioning run at the last step.
+        stop_container(
+            incus,
+            build_container,
+            force_fallback=True,
+            label="the build container",
+        )
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
 

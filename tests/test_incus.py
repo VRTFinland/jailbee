@@ -88,6 +88,30 @@ def test_stop_calls_incus_stop_with_force(incus, mocker):
     assert "--force" in args
 
 
+def test_stop_passes_an_explicit_clean_shutdown_timeout(incus, mocker):
+    """Without `--timeout`, incusd waits 600s before failing the stop."""
+    run = _mock_run(mocker)
+    incus.stop("feat-foo", timeout=120)
+    args = run.call_args[0][0]
+    assert args == ["incus", "stop", "feat-foo", "--timeout", "120"]
+
+
+def test_stop_force_never_sends_a_timeout(incus, mocker):
+    """A forced stop is a zero-timeout stop server-side; both is contradictory."""
+    run = _mock_run(mocker)
+    incus.stop("feat-foo", force=True, timeout=120)
+    args = run.call_args[0][0]
+    assert "--timeout" not in args
+    assert "--force" in args
+
+
+def test_console_log_returns_the_console_ring_buffer(incus, mocker):
+    run = _mock_run(mocker, stdout="A stop job is running for Daily apt upgrade\n")
+    out = incus.console_log("feat-foo")
+    assert run.call_args[0][0] == ["incus", "console", "feat-foo", "--show-log"]
+    assert "stop job" in out
+
+
 def test_delete_calls_incus_delete(incus, mocker):
     run = _mock_run(mocker)
     incus.delete("feat-foo", force=True)
@@ -275,6 +299,48 @@ def test_profile_show_invokes_incus_profile_show(incus, mocker):
     assert args == ["incus", "profile", "show", "foo"]
 
 
+def test_profile_config_get_returns_the_key(incus, mocker):
+    _mock_run(
+        mocker,
+        stdout="name: foo\nconfig:\n  environment.CLAUDE_CONFIG_DIR: /home/dev/.claude\n",
+    )
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") == "/home/dev/.claude"
+
+
+def test_profile_config_get_returns_none_for_an_unset_key(incus, mocker):
+    _mock_run(mocker, stdout='name: foo\nconfig:\n  security.nesting: "true"\n')
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") is None
+
+
+def test_profile_config_get_returns_none_without_a_config_block(incus, mocker):
+    """A profile with no `config:` at all — Incus renders it as `config: {}`,
+    but an empty mapping round-trips to None through yaml, so the `or {}`
+    fallbacks must hold."""
+    _mock_run(mocker, stdout="name: foo\nconfig: {}\ndevices: {}\n")
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") is None
+
+
+def test_profile_config_get_distinguishes_an_empty_value_from_unset(incus, mocker):
+    """`incus profile get` cannot tell these apart; this wrapper must, because
+    callers treat "set to something" as authoritative."""
+    _mock_run(mocker, stdout='name: foo\nconfig:\n  environment.CLAUDE_CONFIG_DIR: ""\n')
+    assert incus.profile_config_get("foo", "environment.CLAUDE_CONFIG_DIR") == ""
+
+
+def test_profile_config_set_invokes_incus_profile_set(incus, mocker):
+    run = _mock_run(mocker)
+    incus.profile_config_set("foo", "environment.CLAUDE_CONFIG_DIR", "/home/dev/.claude")
+    args = run.call_args[0][0]
+    assert args == [
+        "incus",
+        "profile",
+        "set",
+        "foo",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/home/dev/.claude",
+    ]
+
+
 def test_launch_without_config(incus, mocker):
     run = _mock_run(mocker)
     incus.launch("images:ubuntu/26.04", "feat-foo")
@@ -318,6 +384,44 @@ def test_timeout_is_normalized_to_incus_error(incus, mocker):
         incus.exec("feat-foo", ["bash", "-c", "true"], timeout=3)
     assert "timed out" in str(exc.value)
     assert "feat-foo" in str(exc.value)
+
+
+def test_timeout_is_an_incus_error_subclass_callers_can_single_out(incus, mocker):
+    """`IncusTimeoutError` must stay catchable as `IncusError`.
+
+    Every other caller catches the base class and must keep catching expiries
+    unchanged; only code with something specific to say about running out of
+    budget — `pr_ai`, which points at the transcript Claude left behind —
+    catches the subclass first.
+    """
+    from jailbee.incus import IncusTimeoutError
+
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["incus", "exec"], timeout=3),
+    )
+    with pytest.raises(IncusTimeoutError):
+        incus.exec("feat-foo", ["bash", "-c", "true"], timeout=3)
+    assert issubclass(IncusTimeoutError, IncusError)
+
+
+def test_non_timeout_failure_is_not_an_incus_timeout(incus, mocker):
+    """A non-zero exit must not be mistaken for an expiry.
+
+    `pr_ai` decides whether a resumable transcript exists from the exception
+    type alone, so a plain failure has to stay a plain `IncusError`.
+    """
+    from jailbee.incus import IncusTimeoutError
+
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["incus", "exec"], returncode=127, stdout="", stderr="claude: not found"
+        ),
+    )
+    with pytest.raises(IncusError) as exc:
+        incus.exec("feat-foo", ["bash", "-c", "claude"])
+    assert not isinstance(exc.value, IncusTimeoutError)
 
 
 def test_dry_run_does_not_call_subprocess(mocker):
@@ -802,3 +906,103 @@ def test_missing_binary_error_names_the_configured_binary(mocker):
         Incus(binary="/opt/incus/bin/incus").list_containers()
 
     assert "/opt/incus/bin/incus" in str(excinfo.value)
+
+
+def test_config_device_override_passes_key_values(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_override("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "override", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_set_passes_key_values(mocker):
+    """`config_device_set` is the in-place update path for a RUNNING
+    container's NIC — the hot path of every `jailbee apply` re-materialising
+    a container's egress ACL against an existing local `eth0` device — but
+    had no dedicated test in a fully-mocked suite, which is exactly where an
+    argv typo would otherwise go uncaught."""
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    Incus().config_device_set("ct", "eth0", {"security.acls": "a,b"})
+
+    args = run.call_args[0][0]
+    assert args[1:] == ["config", "device", "set", "ct", "eth0", "security.acls=a,b"]
+
+
+def test_config_device_remove_missing_ok_false_raises(mocker):
+    """The six pre-existing `missing_ok=False` (the default) callers depend
+    on a genuine removal failure raising — unlike `missing_ok=True`, which
+    deliberately swallows it."""
+    from jailbee.incus import Incus, IncusError
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    with pytest.raises(IncusError):
+        Incus().config_device_remove("ct", "eth0")
+
+
+def test_config_device_remove_missing_ok_swallows_failure(mocker):
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="Error: Device not found")
+
+    # Must not raise.
+    Incus().config_device_remove("ct", "eth0", missing_ok=True)
+
+
+def test_config_device_remove_missing_ok_retries_a_transient_etag_race(incus, mocker):
+    """A container that just booted can bounce a teardown off a transient
+    ETag mismatch. `missing_ok=True` must retry that, not swallow it on the
+    first attempt — a swallowed ETag failure would leave the device (and the
+    strict ACL still attached to it) in place while the caller believes the
+    teardown succeeded."""
+    sleep = mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR), _cp(returncode=0)],
+    )
+
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == 2
+    sleep.assert_called_once()  # backed off between the two attempts
+
+
+def test_config_device_remove_missing_ok_swallows_persistent_etag_failure(incus, mocker):
+    """Even if the ETag race never resolves, `missing_ok=True` must not
+    raise — it exhausts the same bounded retries as every other
+    read-modify-write, then swallows."""
+    mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR)] * 10,
+    )
+
+    # Must not raise.
+    incus.config_device_remove("ct", "eth0", missing_ok=True)
+
+    assert run.call_count == incus._ETAG_RETRIES
+
+
+def test_network_acl_list_returns_names(mocker):
+    import json as _json
+
+    from jailbee.incus import Incus
+
+    run = mocker.patch("jailbee.incus.subprocess.run")
+    run.return_value = mocker.Mock(
+        returncode=0,
+        stdout=_json.dumps([{"name": "a-allowlist"}, {"name": "b-extra"}]),
+        stderr="",
+    )
+    assert Incus().network_acl_list() == ["a-allowlist", "b-extra"]

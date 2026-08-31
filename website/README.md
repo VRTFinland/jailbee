@@ -17,39 +17,42 @@ Then open <http://localhost:8099>. Opening `website/index.html` directly as
 a `file://` URL also works — the page makes no requests that need a server,
 local or otherwise.
 
-## The demo clips are out for 1.0
+## The demo clip
 
-The page shipped four short terminal clips behind tabs. They were staged
-reconstructions, and they are being replaced by real workflow recordings made
-against a live Incus daemon — work that needs a host, so it did not gate 1.0.
-The `#demos` section, the clips, the posters and their CSS were removed rather
-than left half-finished on a public page.
+The page ships **one** clip: `assets/media/a.{webm,mp4}` with
+`assets/media/a.poster.png`, in `#demos`, click-to-play. It is a real
+recording of `jb new` → an agent working in the container → `jb git pull` →
+`jb destroy`, made against a live (nested) Incus daemon. Every command and
+every line of output on screen was executed; two stretches of dead time are
+sped up and carry a visible `×6` badge for exactly as long as they run.
 
-`demo/` is still here, untouched: `render.sh`, the tapes, the scene scripts,
-and `generate.py`. Keeping it costs nothing — it is not served as part of the
-page's content and never enters the PyPI package — and the recordings will be
-built on top of it.
+The four staged reconstructions the 1.0 page had are gone for good, along
+with their tabs, their autoplay script and `generate.py`. Two more real
+recordings are planned (a PR review and the git bridge); the four-clip tab
+wiring comes back with the second one, from git history at `a68553e`, and
+`tests/test_website.py::test_a_second_clip_brings_the_demo_tabs_back` fails
+the moment a second `<video>` appears without it.
 
-`tests/test_website.py::test_the_page_ships_no_clips_while_they_are_being_rerecorded`
-asserts the removal is complete and fails the moment a `<video>` or a demo tab
-reappears, naming the playback and tab-wiring guards that must come back with
-it. Restore those from git history rather than rewriting them.
+Three tests hold the rest of the contract:
+`test_every_demo_clip_is_click_to_play_with_a_poster` (the playback guards —
+`controls`, `preload="none"`, `poster`, `muted`, `playsinline`, and **not**
+`loop`/`autoplay`, which belonged to the old hero loops),
+`test_every_clip_the_page_references_is_actually_committed`, and
+`test_no_media_file_is_a_zero_byte_stand_in`.
 
-Rendering needs `vhs`, `ttyd`, `ffmpeg` and a system Chrome on the `PATH` —
-none of which exist in this repo's dev container, so it runs on a host.
+## How the clip is produced
 
-## How the scenes are produced
+`demo/render.sh` is the whole pipeline: `--record` drives a VHS tape against
+the demo substrate, then a cut list under `demo/cuts/` speeds up the dead
+spans and a poster is cut from the raw render. Rendering needs `vhs`, `ttyd`,
+`ffmpeg` and a system Chrome on the `PATH`, plus a working Incus daemon and
+the rig under `demo/rig/` — see [`demo/rig/README.md`](demo/rig/README.md).
 
-Nothing shown in the demo tables or the reconstructed terminal scripts is
-invented: each is either a real render through JailBee's own code
-(`demo/generate.py`, pinned against the renderer by
-`tests/test_website.py`) or a hand-transcribed reproduction of a string a
-named function in `src/jailbee/` actually prints, cited in a comment above
-the line that uses it. The full account of which scenes are which, the
-honesty rules that bind the transcriptions, and how to replace a
-reconstruction with a real captured session are in
-[`demo/scenes/README.md`](demo/scenes/README.md) — this file doesn't repeat
-it.
+Nothing about a clip is invented, and the honesty rules are not negotiable:
+no caption states a duration (the recordings are made on a nested daemon, and
+nested timings are not host timings), the agent in the recording is real and
+the caption never claims what it wrote, and no stretch is sped up without the
+`×N` marker on screen.
 
 ## Deployment
 
@@ -67,6 +70,6 @@ something this workflow does.
 
 `tests/test_website.py` is what catches a broken reference before it ships:
 mistyped asset paths, a stray absolute URL outside an anchor, a missing
-font or licence file, a demo table that no longer matches what JailBee's
-renderer produces. It runs as part of the normal suite (`uv run pytest`) —
-there is no separate website test command.
+font or licence file, a clip the page names but nobody committed, a stale
+stylesheet cache-buster. It runs as part of the normal suite
+(`uv run pytest`) — there is no separate website test command.

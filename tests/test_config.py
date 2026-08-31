@@ -1,6 +1,7 @@
 """Tests for config models and loader."""
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from jailbee.config import (
     Stacks,
     load_config,
 )
+from tests.conftest import make_cfg, with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1224,29 +1226,29 @@ def test_jetbrains_config_enabled_can_be_enabled():
 
 
 def test_claude_config_enabled_default_false():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().enabled is False
+    assert ClaudeAgentConfig().enabled is False
 
 
 def test_claude_config_can_be_enabled():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(enabled=True)
+    cfg = ClaudeAgentConfig(enabled=True)
     assert cfg.enabled is True
 
 
 def test_claude_config_extra_keys_rejected():
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
     with pytest.raises(ValidationError):
-        ClaudeConfig(unknown_field=True)  # type: ignore[call-arg]
+        ClaudeAgentConfig(unknown_field=True)  # type: ignore[call-arg]
 
 
 def test_config_has_claude_block_disabled_by_default(tmp_path, mocker):
-    """Config.claude defaults to a disabled ClaudeConfig."""
+    """Config.claude defaults to a disabled ClaudeAgentConfig."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
     cfg = load_config(cfg_path)
@@ -1254,17 +1256,20 @@ def test_config_has_claude_block_disabled_by_default(tmp_path, mocker):
 
 
 def test_claude_config_autostart_defaults():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig()
+    # `command` on the bare model defaults to "" (inherited from AgentConfig) —
+    # "claude" is supplied by `Config.claude`'s fallback construction and by
+    # `claude_preset()` on the load path, not by the model itself.
+    cfg = ClaudeAgentConfig()
     assert cfg.autostart is False
-    assert cfg.command == "claude"
+    assert cfg.command == ""
 
 
 def test_claude_config_autostart_accepts_custom_command():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(
+    cfg = ClaudeAgentConfig(
         enabled=True, autostart=True, command="claude --dangerously-skip-permissions"
     )
     assert cfg.autostart is True
@@ -1272,25 +1277,34 @@ def test_claude_config_autostart_accepts_custom_command():
 
 
 def test_validate_runtime_rejects_autostart_without_enabled(tmp_path):
+    """Exactly one diagnostic for this misconfiguration.
+
+    `resolve_agents_raw` always populates `agents["claude"]`, so a legacy
+    claude-specific special case alongside the generic per-agent loop would
+    double-report the same issue. `validate_runtime`'s generic loop is the
+    single source; guard against a duplicate creeping back in with a count
+    assertion rather than `any(...)`, which can't see a duplicate.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
-    object.__setattr__(cfg, "claude", cfg.claude.model_copy(update={"autostart": True}))
+    cfg = with_agent(cfg, "claude", autostart=True)
     issues = cfg.validate_runtime()
-    assert any("claude.autostart=true requires claude.enabled=true" in i for i in issues)
+    matches = [
+        i for i in issues if "agents.claude.autostart=true requires agents.claude.enabled=true" in i
+    ]
+    assert len(matches) == 1
+    assert "shared ~/.claude mount and Anthropic egress are gated" in matches[0]
 
 
 def test_validate_runtime_silent_when_autostart_and_enabled(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
-    object.__setattr__(
-        cfg,
-        "claude",
-        cfg.claude.model_copy(update={"enabled": True, "autostart": True}),
-    )
+    cfg = with_agent(cfg, "claude", enabled=True, autostart=True)
     issues = cfg.validate_runtime()
-    assert not any("claude.autostart" in i for i in issues)
+    matches = [i for i in issues if "claude.autostart" in i]
+    assert len(matches) == 0
 
 
 def test_claude_auto_update_defaults_true(tmp_path, mocker):
@@ -1333,35 +1347,192 @@ def test_claude_install_jailbee_skills_override_false_via_yaml(tmp_path, mocker)
     assert cfg.claude.install_jailbee_skills is False
 
 
-def test_claude_accepts_legacy_install_gie_skills_key_with_warning(mocker):
-    from jailbee import config as config_mod
-    from jailbee.config import ClaudeConfig
+def test_claude_pr_prompt_defaults_to_none(tmp_path, mocker):
+    """No `claude.pr_prompt` means jailbee's own prompt is used unchanged."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt is None
 
-    config_mod._warn_legacy_skills_key.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn")
 
-    cfg = ClaudeConfig.model_validate({"install_gie_skills": False})
-    ClaudeConfig.model_validate({"install_gie_skills": False})
+def test_claude_pr_prompt_reads_a_multiline_block_from_repo_yaml(tmp_path, mocker):
+    """A repo encodes its PR standard as a YAML block scalar."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml=(
+            "claude:\n"
+            "  enabled: true\n"
+            "  pr_prompt: |\n"
+            "    Use these headings:\n"
+            "    ## Motivation\n"
+            "    ## Risk\n"
+        ),
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.pr_prompt == "Use these headings:\n## Motivation\n## Risk\n"
 
-    assert cfg.install_jailbee_skills is False
-    warn.assert_called_once()
-    assert "install_jailbee_skills" in warn.call_args.args[0]
+
+def test_claude_pr_prompt_rejects_an_oversized_value():
+    """A pathological value fails loudly at load instead of inside the container."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeAgentConfig
+
+    with pytest.raises(ValidationError):
+        ClaudeAgentConfig(enabled=True, pr_prompt="x" * 20_001)
+
+
+def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
+    """PR text is a bounded summarisation job — it does not need the Opus default."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "sonnet"
+
+
+def test_claude_ai_pr_model_accepts_a_pinned_model_id(tmp_path, mocker):
+    """The value passes through to `claude --model`, so full IDs must survive."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: claude-haiku-4-5\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model == "claude-haiku-4-5"
+
+
+def test_claude_ai_pr_model_null_inherits_the_container_default(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_model: null\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_model is None
+
+
+def test_claude_ai_pr_model_rejects_extra_flags():
+    """A model name never contains whitespace; smuggling flags in must not work."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeAgentConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeAgentConfig(enabled=True, ai_pr_model="sonnet --dangerously-skip-permissions")
+
+
+def test_claude_ai_pr_model_rejects_an_empty_string():
+    """Empty means "inherit the container default" — spell that `null`, not ''."""
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeAgentConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_model"):
+        ClaudeAgentConfig(enabled=True, ai_pr_model="   ")
+
+
+def test_claude_ai_pr_timeout_defaults_to_600(tmp_path, mocker):
+    """Generation is an agentic run: 129s in this repo on a 21-file diff.
+
+    The old hard-coded 180s left no room for a larger tree, and there was no
+    config key to raise it.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_timeout == 600
+
+
+def test_claude_ai_pr_timeout_is_raisable_from_repo_yaml(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="claude:\n  enabled: true\n  ai_pr_timeout: 1200\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.claude.ai_pr_timeout == 1200
+
+
+@pytest.mark.parametrize("bad", [0, -30])
+def test_claude_ai_pr_timeout_rejects_non_positive_values(bad):
+    """`timeout=0` expires instantly — a config error, not a way to disable AI.
+
+    Turning generation off is `ai_pr_description: false`.
+    """
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeAgentConfig
+
+    with pytest.raises(ValidationError, match="ai_pr_timeout"):
+        ClaudeAgentConfig(enabled=True, ai_pr_timeout=bad)
+
+
+def test_config_rejects_the_retired_install_gie_skills_key(tmp_path, mocker):
+    """End-to-end, because which error surfaces depends on ordering.
+
+    `ClaudeAgentConfig` forbids extras, so a config carrying the pre-1.0 key name
+    fails either way — but on pydantic's "Extra inputs are not permitted",
+    which names neither the new key nor the fix. `_check_retired_keys` has to
+    run first for the user to be told what to rename it to.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text("claude:\n  install_gie_skills: false\n")
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+
+    msg = str(exc.value)
+    assert "claude.install_jailbee_skills" in msg
+    assert "Extra inputs" not in msg
+
+
+def test_config_rejects_the_retired_install_gie_skills_key_via_agents_claude(tmp_path, mocker):
+    """Same retired-key check, `agents.claude` spelling.
+
+    `_check_retired_keys` runs on the raw dict before `Config.model_validate`,
+    so it must catch this under `agents.claude` too — not just the legacy
+    top-level `claude:` block — or a user who has already migrated to the
+    new spelling loses the friendly rename message and falls through to
+    pydantic's "Extra inputs are not permitted" instead.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text(
+        "agents:\n  claude:\n    install_gie_skills: false\n"
+    )
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+
+    msg = str(exc.value)
+    assert "claude.install_jailbee_skills" in msg
+    assert "Extra inputs" not in msg
 
 
 def test_claude_install_jailbee_skills_defaults_true():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().install_jailbee_skills is True
+    assert ClaudeAgentConfig().install_jailbee_skills is True
 
 
 def test_claude_install_jailbee_skills_override_by_keyword():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig(install_jailbee_skills=False).install_jailbee_skills is False
+    assert ClaudeAgentConfig(install_jailbee_skills=False).install_jailbee_skills is False
 
 
 def test_claude_rejects_unknown_key(tmp_path, mocker):
-    """ClaudeConfig keeps extra='forbid' — unknown keys still raise."""
+    """ClaudeAgentConfig keeps extra='forbid' — unknown keys still raise."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
@@ -1385,6 +1556,7 @@ def test_claude_rejects_unknown_key(tmp_path, mocker):
         ("open_ide", "autostart", "jetbrains.ide + jetbrains.autostart"),
         ("open_chrome", "autostart", "chrome.autostart"),
         ("chrome_dark_mode", "autostart", "chrome.dark_mode"),
+        ("install_gie_skills", "claude", "claude.install_jailbee_skills"),
     ],
 )
 def test_retired_keys_raise_with_new_location(key, parent, target):
@@ -1463,6 +1635,24 @@ def test_config_rejects_removed_claude_seed_from_host_nested(tmp_path, mocker):
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
     (repo / ".jailbee" / "config.yaml").write_text("claude:\n  seed_from_host: true\n")
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+    assert "has been removed" in str(exc.value)
+
+
+def test_config_rejects_removed_claude_seed_from_host_via_agents_claude(tmp_path, mocker):
+    """Same removal message under the `agents.claude` spelling.
+
+    `_check_retired_keys` checks both `raw["claude"]` and
+    `raw["agents"]["claude"]` for `_REMOVED_KEYS_CLAUDE` — this exercises the
+    second one specifically, so the removal message isn't silently lost for
+    users who have already migrated off the legacy `claude:` block.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    repo = tmp_path / "r"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".jailbee" / "config.yaml").write_text("agents:\n  claude:\n    seed_from_host: true\n")
     with pytest.raises(ConfigError) as exc:
         load_config(repo / ".jailbee" / "config.yaml")
     assert "has been removed" in str(exc.value)
@@ -2331,7 +2521,7 @@ def test_push_default_source_default_is_base():
 
 
 def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mocker):
-    """claude.enabled auto-adds claude, claude-json AND claude-install."""
+    """claude.enabled auto-adds claude AND claude-install."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="claude:\n  enabled: true\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -2339,6 +2529,7 @@ def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mock
     assert "claude-install" in by_name
     assert by_name["claude-install"].host_subpath == "claude-install"
     assert by_name["claude-install"].container_path == "~/.local/share/claude"
+    assert "claude-json" not in by_name
 
 
 def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocker):
@@ -2348,6 +2539,156 @@ def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocke
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     names = {c.name for c in cfg.effective_shared_caches()}
     assert "claude-install" not in names
+
+
+def test_agent_mounts_and_egress_reach_effective_lists(tmp_path):
+    """Non-claude agents' mounts and egress flow through the same
+    spec-driven path as claude's, not just a claude-only code path."""
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    assert "codex" in [c.name for c in cfg.effective_shared_caches()]
+    assert "api.openai.com:443" in cfg.effective_egress_allow()
+
+
+def test_validate_agents_revalidates_a_plain_agentconfig_under_claude_key():
+    """A caller building `Config` in Python (not from YAML) can pass an
+    already-constructed base `AgentConfig` under the `claude` key.
+    `_validate_agents` must re-validate it through `ClaudeAgentConfig`,
+    because `Config.claude` only ever recognises that subclass and falls
+    back to a disabled default otherwise — so leaving the base class in
+    `agents["claude"]` would split the config in two views that disagree
+    on whether Claude is enabled.
+
+    Not reachable from YAML: the dict branch of `_validate_agents` already
+    dispatches on the key name, so this is a latent trap only a Python
+    caller passing pre-built model instances can hit.
+    """
+    from jailbee.config import AgentConfig, ClaudeAgentConfig
+
+    cfg = Config.model_validate({"agents": {"claude": AgentConfig(enabled=True, command="claude")}})
+
+    assert isinstance(cfg.agents["claude"], ClaudeAgentConfig)
+    # The actual bug: without re-validation, cfg.claude falls back to a
+    # disabled default while agents["claude"].enabled stays True — the two
+    # views of the same config disagree.
+    assert cfg.claude.enabled == cfg.agents["claude"].enabled
+
+
+def test_validate_runtime_flags_agent_subpath_colliding_with_builtin(tmp_path):
+    """An agent whose `shared[].subpath` names a built-in shared subdir would
+    have `device_name()` derive the same Incus device name as the built-in
+    mount and quietly point it at the agent's container path instead — e.g.
+    `ssh`, which is where `jailbee init` seeds the user's real keys.
+
+    Only reported for an *enabled* agent: a disabled entry attaches nothing.
+    """
+    from jailbee.constants import SHARED_SUBDIRS
+
+    assert "ssh" in SHARED_SUBDIRS  # the collision this test relies on
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "codex": {
+                "enabled": True,
+                "command": "codex",
+                "shared": [{"subpath": "ssh", "path": "~/.codex"}],
+            }
+        },
+    )
+
+    issues = cfg.validate_runtime()
+
+    assert [i for i in issues if "collides with" in i and "'ssh'" in i]
+
+
+def test_validate_runtime_ignores_subpath_collision_for_disabled_agent(tmp_path):
+    """Differential partner for the test above: the check is gated on
+    `enabled`, so a disabled agent with the same colliding subpath is silent.
+    Without this, a check that reported unconditionally would still pass."""
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "codex": {
+                "enabled": False,
+                "command": "codex",
+                "shared": [{"subpath": "ssh", "path": "~/.codex"}],
+            }
+        },
+    )
+
+    assert not [i for i in cfg.validate_runtime() if "collides with" in i]
+
+
+def test_agent_shared_mount_rejects_seed_on_a_dir(tmp_path, mocker):
+    """`seed` names a file to copy in when the shared file is absent, so it is
+    meaningless on `type: dir` — and silently ignoring it would leave the user
+    believing a directory gets seeded. Rejected at model-validation time."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+
+    with pytest.raises(ValidationError, match="seed is only valid for type: file"):
+        make_cfg(
+            tmp_path,
+            agents={
+                "codex": {
+                    "enabled": True,
+                    "command": "codex",
+                    "shared": [
+                        {
+                            "subpath": "codex",
+                            "path": "~/.codex",
+                            "type": "dir",
+                            "seed": "~/.codex.example",
+                        }
+                    ],
+                }
+            },
+        )
+
+
+def test_agent_shared_mount_allows_seed_on_a_file(tmp_path):
+    """The partner case, so the rule above can't be satisfied by rejecting
+    every `seed`. Uses a preset-free agent name so the asserted entry is the
+    only one in `shared` (a preset's own `shared` list would be merged in
+    ahead of it)."""
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "mystery": {
+                "enabled": True,
+                "command": "mystery",
+                "shared": [
+                    {
+                        "subpath": "mystery-config",
+                        "path": "~/.mystery/config.toml",
+                        "type": "file",
+                        "seed": "~/.mystery.example",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert cfg.agents["mystery"].shared[0].seed == "~/.mystery.example"
+
+
+def test_validate_runtime_flags_enabled_agent_with_empty_command(tmp_path):
+    """`enabled: true` with no `command` is a config error, not just something
+    `agent_autostart_steps` skips. An agent name outside the shipped six has
+    no preset to supply a command, so this is reachable by typo — and the only
+    coverage today is the separate autostart-step guard, which is
+    defense-in-depth rather than the primary check.
+    """
+    cfg = make_cfg(tmp_path, agents={"mystery": {"enabled": True, "command": "   "}})
+
+    issues = cfg.validate_runtime()
+
+    assert [i for i in issues if "agents.mystery.enabled=true requires a non-empty `command`" in i]
+
+
+def test_validate_runtime_silent_for_disabled_agent_with_empty_command(tmp_path):
+    """Differential partner: the check is gated on `enabled`."""
+    cfg = make_cfg(tmp_path, agents={"mystery": {"enabled": False, "command": ""}})
+
+    assert not [i for i in cfg.validate_runtime() if "non-empty `command`" in i]
 
 
 def test_new_config_background_defaults_false() -> None:
@@ -2416,23 +2757,55 @@ def test_destroy_background_can_be_enabled(tmp_path, mocker):
     assert cfg.destroy.background is True
 
 
-def test_claude_ai_pr_description_defaults_true_and_round_trips():
-    from jailbee.config import ClaudeConfig
+# ---------- BootConfig
 
-    assert ClaudeConfig().ai_pr_description is True
-    assert ClaudeConfig(ai_pr_description=False).ai_pr_description is False
+
+def test_boot_background_defaults_to_false(tmp_path, mocker):
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path = _make_config(tmp_path, "{}\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.boot.background is False
+
+
+def test_boot_background_can_be_enabled(tmp_path, mocker):
+    """One key covers both boot commands: `jailbee start` and
+    `jailbee restart` run the same slow autostart afterwards."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path = _make_config(tmp_path, "boot:\n  background: true\n")
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.boot.background is True
+
+
+def test_boot_config_rejects_unknown_keys():
+    from pydantic import ValidationError
+
+    from jailbee.config import BootConfig
+
+    with pytest.raises(ValidationError):
+        BootConfig.model_validate({"background": True, "restart": True})
+
+
+def test_claude_ai_pr_description_defaults_true_and_round_trips():
+    from jailbee.config import ClaudeAgentConfig
+
+    assert ClaudeAgentConfig().ai_pr_description is True
+    assert ClaudeAgentConfig(ai_pr_description=False).ai_pr_description is False
 
 
 def test_claude_ai_pr_branch_defaults_true():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    assert ClaudeConfig().ai_pr_branch is True
+    assert ClaudeAgentConfig().ai_pr_branch is True
 
 
 def test_claude_ai_pr_branch_roundtrips_false():
-    from jailbee.config import ClaudeConfig
+    from jailbee.config import ClaudeAgentConfig
 
-    cfg = ClaudeConfig(ai_pr_branch=False)
+    cfg = ClaudeAgentConfig(ai_pr_branch=False)
     assert cfg.ai_pr_branch is False
     assert cfg.model_dump()["ai_pr_branch"] is False
 
@@ -2761,16 +3134,6 @@ def test_effective_columns_explicit_empty_hide_beats_a_nonempty_global(make_cfg,
     assert eff.hide == []
 
 
-def test_effective_dashboard_columns_keeps_the_default_hide(make_cfg, tmp_path) -> None:
-    from jailbee.config import DASHBOARD_DEFAULT_HIDE
-    from jailbee.global_config import GlobalConfig
-
-    cfg = make_cfg(tmp_path)
-
-    eff = cfg.effective_dashboard_columns(GlobalConfig())
-    assert sorted(eff.hide) == sorted(DASHBOARD_DEFAULT_HIDE)
-
-
 def test_validate_runtime_rejects_an_unknown_ls_field(make_cfg, tmp_path) -> None:
     cfg = make_cfg(tmp_path, ls={"fields": ["name", "nosuchfield"]})
 
@@ -3046,30 +3409,85 @@ def test_load_path_global_dashboard_block_reaches_global_config(
     assert gcfg.dashboard.hide == ["ip"]
 
 
-def test_load_path_repo_explicit_empty_hide_beats_a_nonempty_global_dashboard(
+def test_load_path_agents_layer_merges_per_agent_instead_of_replacing(
     tmp_path, monkeypatch, mocker
 ) -> None:
-    """The dashboard-layer twin of the `ls` test above, and the property this
-    branch's review flagged as protected-but-uncovered: a repo block that
-    explicitly sets `dashboard.hide: []` must override a non-empty global
-    `dashboard.hide`, end to end. `Config._effective_columns` keys the merge
-    on `model_fields_set` rather than truthiness specifically so this works;
-    until now the property was only proven by a hand-built `Config`/
-    `GlobalConfig` pair (the `ls` equivalent at
-    `test_effective_columns_explicit_empty_hide_beats_a_nonempty_global`) or
-    by reading the code, never through the real YAML load path that
-    production actually takes."""
+    """The mapping-not-list decision, asserted at the layer that motivated it.
+
+    `agents:` is a mapping precisely so a repo can extend an entry the user
+    enabled globally. If it were a list, `deep_merge`'s list rule would append
+    and the codex entry would appear twice; if the mapping merge were shallow,
+    the repo's `egress_allow` would replace the whole entry and lose
+    `enabled: true`. Neither is covered anywhere else — every other
+    `agents:` test builds one dict.
+    """
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, _ = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="agents:\n  codex:\n    enabled: true\n",
+        repo_yaml="agents:\n  codex:\n    egress_allow: [extra.host:443]\n",
+    )
+
+    cfg = load_config(cfg_path)
+
+    # One entry, not two, and the globally-set scalar survived the repo layer.
+    assert list(cfg.agents) == ["codex"]
+    assert cfg.agents["codex"].enabled is True
+    # The preset's own host is still there (preset merges under both layers),
+    # and the repo's addition appended rather than replacing.
+    assert cfg.agents["codex"].egress_allow == ["api.openai.com:443", "extra.host:443"]
+    # The preset's other fields survived too — the repo entry was a fragment.
+    assert cfg.agents["codex"].command == "codex"
+    assert "extra.host:443" in cfg.effective_egress_allow()
+
+
+def test_load_path_legacy_global_claude_plus_repo_agents_claude_is_an_error(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    """The exact shape an existing user hits: a `claude:` block left in
+    `global.yaml` (what the old template wrote) meeting an `agents.claude`
+    in a repo config. This is a *new hard failure* for such users, and the
+    only direct coverage today is `resolve_agents_raw` with both keys in one
+    dict — which never exercises the cross-layer path or the error text.
+
+    The message must name both files, so it points at `global.yaml` (which
+    holds the key to delete) rather than only at the repo config the
+    surrounding `Config validation failed in ...` wrapper would name.
+    """
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
-        global_yaml="dashboard:\n  hide: [ip]\n",
-        repo_yaml="dashboard:\n  hide: []\n",
+        global_yaml="claude:\n  enabled: true\n",
+        repo_yaml="agents:\n  claude:\n    autostart: true\n",
     )
 
-    columns = load_config(cfg_path).effective_dashboard_columns(_load_global_yaml(global_path))
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(cfg_path)
 
-    assert columns.hide == []
+    message = str(exc_info.value)
+    assert "claude:" in message and "agents.claude" in message
+    assert str(global_path) in message
+    assert str(cfg_path) in message
+
+
+def test_load_path_legacy_claude_alone_still_loads(tmp_path, monkeypatch, mocker) -> None:
+    """The guard above must not fire on the legacy spelling by itself —
+    a `claude:` block in `global.yaml` with no `agents.claude` anywhere is
+    still a supported config."""
+    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    cfg_path, _ = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="claude:\n  enabled: true\n",
+        repo_yaml="agents:\n  codex:\n    enabled: true\n",
+    )
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.claude.enabled is True
+    assert cfg.agents["codex"].enabled is True
 
 
 # A typo, an empty `fields: []`, or a duplicated name in `global.yaml`'s
@@ -3148,33 +3566,33 @@ def test_load_config_column_warnings_empty_by_default(tmp_path, mocker) -> None:
     assert cfg.column_warnings() == []
 
 
-def test_load_config_repo_hide_only_still_inherits_global_fields_after_sanitize(
+def test_load_config_repo_ls_hide_only_still_inherits_global_fields_after_sanitize(
     tmp_path, monkeypatch, mocker
 ) -> None:
-    """The regression guard for the fix itself: `sanitize_column_blocks` must
-    only touch the sub-field it is actually correcting. A dashboard block
-    that sets `hide` (with one bad name to sanitize) but never mentions
-    `fields` must still inherit the global `fields` after going through
+    """`sanitize_column_blocks` must only touch the sub-field it is actually
+    correcting: a repo `ls:` block that sets `hide` (with one bad name to
+    sanitize) but never mentions `fields` must still inherit the global
+    `fields` through `effective_ls_columns` after going through
     `load_config` — if the sanitizer reconstructed the whole `ColumnConfig`
-    it would mark `fields` as explicitly set too (to its own default,
-    `None`), which would override the global `fields` list with `None`
-    instead of inheriting it, corrupting the merge for every repo that ever
-    sets `hide`, not just the ones with a typo."""
-    from jailbee.global_config import load_global_config
-
+    instead of touching only `hide`, it would mark `fields` as explicitly
+    set too (to its own default, `None`), which would override the global
+    `fields` list with `None` instead of inheriting it, corrupting the merge
+    for every repo that ever has a `hide` typo, not just the sanitizer's own
+    unit tests. `ls` is the live path this guards; the equivalent for the
+    deprecated `dashboard:` block was deleted along with
+    `effective_dashboard_columns`."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    xdg = tmp_path / ".config"
-    (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, state]\n")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-    repo = _write_repo(tmp_path, config_yaml="dashboard:\n  hide: [ip, nosuchfield]\n")
+    cfg_path, global_path = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="ls:\n  fields: [name, state]\n",
+        repo_yaml="ls:\n  hide: [ip, nosuchfield]\n",
+    )
 
-    cfg = load_config(repo / ".jailbee" / "config.yaml")
-    gcfg, _ = load_global_config(xdg / "jailbee" / "global.yaml")
+    cfg = load_config(cfg_path)
+    gcfg = _load_global_yaml(global_path)
 
-    assert cfg.dashboard.hide == ["ip"]
-    assert any("nosuchfield" in w for w in cfg.column_warnings())
-    eff = cfg.effective_dashboard_columns(gcfg)
+    eff = cfg.effective_ls_columns(gcfg)
     assert eff.fields == ["name", "state"]
     assert eff.hide == ["ip"]
 
@@ -3267,3 +3685,315 @@ def test_load_config_from_text_rejects_github_block(tmp_path, mocker):
     )
     with pytest.raises(ConfigError, match="github"):
         load_config_from_text("github:\n  enabled: true\n", tmp_path / ".jailbee" / "config.yaml")
+
+
+def test_host_ports_defaults(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n",
+    )
+    cfg = load_config(cfg_path)
+    entry = cfg.host_ports[0]
+    assert entry.name == "adb"
+    assert entry.port == 5037
+    assert entry.host_port is None
+    assert entry.effective_host_port == 5037
+    assert entry.proto == "tcp"
+    assert entry.host_address == "127.0.0.1"
+    assert entry.container_address == "127.0.0.1"
+
+
+def test_host_ports_explicit_host_port_and_udp(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n"
+        "  - name: dns\n"
+        "    port: 5353\n"
+        "    host_port: 53\n"
+        "    proto: udp\n"
+        "    host_address: 10.0.0.1\n"
+        "    container_address: 127.0.0.2\n",
+    )
+    entry = load_config(cfg_path).host_ports[0]
+    assert entry.effective_host_port == 53
+    assert entry.proto == "udp"
+    assert entry.host_address == "10.0.0.1"
+    assert entry.container_address == "127.0.0.2"
+
+
+def test_host_ports_default_is_empty(tmp_path):
+    assert load_config(_make_config(tmp_path, "{}\n")).host_ports == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Adb", "-adb", "adb_server", "adb server", "a" * 41],
+)
+def test_host_ports_rejects_bad_name(tmp_path, name):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: {name!r}\n    port: 5037\n")
+    with pytest.raises(ConfigError, match="host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("port", [0, 70000, -1])
+def test_host_ports_rejects_out_of_range_port(tmp_path, port):
+    cfg_path = _make_config(tmp_path, f"host_ports:\n  - name: x\n    port: {port}\n")
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_out_of_range_host_port(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: x\n    port: 5037\n    host_port: 99999\n",
+    )
+    with pytest.raises(ConfigError, match=re.escape("1..65535")):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("field", ["host_address", "container_address"])
+def test_host_ports_rejects_hostname_as_address(tmp_path, field):
+    cfg_path = _make_config(
+        tmp_path,
+        f"host_ports:\n  - name: x\n    port: 5037\n    {field}: localhost\n",
+    )
+    with pytest.raises(ConfigError, match="IP literal"):
+        load_config(cfg_path)
+
+
+def test_host_ports_accepts_ipv6_literal(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        'host_ports:\n  - name: x\n    port: 5037\n    host_address: "::1"\n',
+    )
+    assert load_config(cfg_path).host_ports[0].host_address == "::1"
+
+
+def test_host_ports_rejects_duplicate_names(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: adb\n    port: 5037\n  - name: adb\n    port: 5038\n",
+    )
+    with pytest.raises(ConfigError, match="duplicate host_ports name"):
+        load_config(cfg_path)
+
+
+@pytest.mark.parametrize("key", ["direction", "to_host", "bind"])
+def test_host_ports_rejects_direction_keys_with_explanation(tmp_path, key):
+    cfg_path = _make_config(
+        tmp_path,
+        f"host_ports:\n  - name: web\n    port: 8080\n    {key}: to_host\n",
+    )
+    with pytest.raises(ConfigError, match="jailbee port to-host"):
+        load_config(cfg_path)
+
+
+def test_host_ports_rejects_unknown_key(tmp_path):
+    cfg_path = _make_config(
+        tmp_path,
+        "host_ports:\n  - name: web\n    port: 8080\n    nat: true\n",
+    )
+    with pytest.raises(ConfigError):
+        load_config(cfg_path)
+
+
+def test_a_global_dashboard_block_is_reported_as_deprecated(tmp_path) -> None:
+    """`jailbee config validate` is where a user finds out the block stopped
+    mattering. Only fires when the key is actually present — a default block
+    must stay silent."""
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  hide: [mem]\n")
+
+    issues = global_config_issues(path)
+
+    assert any("dashboard" in i and "deprecated" in i for i in issues)
+
+
+def test_no_dashboard_block_reports_no_deprecation(tmp_path) -> None:
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("ls:\n  hide: [mem]\n")
+
+    assert not any("deprecated" in i for i in global_config_issues(path))
+
+
+def test_a_repo_dashboard_block_reports_deprecated_and_not_seeded(make_cfg, tmp_path) -> None:
+    """A repo block is doubly dead: deprecated like the global one, and never
+    seeded — the seed reads the personal layer only, so this one is simply
+    dropped. That has to be said out loud, not left to be discovered."""
+    from jailbee.config import ColumnConfig
+
+    # `model_copy(update=...)` adds the updated keys to __pydantic_fields_set__
+    # in Pydantic v2, which is what `"dashboard" in cfg.model_fields_set` reads.
+    cfg = make_cfg(tmp_path).model_copy(update={"dashboard": ColumnConfig(hide=["mem"])})
+    assert "dashboard" in cfg.model_fields_set  # the precondition this test rests on
+
+    issues = cfg.validate_runtime()
+
+    assert any("deprecated" in i for i in issues)
+    assert any("not seeded" in i or "not imported" in i for i in issues)
+
+
+def test_claude_credentials_dir_for_uses_the_default_group():
+    from jailbee.config import ClaudeCredentials
+    from jailbee.paths import xdg_data_home
+
+    creds = ClaudeCredentials(group="work")
+
+    assert creds.dir_for("anything") == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
+
+
+def test_claude_credentials_dir_for_prefers_a_repo_entry():
+    from jailbee.config import ClaudeCredentials
+    from jailbee.paths import xdg_data_home
+
+    creds = ClaudeCredentials(group="work", repos={"side": "personal"})
+
+    root = xdg_data_home() / "jailbee" / "claude-credentials"
+    assert creds.dir_for("side") == root / "personal"
+    assert creds.dir_for("other") == root / "work"
+
+
+def test_claude_credentials_explicit_null_opts_a_repo_out():
+    """An explicit `null` must beat the default group, not fall through to it —
+    it is the only way to keep one repo on its own credential."""
+    from jailbee.config import ClaudeCredentials
+
+    creds = ClaudeCredentials(group="work", repos={"solo": None})
+
+    assert creds.dir_for("solo") is None
+    assert creds.dir_for("other") is not None
+
+
+def test_claude_credentials_absent_block_shares_nothing():
+    from jailbee.config import ClaudeCredentials
+
+    assert ClaudeCredentials().dir_for("anything") is None
+
+
+def test_claude_credentials_rejects_a_group_name_that_is_not_one_path_segment():
+    """The group name becomes a directory name under the credentials root, so
+    a traversal must be refused at validation, not sanitised later."""
+    import pytest
+    from pydantic import ValidationError
+
+    from jailbee.config import ClaudeCredentials
+
+    for bad in ("../escape", "with/slash", "Upper", "-leading", ""):
+        with pytest.raises(ValidationError):
+            ClaudeCredentials(group=bad)
+    with pytest.raises(ValidationError):
+        ClaudeCredentials(repos={"repo": "../escape"})
+
+
+def test_gradle_cache_is_pooled_by_default_when_java_stack_on(tmp_path):
+    """The java stack adds caches/gradle; its preset defaults to pooled."""
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text("golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml")
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is not None
+    assert "caches/modules-2/files-2.1" in gradle.pool.link_paths
+
+
+def test_pooled_caches_false_opts_out(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\npooled_caches:\n  gradle: false\n",
+        tmp_path / "c.yaml",
+    )
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is None
+
+
+def test_pooled_caches_true_opts_in_for_default_off_preset(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    node: 24\npooled_caches:\n  npm: true\n",
+        tmp_path / "c.yaml",
+    )
+    npm = next(c for c in cfg.effective_shared_caches() if c.name == "npm")
+    assert npm.pool is not None
+    assert npm.pool.link_paths == ["_cacache"]
+
+
+def test_explicit_pool_block_beats_pooled_caches(tmp_path):
+    from jailbee.config import load_config_from_text
+
+    text = (
+        "pooled_caches:\n  gradle: false\n"
+        "shared_caches:\n"
+        "  - name: gradle\n"
+        "    host_subpath: caches/gradle\n"
+        "    container_path: ~/.gradle\n"
+        "    pool:\n"
+        "      seed: false\n"
+    )
+    cfg = load_config_from_text(text, tmp_path / "c.yaml")
+    gradle = next(c for c in cfg.effective_shared_caches() if c.name == "gradle")
+    assert gradle.pool is not None
+    assert gradle.pool.seed is False
+
+
+def test_pooled_caches_unknown_name_is_an_error(tmp_path):
+    from jailbee.config import ConfigError, load_config_from_text
+
+    with pytest.raises(ConfigError, match="no shared cache named 'nosuch'"):
+        load_config_from_text("pooled_caches:\n  nosuch: true\n", tmp_path / "c.yaml")
+
+
+def test_pooled_caches_true_without_preset_is_an_error(tmp_path):
+    from jailbee.config import ConfigError, load_config_from_text
+
+    text = (
+        "pooled_caches:\n  sbt: true\n"
+        "shared_caches:\n"
+        "  - name: sbt\n"
+        "    host_subpath: caches/sbt\n"
+        "    container_path: ~/.sbt\n"
+    )
+    with pytest.raises(ConfigError, match="no builtin pool preset"):
+        load_config_from_text(text, tmp_path / "c.yaml")
+
+
+def test_pooled_caches_false_on_a_pool_only_preset_is_an_error(tmp_path):
+    """`chrome-profile`'s host_subpath is the pool root itself, so the
+    un-pooled form would render `source: <shared_dir>/chrome-pool`,
+    `path: ~/.config/google-chrome` — every container's Chrome profile
+    becoming the pool root, writing alongside `slots/` and `by-container/`
+    and thereby breaking the next `ensure_pool_dirs`."""
+    from jailbee.config import ConfigError, load_config_from_text
+
+    text = "chrome:\n  enabled: true\npooled_caches:\n  chrome-profile: false\n"
+    with pytest.raises(ConfigError, match="cannot be un-pooled"):
+        load_config_from_text(text, tmp_path / "c.yaml")
+
+
+def test_pool_only_preset_stays_pooled_even_if_the_flag_says_otherwise(tmp_path):
+    """Defence in depth for a Config built without validation: honouring
+    `false` here is what mounts the pool root into the container."""
+    from jailbee.config import POOL_PRESETS, load_config_from_text
+
+    assert POOL_PRESETS["chrome-profile"].pool_only is True
+    cfg = load_config_from_text("chrome:\n  enabled: true\n", tmp_path / "c.yaml")
+    cfg = cfg.model_copy(update={"pooled_caches": {"chrome-profile": False}})
+    chrome = next(c for c in cfg.effective_shared_caches() if c.name == "chrome-profile")
+    assert chrome.pool is not None
+
+
+def test_chrome_pool_entry_matches_the_legacy_layout(tmp_path):
+    """The device name and pool root existing containers already carry."""
+    from jailbee.config import load_config_from_text
+
+    cfg = load_config_from_text("chrome:\n  enabled: true\n", tmp_path / "c.yaml")
+    chrome = next(c for c in cfg.effective_shared_caches() if c.name == "chrome-profile")
+    assert chrome.host_subpath == "chrome-pool"
+    assert chrome.container_path == "~/.config/google-chrome"
+    assert chrome.pool is not None
+    assert chrome.pool.allocate == "on-demand"
+    assert chrome.pool.warmth_file == "Default/Login Data"

@@ -4,9 +4,15 @@
 
 In clone mode the container has its own working tree, so commits move between
 host and container over a small bridge — **the container acts as a git remote** —
-instead of round-tripping through GitHub. Each container records the **base
-branch** it was forked from (`user.jailbee.base_branch`, set at `jailbee new` time); pulls
-merge into that base and `jailbee ls` / `jailbee git diff` measure "ahead" against it.
+instead of round-tripping through GitHub. The transport is git's own `ext::`
+helper running `incus exec --user <uid> … git upload-pack` (reading) or
+`git receive-pack` (writing) inside the container, so no daemon, port or key is
+involved. Little travels either way: the container was cloned with
+`git clone --shared`, so its alternates point at the host's object store and
+only the objects the other side actually lacks are sent. Each container records
+the **base branch** it was forked from (`user.jailbee.base_branch`, set at
+`jailbee new` time); pulls merge into that base and `jailbee ls` /
+`jailbee git diff` measure "ahead" against it.
 
 **Container → host:**
 
@@ -127,6 +133,43 @@ silently. Configure the defaults with `push.push_from` / `push.autofetch`
 > `--from-origin` / `--from-local` and the `push_from: origin` value keep the
 > word regardless of what your remote is called.
 
+### What the push writes inside the container
+
+A push updates up to three refs in the container:
+
+| Ref | When |
+|---|---|
+| `refs/jailbee/host/<source>` | always — the transport's landing ref, force-updated |
+| `refs/jailbee/base/<base>` | when the pushed source *is* the container's base branch, so `jailbee ls` AHEAD measures against the fresh base |
+| `refs/heads/<source>` | when it can be fast-forwarded (see below) |
+
+That last one exists because the `refs/jailbee/*` namespace is invisible to
+everyday git: a container whose local `dev` never moved makes an in-container
+`git rebase dev` silently use a stale base, and the container cannot fix that
+itself — its `origin` is the real upstream URL, so `git fetch` there needs
+network and credentials that strict mode does not grant.
+
+The update is strictly fast-forward and never fails a push:
+
+- **HEAD's own branch is skipped.** Moving it would leave the index and working
+  tree describing a commit the branch no longer points at, and
+  `receive.denyCurrentBranch` refuses a push into it for the same reason. This
+  is the case for a container forked from the base branch itself, and for every
+  `--pr` push (a PR container is checked out on the head ref). `--merge` and
+  `--rebase` advance that branch themselves.
+- **An absent branch is created.** `git clone` gives the container only the
+  host's HEAD branch, so a container created off `dev` from a host sitting on
+  `main` has no local `dev` at all until the first push.
+- **A diverged branch is reported and left alone** — a commit made in the
+  container on that branch is never discarded here. Reconcile it by hand in
+  `jailbee shell`, or compare against `refs/jailbee/host/<source>`.
+- The write uses `git update-ref`'s compare-and-swap form, so a commit made in
+  the container mid-push loses the race rather than the commit.
+
+The push summary prints one line when the branch was created or fast-forwarded,
+a warning when it diverged or the update failed, and nothing in the two benign
+cases (already current, or HEAD's own branch).
+
 Both `jailbee git push` and `jailbee git pull` print a one-line
 `<source> (…) ──▶ <target> (…)` banner before the detailed summary, so the
 direction of the sync is always unambiguous at a glance.
@@ -181,16 +224,32 @@ over is grouped by what it needs:
 Ordinary file conflicts are never auto-resolved; they are listed alongside so
 you see the whole picture before starting.
 
-**Branch placement.** `jailbee submodule checkout` recursively puts submodules
-on the superproject's branch. It is purely local — it moves nothing between
-host and container — and works on either side: with no argument it aligns
-the host repo, with a container name it aligns that container.
+**Branch placement.** `jailbee submodule checkout` puts the tree —
+superproject and submodules, recursively — on one branch. It is purely local
+— it moves nothing between host and container — and works on either side:
+with no argument it works on the host repo, with a container name on that
+container.
 
 ```bash
-jailbee submodule checkout               # host repo, current branch
-jailbee submodule checkout -b feat/x     # host repo, explicit branch
+jailbee submodule checkout               # host, align to current branch
+jailbee submodule checkout -b master     # host, whole tree to master
+jailbee submodule checkout -b master --submodules-only
 jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
 ```
+
+On the host, `-b` checks that branch out in the superproject first and then
+aligns the submodules to it — one command to jump the whole tree back to
+`master` and out again, the counterpart of `jailbee git checkout <container>`
+(which does the same thing towards a container's branch). `--submodules-only`
+leaves the superproject where it is: a deliberate mismatch, or a detached
+HEAD you want to keep. A container's branch is its identity, so `-b` with a
+container name never switches it — there it is pure submodule placement.
+
+Placement never rewinds a submodule branch. When a submodule's local branch
+is ahead of the gitlink recorded in the superproject — a submodule commit
+published without bumping the pointer — the newer branch stays checked out
+and the run warns instead: bump the gitlink with `git add <sub> && git
+commit` in the superproject.
 
 **Before you destroy.** `jailbee destroy`'s pre-flight check counts a changed
 submodule as work at risk — added, removed, committed ahead, or merely dirty
@@ -200,6 +259,28 @@ only its sub-repo held the change.
 Each submodule also carries its own base anchor, seeded from the gitlink
 recorded at the superproject's `refs/jailbee/base/<base>`, which is what lets
 per-submodule comparisons stay meaningful on a stacked branch.
+
+**Submodule pull requests.** `jailbee submodule pr [<name>] [<path>]` opens or
+updates a PR in a submodule's own GitHub repository — a separate repo from the
+superproject, so a separate PR from `jailbee pr`. Its signal is that same base
+anchor, never the superproject's gitlink diff `jailbee ls` uses: when you've
+committed inside a submodule but not yet committed the gitlink bump in the
+superproject, the gitlink diff reads zero while the anchor sees exactly the
+commits the PR is for. That gap is reported as information, not an error.
+
+```bash
+jailbee submodule pr feat-foo              # auto-target, draft PR
+jailbee submodule pr feat-foo libs/foo     # explicit submodule
+jailbee submodule pr feat-foo --ready      # mark ready for review
+```
+
+Base and head come from the submodule's own data, not the superproject's:
+base is `--base` > `submodule.<name>.branch` declared in `.gitmodules` (found by
+descending from repo root, unless `.`) > the sub-repo's `<remote>/HEAD` > `main`; head
+is `--as` > Claude's proposal > the branch the commits were read from. The remote is resolved per submodule,
+since a submodule may name its upstream something the superproject doesn't.
+Merge order is stated, never enforced: merge the submodule PR first, so the
+superproject PR's gitlink bump then points at a merged commit.
 
 ## Stacked PRs
 
@@ -224,6 +305,65 @@ jailbee destroy feat-a --force
 
 For longer chains, repeat the propagation per link: `jailbee git checkout
 feat-b && git push`, then `jailbee git push feat-c --merge`.
+
+## Merging several containers through one
+
+Three features built in parallel in three containers eventually have to become
+one branch. The obvious way is three merges on the host — but the host is the
+one place with no test suite running, no lint gate and no agent. Send each
+branch into *one* of the containers instead and resolve every conflict there,
+where those things already are. The host stays what it is everywhere else in
+this document: a transport hub that resolves nothing.
+
+```bash
+jailbee new feat/a
+jailbee new feat/b
+jailbee new feat/c
+#   ... work in each container ...
+
+jailbee git checkout feat-a          # host HEAD → feat/a, ff-only, from the container
+jailbee git push feat-c --current    # feat/a into container c, merged into its branch
+jailbee shell feat-c                 # resolve, run the gates, commit the merge
+
+jailbee git checkout feat-b
+jailbee git push feat-c --current
+jailbee shell feat-c
+
+git checkout main
+jailbee git pull feat-c --current    # all three features land on main
+```
+
+`--current` is what makes this work. `push`'s default source is
+`default_source: base` — the container's *base* branch — so a bare
+`jailbee git push feat-c` would send `main` into container c, not `feat/a`.
+`--current` (like `--pr`) also resolves the source locally and skips the host
+fetch, which matters here because `feat/a` may exist nowhere but the host and
+its own container.
+
+The action comes from `push.default_action`. Its built-in default is `ask`, so
+the commands above open a picker and you choose *merge*; with
+`default_action: merge` configured they merge with nothing extra typed. `ask`
+needs a terminal, though — run this recipe from a script and it exits with
+*"push.default_action is 'ask' but no TTY is available"*, so a scripted version
+has to spell the flag out. Either way it must be a merge or a rebase — `plain`
+only transports
+`refs/jailbee/host/<branch>` into the container and never attempts to apply it,
+so no conflict ever surfaces to resolve. Spelling the flag out
+(`jailbee git push feat-c --current --merge`, as `## Stacked PRs` above does)
+is always unambiguous.
+
+A conflict leaves container c in merge state, exactly as it would on the host.
+Resolve it in `jailbee shell feat-c` or `jailbee tmux feat-c` and commit there.
+
+Two things the last `pull` does not cover:
+
+- Cleanup of container c and the merged `feat/c` branch follows
+  `pull.destroy_container` and `pull.delete_branch` (`prompt | always | never`
+  each), so it may ask, act, or do nothing depending on config.
+- Containers a and b are untouched — their commits reached `main` through c,
+  not through their own pull. Destroy them yourself when the branch is merged:
+  `jailbee destroy feat-a`, then `jailbee destroy feat-b` (one name per
+  invocation; with no name and a TTY you get a picker).
 
 ## Choosing the starting point for `jailbee new`
 
@@ -269,8 +409,9 @@ running container once it's ready. A failed background creation shows
 <name>`, then `jailbee destroy`). The detailed worker log is written under
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/logs/`.
 
-Once you have fixed things by hand (`jailbee shell <name> --force`), clear the
-record with `jailbee job clear <name>`; the container is not touched.
+Once you have fixed things by hand (`jailbee shell <name>` warns about the
+failed job and asks before letting you in), clear the record with
+`jailbee job clear <name>`; the container is not touched.
 
 To make background the default, set it in `~/.config/jailbee/global.yaml`
 (applies to every repo) or a repo's `.jailbee/config.yaml`:
@@ -287,6 +428,14 @@ asking to attach means asking for the foreground. `--attach none` /
 `--no-attach` don't force foreground and combine fine with `--background`.
 Passing `--background` together with `--attach shell`/`--attach tmux`,
 `--tmux`, or `--shell` is a usage error.
+
+`jailbee start` and `jailbee restart` take the same `--background` / `-b` /
+`--no-background` flags, tracked the same way (phases `starting` →
+`autostart`). There the slow part is the `on_start` autostart run, not the
+boot, and one config key — `boot.background: true` — makes both detach by
+default. A detached boot is refused while another background job for that
+container is still live, since two of them would interleave their autostart
+steps.
 
 ## Mount mode vs clone mode
 
@@ -357,6 +506,19 @@ fetch runs **on the host**, so no `jailbee net loose` is needed:
 ```bash
 jailbee git push <name> --pr --rebase    # or --merge
 ```
+
+The container name is required here — `--pr` reads the container's own
+`user.jailbee.pr` label, so there is no picker to fall back on. The action
+flag is not: drop it and the merge/rebase/plain choice follows
+`push.default_action`, which defaults to `ask` (see
+[Configuration](config.md#push)) — a prompt on a TTY, and an error naming
+the config key off one. Pass the flag in scripts.
+
+Both dashboards offer this as **"Refresh from PR head"** in the action
+menu, on review containers only: a PR JailBee opened from the container's
+own branch has its head downstream of the container, where the refresh
+could only be a no-op. The Qt dashboard asks the action in a dialog and
+never asks for a source, because `--pr` already is one.
 
 Push your own commits back to the PR's head branch:
 

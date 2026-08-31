@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jailbee.config import load_config
+from jailbee.config import load_config, load_config_from_text
 from jailbee.profiles import (
     ProfileNames,
     base_profile_yaml,
@@ -172,6 +172,140 @@ def test_base_profile_container_env_overrides_gie_defaults():
     assert parsed["config"]["environment.DISPLAY"] == ":1"
 
 
+def test_base_profile_sets_claude_config_dir_when_enabled(make_cfg, tmp_path):
+    """`CLAUDE_CONFIG_DIR` must reach every `incus exec`, login shell or not
+    — belt-and-suspenders for the `/etc/profile.d` export, which only
+    login shells source (e.g. a JetBrains IDE's integrated terminal)."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert parsed["config"]["environment.CLAUDE_CONFIG_DIR"] == "/home/dev/.claude"
+
+
+def test_base_profile_omits_claude_config_dir_when_disabled(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, claude={"enabled": False})
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert "environment.CLAUDE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_container_env_overrides_claude_config_dir(make_cfg, tmp_path):
+    """A user's `container.env` override must win over the built-in
+    CLAUDE_CONFIG_DIR default — same pattern as SSH_AUTH_SOCK/DISPLAY."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    cfg = cfg.model_copy(
+        update={
+            "container": cfg.container.model_copy(
+                update={"env": {"CLAUDE_CONFIG_DIR": "/custom/path"}}
+            )
+        }
+    )
+    out = base_profile_yaml(cfg)
+    parsed = yaml.safe_load(out)
+    assert parsed["config"]["environment.CLAUDE_CONFIG_DIR"] == "/custom/path"
+
+
+def test_base_profile_sets_securestorage_dir_for_a_group_repo(make_cfg, tmp_path):
+    """The variable Claude Code resolves `.credentials.json` from. Reaching
+    every `incus exec` through the profile is what makes this work on existing
+    containers with no image rebuild."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        "/home/dev/.claude-creds"
+    )
+
+
+def test_base_profile_omits_securestorage_dir_for_a_non_group_repo(make_cfg, tmp_path):
+    """The promise this feature rests on: a repo that has not opted in renders
+    exactly as before."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_omits_securestorage_dir_when_claude_is_disabled(make_cfg, tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": False},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
+    """An empty value is NOT the same as an unset variable: Claude Code falls
+    back to `~/.claude` for it, silently pointing credential lookup back at the
+    config home. A `container.env` entry set to "" must therefore drop the key
+    rather than write it."""
+    from jailbee.profiles import claude_securestorage_dir_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
+    )
+    assert claude_securestorage_dir_env(cfg) is None
+    # The helper returning None is not enough on its own: base_profile_yaml
+    # also runs an unconditional `container.env` passthrough loop that could
+    # re-write the same key to "". Assert on the actual rendered profile.
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
+
+
+def test_base_profile_container_env_overrides_securestorage_dir(make_cfg, tmp_path):
+    """A non-empty `container.env` override must still win over the default
+    — same pattern as CLAUDE_CONFIG_DIR."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/custom/creds"}},
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == "/custom/creds"
+
+
+def test_binds_profile_mounts_the_group_credential_dir(make_cfg, tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+    device = parsed["devices"]["claude-creds"]
+    assert device == {
+        "type": "disk",
+        "source": str(tmp_path / "creds" / "work"),
+        "path": "/home/dev/.claude-creds",
+    }
+
+
+def test_binds_profile_has_no_credential_device_for_a_non_group_repo(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "claude-creds" not in parsed["devices"]
+
+
+def test_group_repo_adds_exactly_one_device(make_cfg, tmp_path):
+    """Pin the blast radius: joining a group adds `claude-creds` and changes
+    nothing else about the Claude mounts."""
+    base = make_cfg(tmp_path, claude={"enabled": True})
+    grouped = base.model_copy(update={"claude_credentials_dir": tmp_path / "creds" / "work"})
+
+    before = set(yaml.safe_load(binds_profile_yaml(base))["devices"])
+    after = set(yaml.safe_load(binds_profile_yaml(grouped))["devices"])
+
+    assert after - before == {"claude-creds"}
+    assert before - after == set()
+
+
 def test_binds_profile_includes_host_mounts():
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
@@ -292,7 +426,13 @@ def test_host_tmux_paths_filters_to_existing(tmp_path, mocker):
 def test_binds_profile_includes_shared_caches_rw():
     """Language caches are opt-in (not in the stack-neutral default), but
     when configured explicitly via `shared_caches:` they must render as
-    RW disk devices on the binds profile."""
+    RW disk devices on the binds profile.
+
+    `gradle` and `m2` opt out of `pooled_caches` here because their
+    presets default to pooled (see `POOL_PRESETS`) — pooling them would
+    correctly remove them from this profile, which is exactly what
+    `test_pooled_caches_are_not_profile_devices` in test_profiles.py and
+    the `pool`-focused tests in test_config.py cover instead."""
     from jailbee.config import SharedCache
 
     cfg = _cfg()
@@ -310,6 +450,7 @@ def test_binds_profile_includes_shared_caches_rw():
                 SharedCache(name="npm", host_subpath="caches/npm", container_path="~/.npm"),
                 SharedCache(name="m2", host_subpath="caches/m2", container_path="~/.m2"),
             ],
+            "pooled_caches": {"gradle": False, "m2": False},
         }
     )
     out = binds_profile_yaml(cfg)
@@ -321,8 +462,8 @@ def test_binds_profile_includes_shared_caches_rw():
 
 
 def test_binds_profile_omits_shared_chrome_profile():
-    """The chrome profile mount is now per-container via chrome_pool;
-    must not be in the gisgro-binds profile."""
+    """The chrome profile mount is per-container, attached by `pool.py` as
+    the `chrome-profile-slot` device; it must not be in the binds profile."""
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
     parsed = yaml.safe_load(out)
@@ -434,12 +575,13 @@ def test_net_loose_profile_uses_gie_loose_bridge():
 
 
 def test_loose_net_profile_yaml_matches_the_config_driven_one():
-    """`jailbee migrate` writes loose profiles through the prefix-only helper.
+    """The prefix-only helper must stay byte-identical to the config-driven one.
 
-    If `net_profile_yaml(cfg, "loose")` ever grows a Config-derived key that
-    `loose_net_profile_yaml` doesn't, the migrator would silently rewrite a
-    repo's loose profile with a *different* profile than `jailbee apply`
-    produces. Keep them byte-identical.
+    `loose_net_profile_yaml` exists so a loose profile can be written without
+    loading a repo's whole config. If `net_profile_yaml(cfg, "loose")` ever
+    grows a Config-derived key the prefix-only path cannot see, that path
+    would quietly write a *different* profile than `jailbee apply` produces —
+    a divergence nothing else in the suite would notice.
     """
     from jailbee.profiles import loose_net_profile_yaml
 
@@ -507,7 +649,9 @@ def test_binds_profile_includes_claude_when_enabled(make_cfg, tmp_path):
     parsed = yaml.safe_load(yaml_text)
     devices = parsed["devices"]
     assert "shared-claude" in devices
-    assert "shared-claude-json" in devices
+    # `.claude.json` is no longer its own file-level bind; it lives inside the
+    # `claude` directory mount (CLAUDE_CONFIG_DIR).
+    assert "shared-claude-json" not in devices
 
 
 def test_binds_profile_custom_cache(make_cfg, tmp_path):
@@ -787,3 +931,24 @@ def test_net_by_mode_has_no_offline():
 def test_net_profile_yaml_rejects_offline():
     with pytest.raises(ValueError, match="Unknown network mode"):
         net_profile_yaml(_cfg(), "offline")
+
+
+def test_pooled_caches_are_not_profile_devices(tmp_path):
+    """A pooled cache is a per-container device, never a profile mount."""
+    cfg = load_config_from_text(
+        "chrome:\n  enabled: true\ngolden:\n  stacks:\n    java: corretto-21\n",
+        tmp_path / "c.yaml",
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    profile = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "shared-gradle" not in profile["devices"]
+    assert "shared-chrome-profile" not in profile["devices"]
+    assert "shared-ssh" in profile["devices"]  # unpooled caches still mount
+
+
+def test_opting_out_restores_the_shared_gradle_mount(tmp_path):
+    cfg = load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\npooled_caches:\n  gradle: false\n",
+        tmp_path / "c.yaml",
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    profile = yaml.safe_load(binds_profile_yaml(cfg))
+    assert "shared-gradle" in profile["devices"]

@@ -7,9 +7,12 @@ import pytest
 from jailbee.docker_daemon import (
     apply_docker_proxy,
     compute_mirror_endpoint,
+    mirror_skip_reason,
+    mirror_wanted,
     render_proxy_conf,
 )
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+from tests.conftest import make_cfg
 
 
 def test_compute_mirror_endpoint_returns_mirror_container_ip(tmp_path):
@@ -168,23 +171,21 @@ def test_apply_docker_proxy_script_writes_ca_cert_via_heredoc():
     assert "update-ca-certificates" in script
 
 
-def test_apply_docker_proxy_removes_the_pre_1_0_trust_anchors():
-    """`jailbee migrate` deletes the gie-registry-mirror it vouched for.
+def test_apply_docker_proxy_deletes_its_own_alias_before_reimporting():
+    """The keystore delete is what makes the re-import idempotent.
 
-    Left behind, the old CA file and keytool alias are dangling anchors for
-    a mirror that no longer exists — and this script is the only thing that
-    rewrites container-side trust after the rename.
+    `keytool -importcert` fails on an alias that already exists, so a second
+    `jailbee apply` against a container that already trusts the mirror would
+    leave the JDK on a stale certificate if the delete ran after — or not at
+    all. Ordering is the assertion; presence alone would not catch a swap.
     """
     incus = MagicMock()
     apply_docker_proxy(incus, "myrepo-feat-x", ca_cert_pem="cert", port=3128)
 
     script = incus.exec.call_args.args[1][2]
-    old_cert_rm = "rm -f /usr/local/share/ca-certificates/gie-registry-mirror.crt"
-    assert old_cert_rm in script
-    assert "-alias gie-registry-mirror" in script
-    # The removals must precede the trust-store refresh / re-import they undo.
-    assert script.index(old_cert_rm) < script.index("update-ca-certificates")
-    assert script.index("-alias gie-registry-mirror") < script.index("-importcert")
+    assert script.index("-delete -noprompt -alias jailbee-registry-mirror") < script.index(
+        "-importcert"
+    )
 
 
 def test_apply_docker_proxy_writes_systemd_dropin_atomically():
@@ -269,3 +270,111 @@ def test_apply_docker_proxy_uses_dns_name_not_ip():
 
     script = incus.exec.call_args.args[1][2]
     assert "jailbee-registry-mirror.incus:3128" in script
+
+
+def _gcfg(enabled, tmp_path):
+    return GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(enabled=enabled, data_dir=tmp_path),
+    )
+
+
+def _docker_cfg(tmp_path):
+    return make_cfg(tmp_path / "repo", golden={"stacks": {"docker": True}})
+
+
+def _plain_cfg(tmp_path):
+    return make_cfg(tmp_path / "repo")
+
+
+def test_mirror_wanted_auto_follows_the_docker_stack(tmp_path):
+    assert mirror_wanted(_docker_cfg(tmp_path), _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_is_false_without_docker(tmp_path):
+    assert mirror_wanted(_plain_cfg(tmp_path), _gcfg("auto", tmp_path)) is False
+
+
+def test_mirror_wanted_auto_sees_docker_in_extra_apt_packages(tmp_path):
+    """`golden.extra_apt_packages` is staged by 05-extra-apt.sh, so Docker can
+    reach the image without the `docker` snippet ever resolving."""
+    cfg = make_cfg(tmp_path / "repo", golden={"extra_apt_packages": ["docker.io"]})
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_sees_extra_registries_as_intent(tmp_path):
+    """Naming upstream registries to cache is the clearest statement of intent
+    there is; without this the key would be an inert no-op (both push sites
+    are gated on the endpoint)."""
+    cfg = make_cfg(
+        tmp_path / "repo",
+        docker_registry_mirror={"extra_registries": ["x.dkr.ecr.eu-north-1.amazonaws.com"]},
+    )
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_auto_sees_the_ecr_stack(tmp_path):
+    """`stacks.ecr` stages a Docker credential helper without the `docker`
+    snippet, so image content alone would miss it."""
+    cfg = make_cfg(tmp_path / "repo", golden={"stacks": {"ecr": True}})
+    assert mirror_wanted(cfg, _gcfg("auto", tmp_path)) is True
+
+
+def test_mirror_wanted_false_wins_over_every_auto_signal(tmp_path):
+    """`false` must short-circuit before detection, not merely outvote it."""
+    cfg = make_cfg(
+        tmp_path / "repo",
+        golden={"extra_apt_packages": ["docker.io"], "stacks": {"docker": True, "ecr": True}},
+        docker_registry_mirror={"extra_registries": ["x.dkr.ecr.eu-north-1.amazonaws.com"]},
+    )
+    assert mirror_wanted(cfg, _gcfg(False, tmp_path)) is False
+
+
+def test_mirror_wanted_true_forces_on_without_docker(tmp_path):
+    """The escape hatch for a repo whose Docker install jailbee cannot see."""
+    assert mirror_wanted(_plain_cfg(tmp_path), _gcfg(True, tmp_path)) is True
+
+
+def test_mirror_wanted_false_wins_over_the_docker_stack(tmp_path):
+    assert mirror_wanted(_docker_cfg(tmp_path), _gcfg(False, tmp_path)) is False
+
+
+def test_mirror_skip_reason_is_none_when_the_mirror_is_wanted(tmp_path):
+    """A reason exists only for the two "no" cases; None is the caller's cue
+    that the mirror really is expected to be there."""
+    assert mirror_skip_reason(_docker_cfg(tmp_path), _gcfg("auto", tmp_path)) is None
+    assert mirror_skip_reason(_plain_cfg(tmp_path), _gcfg(True, tmp_path)) is None
+
+
+def test_mirror_skip_reason_distinguishes_the_two_no_cases(tmp_path):
+    """`enabled: false` never looks at the repo, so it must not be reported as
+    "no docker detected" — that is a fact about a check that never ran."""
+    disabled = mirror_skip_reason(_docker_cfg(tmp_path), _gcfg(False, tmp_path))
+    undetected = mirror_skip_reason(_plain_cfg(tmp_path), _gcfg("auto", tmp_path))
+
+    assert disabled is not None and "enabled: false" in disabled
+    assert undetected is not None and "no docker detected" in undetected
+    assert disabled != undetected
+
+
+def test_enabled_is_read_in_exactly_two_modules():
+    """`mirror_wanted` is the only reader; a call site that peeks at the raw
+    field would silently ignore `auto` and re-introduce the old behaviour.
+
+    The scan matches the full attribute access including its receiver
+    (`gcfg.docker_registry_mirror.enabled`), not the bare field name — a
+    docstring or comment is free to name the flag in prose (e.g.
+    `golden.py` explains what the flag is for) without that counting as a
+    read. Every migrated call site accesses the field through a variable
+    named `gcfg`, so this is also the pattern a new offending read would
+    have to reproduce to actually work.
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "src" / "jailbee"
+    offenders = sorted(
+        p.name
+        for p in src.rglob("*.py")
+        if "gcfg.docker_registry_mirror.enabled" in p.read_text()
+        and p.name not in {"global_config.py", "docker_daemon.py"}
+    )
+    assert offenders == []

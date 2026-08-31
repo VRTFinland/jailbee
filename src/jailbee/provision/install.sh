@@ -27,6 +27,27 @@ export CONTAINER_USER=dev
 : "${JAILBEE_USER_HOME:=/home/dev}"
 : "${JAILBEE_PROVISION_DIR:=/provision}"
 
+# Ubuntu's unattended-upgrade machinery is a liability in a dev container.
+# apt-daily.timer fires within minutes of every boot, so it takes the dpkg
+# lock out from under whoever is installing something — including this
+# script, moments from now — and an apt run still in flight at shutdown
+# blocks systemd, which can burn the whole clean-shutdown budget `jailbee`
+# gives a stop and leave the container Running. Nothing in a branch
+# container wants surprise background upgrades: the image is rebuilt by
+# `jailbee base build` instead.
+#
+# Masked rather than disabled: `apt-get install` of anything that ships
+# these units re-enables a merely-disabled timer, and masking survives that.
+# The timers are stopped here; the services deliberately are not, since
+# SIGTERM to an apt run mid-dpkg is how an image gets a broken package
+# database. If one is running, the apt-get below fails loudly on the lock.
+echo "==> Masking Ubuntu's automatic apt machinery"
+systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask \
+    apt-daily.timer apt-daily-upgrade.timer \
+    apt-daily.service apt-daily-upgrade.service \
+    unattended-upgrades.service 2>/dev/null || true
+
 echo "==> Updating apt cache"
 apt-get update -y
 
@@ -72,6 +93,44 @@ export PATH="$HOME/.local/bin:$PATH"
 EOF
 chmod 0644 /etc/profile.d/local-bin.sh
 
+# Heal a dangling ~/.local/bin/claude at login.
+#
+# The two halves of the Claude install disagree about lifetime:
+# ~/.local/share/claude/versions is a bind mount SHARED by every container of
+# a repo (agent_presets.claude_preset's claude-install cache), while
+# ~/.local/bin/claude is a per-container symlink pinned to one exact version
+# by ensure-claude.sh — which runs at `jailbee new` and never again. Claude's
+# own updater prunes old releases from the shared store, so a `claude update`
+# in ANY container of the repo can delete the version THIS container points
+# at, and the launcher stays dangling for the rest of the container's life
+# (`-bash: /home/dev/.local/bin/claude: No such file or directory`).
+#
+# Repointing it at login covers every path that runs `claude` in a container:
+# each goes through a `bash -lc` login shell (jailbee shell, tmux windows,
+# autostart steps, `jailbee pr`'s claude invocation, the agent install check).
+#
+# Two properties this snippet must keep:
+#   - Only acts when the launcher is missing or dangling. A healthy pin is
+#     left alone, so `claude.auto_update: false` keeps its chosen version.
+#   - Prints nothing, ever. pr_ai.ask_claude_for_pr_text parses the stdout of
+#     a `bash -lc` login shell as JSON; a chatty snippet would corrupt it.
+# The reverse-sorted loop skips a newest-named entry that isn't a usable
+# binary (an interrupted download) instead of linking the stub.
+cat > /etc/profile.d/jailbee-claude.sh <<'EOF'
+if [ ! -x "$HOME/.local/bin/claude" ]; then
+    _jb_claude_store="$HOME/.local/share/claude/versions"
+    for _jb_claude_v in $(ls -1 "$_jb_claude_store" 2>/dev/null | sort -V -r); do
+        if [ -x "$_jb_claude_store/$_jb_claude_v" ]; then
+            mkdir -p "$HOME/.local/bin"
+            ln -sfn "$_jb_claude_store/$_jb_claude_v" "$HOME/.local/bin/claude"
+            break
+        fi
+    done
+    unset _jb_claude_store _jb_claude_v
+fi
+EOF
+chmod 0644 /etc/profile.d/jailbee-claude.sh
+
 # Passwordless sudo for the dev user.
 echo "${CONTAINER_USER} ALL=(ALL) NOPASSWD:ALL" \
     > "/etc/sudoers.d/90-${CONTAINER_USER}"
@@ -105,6 +164,18 @@ if [ -z "${SSH_AUTH_SOCK:-}" ]; then
         export SSH_AUTH_SOCK="$_jailbee_gpg_sock"
     fi
     unset _jailbee_gpg_sock
+fi
+
+# Claude Code resolves its config home as `CLAUDE_CONFIG_DIR || $HOME/.claude`
+# and its global config as `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Setting
+# the variable to the value the default already resolves to therefore changes
+# exactly one thing: the global config file moves from $HOME/.claude.json into
+# $HOME/.claude/, which is JailBee's shared directory mount. That retires the
+# file-level bind for .claude.json, whose inode any atomic rewrite on the host
+# would replace, leaving the container bound to the old one.
+# Not forced: `container.env` can override it.
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ]; then
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
 fi
 EOF
 chmod 0644 /etc/profile.d/jailbee-env.sh
@@ -152,6 +223,32 @@ done
 echo "==> Enabling systemd-logind linger for ${CONTAINER_USER}"
 mkdir -p /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/${CONTAINER_USER}"
+
+# Keep the user manager that linger just guaranteed away from the host's
+# sockets. jailbee bind-mounts the host's own /run/user/<uid>/gnupg and
+# /run/user/<uid>/pulse *directories* into the container, and these user
+# socket units listen on paths inside them — unlinking whatever file is
+# already there before they bind. Left alone, a container boot therefore
+# deletes the host's live agent sockets: the host gpg-agent logs "socket file
+# has been removed - shutting down", and the container's own agent, which has
+# no smartcard access, answers in its place. The host's YubiKey vanishes from
+# `ssh-add -l` mid-session because a container restarted.
+#
+# `--global` (i.e. /etc/systemd/user/) because these are per-user units and
+# the dev user's session is created at boot, not by this script. Masked rather
+# than disabled so an `apt-get install` of gnupg or pipewire inside the
+# container cannot quietly re-enable them.
+#
+# The read-only flag on those two devices (jailbee's runtime_mounts) is the
+# actual guarantee — it also covers gpg's own agent autostart, which never
+# goes through systemd. This half keeps the container from even trying, so no
+# failed units pile up in the user session.
+echo "==> Masking user socket units that would clobber the host's sockets"
+systemctl --global mask \
+    gpg-agent.socket gpg-agent-ssh.socket \
+    gpg-agent-extra.socket gpg-agent-browser.socket \
+    dirmngr.socket keyboxd.socket \
+    pulseaudio.socket pipewire-pulse.socket 2>/dev/null || true
 
 # Run user/repo install.d snippets (and after this task, the bundled
 # feature snippets too). Empty files are skipped — that's the same-name

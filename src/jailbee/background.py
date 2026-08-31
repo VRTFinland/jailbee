@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from sqlmodel import Session, select
 
+from jailbee.db.models import JOB_BOOT as JOB_BOOT
 from jailbee.db.models import JOB_CREATE as JOB_CREATE
 from jailbee.db.models import JOB_DESTROY as JOB_DESTROY
 from jailbee.db.models import BackgroundJob
@@ -32,12 +33,18 @@ PHASE_FAILED = "failed"
 
 TERMINAL_PHASES = frozenset({PHASE_FAILED})
 
-# Phases at which a create op's container is already `incus start`ed and can be
-# attached to (shell/tmux) without waiting for the whole op to finish. The
-# container is started before the clone, so by the autostart phase it's running
-# and its repo is in place; autostart steps run as tmux windows the user may
-# actually want to watch appear live.
+# Phases at which the container is already `incus start`ed and can be attached
+# to (shell/tmux) without waiting for the whole op to finish. A create starts
+# the container before the clone, so by the autostart phase it's running and
+# its repo is in place; a boot reaches this phase once the container is back
+# up. Either way the autostart steps run as tmux windows the user may actually
+# want to watch appear live.
 ATTACHABLE_CREATE_PHASES = frozenset({PHASE_AUTOSTART})
+
+# Op kinds whose container survives the op, so the phases above mean
+# "attachable". A destroy is the exception: waiting it out is all a caller can
+# do.
+ATTACHABLE_OP_KINDS = frozenset({JOB_CREATE, JOB_BOOT})
 
 
 @dataclass(frozen=True)
@@ -98,6 +105,17 @@ def job_label_or_empty(phase: str | None, pid: int | None, *, kind: str | None =
     if pid is None:
         return phase
     return job_label(phase, pid, kind=kind)
+
+
+def get_job(session: Session, container_name: str) -> BackgroundJob | None:
+    """The tracking row for one container, or None.
+
+    Read-only counterpart to the mutators below, for callers that must inspect
+    a row (its kind, its phase) before deciding what to do with it. Takes the
+    full container name — `lifecycle.lookup_background_job` is the variant
+    that resolves a user-typed short name.
+    """
+    return session.get(BackgroundJob, container_name)
 
 
 def start_job(

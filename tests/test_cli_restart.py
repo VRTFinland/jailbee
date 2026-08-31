@@ -18,7 +18,7 @@ def _common_mocks(mocker):
         "jailbee.cli._resolve_existing",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch(
         "jailbee.lifecycle.current_network_mode",
         return_value="loose",

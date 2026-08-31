@@ -13,16 +13,24 @@ from jailbee.incus import Incus
 
 
 @pytest.fixture(autouse=True)
-def _no_mirror_lookup(mocker: MockerFixture) -> None:
-    """Default: mirror disabled. Override per-test by re-patching."""
-    mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+def _no_mirror_lookup(mocker: MockerFixture) -> Any:
+    """Default: mirror disabled. Override per-test by re-patching.
+
+    Returns the `_mirror_endpoint_or_warn` patch object so a test that needs
+    the real implementation to run can undo just this one patch via
+    ``mocker.stop(...)`` — not ``mocker.stopall()``, which would also tear
+    down every other autouse patch made through this test's `mocker`
+    instance (e.g. conftest's runtime-mounts and kitty-autodetect fixtures).
+    """
+    endpoint_patch = mocker.patch(
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=None,
     )
     mocker.patch(
         "jailbee.apply._read_mirror_ca_or_warn",
         return_value=None,
     )
+    return endpoint_patch
 
 
 @pytest.fixture(autouse=True)
@@ -42,10 +50,27 @@ def _no_egress_refresh(mocker: MockerFixture) -> Any:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_container_acl_apply(mocker: MockerFixture) -> Any:
+    """Default: per-container ACL re-materialisation is a no-op.
+
+    `run_apply`'s per-container loop now calls
+    `egress_scope.apply_container_acl`, which reads the container's
+    `user.jailbee.egress_extra` label via `incus.config_get` — a call most
+    `run_apply` tests here don't configure. Behaviour of
+    `apply_container_acl` itself is covered by `tests/test_egress_scope.py`;
+    the sweep it feeds is covered separately below (`_sweep_orphan_extra_acls`
+    tests), which call it directly rather than through `run_apply`.
+    """
+    return mocker.patch("jailbee.egress_scope.apply_container_acl")
+
+
 def test_profile_differs_returns_false_for_equivalent_yaml() -> None:
     from jailbee.apply import _profile_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.profile_show.return_value = (
         "name: foo\nconfig:\n  k: v\ndevices:\n  d1: {type: disk, source: /a, path: /b}\n"
     )
@@ -62,6 +87,8 @@ def test_profile_differs_returns_true_for_added_device() -> None:
     from jailbee.apply import _profile_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.profile_show.return_value = "name: foo\nconfig: {}\ndevices: {}\n"
     new_yaml = "name: foo\nconfig: {}\ndevices:\n  new: {type: disk, source: /a, path: /b}\n"
     assert _profile_differs(incus, "foo", new_yaml) is True
@@ -71,6 +98,8 @@ def test_acl_differs_returns_false_for_equivalent_yaml() -> None:
     from jailbee.apply import _acl_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_acl_show.return_value = (
         "name: a\negress:\n  - action: allow\n    destination: 1.2.3.4/32\n"
     )
@@ -82,6 +111,8 @@ def test_acl_differs_returns_true_for_changed_destination() -> None:
     from jailbee.apply import _acl_differs
 
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_acl_show.return_value = (
         "name: a\negress:\n  - action: allow\n    destination: 1.2.3.4/32\n"
     )
@@ -105,6 +136,8 @@ def test_run_apply_noop_when_nothing_changed(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()  # mirror disabled by default
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -143,11 +176,14 @@ def test_run_apply_syncs_gie_skills_when_claude_enabled(
     """run_apply refreshes the bundled gie skills into the shared dir."""
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
+    from tests.conftest import with_agent
 
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -167,6 +203,8 @@ def test_run_apply_pushes_changed_profile(make_cfg, tmp_path: Path, mocker: Mock
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -209,6 +247,8 @@ def test_run_apply_creates_user_shared_cache_dirs(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
@@ -232,6 +272,8 @@ def test_run_apply_reports_acl_changed_when_pool_grew(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     _no_egress_refresh.return_value = RefreshResult(
@@ -245,6 +287,40 @@ def test_run_apply_reports_acl_changed_when_pool_grew(
 
     assert result.acl_changed is True
     _no_egress_refresh.assert_called_once()
+
+
+def test_run_apply_survives_a_polluted_pool_root(
+    make_cfg,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """A pool root needing hand-cleaning must not abort `apply` before the
+    profiles, ACL and port forwards are written — otherwise it wedges every
+    subsequent `jailbee apply`. `jailbee doctor` reports the unmigrated root,
+    so warn-and-continue loses no information.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.pool import pools_for
+
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared", chrome={"enabled": True})
+    pools = pools_for(cfg)
+    assert pools, "test needs at least one pool to pollute"
+    # Loose content *and* an existing slot-0: ensure_pool_dirs refuses to
+    # guess which is the real cache and raises PoolError.
+    (pools[0].slots_dir / "slot-0").mkdir(parents=True)
+    (pools[0].root / "Default").mkdir(parents=True)
+
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=True)
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert incus.profile_set_yaml.call_count == 4  # base, binds, net-strict, net-loose
 
 
 def test_run_apply_does_not_push_acl_directly(
@@ -262,6 +338,8 @@ def test_run_apply_does_not_push_acl_directly(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -283,6 +361,8 @@ def test_run_apply_repins_hosts_on_running_strict_only(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -325,6 +405,77 @@ def test_run_apply_repins_hosts_on_running_strict_only(
     assert apply_hosts.call_args[0][2] == "a"
 
 
+def test_run_apply_re_materialises_container_acl_for_every_container(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, _no_container_acl_apply: MagicMock
+) -> None:
+    """`run_apply` must call `egress_scope.apply_container_acl(cfg, incus,
+    ci.name, mode=ci.network or "strict")` for EVERY container of the repo —
+    running or stopped — including the `mode` fallback when `ci.network` is
+    None. `incus config device override`/`set` (which `apply_container_acl`
+    owns) work on a stopped instance too; only `/etc/hosts` pinning needs
+    the container running. Skipping stopped containers here left one
+    frozen on a stale NIC/ACL forever, contradicting `jailbee apply`'s job
+    as the drift-killer for every container of the repo.
+
+    The autouse `_no_container_acl_apply` fixture no-ops the call for the
+    ~40 other `run_apply` tests in this module (their `incus` mocks don't
+    configure `config_get`, so the real implementation would crash on
+    `json.loads(MagicMock())`); this test asserts on that same mock instead
+    of bypassing it, so it exercises the real call site in `run_apply`.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="a",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name="b",
+                state="Running",
+                network=None,
+                ip="10.0.0.2",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name="c",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert _no_container_acl_apply.call_args_list == [
+        mocker.call(cfg, incus, "a", mode="strict"),
+        mocker.call(cfg, incus, "b", mode="strict"),  # None falls back to "strict"
+        mocker.call(cfg, incus, "c", mode="strict"),  # stopped — still re-materialised
+    ]
+
+
 def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
@@ -338,12 +489,14 @@ def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -383,6 +536,8 @@ def test_run_apply_passes_none_mirror_endpoint_to_apply_hosts_when_mirror_disabl
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -419,13 +574,15 @@ def test_run_apply_reapplies_docker_proxy_when_mirror_enabled(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     # Override the autouse `_no_mirror_lookup` fixture: mirror IS enabled.
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -474,6 +631,8 @@ def test_run_apply_skips_docker_proxy_when_mirror_disabled(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()  # autouse fixture forces mirror disabled
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -511,6 +670,8 @@ def test_run_apply_no_prompt_when_no_profile_changed(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -548,6 +709,8 @@ def test_run_apply_prompts_when_profile_changed_and_running(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -587,6 +750,8 @@ def test_run_apply_user_declines_restart(make_cfg, tmp_path: Path, mocker: Mocke
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -626,6 +791,8 @@ def test_run_apply_assume_yes_skips_prompt(make_cfg, tmp_path: Path, mocker: Moc
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -668,6 +835,8 @@ def test_run_apply_no_restart_flag_skips_prompt_and_restart(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -716,6 +885,8 @@ def test_run_apply_partial_restart_failure(make_cfg, tmp_path: Path, mocker: Moc
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -782,6 +953,8 @@ def test_run_apply_all_restarts_succeed_is_fully_successful(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     names = profile_names(cfg)
@@ -824,6 +997,8 @@ def test_run_apply_dns_failure_aborts_before_incus_calls(
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
     _no_egress_refresh.return_value = RefreshResult(
         container_prefix=cfg.container_prefix,
@@ -838,27 +1013,55 @@ def test_run_apply_dns_failure_aborts_before_incus_calls(
     assert incus.network_acl_set_yaml.call_count == 0
 
 
-def test_run_apply_mirror_endpoint_failure_aborts_before_incus_calls(
-    make_cfg, tmp_path: Path, mocker: MockerFixture
+def test_run_apply_continues_when_the_mirror_endpoint_cannot_be_resolved(
+    make_cfg,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    _no_mirror_lookup: Any,
+    _no_egress_refresh: Any,
 ) -> None:
+    """A mirror-endpoint failure must not abort `apply`: it degrades to a
+    warning (via `_mirror_endpoint_or_warn`) and `apply` continues to its
+    normal work rather than raising. This exercises the real
+    `_mirror_endpoint_or_warn`, not a mock standing in for it, so it fails
+    if that catch is ever removed."""
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path)
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
 
-    # Override the autouse fixture's "mirror returns None" with a hard fail.
+    # Let the real `_mirror_endpoint_or_warn` run instead of the autouse
+    # fixture's blanket mock of it (targeted `.stop()`, not
+    # `mocker.stopall()` — see `_no_mirror_lookup`'s docstring).
+    mocker.stop(_no_mirror_lookup)
+    mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
-        side_effect=ValueError("mirror down"),
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError(
+            "jailbee-registry-mirror container not found. Run 'jailbee registry up' first."
+        ),
     )
+    # Unrelated to the mirror: unlike the old abort test, this one now
+    # reaches the profile/ACL diff step. `incus.profile_show` on a bare
+    # `MagicMock(spec=Incus)` returns a MagicMock, and feeding that into
+    # `_profile_differs`'s `yaml.safe_load` sends PyYAML's reader into an
+    # unbounded loop reading "chunks" off a mock. Short-circuit the diff
+    # itself, same as most other `run_apply` tests in this file that don't
+    # care about profile/ACL content.
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.apply._list_containers", return_value=[])
 
-    with pytest.raises(ValueError, match="mirror down"):
-        run_apply(cfg, incus, gcfg)
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    assert incus.profile_set_yaml.call_count == 0
-    assert incus.network_acl_set_yaml.call_count == 0
+    # No exception escaped `run_apply` above; confirm it actually reached
+    # its normal work past the mirror lookup rather than short-circuiting.
+    _no_egress_refresh.assert_called_once()
 
 
 def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
@@ -880,12 +1083,14 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
     )
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     mocker.patch(
-        "jailbee.apply._compute_mirror_endpoint_or_abort",
+        "jailbee.apply._mirror_endpoint_or_warn",
         return_value=("10.0.0.99", 3128),
     )
     mocker.patch(
@@ -902,6 +1107,158 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
     )
 
 
+# ---- Polluted pool roots ----
+
+
+def _cfg_with_pool(make_cfg, tmp_path: Path):
+    """A config carrying the `gradle` pool, rooted under `tmp_path`.
+
+    `shared_dir` is passed explicitly: `make_cfg`'s default points at the
+    real `~/.local/share/jailbee/shared`, and these tests create directories
+    under it.
+    """
+    return make_cfg(
+        tmp_path,
+        shared_dir=tmp_path / "shared",
+        golden={"stacks": {"java": "corretto-21"}},
+    )
+
+
+def _pollute_pools(cfg) -> list:
+    """Make every pool root refuse: loose content beside an existing slot-0."""
+    from jailbee import pool
+
+    pools = pool.pools_for(cfg)
+    assert pools, "the fixture config must pool something for this test to mean anything"
+    for p in pools:
+        (p.slots_dir / "slot-0").mkdir(parents=True)
+        (p.root / "daemon").mkdir(parents=True)
+    return pools
+
+
+def _apply_mocks(mocker: MockerFixture, cfg, tmp_path: Path, *, running: bool) -> MagicMock:
+    """Wire the incus/profile mocks the restart-prompt tests all share."""
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.profiles import profile_names
+
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    names = profile_names(cfg)
+    mocker.patch(
+        "jailbee.apply._profile_differs",
+        side_effect=lambda _i, n, _y: n == names.binds,
+    )
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=(
+            [
+                ContainerInfo(
+                    name="a",
+                    state="Running",
+                    network="strict",
+                    ip="10.0.0.1",
+                    memory_limit="16GiB",
+                    repo=tmp_path.name,
+                ),
+            ]
+            if running
+            else []
+        ),
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    return incus
+
+
+def test_run_apply_offers_to_resolve_a_polluted_pool_root(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The fix for "Move or delete the loose entries by hand": `apply` is
+    where the user is sitting at a terminal, so it asks."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=False)
+    mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == []
+    for p in pools:
+        assert not (p.root / "daemon").exists()
+        assert list(p.root.parent.glob(f"{p.root.name}.loose-*"))
+
+
+def test_run_apply_does_not_offer_a_restart_that_would_fail(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Every boot runs `allocate_startup` -> `ensure_pool_dirs`, so with a
+    pool root still polluted each restart is guaranteed to raise the very
+    error the user was just shown. Don't ask, and don't try."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    confirm = mocker.MagicMock(return_value=False)
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=confirm)
+
+    assert result.unresolved_pools == [p.name for p in pools]
+    assert restart_one.call_count == 0
+    assert result.restarted == []
+    assert result.restart_failures == []
+    # Declining the move is the only question asked — never "Restart now?".
+    assert not any("Restart" in c.args[0] for c in confirm.call_args_list)
+
+
+def test_run_apply_restarts_once_the_pool_is_resolved(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The suppression is conditional on the pool, not on it having ever
+    been polluted: accepting the move must restore the normal prompt."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == []
+    assert restart_one.call_count == 1
+
+
+def test_run_apply_assume_yes_never_moves_cache_directories(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`--yes` is documented as "skip restart confirmation". Relocating a
+    user's cache content unasked is not covered by that."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _cfg_with_pool(make_cfg, tmp_path)
+    pools = _pollute_pools(cfg)
+    incus = _apply_mocks(mocker, cfg, tmp_path, running=True)
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), assume_yes=True, confirm_fn=lambda _m: True)
+
+    assert result.unresolved_pools == [p.name for p in pools]
+    for p in pools:
+        assert (p.root / "daemon").is_dir()
+    assert restart_one.call_count == 0
+
+
 def test_restart_one_runs_autostart_on_start(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
@@ -916,8 +1273,10 @@ def test_restart_one_runs_autostart_on_start(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     apply_hosts = mocker.patch("jailbee.hosts.apply_hosts")
@@ -941,8 +1300,10 @@ def test_restart_one_pins_hosts_in_strict_mode(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     apply_hosts = mocker.patch("jailbee.hosts.apply_hosts")
@@ -966,8 +1327,10 @@ def test_restart_one_does_not_launch_gui_apps(
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
 
-    mocker.patch("jailbee.lifecycle.restart_container")
+    mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.autostart.run_autostart")
@@ -985,7 +1348,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
 ) -> None:
     """Enabling claude after the initial `gie init` means the next
     `gie apply` must create `<shared_dir>/claude`, `<shared_dir>/claude-install`
-    and touch `<shared_dir>/claude.json` so the binds profile's file/dir
+    and seed `<shared_dir>/claude/.claude.json` so the binds profile's dir
     mounts have valid sources. Otherwise Incus refuses to start (or to
     accept the profile edit/assign for) the container with a "Missing
     source path ... for disk shared-claude-install" error.
@@ -998,6 +1361,8 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1006,7 +1371,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
 
     assert not (shared / "claude").exists()
     assert not (shared / "claude-install").exists()
-    assert not (shared / "claude.json").exists()
+    assert not (shared / "claude" / ".claude.json").exists()
 
     run_apply(cfg, incus, gcfg, assume_yes=True, confirm_fn=lambda _m: False)
 
@@ -1014,7 +1379,7 @@ def test_run_apply_creates_claude_shared_dir_when_enabled(
     # The shared version store (`~/.local/share/claude` inside the container)
     # — the disk device whose missing source path broke `gie apply`/assign.
     assert (shared / "claude-install").is_dir()
-    assert (shared / "claude.json").is_file()
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
     # The rest of the shared-dir tree should also be present.
     assert (shared / "caches" / "pnpm-store").is_dir()
 
@@ -1035,6 +1400,8 @@ def test_run_apply_does_not_create_claude_shared_dir_when_disabled(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1045,7 +1412,7 @@ def test_run_apply_does_not_create_claude_shared_dir_when_disabled(
 
     assert not (shared / "claude").exists()
     assert not (shared / "claude-install").exists()
-    assert not (shared / "claude.json").exists()
+    assert not (shared / "claude" / ".claude.json").exists()
     # The rest of the shared-dir tree IS still created.
     assert (shared / "caches" / "pnpm-store").is_dir()
     assert (shared / "ssh").is_dir()
@@ -1068,6 +1435,8 @@ def test_run_apply_creates_jetbrains_shared_dirs_when_enabled(
     cfg = make_cfg(tmp_path, shared_dir=shared, jetbrains={"enabled": True})
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -1103,6 +1472,8 @@ def test_run_apply_does_not_create_jetbrains_idea_when_share_idea_off(
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1127,6 +1498,8 @@ def test_run_apply_does_not_create_jetbrains_dirs_when_disabled(
     cfg = make_cfg(tmp_path, shared_dir=shared, jetbrains={"enabled": False})
     gcfg = GlobalConfig()
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = []
     incus.network_get.return_value = ""
 
@@ -1157,6 +1530,8 @@ def test_run_apply_skips_extra_registries_when_mirror_disabled(
     )
     gcfg = GlobalConfig()  # autouse fixture forces mirror disabled
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.network_get.return_value = ""
 
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1185,6 +1560,8 @@ def test_run_apply_migrates_offline_container_to_strict(
     names = profile_names(cfg)
     stale = f"{cfg.container_prefix}-net-offline"
     incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
     incus.list_containers.return_value = [
         {
             "name": f"{cfg.container_prefix}-feat-x",
@@ -1219,6 +1596,8 @@ def test_run_apply_deletes_offline_profile_with_no_containers_on_it(
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = True
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1241,6 +1620,8 @@ def test_run_apply_skips_offline_profile_delete_when_absent(
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = False
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
@@ -1262,6 +1643,8 @@ def test_run_apply_warns_but_continues_when_offline_profile_delete_fails(
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
     incus.network_get.return_value = ""
     incus.profile_exists.return_value = True
     incus.profile_delete.side_effect = IncusError("profile is currently in use")
@@ -1273,3 +1656,321 @@ def test_run_apply_warns_but_continues_when_offline_profile_delete_fails(
 
     assert result.fully_successful is True
     assert any("net-offline" in str(c.args[0]) for c in warn.call_args_list)
+
+
+def test_run_apply_reconciles_port_forwards_on_every_container(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Stopped containers are reconciled too: a proxy device on a stopped
+    container takes effect on its next boot, so skipping it hides drift."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import ReconcileResult
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Running",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-b",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        side_effect=[
+            ReconcileResult(added=["port-cfg-adb"], replaced=[], removed=[]),
+            ReconcileResult(added=[], replaced=[], removed=[]),
+        ],
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert reconcile.call_count == 2
+    assert [c.args[2] for c in reconcile.call_args_list] == [
+        f"{cfg.container_prefix}-a",
+        f"{cfg.container_prefix}-b",
+    ]
+    assert result.ports_changed == [f"{cfg.container_prefix}-a"]
+
+
+def test_run_apply_reconciles_even_with_no_host_ports(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Deleting the last host_ports entry must still clean up its device.
+
+    So reconciliation is unconditional: gating it on `cfg.host_ports` would
+    strand a `port-cfg-*` device forever.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import ReconcileResult
+
+    cfg = make_cfg(tmp_path)  # no host_ports at all
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        return_value=ReconcileResult(added=[], replaced=[], removed=["port-cfg-gone"]),
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert reconcile.call_count == 1
+    assert result.ports_changed == [f"{cfg.container_prefix}-a"]
+
+
+def test_run_apply_reports_and_continues_on_a_port_forward_failure(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A translated port-forward failure on one container must not abort the
+    rest of the sweep: `apply` is asked to reconcile every container of the
+    repo, and one container's proxy device being refused (e.g. something
+    already listening on its container-side port) must not block the
+    profile/ACL/hosts work already done this run for the others. Mirrors
+    `restart_failures`'s report-and-continue behaviour below.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import PortError, ReconcileResult
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-b",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.ports.list_forwards", return_value={})
+    reconcile = mocker.patch(
+        "jailbee.ports.reconcile_config_ports",
+        side_effect=[
+            PortError("something is already listening on port 5037 inside the container"),
+            ReconcileResult(added=["port-cfg-adb"], replaced=[], removed=[]),
+        ],
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    # Both containers were attempted — the first's failure did not stop
+    # the loop before it reached the second.
+    assert reconcile.call_count == 2
+    assert result.port_failures == [
+        (
+            f"{cfg.container_prefix}-a",
+            "something is already listening on port 5037 inside the container",
+        )
+    ]
+    assert result.ports_changed == [f"{cfg.container_prefix}-b"]
+    assert result.fully_successful is False
+
+
+def test_run_apply_reconciles_ports_from_one_prefetched_call(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`apply` fetches every container's forwards in a single `list_forwards`
+    call and hands each container its own slice via `reconcile_config_ports`'s
+    `forwards` kwarg — instead of that function re-querying Incus (via
+    `forwards_for`) once per container.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import Endpoint, Forward
+
+    cfg = make_cfg(tmp_path, host_ports=[{"name": "adb", "port": 5037}])
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{cfg.container_prefix}-a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+                repo=cfg.container_prefix,
+            ),
+        ],
+    )
+    fwd = Forward(
+        device="port-cfg-adb",
+        direction="to-container",
+        proto="tcp",
+        container=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        host=Endpoint(proto="tcp", address="127.0.0.1", port=5037, raw="tcp:127.0.0.1:5037"),
+        source="config",
+    )
+    list_forwards = mocker.patch(
+        "jailbee.ports.list_forwards",
+        return_value={f"{cfg.container_prefix}-a": [fwd]},
+    )
+    forwards_for = mocker.patch("jailbee.ports.forwards_for")
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    list_forwards.assert_called_once_with(incus, [f"{cfg.container_prefix}-a"])
+    # The already-matching forward was handed in directly, so
+    # `reconcile_config_ports` never fell back to its own per-container query.
+    forwards_for.assert_not_called()
+    assert result.ports_changed == []
+
+
+def test_apply_warns_and_continues_when_the_mirror_is_down(
+    tmp_path, mocker, _no_mirror_lookup: Any
+):
+    """`apply` is the repair command; it must not die on the one thing the
+    user might be running it to fix. The CA half already warns
+    (`_read_mirror_ca_or_warn`) — the endpoint half must match."""
+    from jailbee import apply as apply_mod
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+    from tests.conftest import make_cfg
+
+    # The autouse `_no_mirror_lookup` fixture above blanket-mocks this exact
+    # function to return_value=None so every other test in this module gets
+    # "mirror disabled" for free. This test is testing that function's own
+    # body, so it must undo just that one patch (not `mocker.stopall()`,
+    # which would also tear down conftest's other autouse patches, e.g.
+    # runtime-mounts and kitty-autodetect) before patching the two things
+    # the real implementation actually calls.
+    mocker.stop(_no_mirror_lookup)
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror container not found."),
+    )
+    # Patch the source module, not captured output: `warn` prints through a
+    # Rich console that hard-wraps at 80 columns, so a substring assertion
+    # would depend on terminal width. The helper imports `warn` lazily, so
+    # this patch is what it resolves.
+    warn = mocker.patch("jailbee.tui.warn")
+    cfg = make_cfg(tmp_path / "repo", golden={"stacks": {"docker": True}})
+    gcfg = GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(data_dir=tmp_path / "registry"),
+    )
+
+    assert apply_mod._mirror_endpoint_or_warn(cfg, mocker.MagicMock(), gcfg) is None
+    warn.assert_called_once()
+
+
+def test_sweep_orphan_extra_acls_deletes_acls_with_no_container(make_cfg, tmp_path, mocker):
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-live", "status": "Running", "profiles": [], "config": {}, "devices": {}}
+    ]
+    incus.network_acl_list.return_value = [
+        "myrepo-allowlist",
+        "myrepo-live-extra",
+        "myrepo-gone-extra",
+        "other-repo-x-extra",
+    ]
+
+    deleted = _sweep_orphan_extra_acls(cfg, incus)
+
+    assert deleted == ["myrepo-gone-extra"]
+    incus.network_acl_delete.assert_called_once_with("myrepo-gone-extra")
+
+
+def test_sweep_leaves_another_repos_extra_acls_alone(make_cfg, tmp_path, mocker):
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = ["other-repo-x-extra"]
+
+    assert _sweep_orphan_extra_acls(cfg, incus) == []
+    incus.network_acl_delete.assert_not_called()
+
+
+def test_sweep_leaves_a_hand_made_degenerate_acl_alone(make_cfg, tmp_path, mocker):
+    """`<prefix>-extra` — prefix and suffix with nothing in between — is not
+    a name any real jailbee container can produce (`extra_acl_name` always
+    has a container name component before the `-extra` suffix). A hand-made
+    ACL happening to be named exactly that must survive the sweep: it is an
+    Incus object jailbee cannot recreate if wrongly deleted."""
+    from jailbee.apply import _sweep_orphan_extra_acls
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = ["myrepo-extra"]
+
+    assert _sweep_orphan_extra_acls(cfg, incus) == []
+    incus.network_acl_delete.assert_not_called()

@@ -64,6 +64,65 @@ def _host_render_nodes() -> list[Path]:
     return sorted(Path("/dev/dri").glob("renderD*"))
 
 
+def claude_config_dir_env(cfg: Config) -> tuple[str, str]:
+    """The `(key, value)` `<prefix>-base` carries so Claude Code reads its
+    global config from the shared `~/.claude` mount.
+
+    Single source of truth for the two writers of that key: this module's
+    full profile render (`jailbee apply`) and `init_command`'s one-key repair
+    on the `jailbee new` path. They must agree on both halves or the repair
+    writes a value the next `apply` silently changes.
+
+    `container.env` wins, mirroring the render order below — the repo may
+    point Claude Code somewhere else on purpose.
+    """
+    default = f"/home/{CONTAINER_USERNAME}/.claude"
+    return (
+        "environment.CLAUDE_CONFIG_DIR",
+        cfg.container.env.get("CLAUDE_CONFIG_DIR", default),
+    )
+
+
+CLAUDE_CREDS_DIRNAME = ".claude-creds"
+"""Container-side directory name for a shared Claude credential.
+
+Deliberately not `.claude`: only the credential is shared, and the config home
+stays per-repo. Claude Code resolves `.credentials.json` *and*
+`.oauth_refresh.lock` from `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so the rotation
+lock travels with the credential into this directory — which is what keeps
+containers of different repos mutually excluded.
+"""
+
+CLAUDE_CREDS_DEVICE = "claude-creds"
+"""Name of the `<prefix>-binds` disk device that mounts the shared credential
+directory. Its presence on that profile is what `init_command`'s `jailbee
+new` repair checks before writing the env key — see
+`ensure_claude_credentials_env`.
+"""
+
+
+def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
+    """The `(key, value)` that points Claude Code at a shared credential.
+
+    `None` when this repo shares no credential, when Claude is disabled, or
+    when the resolved value is empty. That last case is not paranoia: an empty
+    `CLAUDE_SECURESTORAGE_CONFIG_DIR` is *not* the same as an unset one —
+    Claude Code falls back to `~/.claude` for it, silently sending credential
+    lookup back into the per-repo config home.
+
+    Single source of truth for the two writers of the key, mirroring
+    `claude_config_dir_env`: this module's full render (`jailbee apply`) and
+    `init_command`'s one-key repair on the `jailbee new` path.
+    """
+    if not cfg.claude.enabled or cfg.claude_credentials_dir is None:
+        return None
+    default = f"/home/{CONTAINER_USERNAME}/{CLAUDE_CREDS_DIRNAME}"
+    value = cfg.container.env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", default)
+    if not value:
+        return None
+    return ("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", value)
+
+
 def base_profile_yaml(cfg: Config) -> str:
     """Generate <repo>-base profile YAML.
 
@@ -134,12 +193,39 @@ def base_profile_yaml(cfg: Config) -> str:
     }
     if cfg.gpg.enabled:
         profile_config["environment.SSH_AUTH_SOCK"] = f"{runtime}/gnupg/S.gpg-agent.ssh"
+    if cfg.claude.enabled:
+        # Belt-and-suspenders for `/etc/profile.d/jailbee-env.sh`: Incus
+        # injects `environment.*` into every `incus exec`, login shell or
+        # not, so this also covers `claude` launched from a non-login shell
+        # jailbee didn't spawn itself (a JetBrains IDE's integrated
+        # terminal, a Claude Code IDE extension). Also reaches existing
+        # containers via `jailbee apply` with no image rebuild required.
+        key, value = claude_config_dir_env(cfg)
+        profile_config[key] = value
+        # The credential directory has no `profile.d` half at all: its value is
+        # per-repo, so the golden image cannot carry it. The profile route
+        # covers every way into the container that jailbee itself opens.
+        creds_env = claude_securestorage_dir_env(cfg)
+        if creds_env is not None:
+            profile_config[creds_env[0]] = creds_env[1]
 
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point
     # SSH_AUTH_SOCK at a different agent).
     for key, value in cfg.container.env.items():
         profile_config[f"environment.{key}"] = value
+
+    # CLAUDE_SECURESTORAGE_CONFIG_DIR is special-cased: unlike DISPLAY or
+    # SSH_AUTH_SOCK, an empty value here is NOT equivalent to unset — Claude
+    # Code falls back to `~/.claude` for it, silently sending credential
+    # lookup back into the per-repo config home. The loop above can (re-)set
+    # it to "" via a `container.env` override even when
+    # `claude_securestorage_dir_env` already decided to omit the key, so drop
+    # it here if it ended up empty. Scoped to this one key on purpose: other
+    # env vars keep their existing "repo override always wins, even empty"
+    # behaviour.
+    if not profile_config.get("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"):
+        profile_config.pop("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", None)
 
     profile = {
         "name": profile_names(cfg).base,
@@ -271,6 +357,10 @@ def binds_profile_yaml(cfg: Config) -> str:
     shared = str(cfg.shared_dir)
 
     for cache in cfg.effective_shared_caches():
+        if cache.pool is not None:
+            # Pooled: attached per container by `pool.allocate`, because a
+            # profile-level mount is the sharing this exists to remove.
+            continue
         container_path = (
             cache.container_path.replace("~", home, 1)
             if cache.container_path.startswith("~")
@@ -282,6 +372,18 @@ def binds_profile_yaml(cfg: Config) -> str:
             "type": "disk",
             "source": f"{shared}/{cache.host_subpath}",
             "path": container_path,
+        }
+
+    # Shared Claude credential — one directory, several repos. Rendered by its
+    # own branch rather than through `effective_shared_caches()` because its
+    # source is outside `shared_dir`; named without the `shared-` prefix for
+    # the same reason, since that prefix means "derived from a SharedCache"
+    # everywhere else in this profile.
+    if cfg.claude.enabled and cfg.claude_credentials_dir is not None:
+        devices[CLAUDE_CREDS_DEVICE] = {
+            "type": "disk",
+            "source": str(cfg.claude_credentials_dir),
+            "path": f"{home}/{CLAUDE_CREDS_DIRNAME}",
         }
 
     # Auto-detect tmux config/plugins on host and RO-bind into the dev
@@ -309,11 +411,10 @@ def loose_net_profile_yaml(prefix: str) -> str:
 
     Split out of `net_profile_yaml` because the loose profile's content is
     fully determined by the container prefix — no other Config field enters
-    it. `jailbee migrate` repoints a pre-1.0 repo's loose profile at the
-    renamed bridge and must not have to load (and risk failing to validate)
-    that repo's whole config to do so.
-
-    `net_profile_yaml(cfg, "loose")` delegates here, so the two can't drift.
+    it. The caller that needed a config-free path here was `jailbee migrate`,
+    removed in 1.1.0; the split stays because it keeps that independence
+    checkable, and `net_profile_yaml(cfg, "loose")` delegates here, so the
+    two cannot drift.
     """
     profile = {
         "name": f"{prefix}{LOOSE_PROFILE_SUFFIX}",

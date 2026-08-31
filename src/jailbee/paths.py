@@ -9,7 +9,7 @@ REPO_CONFIG_DIRS: tuple[str, ...] = (".jailbee", ".gie")
 
 ``.gie`` is the pre-1.0 location. It is accepted with a deprecation warning
 because the file is committed to shared application repos, so renaming it
-there cannot be synchronised with each user's tool upgrade. Removed in 1.1.0.
+there cannot be synchronised with each user's tool upgrade. Removed in 2.0.0.
 """
 
 
@@ -17,6 +17,23 @@ def expand_path(path: str | Path) -> Path:
     """Expand ~, $VARS, and resolve to an absolute path."""
     p = Path(os.path.expandvars(str(path))).expanduser()
     return p.resolve() if not p.is_absolute() else p
+
+
+def display_path(path: Path) -> str:
+    """`path` with the user's home directory shown as `~`, for output.
+
+    The counterpart to `expand_path`'s tilde handling. A path under
+    `$XDG_DATA_HOME` is most of a terminal line, long enough that Rich folds it
+    mid-word under a narrow table — and the `~` form is both shorter and the
+    form the user would type back. Absolute either way when `path` is outside
+    the home directory, or when the home directory cannot be determined
+    (`Path.home()` raises `RuntimeError` when it cannot be resolved).
+    """
+    try:
+        relative = path.relative_to(Path.home())
+    except (ValueError, RuntimeError):
+        return str(path)
+    return "~" if str(relative) == "." else f"~/{relative}"
 
 
 def xdg_data_home() -> Path:
@@ -35,7 +52,7 @@ def _warn_legacy_config_dir(path: Path) -> None:
     from jailbee.tui import warn
 
     warn(
-        f"{path.parent.name}/config.yaml is deprecated and stops working in 1.1.0 — "
+        f"{path.parent.name}/config.yaml is deprecated and stops working in 2.0.0 — "
         f"run `git mv {path.parent.name} .jailbee` in this repo."
     )
 

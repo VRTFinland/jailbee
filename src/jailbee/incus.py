@@ -12,9 +12,22 @@ import subprocess
 import time
 from typing import Any
 
+import yaml
+
 
 class IncusError(Exception):
     """Raised when an `incus` CLI invocation fails."""
+
+
+class IncusTimeoutError(IncusError):
+    """Raised when an `incus` CLI invocation exceeded its ``timeout``.
+
+    A subclass so that every existing ``except IncusError`` keeps catching
+    timeouts unchanged. Callers that can say something useful *specifically*
+    about an expiry — as opposed to a missing binary or a non-zero exit —
+    catch this first; `pr_ai` does, to point at the transcript the timed-out
+    Claude run left behind in the container.
+    """
 
 
 # An argument longer than this, or one spanning lines, is summarised rather
@@ -145,7 +158,7 @@ class Incus:
             # be told apart from a DNS failure in its first second.
             detail = _partial_output(e)
             message = f"`incus {_render_args(args)}` timed out after {timeout}s"
-            raise IncusError(f"{message}: {detail}" if detail else message) from e
+            raise IncusTimeoutError(f"{message}: {detail}" if detail else message) from e
         if check and result.returncode != 0:
             # Include stdout AND stderr — `incus exec` runs scripts whose
             # progress (echo) goes to stdout, while errors (set -u traps,
@@ -272,14 +285,19 @@ class Incus:
         result = self._run(args, timeout=timeout)
         return json.loads(result.stdout) if result.stdout else []
 
-    def info(self, name: str) -> dict[str, Any]:
-        """Return container info as a dict."""
-        result = self._run(["info", name, "--format", "json"])
-        return json.loads(result.stdout) if result.stdout else {}
-
     def exists(self, name: str) -> bool:
         """Return True if a container with this name exists."""
         return any(c["name"] == name for c in self.list_containers())
+
+    def console_log(self, name: str, *, timeout: int | None = None) -> str:
+        """The container's console ring buffer (`incus console --show-log`).
+
+        This is where systemd's own shutdown narration lands — ``A stop job
+        is running for …`` — which is the one place that names the unit
+        blocking a shutdown. Distinct from ``incus info --show-log``, which
+        shows the LXC log rather than the guest's console.
+        """
+        return self._run(["console", name, "--show-log"], timeout=timeout).stdout
 
     # ---- Container lifecycle ------------------------------------------------
 
@@ -293,10 +311,25 @@ class Incus:
     def start(self, name: str) -> None:
         self._run(["start", name])
 
-    def stop(self, name: str, force: bool = False) -> None:
+    def stop(self, name: str, force: bool = False, timeout: int | None = None) -> None:
+        """Stop a container; ``timeout`` bounds the clean shutdown, in seconds.
+
+        Omitting ``timeout`` is not the neutral default it looks like: incusd
+        turns the CLI's ``--timeout -1`` into **600 seconds**
+        (``cmd/incusd/instance_state.go``, ``doInstanceStatePut``), so a
+        container whose init never finishes shutting down blocks for ten
+        minutes and then fails with ``Failed shutting down instance, status
+        is "Running": context deadline exceeded``. Callers that a user is
+        watching should pass a budget — see `jailbee.stopping`.
+
+        ``force`` is a power cut and maps to a zero timeout server-side, so
+        the two flags are mutually exclusive; ``force`` wins.
+        """
         args = ["stop", name]
         if force:
             args.append("--force")
+        elif timeout is not None:
+            args += ["--timeout", str(timeout)]
         self._run(args)
 
     def restart(self, name: str) -> None:
@@ -464,6 +497,22 @@ class Incus:
     # ("Invalid number of arguments").
     _PROFILE_ASSIGN_VARIADIC_SINCE = (7, 3)
 
+    def profile_config_get(self, name: str, key: str) -> str | None:
+        """Return one `config` key of a profile, or None when it is unset.
+
+        Read out of `profile show` rather than `incus profile get`: the
+        latter prints an empty line and exits 0 both for an unset key and
+        for a key set to the empty string, and the caller here has to tell
+        those apart (an explicitly set value is never overwritten).
+        """
+        parsed = yaml.safe_load(self.profile_show(name)) or {}
+        value = (parsed.get("config") or {}).get(key)
+        return None if value is None else str(value)
+
+    def profile_config_set(self, name: str, key: str, value: str) -> None:
+        """Set a single `config` key on a profile, leaving the rest as-is."""
+        self._run(["profile", "set", name, key, value])
+
     def profile_assign(self, container: str, profiles: list[str]) -> None:
         self._run_retrying_on_etag(
             ["profile", "assign", container, *self._profile_assign_args(profiles)]
@@ -528,8 +577,70 @@ class Incus:
             args.append(f"{k}={v}")
         self._run_retrying_on_etag(args)
 
-    def config_device_remove(self, name: str, device_name: str) -> None:
-        self._run_retrying_on_etag(["config", "device", "remove", name, device_name])
+    def config_device_override(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Copy a profile-inherited device onto the instance, with overrides.
+
+        Fails when the instance already has a local device of this name —
+        use `config_device_set` for that case.
+        """
+        args = ["config", "device", "override", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_set(
+        self,
+        name: str,
+        device_name: str,
+        properties: dict[str, str],
+    ) -> None:
+        """Update keys on an instance-local device."""
+        args = ["config", "device", "set", name, device_name]
+        for k, v in properties.items():
+            args.append(f"{k}={v}")
+        self._run_retrying_on_etag(args)
+
+    def config_device_remove(
+        self,
+        name: str,
+        device_name: str,
+        *,
+        missing_ok: bool = False,
+    ) -> None:
+        """Remove an instance-local device.
+
+        ``missing_ok=True`` swallows the failure when there is no such local
+        device, mirroring `config_unset`. Callers that re-materialise derived
+        state want removal to be idempotent.
+        """
+        args = ["config", "device", "remove", name, device_name]
+        if missing_ok:
+            # `_run_retrying_on_etag(args)`, not `_run(args, check=False)`: a
+            # container that just booted churns `volatile.*` keys, which can
+            # bounce this removal off a transient ETag mismatch. Swallowing
+            # that immediately — as a bare `check=False` would — leaves the
+            # device in place while the caller believes teardown succeeded.
+            # Retry the transient case first; only a genuine failure (no such
+            # local device, or the ETag race never resolves) is swallowed.
+            #
+            # Passing `check=False` down into `_run_retrying_on_etag` would
+            # defeat this: `_run` only raises `IncusError` on a bad exit code
+            # when `check=True`, so with `check=False` the retry loop's
+            # `except IncusError` would never fire and an ETag race would go
+            # unretried — the same bug this replaces. So this calls it with
+            # its default `check=True` and catches the resulting
+            # `IncusError` here instead.
+            try:
+                self._run_retrying_on_etag(args)
+            except IncusError:
+                pass
+            return
+        self._run_retrying_on_etag(args)
 
     # ---- Snapshots ----------------------------------------------------------
 
@@ -571,10 +682,14 @@ class Incus:
         if result.returncode != 0:
             raise IncusError(f"`incus network acl edit {name}` failed: {result.stderr.strip()}")
 
-    def network_acl_exists(self, name: str) -> bool:
+    def network_acl_list(self) -> list[str]:
+        """Names of every network ACL known to the daemon."""
         result = self._run(["network", "acl", "list", "--format", "json"])
         acls = json.loads(result.stdout) if result.stdout else []
-        return any(a["name"] == name for a in acls)
+        return [a["name"] for a in acls]
+
+    def network_acl_exists(self, name: str) -> bool:
+        return name in self.network_acl_list()
 
     def network_acl_show(self, name: str) -> str:
         """Return the ACL's current state as YAML (raw stdout)."""

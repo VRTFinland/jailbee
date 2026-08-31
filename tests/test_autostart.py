@@ -417,9 +417,13 @@ def test_tmux_step_error_wrapped_as_autostart_step_error(mocker):
     assert "jailbee tmux gisgro-part4-fixes" in msg
 
 
-def test_autostart_error_hint_includes_force_flag():
-    """The inspection hint points at `jailbee tmux <name> --force` so it works
-    even when a background op left a `failed` row blocking a plain attach."""
+def test_autostart_error_hint_is_a_plain_attach():
+    """The inspection hint is a bare `jailbee tmux <name>`.
+
+    It renders for foreground failures too, where no background job row
+    exists and `--force` would be cargo-culted noise; the attach guard now
+    offers the failed container itself, so no flag is needed either way.
+    """
     err = AutostartStepError(
         container="gisgro-feat-x",
         step_name="backend-warmup",
@@ -427,7 +431,8 @@ def test_autostart_error_hint_includes_force_flag():
         exit_code=1,
     )
     rendered = str(err)
-    assert "jailbee tmux gisgro-feat-x --force" in rendered
+    assert "jailbee tmux gisgro-feat-x" in rendered
+    assert "--force" not in rendered
 
 
 def test_autostart_step_error_timeout_message(mocker):
@@ -696,47 +701,45 @@ def test_on_create_does_not_get_github_token_step(tmp_path):
     assert applied == ["user-step"]
 
 
-# ---------- claude autostart step
+# ---------- agent autostart steps (`agent_autostart_steps`)
 
 
-def test_claude_autostart_step_returns_none_when_off(tmp_path):
-    from jailbee.autostart import _claude_autostart_step
+def test_agent_autostart_steps_empty_when_autostart_off(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path, claude={"enabled": True, "autostart": False})
-    assert _claude_autostart_step(cfg) is None
+    assert agent_autostart_steps(cfg) == []
 
 
-def test_claude_autostart_step_shape(tmp_path):
-    from jailbee.autostart import _claude_autostart_step
+def test_agent_autostart_step_shape(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path, claude={"enabled": True, "autostart": True})
-    step = _claude_autostart_step(cfg)
-    assert step is not None
+    (step,) = agent_autostart_steps(cfg)
     assert step.name == "claude"
     assert step.background is True
     assert step.network is None
     assert step.run == "exec claude"
 
 
-def test_claude_autostart_step_is_continue_on_error(tmp_path):
+def test_agent_autostart_step_is_continue_on_error(tmp_path):
     """The claude step is an *optional* integration. If `claude` fails to
     launch (e.g. the binary never installed), `gie new` must degrade with a
     warning rather than hard-failing the whole provisioning — the dev
     container is still usable. So the synthetic step carries
     continue_on_error=True."""
-    from jailbee.autostart import _claude_autostart_step
+    from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path, claude={"enabled": True, "autostart": True})
-    step = _claude_autostart_step(cfg)
-    assert step is not None
+    (step,) = agent_autostart_steps(cfg)
     assert step.continue_on_error is True
 
 
-def test_claude_autostart_step_uses_custom_command(tmp_path):
-    from jailbee.autostart import _claude_autostart_step
+def test_agent_autostart_step_uses_custom_command(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -747,8 +750,7 @@ def test_claude_autostart_step_uses_custom_command(tmp_path):
             "command": "claude --dangerously-skip-permissions",
         },
     )
-    step = _claude_autostart_step(cfg)
-    assert step is not None
+    (step,) = agent_autostart_steps(cfg)
     assert step.run == "exec claude --dangerously-skip-permissions"
 
 
@@ -859,7 +861,6 @@ def test_run_autostart_sets_and_clears_progress_flag(mocker):
     incus = MagicMock()
     mocker.patch("jailbee.autostart._apply_step")
     mocker.patch("jailbee.autostart._github_token_step", return_value=None)
-    mocker.patch("jailbee.autostart._claude_autostart_step", return_value=None)
 
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
@@ -880,7 +881,6 @@ def test_run_autostart_clears_progress_flag_on_exception(mocker):
         side_effect=RuntimeError("boom"),
     )
     mocker.patch("jailbee.autostart._github_token_step", return_value=None)
-    mocker.patch("jailbee.autostart._claude_autostart_step", return_value=None)
 
     with pytest.raises(RuntimeError):
         run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
@@ -897,3 +897,78 @@ def test_run_autostart_no_steps_does_not_set_progress_flag(mocker):
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_CREATE, repo_dir="/r")
     assert incus.config_set.call_count == 0
     assert incus.config_unset.call_count == 0
+
+
+# ---------- agent_autostart_steps (spec-driven)
+
+
+def test_one_window_per_autostart_agent_claude_last(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        agents={
+            "codex": {"enabled": True, "autostart": True},
+            "claude": {"enabled": True, "autostart": True},
+        },
+    )
+    steps = agent_autostart_steps(cfg)
+    assert [s.name for s in steps] == ["codex", "claude"]
+    assert steps[0].run == "exec codex"
+    assert all(s.background and s.continue_on_error for s in steps)
+
+
+def test_enabled_but_not_autostart_gets_no_window(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    assert agent_autostart_steps(cfg) == []
+
+
+def test_empty_command_agent_skipped_even_when_autostart(tmp_path):
+    """Defense-in-depth: an agent with a blank `command` must not emit a
+    bare `exec ` step, which would fail opaquely inside the tmux window.
+    `validate_runtime` already flags this config as an issue; this guard
+    only prevents a broken autostart step from reaching tmux."""
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": True}})
+    cfg = with_agent(cfg, "codex", command="   ")
+    assert agent_autostart_steps(cfg) == []
+
+
+def test_agent_env_reaches_the_autostart_step(tmp_path):
+    """`agents.<name>.env` must land on the emitted step.
+
+    `agent_autostart_steps` passes `env=dict(spec.env)`; deleting that kwarg
+    left the whole suite green, so the field the function's new signature
+    added had no coverage at all. Without it a configured `env` silently
+    never reaches the launched binary — the step's tmux window gets only
+    `autostart.env`.
+    """
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True, "autostart": True}})
+    cfg = with_agent(cfg, "codex", env={"CODEX_MODEL": "o4-mini"})
+
+    (step,) = agent_autostart_steps(cfg)
+
+    assert step.env == {"CODEX_MODEL": "o4-mini"}
+
+
+def test_claude_auto_update_env_reaches_the_autostart_step(tmp_path):
+    """The same wiring for the one env value `agents.py` synthesises rather
+    than reading from config, so the generic path above can't be satisfied by
+    a claude-only special case."""
+    from jailbee.autostart import agent_autostart_steps
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+
+    (step,) = agent_autostart_steps(cfg)
+
+    assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"

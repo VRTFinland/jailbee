@@ -138,6 +138,41 @@ def resolve_hostnames(names: list[str]) -> dict[str, list[str]]:
     return result
 
 
+def resolve_with_status(
+    hostnames: list[str],
+) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Resolve hostnames, splitting successes from failures.
+
+    Strategy: try the whole batch first (fast path). If it fails, fall
+    back to per-name resolution to identify which names actually broke.
+    Returns ``(resolved, failed)`` where ``failed[name]`` is the error message.
+
+    The tolerant counterpart to `resolve_hostnames` / `build_egress_entries`,
+    which raise on the first bad host. Used everywhere a single flaky host
+    must not take down materialisation for every OTHER host sharing the same
+    allowlist: the repo pool refresh, a container's own egress-extra ACL, and
+    the mode switch that re-applies it.
+    """
+    if not hostnames:
+        return {}, {}
+
+    try:
+        return resolve_hostnames(hostnames), {}
+    except NetworkResolveError:
+        pass
+
+    resolved: dict[str, list[str]] = {}
+    failed: dict[str, str] = {}
+    for name in hostnames:
+        try:
+            single = resolve_hostnames([name])
+        except NetworkResolveError as e:
+            failed[name] = str(e)
+            continue
+        resolved.update(single)
+    return resolved, failed
+
+
 def build_egress_entries(raw_entries: list[str]) -> list[EgressEntry]:
     """Parse raw `egress_allow` strings and resolve hostnames in one pass.
 

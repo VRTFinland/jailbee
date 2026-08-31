@@ -156,6 +156,7 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "BASE_BRANCH": "feature/x",
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
+        "GIT_OPTIONAL_LOCKS": "0",
     }
     assert kwargs.get("timeout") == 5
 
@@ -609,3 +610,27 @@ def test_probe_many_parallel_forwards_host_head_to_every_target(mocker):
     )
 
     assert [c.kwargs["host_head"] for c in probe.call_args_list] == ["deadbeef", "deadbeef"]
+
+
+def test_probe_does_not_take_the_git_index_lock(mocker):
+    """The probe must run with GIT_OPTIONAL_LOCKS=0.
+
+    The probe reads state, but `git diff` / `git diff --cached` /
+    `git submodule foreach 'git diff'` refresh the index and write it back,
+    which takes `.git/index.lock`. That makes a nominally read-only listing
+    race any concurrent write in the same container: `jailbee git push`'s
+    `git merge` then dies with "Unable to create '.git/index.lock': File
+    exists". GIT_OPTIONAL_LOCKS=0 tells git to skip the lock and simply not
+    write the refreshed cache back.
+    """
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "\x00\x00\x00ok\x00"
+    probe_container_git(
+        incus,
+        full_name="c",
+        repo_dir="/repo",
+        base_branch="main",
+        default_branch="main",
+    )
+    env = incus.exec.call_args.kwargs.get("env") or {}
+    assert env.get("GIT_OPTIONAL_LOCKS") == "0"

@@ -1,10 +1,10 @@
 """Shell-completion callbacks for jailbee's CLI arguments.
 
 Typer/Click runs these inside a fresh `jailbee` process on every TAB press
-(`_JAILBEE_COMPLETE=bash_complete`; each installed console script — `jailbee`,
-`jb`, the legacy `gie` alias — gets its own variable derived from its invoked
-name, e.g. `_JB_COMPLETE` / `_GIE_COMPLETE`, per Click's convention, not
-something this code chooses), which dictates two rules:
+(`_JAILBEE_COMPLETE=bash_complete`; each installed console script — `jailbee`
+and `jb` — gets its own variable derived from its invoked name, e.g.
+`_JB_COMPLETE`, per Click's convention, not something this code chooses),
+which dictates two rules:
 
 * **Never raise.** An exception escaping a completion callback prints a
   traceback into the middle of the user's command line. An empty list is the
@@ -194,6 +194,38 @@ def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(b for b in list_branches(cfg.repo_root) if b.startswith(incomplete))
 
 
+@_never_raises
+def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a pool name from this repo's configured cache pools.
+
+    Used by `jailbee pool ls`/`prune`'s optional NAME positional.
+    """
+    from jailbee import pool as pool_mod
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, _incus = loaded
+    return [p.name for p in pool_mod.pools_for(cfg) if p.name.startswith(incomplete)]
+
+
+@_never_raises
+def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a stored Claude login for `jailbee claude use`/`rm`.
+
+    Only the *parked* slots, which is what both commands accept — each refuses
+    the live one. `parked_slots` also globs the store with no config to load
+    and no Incus call, unlike `list_slots`, which resolves the holder's members
+    by loading every registered repo's config: far too much for a TAB press.
+
+    Full slot names rather than bare emails: a name is always an exact match,
+    while an email is ambiguous once one account has two stored logins.
+    """
+    from jailbee.claude_pool import parked_slots
+
+    return [s.name for s in parked_slots() if s.name.startswith(incomplete)]
+
+
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:
     """Map a user-typed container name to its full Incus name, or None.
 
@@ -247,6 +279,84 @@ def complete_snapshot(ctx: typer.Context, incomplete: str) -> list[str]:
 
     tags = [s.get("name") for s in snaps]
     return sorted(t for t in tags if isinstance(t, str) and t.startswith(incomplete))
+
+
+@_never_raises
+def complete_submodule_path(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a submodule path from the container already on the command line.
+
+    Context-dependent like `complete_snapshot`: reads the container from
+    `ctx.params["name"]` and lists that container's submodule paths, so
+    `jailbee submodule pr feat-foo <TAB>` offers `lib/a`, `lib/b`. Returns []
+    when no container has been typed yet — guessing would query the wrong repo.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import container_repo_dir
+
+    typed = ctx.params.get("name") if ctx.params else None
+    if not isinstance(typed, str) or not typed:
+        return []
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, incus = loaded
+    full = _resolve_typed_container(cfg, incus, typed)
+    if full is None:
+        return []
+    try:
+        repo_dir = container_repo_dir(cfg, incus, full)
+        out = incus.exec(
+            full,
+            ["git", "-C", repo_dir, "submodule", "status", "--recursive"],
+            uid=cfg.container_user.uid,
+            timeout=QUERY_TIMEOUT,
+        )
+    except (IncusError, ValueError, OSError):
+        return []
+    paths = [
+        parts[1] for parts in (line.strip().split() for line in out.splitlines()) if len(parts) >= 2
+    ]
+    return sorted(p for p in paths if p.startswith(incomplete))
+
+
+@_never_raises
+def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a `jailbee port rm` handle from one container's forwards.
+
+    Offers device names only — a bare port number also resolves at runtime, but
+    two forwards can share one, so completing it would suggest something that
+    then needs disambiguating.
+
+    Unlike `complete_snapshot`, this does not give up when no container has
+    been typed. `port rm` takes HANDLE first and the optional NAME second, so
+    at completion time the name is usually still missing; with one container in
+    the repo — the common case, and the one `_resolve_existing` auto-picks
+    anyway — the union over every container is exactly the right answer, and
+    with several it is a superset the user can filter by typing.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.ports import list_forwards
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, incus = loaded
+
+    typed = ctx.params.get("name") if ctx.params else None
+    try:
+        if isinstance(typed, str) and typed:
+            full = _resolve_typed_container(cfg, incus, typed)
+            names = [] if full is None else [full]
+        else:
+            names = _container_names(cfg, incus)
+        devices = {
+            fwd.device
+            for fwds in list_forwards(incus, names, timeout=QUERY_TIMEOUT).values()
+            for fwd in fwds
+        }
+    except (IncusError, ValueError, OSError):
+        return []
+    return sorted(d for d in devices if d.startswith(incomplete))
 
 
 def complete_choices(*values: str) -> Callable[[str], list[str]]:

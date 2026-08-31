@@ -8,6 +8,7 @@ import pytest
 from jailbee.config import load_config
 from jailbee.incus import IncusError
 from jailbee.init_command import apply_allowlist_acl, run_init
+from tests.conftest import make_cfg, with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -28,7 +29,7 @@ def test_init_creates_shared_dirs(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     # Drop the fixture's claude.enabled + jetbrains.enabled flags for this test.
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     cfg = cfg.model_copy(update={"jetbrains": cfg.jetbrains.model_copy(update={"enabled": False})})
     incus = MagicMock()
     incus.profile_exists.return_value = False
@@ -43,8 +44,6 @@ def test_init_creates_shared_dirs(tmp_path):
         "caches/gradle",
         "caches/npm",
         "caches/m2",
-        "chrome-pool/slots",
-        "chrome-pool/by-container",
         "docker-registry",
         "ssh",
     ]
@@ -54,6 +53,11 @@ def test_init_creates_shared_dirs(tmp_path):
     assert not (tmp_path / "shared" / "claude-install").exists()
     assert not (tmp_path / "shared" / "jetbrains-config").exists()
     assert not (tmp_path / "shared" / "jetbrains-data").exists()
+    # chrome-pool/{slots,by-container} are no longer in SHARED_SUBDIRS (Task
+    # 3): they must instead come from `run_init`'s `ensure_pools(cfg)` call,
+    # since the fixture's chrome.enabled=true makes chrome-profile a pool.
+    assert (tmp_path / "shared" / "chrome-pool" / "slots").is_dir()
+    assert (tmp_path / "shared" / "chrome-pool" / "by-container").is_dir()
 
 
 def test_run_init_does_not_create_jetbrains_subdirs_when_disabled(tmp_path):
@@ -209,10 +213,14 @@ def test_run_init_creates_user_shared_cache_dirs(tmp_path):
 
 
 def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
-    """`_ensure_claude_json_exists` is called only when claude.enabled."""
+    """The claude.json seed file is only written when claude.enabled — and
+    with it disabled, a pre-existing legacy `claude.json` must also be left
+    untouched (i.e. the relocation half is gated too, not just the seed)."""
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
+    (tmp_path / "shared").mkdir(parents=True)
+    (tmp_path / "shared" / "claude.json").write_text('{"legacy": true}')
     incus = MagicMock()
     incus.profile_exists.return_value = False
     incus.network_acl_exists.return_value = False
@@ -221,7 +229,8 @@ def test_run_init_skips_claude_json_touch_when_disabled(tmp_path):
 
     run_init(cfg, incus)
 
-    assert not (tmp_path / "shared" / "claude.json").exists()
+    assert not (tmp_path / "shared" / "claude" / ".claude.json").exists()
+    assert (tmp_path / "shared" / "claude.json").read_text() == '{"legacy": true}'
 
 
 def test_init_creates_profiles(tmp_path):
@@ -619,11 +628,10 @@ def test_run_init_forwards_mirror_endpoint_to_allowlist_acl(make_cfg, tmp_path, 
 
 
 def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
-    """The claude.json bind-mount source must exist or Incus rejects the
-    container start. `gie init` seeds valid empty JSON (`{}`) when
-    claude.enabled — a zero-byte file is invalid JSON and makes the first
-    `claude` invocation (run by the Claude Code installer) abort the install
-    with a parse error, hard-failing `gie new`."""
+    """The `claude/.claude.json` seed must exist or Claude Code's first
+    invocation (run by the Claude Code installer) aborts with a parse error
+    on a zero-byte/missing file, hard-failing `gie new`. `gie init` seeds
+    valid empty JSON (`{}`) when claude.enabled."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(
@@ -639,19 +647,20 @@ def test_run_init_creates_empty_claude_json_when_enabled(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    json_path = tmp_path / "shared" / "claude.json"
+    json_path = tmp_path / "shared" / "claude" / ".claude.json"
     assert json_path.is_file()
     assert json_path.read_text() == "{}\n"
 
 
 def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
-    """Pre-existing <shared_dir>/claude.json (e.g. previously written by a
-    container) must be left untouched by re-init."""
+    """Pre-existing <shared_dir>/claude/.claude.json (e.g. previously written
+    by a container) must be left untouched by re-init."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     shared = tmp_path / "shared"
     shared.mkdir()
-    (shared / "claude.json").write_text('{"existing": true}')
+    (shared / "claude").mkdir()
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
     cfg = make_cfg(
         repo,
         shared_dir=shared,
@@ -665,7 +674,34 @@ def test_run_init_does_not_overwrite_existing_claude_json(make_cfg, tmp_path):
 
     run_init(cfg, incus)
 
-    assert (shared / "claude.json").read_text() == '{"existing": true}'
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
+
+
+def test_agent_dir_and_file_mounts_are_created(tmp_path):
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        agents={"aider": {"enabled": True}, "codex": {"enabled": True}},
+    )
+    _ensure_integration_shared_dirs(cfg)
+    assert (shared / "codex").is_dir()
+    assert (shared / "aider.conf.yml").is_file()
+    assert (shared / "aider.conf.yml").read_text() == ""
+
+
+def test_claude_json_seeded_inside_the_claude_dir(tmp_path):
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+    _ensure_integration_shared_dirs(cfg)
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+    assert not (shared / "claude.json").exists()
 
 
 def test_run_init_chmods_ssh_to_0700_when_ssh_enabled(make_cfg, tmp_path, mocker):
@@ -749,3 +785,515 @@ def test_run_init_skips_ssh_seed_when_ssh_disabled(make_cfg, tmp_path, mocker):
     run_init(cfg, incus)
 
     spy.assert_not_called()
+
+
+def test_relocate_claude_json_moves_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+    assert not (shared / "claude.json").exists()
+
+
+def test_relocate_claude_json_announces_the_move(mocker, tmp_path):
+    """The migration touches the user's Claude identity — it must say so,
+    not move it silently (mirrors the SSH seed's `success(...)` announcement)."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_warns_when_orphaning_the_legacy_file(mocker, tmp_path):
+    """The skip-because-destination-exists branch is finding 2's orphaning
+    case (a later `apply` can never migrate the legacy file again) and must
+    warn, naming both paths, rather than silently leaving the user unaware."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    source = shared / "claude.json"
+    source.write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    out = recording.export_text()
+    assert str(source) in out
+    assert str(shared / "claude" / ".claude.json") in out
+
+
+def test_relocate_claude_json_skips_a_symlink_source(mocker, tmp_path):
+    """A symlink source must not be renamed: `rename()` moves the link, not
+    its target, leaving a dangling symlink at the destination inside the
+    container."""
+    from rich.console import Console
+
+    from jailbee.init_command import _relocate_claude_json
+
+    recording = Console(record=True, width=200)
+    mocker.patch("jailbee.tui.console", recording)
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    real = tmp_path / "real-claude.json"
+    real.write_text('{"real": true}')
+    source = shared / "claude.json"
+    source.symlink_to(real)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert source.is_symlink()
+    assert not (shared / "claude" / ".claude.json").exists()
+    out = recording.export_text()
+    assert str(source) in out
+
+
+def test_relocate_claude_json_is_a_noop_without_a_legacy_file(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert not (shared / "claude" / ".claude.json").exists()
+
+
+def test_ensure_claude_config_dir_sets_the_key_when_absent(tmp_path):
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/home/dev/.claude",
+    )
+
+
+def test_ensure_claude_config_dir_respects_a_container_env_override(tmp_path):
+    """`base_profile_yaml` lets `container.env` override the default, so the
+    repair must write the same value — otherwise the two writers disagree and
+    the next `jailbee apply` silently changes it back."""
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}},
+        container={"env": {"CLAUDE_CONFIG_DIR": "/opt/claude-config"}},
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_CONFIG_DIR",
+        "/opt/claude-config",
+    )
+
+
+def test_ensure_claude_config_dir_leaves_an_existing_value_alone(tmp_path):
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/somewhere/else"
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_config_dir_skips_a_repo_without_a_base_profile(tmp_path):
+    """Nothing to repair before `jailbee init` — and `profile show` on
+    a missing profile is an error, not an empty answer."""
+    from jailbee.init_command import ensure_claude_config_dir
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    incus = MagicMock()
+    incus.profile_exists.return_value = False
+
+    ensure_claude_config_dir(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_sets_the_key_when_the_mount_is_in_place(tmp_path):
+    """`jailbee new` renders no profile, so without this repair a container
+    created after joining a group quietly uses the repo's own credential.
+
+    Deliberately updated pin (Finding 2): this used to assert the key was set
+    with no `claude-creds` device on the binds profile at all — the harmful
+    half-joined case where every container in the repo got logged out. Now
+    the repair only fires once the binds profile actually carries the
+    device, so the container it repairs will really find the mount."""
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+    incus.profile_show.return_value = "devices:\n  claude-creds:\n    type: disk\n"
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_set.assert_called_once_with(
+        f"{cfg.container_prefix}-base",
+        "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR",
+        "/home/dev/.claude-creds",
+    )
+
+
+def test_ensure_claude_credentials_env_skips_when_the_binds_profile_lacks_the_device(
+    tmp_path,
+):
+    """Finding 2: the half-joined state — `claude_credentials` configured but
+    `jailbee apply` not yet run, so `<prefix>-binds` exists but has no
+    `claude-creds` device yet. Setting the env key here would point a `jb
+    new` container's Claude Code at a directory nothing mounts, logging out
+    every container in the repo (the credential is still safe at
+    `<shared_dir>/claude`, untouched). The repair must wait for `jailbee
+    apply` to attach the device first."""
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_show.return_value = "devices: {}\n"
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_is_a_noop_for_a_non_group_repo(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    incus = MagicMock()
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_exists.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_leaves_an_existing_value_alone(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/somewhere/else"
+    incus.profile_show.return_value = "devices:\n  claude-creds:\n    type: disk\n"
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_ensure_claude_credentials_env_skips_a_repo_without_a_base_profile(tmp_path):
+    from jailbee.init_command import ensure_claude_credentials_env
+
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+    incus = MagicMock()
+    incus.profile_exists.return_value = False
+
+    ensure_claude_credentials_env(cfg, incus)
+
+    incus.profile_config_get.assert_not_called()
+    incus.profile_config_set.assert_not_called()
+
+
+def test_relocate_claude_json_never_overwrites_the_destination(tmp_path):
+    """Both files present: the destination is live state, the source is a
+    leftover. Never overwrite, and never delete the user's copy either."""
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude.json").write_text('{"old": true}')
+    (shared / "claude" / ".claude.json").write_text('{"current": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"current": true}'
+    assert (shared / "claude.json").read_text() == '{"old": true}'
+
+
+def test_relocate_claude_json_creates_a_missing_claude_dir(tmp_path):
+    from jailbee.init_command import _relocate_claude_json
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"real": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _relocate_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"real": true}'
+
+
+def test_seed_claude_json_writes_an_empty_object(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == "{}\n"
+
+
+def test_seed_claude_json_does_not_touch_an_existing_file(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".claude.json").write_text('{"existing": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _seed_claude_json(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
+
+
+def test_legacy_claude_json_survives_seeding(tmp_path):
+    """Relocation must run before the seed. If the seed wins, `{}` lands at
+    the destination, the relocation no-ops on a now-existing target, and the
+    user's real Claude state is orphaned at the old path."""
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "claude.json").write_text('{"onboarded": true}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+
+    _ensure_integration_shared_dirs(cfg)
+
+    assert (shared / "claude" / ".claude.json").read_text() == '{"onboarded": true}'
+    # Pins move-not-copy: a copy-instead-of-move implementation would still
+    # pass the assertion above but leave the legacy file behind.
+    assert not (shared / "claude.json").exists()
+
+
+# ---- Shared Claude credentials directory ----
+
+
+def _grouped_cfg(tmp_path):
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    return make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        claude={"enabled": True},
+        claude_credentials_dir=tmp_path / "creds" / "work",
+    )
+
+
+def test_credentials_dir_is_created_when_a_repo_joins_a_group(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert cfg.claude_credentials_dir.is_dir()
+    assert cfg.claude_credentials_dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_joining_a_group_moves_the_repos_credential_in(tmp_path):
+    """Moved, never copied: two copies of one grant means two refreshers, and
+    the first rotation logs one side out."""
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text('{"token": "sentinel"}')
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert not repo_cred.exists()
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == (
+        '{"token": "sentinel"}'
+    )
+
+
+def _two_credentials(tmp_path):
+    """A repo joining a group where both sides already hold a login."""
+    cfg = _grouped_cfg(tmp_path)
+    cfg.claude_credentials_dir.mkdir(parents=True)
+    group_cred = cfg.claude_credentials_dir / ".credentials.json"
+    group_cred.write_text("group")
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+    return cfg, group_cred, repo_cred
+
+
+def test_two_credentials_adopting_the_group_deletes_the_repos_copy(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "group")
+
+    assert group_cred.read_text() == "group"
+    assert not repo_cred.exists()
+
+
+def test_two_credentials_promoting_this_repo_replaces_the_groups_copy(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "repo")
+
+    assert group_cred.read_text() == "repo"
+    assert not repo_cred.exists()
+
+
+def test_two_credentials_cancelled_is_refused_and_changes_nothing(tmp_path):
+    import pytest
+
+    from jailbee.config import ConfigError
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: None)
+
+    assert group_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_two_credentials_without_a_tty_is_refused_and_changes_nothing(tmp_path, mocker):
+    """The default chooser must not block a piped/CI `jailbee apply` on stdin."""
+    import pytest
+
+    from jailbee.config import ConfigError
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    select = mocker.patch("questionary.select")
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _ensure_claude_credentials_dir(cfg)
+
+    select.assert_not_called()
+    assert group_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_the_chooser_is_never_asked_when_only_one_side_holds_a_credential(tmp_path, mocker):
+    """The prompt exists for the ambiguous case only — a plain join stays silent."""
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+    choose_fn = mocker.MagicMock()
+
+    _ensure_claude_credentials_dir(cfg, choose_fn=choose_fn)
+
+    choose_fn.assert_not_called()
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "repo"
+
+
+def test_an_existing_group_credential_is_left_alone(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    cfg = _grouped_cfg(tmp_path)
+    cfg.claude_credentials_dir.mkdir(parents=True)
+    (cfg.claude_credentials_dir / ".credentials.json").write_text("group")
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "group"
+
+
+def test_nothing_happens_for_a_non_group_repo(tmp_path):
+    from jailbee.init_command import _ensure_claude_credentials_dir
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, claude={"enabled": True})
+    repo_cred = shared / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+
+    _ensure_claude_credentials_dir(cfg)
+
+    assert repo_cred.read_text() == "repo"
+    assert not (tmp_path / "creds").exists()
+
+
+def test_integration_shared_dirs_creates_the_group_dir(tmp_path):
+    """The seeding must run from the helper `init` and `apply` share, or one of
+    them renders a profile whose disk source does not exist and Incus rejects
+    every later `profile edit`."""
+    from jailbee.init_command import _ensure_integration_shared_dirs
+
+    cfg = _grouped_cfg(tmp_path)
+
+    _ensure_integration_shared_dirs(cfg)
+
+    assert cfg.claude_credentials_dir.is_dir()

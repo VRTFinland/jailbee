@@ -19,7 +19,16 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
-from jailbee.tui import confirm_destroy_risk, error, error_plain, info, success, warn
+from jailbee.tui import (
+    confirm_destroy_risk,
+    error,
+    error_plain,
+    info,
+    success,
+    success_plain,
+    warn,
+    warn_plain,
+)
 
 app = typer.Typer(
     name="jailbee",
@@ -50,6 +59,155 @@ def _resolve_config_path(path: Path | None) -> Path:
 def _now() -> datetime:
     """Wallclock helper, factored for test mocking."""
     return datetime.now(UTC)
+
+
+def _is_tty() -> bool:
+    """Whether stdin is a terminal, factored for test mocking.
+
+    `CliRunner` replaces `sys.stdin` inside `invoke()`, so a test cannot patch
+    `sys.stdin.isatty` and have it reach the command — hence the indirection.
+    """
+    return sys.stdin.isatty()
+
+
+def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
+    """Record that `action` just ran successfully in this repo.
+
+    Bookkeeping for `jailbee.upgrade`'s advice, and a courtesy like the advice
+    itself: a state-DB problem must not turn a successful `base build` into a
+    failed command, hence the broad except.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.upgrade import record
+
+    try:
+        with Session(get_engine()) as session:
+            record(session, cfg.container_prefix, action, __version__, now=_now())
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
+
+
+def _advise_upgrade(cfg: "Config") -> None:
+    """Print any pending `base build` / `apply` advice for this repo.
+
+    Non-blocking and never interactive: it must work with no TTY, and in
+    background `jailbee new` it prints from the foreground parent rather than
+    into the detached job's log where nobody reads it.
+
+    Wrapped broadly on purpose — a locked state DB, a schema surprise, an
+    unreadable row: none of it may take down the command the user actually
+    ran. Advice is a courtesy.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.tui import hint
+    from jailbee.upgrade import advice_lines
+
+    try:
+        with Session(get_engine()) as session:
+            lines = advice_lines(session, cfg.container_prefix, __version__, now=_now())
+        hint(lines)
+    except Exception:  # advice is a courtesy; must never fail the command
+        return
+
+
+def _advise_setup() -> None:
+    """Print the one-shot post-install hint, if it has anything left to say.
+
+    Same contract as `_advise_upgrade`: stderr, non-interactive, and wrapped
+    broadly because a courtesy must never take down the command the user
+    actually ran. `consume_hint` is what makes this fire at most once — the
+    probes it runs are `stat`s, so this costs nothing on the commands it
+    decorates.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.setup_command import consume_hint, detect_shell
+    from jailbee.tui import hint
+
+    try:
+        shell = detect_shell()
+        with Session(get_engine()) as session:
+            lines = consume_hint(session, shells=[shell] if shell else [], now=_now())
+        hint(lines)
+    except Exception:  # the hint is a courtesy; must never fail the command
+        return
+
+
+def _record_setup_run() -> None:
+    """Record that `jailbee setup` ran, silencing the hint for good.
+
+    Recorded even when every step was declined: the user has seen the state
+    and decided, and re-asking on the next `jailbee ls` would be nagging.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.setup_command import record_setup
+
+    try:
+        with Session(get_engine()) as session:
+            record_setup(session, __version__, now=_now())
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
+
+
+def _job_engine() -> "Engine | None":
+    """The state-DB engine used for background-job tracking, or None.
+
+    Same contract as the advice helpers above, one step earlier: a job row is
+    bookkeeping for `jailbee ls` / `jailbee job`, not part of the container, so
+    an unwritable state dir or a database that refuses to open must cost the
+    user the tracking — not the create/destroy the worker exists to run.
+    """
+    from jailbee.db import get_engine
+
+    try:
+        return get_engine()
+    except Exception as e:  # bookkeeping only; never abort the operation
+        # `warn_plain`: a DBAPI error body carries `[SQL: ...]` /
+        # `[parameters: ...]`, which Rich markup would silently eat.
+        warn_plain(f"Job tracking unavailable ({e}) — the operation itself continues")
+        return None
+
+
+def _track_job(
+    engine: "Engine | None",
+    work: "Callable[[Session], None]",
+    what: str,
+) -> None:
+    """Run one job-row write, warning instead of raising when the DB says no.
+
+    Every phase update, failure record and cleanup of a detached worker goes
+    through here, because the write is bookkeeping and the operation around it
+    is not: a locked database, a read-only state dir or a vanished table must
+    not abort a container create halfway.
+
+    Not hypothetical. A *concurrently running older* jailbee is enough: older
+    `db._ensure_schema` versions dropped and recreated every table they knew
+    about whenever they met a database newer than their own
+    `CURRENT_SCHEMA_VERSION`, and re-checked on every connection. A long-lived
+    process from such a build (a dashboard left open across an upgrade) reset
+    the schema under a live worker, whose next phase update then died on
+    `no such table: background_op` and, unguarded, took the whole
+    `jailbee new` with it. That reset is gone — a newer database is now used
+    as-is — but the worker must survive one regardless, because the process
+    doing it is the *old* build, which no fix here can reach.
+    """
+    if engine is None:
+        return
+
+    from sqlmodel import Session
+
+    try:
+        with Session(engine) as session:
+            work(session)
+    except Exception as e:  # bookkeeping only; never abort the operation
+        warn_plain(f"Job tracking: could not {what} ({e})")  # see `_job_engine`
 
 
 def _version_callback(value: bool) -> None:
@@ -119,9 +277,26 @@ def config_show(
     cfg = _load_or_exit(config)
     info(f"# Effective config (merged from global + {path})")
     data = cfg.model_dump(mode="json")
-    data["egress_allow"] = cfg.effective_egress_allow()
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.egress_scope import effective_repo_entries
+
+    # The `effective` layer promises the list that is actually enforced, so
+    # host-local repo overrides belong here. `--layer repo|global` print raw
+    # files and stay untouched. Container-scope extras are not part of a repo
+    # config layer — `jailbee net egress ls` is the view that shows those.
+    with Session(get_engine()) as session:
+        data["egress_allow"] = effective_repo_entries(cfg, session)
     data["shared_caches"] = [c.model_dump(mode="json") for c in cfg.effective_shared_caches()]
     data["host_mounts"] = [m.model_dump(mode="json") for m in cfg.effective_host_mounts()]
+    # Dump each agent through its own (possibly subclassed) model rather than
+    # relying on `cfg.model_dump()`'s dict[str, AgentConfig] field type: that
+    # would serialise every entry — including `agents.claude`, which is a
+    # ClaudeAgentConfig — through the base AgentConfig shape and silently
+    # drop the Claude-only fields (plugins_enabled, install_jailbee_skills, …).
+    data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
 
@@ -140,7 +315,11 @@ def config_validate(config: ConfigOption = None) -> None:
         # raw, unrecovered blocks.
         cfg = load_config_unsanitized(path)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     success(f"Schema OK: {path}")
 
@@ -155,7 +334,11 @@ def config_validate(config: ConfigOption = None) -> None:
     try:
         issues += global_config_issues(default_global_config_path())
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
 
     if not issues:
@@ -212,9 +395,10 @@ def init(config: ConfigOption = None) -> None:
     Errors if profiles already exist — use `jailbee apply` to update from
     current config.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.incus import Incus
     from jailbee.init_command import run_init
+    from jailbee.pool import PoolError
 
     cfg = _load_or_exit(config)
 
@@ -222,18 +406,30 @@ def init(config: ConfigOption = None) -> None:
     gcfg = _load_global()
 
     mirror_endpoint: tuple[str, int] | None = None
-    if gcfg.docker_registry_mirror.enabled:
+    if mirror_wanted(cfg, gcfg):
+        from jailbee.docker_daemon import compute_mirror_endpoint
+
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
+            # Not fatal: `init` is documented to run before `registry up`, and
+            # the ACL's mirror rule is written by the next `apply` / refresh.
+            warn(f"{e} Continuing — run 'jailbee apply' after 'jailbee registry up'.")
 
     try:
         run_init(cfg, incus, mirror_endpoint=mirror_endpoint)
-    except RuntimeError as e:
+    except (RuntimeError, PoolError) as e:
         error(str(e))
         raise typer.Exit(1) from e
+
+    # `run_init` writes exactly what `apply` writes — profiles, ACL, shared
+    # dirs — so it satisfies an `apply` upgrade note just as `apply` does.
+    # Recorded here, at the point that work is known to have succeeded, and
+    # not at the end of the command: the steps below (systemd units, repo
+    # registration) are not part of what the note is about, and a freshly
+    # inited repo must not be told to `jailbee apply` for changes `jailbee
+    # init` just made.
+    _record_upgrade_action(cfg, "apply")
 
     # Install the singleton refresh timer + register this repo so it
     # gets refreshed on the next 60s tick (and stays up to date going
@@ -251,18 +447,83 @@ def init(config: ConfigOption = None) -> None:
 
     # Linger keeps the timer firing when no user session is open.
     # Inform but don't enforce — needs root.
-    import os
-    import subprocess
+    from jailbee.setup_command import linger_tip
 
-    proc = subprocess.run(
-        ["loginctl", "show-user", os.getenv("USER", ""), "-p", "Linger"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if "Linger=yes" not in proc.stdout:
-        info("Tip: `sudo loginctl enable-linger $USER` keeps the timer")
-        info("     running when no user session is open.")
+    linger_tip()
+
+
+@app.command()
+def setup(
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Install every selected step without asking"),
+    ] = False,
+    only: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--only",
+            help="Limit to these steps (repeatable): completions, timer, skills",
+            autocompletion=completion.complete_choices("completions", "timer", "skills"),
+        ),
+    ] = None,
+    shell: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--shell",
+            help="Shells to install completions for (repeatable); default: the detected one",
+            autocompletion=completion.complete_choices("bash", "zsh", "fish"),
+        ),
+    ] = None,
+) -> None:
+    """Set up this machine: shell completions, the refresh timer, Claude skills.
+
+    The machine-level counterpart to `jailbee init`, which sets up a repo.
+    These are the steps a `uv tool install jailbee` cannot perform for you:
+    completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user
+    timer (egress pool refresh and `jailbee net loose` TTL expiry), and
+    jailbee's Claude Code skills in `~/.claude/skills`.
+
+    Interactive by default and idempotent, so re-run it after upgrading
+    jailbee. `--yes` installs everything without asking, which is what
+    `make install` runs.
+
+    Host prerequisites — Incus, the firewall, UID delegation — are not done
+    here: run `jailbee doctor` and follow docs/installation.md.
+    """
+    from jailbee import setup_command as sc
+
+    if only:
+        unknown = [key for key in only if key not in sc.STEP_KEYS]
+        if unknown:
+            error(f"Unknown step: {', '.join(unknown)} (known: {', '.join(sc.STEP_KEYS)})")
+            raise typer.Exit(2)
+    keys = [key for key in sc.STEP_KEYS if not only or key in only]
+
+    if shell:
+        unsupported = [name for name in shell if name not in sc.SUPPORTED_SHELLS]
+        if unsupported:
+            error(
+                f"Unsupported shell: {', '.join(unsupported)} "
+                f"(supported: {', '.join(sc.SUPPORTED_SHELLS)})"
+            )
+            raise typer.Exit(2)
+        shells = list(shell)
+    else:
+        detected = sc.detect_shell()
+        shells = [detected] if detected is not None else []
+
+    def ask(question: str, default: bool) -> bool:
+        return typer.confirm(question, default=default)
+
+    ran = sc.run_setup(keys=keys, shells=shells, confirm=None if yes else ask)
+
+    if "timer" in ran:
+        sc.linger_tip()
+    _record_setup_run()
+
+    info("")
+    info("Next: `jb doctor` checks the host — Incus, firewall, UID delegation.")
+    info(f"      Host setup end to end: docs/installation.md ({sc.DOCS_URL})")
 
 
 @app.command()
@@ -312,6 +573,7 @@ def apply(
             result.hosts_repinned,
             result.docker_proxy_reapplied,
             result.offline_migrated,
+            result.ports_changed,
         ]
     ):
         info("Configuration already up to date.")
@@ -320,6 +582,19 @@ def apply(
 
     for name, err in result.restart_failures:
         error(f"Restart failed: {short_name(cfg, name)}: {err}")
+
+    for name, err in result.port_failures:
+        error_plain(f"Port forwards on {short_name(cfg, name)}: {err}")
+
+    # Unconditional: `run_apply` raises if the config-writing steps fail, so
+    # returning at all means profiles, ACL, /etc/hosts and the dockerd proxy
+    # now match the repo's config — which is the only question the upgrade
+    # advice asks. A container that refused to restart, a port already in
+    # use, or a pool root needing hand-resolution are real failures (hence
+    # the exit code below), but each is reported on its own and re-reported
+    # by `jailbee doctor`. Gating the watermark on them left the `jb ls`
+    # hint nagging about an `apply` that had in fact run.
+    _record_upgrade_action(cfg, "apply")
 
     if not result.fully_successful:
         raise typer.Exit(1)
@@ -375,6 +650,8 @@ def list_cmd(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
+    _advise_setup()
     show_submodules = submodules and repo_has_submodules(cfg)
 
     containers = list_containers(
@@ -594,11 +871,14 @@ def new_cmd(
                                         # name; host repo is bind-mounted RW
     """
     from jailbee.autostart import AutostartStepError
+    from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
     from jailbee.incus import Incus
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
+    _advise_setup()
 
     # --tmux/--shell are shorthands for `--attach <mode>` that additionally
     # force foreground creation. All four attach flags are mutually
@@ -835,30 +1115,47 @@ def new_cmd(
 
     gcfg = _load_global()
 
+    net_mode = network or cfg.defaults.network
+
     mirror_endpoint: tuple[str, int] | None = None
-    mirror_ca_path = None
-    if gcfg.docker_registry_mirror.enabled:
+    mirror_ca_path: Path | None = None
+    if mirror_wanted(cfg, gcfg):
         from jailbee.docker_daemon import compute_mirror_endpoint
 
+        problem: str | None = None
         try:
             mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
         except ValueError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
-        mirror_ca_path = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
-        if not mirror_ca_path.is_file():
-            error(
-                f"Mirror CA cert not found at {mirror_ca_path}. "
-                f"Run 'jailbee registry up' and wait for the proxy to start."
+            problem = str(e)
+        else:
+            ca = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
+            if ca.is_file():
+                mirror_ca_path = ca
+            else:
+                problem = (
+                    f"Mirror CA cert not found at {ca}. "
+                    f"Run 'jailbee registry up' and wait for the proxy to start."
+                )
+        if problem is not None:
+            # Half a mirror is not a mirror: without the CA the container
+            # cannot trust the proxy, so drop the endpoint too and treat both
+            # failures identically.
+            mirror_endpoint = None
+            if net_mode == "strict":
+                error(problem)
+                raise typer.Exit(1)
+            warn(
+                f"{problem} Continuing without it — in loose mode the mirror is "
+                f"only a pull cache. Enable it later with "
+                f"'jailbee registry up && jailbee apply'."
             )
-            raise typer.Exit(1)
 
     if mount:
         full_name = name or f"{cfg.container_prefix}-{container_branch}"
         opts = NewContainerOptions(
             container_branch="",
             name=full_name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
@@ -874,7 +1171,7 @@ def new_cmd(
         opts = NewContainerOptions(
             container_branch=container_branch,
             name=name,
-            network=network or cfg.defaults.network,
+            network=net_mode,
             memory=memory or cfg.defaults.memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
@@ -916,6 +1213,11 @@ def new_cmd(
         raise typer.Exit(1)
     if refresh_result.status == "partial":
         warn(f"Some egress hostnames failed to resolve: {refresh_result.error}")
+
+    # Before either path creates anything: a polluted cache pool root would
+    # otherwise stop `new_container` half-way, with the container already
+    # created and its GUI sockets and port forwards attached.
+    _preflight_cache_pools(cfg)
 
     if run_in_background:
         from datetime import datetime as _dt
@@ -964,16 +1266,23 @@ def new_cmd(
             cwd=str(cfg.repo_root),
         )
 
-        with Session(get_engine()) as session:
-            bg.start_job(
-                session,
+        # Guarded like the worker's own writes, and for the same reason with
+        # one twist: the worker is already running by now, so a failed insert
+        # must cost the user only `jailbee ls`'s JOB column — never the
+        # container that is being built behind it.
+        _track_job(
+            _job_engine(),
+            lambda s: bg.start_job(
+                s,
                 container_name=container_name,
                 container_prefix=cfg.container_prefix,
                 branch=None if opts.mount else opts.container_branch,
                 pid=proc.pid,
                 log_path=str(log_path),
                 now=_dt.now().astimezone(),
-            )
+            ),
+            "record the new job row",
+        )
 
         success(
             f"🌱 '{short_name(cfg, container_name)}' is being created in the background "
@@ -1001,6 +1310,37 @@ def new_cmd(
         raise typer.Exit(_attach_tmux(cfg, incus, created))
     if attach_mode == "shell":
         raise typer.Exit(_attach_shell(cfg, incus, created))
+
+
+def _preflight_cache_pools(cfg: "Config") -> None:
+    """Bring every cache pool root into a usable state, or exit 2.
+
+    Runs before anything is created or booted. `pool.ensure_pool_dirs`
+    refuses a root holding both `slots/slot-0` and loose cache content, and
+    every boot path reaches it — `new_container` through `allocate_startup`,
+    `start`/`restart` through `boot_container`. Neither has a handler above
+    it, so the refusal used to surface as a traceback, and in `new` only
+    after the container had been created and its devices attached.
+
+    Prompting needs a terminal: without one (a script, the detached
+    `_new-worker` / `_boot-worker`) it reports and changes nothing rather
+    than relocating a user's cache content on an answer nobody gave. That is
+    also why this runs in the *foreground* command, before the background
+    fork — same reasoning as `_preflight_background_new`.
+    """
+    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee.pool import preflight_pools
+    from jailbee.tui import default_confirm
+
+    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    if not unresolved:
+        return
+    error(
+        f"Cache pool {', '.join(unresolved)} cannot be used until its root holds "
+        "only the pool layout. Re-run in a terminal to be offered a move, or "
+        "move the loose entries out of the pool root yourself. Nothing was created."
+    )
+    raise typer.Exit(2)
 
 
 def _preflight_background_new(
@@ -1101,10 +1441,7 @@ def _new_worker(
     import json
     import traceback
 
-    from sqlmodel import Session
-
     from jailbee import background
-    from jailbee.db import get_engine
     from jailbee.incus import Incus
     from jailbee.lifecycle import new_container
 
@@ -1114,11 +1451,14 @@ def _new_worker(
     data = json.loads(job.read_text())
     opts, container_name, _log_path = background.job_to_opts(data)
 
-    engine = get_engine()
+    engine = _job_engine()
 
     def _on_phase(phase: str) -> None:
-        with Session(engine) as s:
-            background.set_phase(s, container_name, phase, now=_now())
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, container_name, phase, now=_now()),
+            f"record phase '{phase}'",
+        )
 
     try:
         created = new_container(
@@ -1137,12 +1477,22 @@ def _new_worker(
         _finalize_new(cfg, incus, created, launch_gui=opts.autostart)
     except Exception as e:
         traceback.print_exc()
-        with Session(engine) as s:
-            background.fail_job(s, container_name, str(e), now=_now())
+        # `msg`, not `str(e)` inside the lambda: `e` is unbound once the
+        # except block ends, and a closure over it would be a trap for the
+        # next reader even though the call happens inside the block.
+        msg = str(e)
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, container_name, msg, now=_now()),
+            "mark the job failed",
+        )
         raise typer.Exit(1) from e
 
-    with Session(engine) as s:
-        background.delete_job(s, container_name)
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, container_name),
+        "clear the finished job row",
+    )
 
 
 @app.command("_destroy-worker", hidden=True)
@@ -1157,31 +1507,102 @@ def _destroy_worker(
     """
     import traceback
 
-    from sqlmodel import Session
-
     from jailbee import background
-    from jailbee.db import get_engine
     from jailbee.incus import Incus
     from jailbee.lifecycle import destroy_container
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    engine = get_engine()
+    engine = _job_engine()
 
     def _on_phase(phase: str) -> None:
-        with Session(engine) as s:
-            background.set_phase(s, name, phase, now=_now())
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, name, phase, now=_now()),
+            f"record phase '{phase}'",
+        )
 
     try:
         destroy_container(cfg, incus, name, force=force, on_phase=_on_phase)
     except Exception as e:
         traceback.print_exc()
-        with Session(engine) as s:
-            background.fail_job(s, name, str(e), now=_now())
+        msg = str(e)  # see `_new_worker`: `e` is unbound after the block
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, msg, now=_now()),
+            "mark the job failed",
+        )
         raise typer.Exit(1) from e
 
-    with Session(engine) as s:
-        background.delete_job(s, name)
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, name),
+        "clear the finished job row",
+    )
+
+
+@app.command("_boot-worker", hidden=True)
+def _boot_worker(
+    name: Annotated[str, typer.Option("--name", help="Full container name to boot.")],
+    restart: Annotated[
+        bool,
+        typer.Option("--restart", help="Reboot a running container instead of starting it."),
+    ] = False,
+    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Internal: boot a container detached, tracking phase in SQLite.
+
+    Spawned by `start` / `restart` when background mode is active. Not for
+    direct use.
+    """
+    import traceback
+
+    from jailbee import background
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import boot_container
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    engine = _job_engine()
+
+    try:
+        boot_container(cfg, incus, name, restart=restart)
+        # Only once the container is up, and only when there is an autostart
+        # run to report: with --no-autostart the rest is a hosts pin and a
+        # token write, and `starting` stays the honest phase for those.
+        if not no_autostart:
+            _track_job(
+                engine,
+                lambda s: background.set_phase(s, name, background.PHASE_AUTOSTART, now=_now()),
+                f"record phase '{background.PHASE_AUTOSTART}'",
+            )
+        _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    except typer.Exit:
+        # `_post_start_actions` reports an autostart failure itself and exits.
+        # Its `str()` is the exit code, which would leave the row saying "1",
+        # so point at the log that does carry the detail.
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, "boot failed — see the worker log", now=_now()),
+            "mark the job failed",
+        )
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        msg = str(e)  # see `_new_worker`: `e` is unbound after the block
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, msg, now=_now()),
+            "mark the job failed",
+        )
+        raise typer.Exit(1) from e
+
+    _track_job(
+        engine,
+        lambda s: background.delete_job(s, name),
+        "clear the finished job row",
+    )
 
 
 def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev") -> int:
@@ -1229,15 +1650,17 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
 
 def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
     """Attach to the autostart tmux session, creating it on demand."""
+    from jailbee.autostart import agent_autostart_steps
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
     from jailbee.tmux import SESSION_NAME, ensure_session, select_window
 
     ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
-    if cfg.claude.autostart:
-        # Best-effort: claude window may have died; fall through to the
+    steps = agent_autostart_steps(cfg)
+    if steps:
+        # Best-effort: the window may have died; fall through to the
         # default focus rather than blocking the attach.
-        select_window(incus, name, "claude")
+        select_window(incus, name, steps[-1].name)
     # See `_attach_shell` for why we route through `incus exec --user`
     # instead of `sudo -i`.
     return incus.exec_interactive(
@@ -1273,9 +1696,8 @@ def shell(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1291,6 +1713,8 @@ def shell(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
+    _advise_upgrade(cfg)
+    _advise_setup()
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")
     raise typer.Exit(_attach_shell(cfg, incus, name, user))
 
@@ -1305,9 +1729,8 @@ def tmux(
         bool,
         typer.Option(
             "--force",
-            help="Attach even if the container's background creation failed "
-            "(e.g. an autostart step errored). Inspects the running container "
-            "regardless of background job state.",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — attach straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -1462,12 +1885,26 @@ def _run_dashboard(
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from sqlalchemy.engine import Engine
+    from sqlmodel import Session
+
+    from jailbee import claude_pool
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
-    from jailbee.sync import BridgePlan, FetchResult, PushResult, SourcePref
+    from jailbee.pool import Pool
+    from jailbee.pr_flow import PrState
+    from jailbee.submodule_pr import SubCandidate
+    from jailbee.sync import (
+        BridgePlan,
+        FetchResult,
+        LocalBranchUpdate,
+        PublishResult,
+        PushResult,
+        SourcePref,
+    )
 
 
 def _resolve_existing(
@@ -1512,6 +1949,23 @@ def _resolve_existing_detailed(
     return incus, resolved
 
 
+def _confirm_attach(*, force: bool) -> bool:
+    """Whether to attach over a background job that failed or is unfinished.
+
+    Defaults to yes: the user typed ``jailbee shell``/``tmux`` precisely to
+    look at a container that misbehaved, and looking changes nothing. The
+    question exists only so the warning above it is read before ``tmux
+    attach`` takes over the screen.
+
+    ``force`` is an explicit "don't ask". A non-interactive stdin answers the
+    same way, because :func:`typer.confirm` would read EOF there and abort an
+    attach the caller explicitly requested.
+    """
+    if force or not sys.stdin.isatty():
+        return True
+    return typer.confirm("Continue anyway?", default=True)
+
+
 def _resolve_attachable(
     cfg: "Config",
     name: str | None,
@@ -1523,22 +1977,25 @@ def _resolve_attachable(
 
     Like :func:`_resolve_existing`, but in-flight ``jailbee new --background``
     containers resolve by name and appear in the picker; once resolved, the
-    call blocks on a spinner until the background op finishes. Fails fast
-    (Exit 1) on a failed op or a dead worker; Ctrl-C cancels the wait (not
-    the background build).
+    call blocks on a spinner until the background op finishes.
 
-    When ``force`` is set, the background job guard is bypassed entirely: the
-    call skips :func:`wait_for_background_ready` and attaches to the resolved
-    container regardless of op state, warning first if the op is ``failed``
-    or its worker died. This is the escape hatch for inspecting a container
-    whose autostart step failed (the container is created and running; only
-    the ``failed`` job row was blocking the attach).
+    A broken job never blocks the attach on its own. When the wait ends badly
+    but the container is up — the common autostart-failure case, where only
+    the ``failed`` job row stands between the user and the tmux window they
+    want to read — the failure is reported and :func:`_confirm_attach` asks
+    whether to go in anyway (default yes; ``force`` skips the question).
 
-    ``force`` bypasses the job guard, not the container's existence: a create
-    that failed before ``incus init`` leaves a job row and no container, and
-    "attaching anyway" to that can only produce an Incus error.
+    Ctrl-C out of the wait gets a similar offer, on stricter terms: an
+    unfinished container is still worth looking inside, but the interrupt is
+    an explicit cancel, so the question is asked even under ``force``,
+    defaults to no, and is not asked at all without a TTY.
+
+    Exits 1 without asking when attaching cannot help: no container exists
+    yet (a create that died before ``incus init``), or a destroy is actively
+    tearing this one down.
     """
     from jailbee import background
+    from jailbee.db.models import JOB_BOOT
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
         lookup_background_job,
@@ -1557,28 +2014,6 @@ def _resolve_attachable(
 
     short = short_name(cfg, resolved)
 
-    if force:
-        row = lookup_background_job(cfg, resolved)
-        dead_job = row is not None and background.clearable(row.phase, row.pid)
-        if not incus.exists(resolved):
-            error(f"'{short}': no such container — there is nothing to attach to.")
-            if dead_job:
-                assert row is not None  # narrowed by dead_job
-                info(
-                    f"  Its background creation failed before the container was created: "
-                    f"{row.error_msg or 'unknown error'}"
-                )
-                info(f"  Clear the leftover job record with: jailbee job clear {short}")
-            raise typer.Exit(1)
-        if dead_job:
-            assert row is not None  # narrowed by dead_job
-            warn(
-                f"'{short}': background creation failed "
-                f"({row.error_msg or 'unknown error'}) — attaching anyway."
-            )
-            info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
-        return incus, resolved
-
     try:
         with console.status(f"⏳ waiting for '{short}' …") as status:
             wait_for_background_ready(
@@ -1587,21 +2022,38 @@ def _resolve_attachable(
                 on_phase=lambda p: status.update(f"⏳ waiting for '{short}' — {p}…"),
             )
     except KeyboardInterrupt:
-        warn(f"'{short}' is still building in the background; check `jailbee ls`.")
-        raise typer.Exit(1) from None
-    except ValueError as e:
-        text = str(e)
-        error(text)
-        # If the op failed (or its worker died) but the container is up —
-        # the common autostart-failure case — point at --force so the user
-        # can attach and inspect it. Skip only when the error text already
-        # carries a --force hint (a freshly-rendered autostart failure);
-        # older stored error_msgs predate --force, so we still add ours.
+        if not incus.exists(resolved):
+            warn(f"'{short}' is still building in the background; check `jailbee ls`.")
+            raise typer.Exit(1) from None
+        # A boot job's container was already there; only its post-boot setup
+        # is unfinished. Saying "created" about one would be a lie the user
+        # could act on (e.g. by destroying it).
         row = lookup_background_job(cfg, resolved)
-        blocked = row is not None and background.clearable(row.phase, row.pid)
-        if blocked and incus.exists(resolved) and "--force" not in text:
-            info(f"  Inspect it anyway with:  jailbee {attach_cmd} {short} --force")
-        raise typer.Exit(1) from e
+        doing = "booting" if row is not None and row.op_kind == JOB_BOOT else "being created"
+        warn(f"'{short}' is still {doing} in the background — its setup is unfinished.")
+        # Ctrl-C is an explicit cancel, so neither `force` nor a missing TTY
+        # answers this one on the user's behalf: offer the unfinished
+        # container only when someone is at the keyboard to accept it, and
+        # default to no, since they just interrupted.
+        if not (sys.stdin.isatty() and typer.confirm("Attach anyway?", default=False)):
+            raise typer.Exit(1) from None
+    except ValueError as e:
+        # A dead job (terminal phase, or a worker that vanished) over a
+        # container that exists is recoverable by looking inside it. A live
+        # destroy job is not — nor is a create that never got as far as a
+        # container.
+        row = lookup_background_job(cfg, resolved)
+        dead_job = row is not None and background.clearable(row.phase, row.pid)
+        if not (dead_job and incus.exists(resolved)):
+            error(str(e))
+            if dead_job:
+                info(f"  Nothing was created; clear the job record: jailbee job clear {short}")
+            raise typer.Exit(1) from e
+        warn(str(e))
+        info(f"  The container itself is up — 'jailbee {attach_cmd}' can still reach it.")
+        info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
+        if not _confirm_attach(force=force):
+            raise typer.Exit(1) from e
     return incus, resolved
 
 
@@ -1635,6 +2087,21 @@ def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> No
         info(f"  {line}")
 
 
+def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult") -> None:
+    """Report the container fetch, then announce the push about to run.
+
+    Wired into `sync.publish_branch_from_container` as its `on_before_push`
+    hook, so everything `jailbee pr` did before the push is on screen before the
+    push starts. `git push` inherits its output and prints nothing until the
+    remote answers, so without this the terminal's last line is git's own fetch
+    output and a push waiting on remote authentication looks like a hung fetch.
+    """
+    _print_fetch_summary(cfg, short, publish.fetch)
+    if publish.dirty:
+        warn(f"Container '{short}' has uncommitted changes — they are NOT included in the PR.")
+    info(f"Pushing '{publish.publish_name}' to {cfg.upstream_remote}…")
+
+
 def _post_start_actions(
     cfg: "Config", incus: "IncusType", name: str, *, no_autostart: bool
 ) -> None:
@@ -1655,7 +2122,7 @@ def _post_start_actions(
     )
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
-    mirror_endpoint = _mirror_endpoint_or_none(incus)
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     if current_network_mode(cfg, incus, name) == "strict":
         from jailbee.hosts import apply_hosts
 
@@ -1698,6 +2165,155 @@ def _post_start_actions(
                 open_chrome(cfg, incus, name, cfg.chrome.url)
 
 
+def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
+    """Drop a leftover boot job row after a successful foreground boot.
+
+    A `failed` (or worker-gone) row describes a boot that the one just
+    completed supersedes. Without this, `jailbee ls` keeps flagging the
+    container and the attach guards keep pointing at `jailbee job clear` even
+    though it came up seconds ago. The background path needs nothing:
+    `start_job` overwrites the row on spawn and the worker deletes it on
+    success.
+
+    Two rows are deliberately left alone:
+
+    - Anything that isn't a *boot*. A failed create means the container's
+      setup (clone, credential wiring, first autostart) never finished, which
+      a reboot doesn't complete, so its row must survive to keep saying so; a
+      destroy job is not this command's business either.
+    - A *live* row, which belongs to a worker still writing to the container.
+      Hence the guarded `clear_job` — also the reason this is safe to reach
+      from `_boot_worker`'s own `_post_start_actions` path.
+    """
+    from jailbee import background as bg
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import short_name
+
+    cleared: list[str] = []
+
+    def work(session: "Session") -> None:
+        row = bg.get_job(session, full_name)
+        if row is None or row.op_kind != JOB_BOOT:
+            return
+        outcome = bg.clear_job(session, full_name)
+        if outcome.cleared:
+            cleared.append(outcome.reason)
+
+    _track_job(_job_engine(), work, "clear the superseded boot job row")
+    if cleared:
+        label = "failed" if cleared[0] == "failed" else "stale"
+        info(f"Cleared the {label} boot job record for '{short_name(cfg, full_name)}'.")
+
+
+def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: bool) -> bool:
+    """Three-way resolution of the boot commands' background mode.
+
+    Explicit flags win over `boot.background`, and asking for both at once is
+    a usage error rather than a silent precedence rule.
+    """
+    if background and no_background:
+        error("--background and --no-background are mutually exclusive.")
+        raise typer.Exit(2)
+    if no_background:
+        return False
+    if background:
+        return True
+    return cfg.boot.background
+
+
+def _spawn_boot_worker(
+    cfg: "Config",
+    config_path: Path,
+    full_name: str,
+    *,
+    restart: bool,
+    no_autostart: bool,
+) -> None:
+    """Spawn a detached `_boot-worker` for one container and record its job row.
+
+    Mirrors the `jailbee destroy --background` spawn: the worker inherits a
+    log file as stdout/stderr and runs in its own session so it survives the
+    parent shell exiting.
+
+    Refuses while another job for this container is still live. Unlike a
+    create or a destroy, a boot is not the last thing to happen to the
+    container: two workers would race the same reboot and interleave their
+    autostart steps.
+    """
+    from datetime import datetime as _dt
+
+    from jailbee import background as bg
+    from jailbee.db import state_dir
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import lookup_background_job, short_name
+
+    short = short_name(cfg, full_name)
+    row = lookup_background_job(cfg, full_name)
+    if row is not None and not bg.clearable(row.phase, row.pid):
+        error(
+            f"'{short}' already has a background job in flight "
+            f"({bg.job_label(row.phase, row.pid, kind=row.op_kind)}, pid {row.pid})."
+        )
+        info("  Wait for it to finish (`jailbee ls`), or run without --background.")
+        raise typer.Exit(1)
+
+    log_dir = state_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"{full_name}-boot-{stamp}.log"
+
+    worker_argv = [
+        sys.executable,
+        "-m",
+        "jailbee",
+        "_boot-worker",
+        "--name",
+        full_name,
+        "--config",
+        str(config_path),
+    ]
+    if restart:
+        worker_argv.append("--restart")
+    if no_autostart:
+        worker_argv.append("--no-autostart")
+
+    # Deliberately not closed here: the handle is inherited by the
+    # detached child as its stdout/stderr; the parent returns immediately
+    # and the fd is released on exit.
+    log_fh = open(log_path, "w")
+    proc = subprocess.Popen(
+        worker_argv,
+        stdin=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        cwd=str(cfg.repo_root),
+    )
+
+    # Guarded like the other background spawns: the worker is already booting
+    # the container, so a failed row costs tracking, not the job.
+    _track_job(
+        _job_engine(),
+        lambda s: bg.start_job(
+            s,
+            container_name=full_name,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=proc.pid,
+            log_path=str(log_path),
+            now=_dt.now().astimezone(),
+            op_kind=JOB_BOOT,
+        ),
+        "record the new job row",
+    )
+
+    verb = "restarting" if restart else "starting"
+    success(
+        f"🔁 '{short}' is {verb} in the background (pid {proc.pid}). "
+        f"Track with: jailbee ls — log: {log_path}"
+    )
+
+
 @app.command()
 def start(
     name: Annotated[
@@ -1705,28 +2321,53 @@ def start(
         typer.Argument(autocompletion=completion.complete_container),
     ] = None,
     no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            "-b",
+            help=(
+                "Start the container detached in the background and return the "
+                "shell immediately. Track progress with `jailbee ls`. "
+                "Overrides the `boot.background` config setting."
+            ),
+        ),
+    ] = False,
+    no_background: Annotated[
+        bool,
+        typer.Option(
+            "--no-background",
+            help="Force a foreground start, overriding `boot.background`.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Start a stopped container, then run autostart."""
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
+    run_in_background = _resolve_boot_background(
+        cfg, background=background, no_background=no_background
+    )
     incus, name = _resolve_existing(cfg, name)
-    incus.start(name)
+    _preflight_cache_pools(cfg)
+    if run_in_background:
+        _spawn_boot_worker(
+            cfg,
+            _resolve_config_path(config),
+            name,
+            restart=False,
+            no_autostart=no_autostart,
+        )
+        return
+    # boot_container also re-attaches the /run/user/<uid>/* GUI sockets,
+    # detaching first so a stale device from a previous boot can't error
+    # the attach out. See runtime_mounts.
+    boot_container(cfg, incus, name, restart=False)
     success(f"Started: {short_name(cfg, name)}")
 
-    # Re-attach /run/user/<uid>/* GUI sockets — see runtime_mounts.
-    # Detach first to avoid stale-device errors if the container had
-    # previously been attached.
-    from jailbee.runtime_mounts import (
-        attach_runtime_devices,
-        detach_runtime_devices,
-    )
-
-    detach_runtime_devices(cfg, incus, name)
-    attach_runtime_devices(cfg, incus, name)
-
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _clear_superseded_boot_job(cfg, name)
 
 
 @app.command()
@@ -1740,10 +2381,14 @@ def stop(
 ) -> None:
     """Stop a running container."""
     from jailbee.lifecycle import short_name
+    from jailbee.stopping import stop_container
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    incus.stop(name, force=force)
+    # No force fallback here: this container holds the user's work, so a
+    # shutdown that will not finish is reported (with what is blocking it)
+    # rather than turned into a power cut behind their back.
+    stop_container(incus, name, force=force, label=short_name(cfg, name))
     success(f"Stopped: {short_name(cfg, name)}")
 
 
@@ -1754,16 +2399,49 @@ def restart(
         typer.Argument(autocompletion=completion.complete_container),
     ] = None,
     no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            "-b",
+            help=(
+                "Restart the container detached in the background and return "
+                "the shell immediately. Track progress with `jailbee ls`. "
+                "Overrides the `boot.background` config setting."
+            ),
+        ),
+    ] = False,
+    no_background: Annotated[
+        bool,
+        typer.Option(
+            "--no-background",
+            help="Force a foreground restart, overriding `boot.background`.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
-    from jailbee.lifecycle import restart_container, short_name
+    from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
+    run_in_background = _resolve_boot_background(
+        cfg, background=background, no_background=no_background
+    )
     incus, name = _resolve_existing(cfg, name)
-    restart_container(cfg, incus, name)
+    _preflight_cache_pools(cfg)
+    if run_in_background:
+        _spawn_boot_worker(
+            cfg,
+            _resolve_config_path(config),
+            name,
+            restart=True,
+            no_autostart=no_autostart,
+        )
+        return
+    boot_container(cfg, incus, name, restart=True)
     success(f"Restarted: {short_name(cfg, name)}")
     _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _clear_superseded_boot_job(cfg, name)
 
 
 def _destroy_batch(cfg: "Config", incus: "IncusType", names: list[str]) -> None:
@@ -1800,10 +2478,8 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
     """
     from datetime import datetime as _dt
 
-    from sqlmodel import Session
-
     from jailbee import background as bg
-    from jailbee.db import get_engine, state_dir
+    from jailbee.db import state_dir
     from jailbee.db.models import JOB_DESTROY
     from jailbee.lifecycle import short_name
 
@@ -1836,9 +2512,12 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
         cwd=str(cfg.repo_root),
     )
 
-    with Session(get_engine()) as session:
-        bg.start_job(
-            session,
+    # Guarded like the `new --background` insert above: the worker is already
+    # tearing the container down, so a failed row costs tracking, not the job.
+    _track_job(
+        _job_engine(),
+        lambda s: bg.start_job(
+            s,
             container_name=full_name,
             container_prefix=cfg.container_prefix,
             branch=None,
@@ -1846,7 +2525,9 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
             log_path=str(log_path),
             now=_dt.now().astimezone(),
             op_kind=JOB_DESTROY,
-        )
+        ),
+        "record the new job row",
+    )
 
     success(
         f"🗑️  '{short_name(cfg, full_name)}' is being destroyed in the background "
@@ -2671,6 +3352,36 @@ app.command(
 )(retarget)
 
 
+def _print_local_branch_update(short: str, upd: "LocalBranchUpdate") -> None:
+    """Report what the push did to the container's own `refs/heads/<source>`.
+
+    Silent for the two benign no-ops, which are also the common ones: a branch
+    already at the pushed tip, and HEAD's own branch — which `--merge` /
+    `--rebase` advance themselves and `ff_container_branch` never touches.
+    """
+    if upd.status in ("up-to-date", "checked-out"):
+        return
+    old = upd.old_oid[:7] if upd.old_oid is not None else "?"
+    if upd.status == "created":
+        info(f"Container's local '{upd.branch}' created at {upd.new_oid[:7]}.")
+    elif upd.status == "fast-forwarded":
+        info(f"Container's local '{upd.branch}' fast-forwarded {old} -> {upd.new_oid[:7]}.")
+    elif upd.status == "diverged":
+        warn(
+            f"⚠ container's local '{upd.branch}' ({old}) has diverged from the "
+            f"pushed ref and was left alone — no container commit is discarded "
+            f"here. Reconcile it in 'jailbee shell {short}', or compare against "
+            f"refs/jailbee/host/{upd.branch}."
+        )
+    else:  # "failed"
+        warn(
+            f"⚠ could not advance the container's local '{upd.branch}'; it is "
+            f"stale, so an in-container 'git rebase {upd.branch}' would use the "
+            f"wrong base. Use refs/jailbee/host/{upd.branch} instead, or retry "
+            f"the push."
+        )
+
+
 def _print_push_summary(short: str, result: "PushResult") -> None:
     if result.old_oid is None:
         delta = "new ref"
@@ -2703,6 +3414,8 @@ def _print_push_summary(short: str, result: "PushResult") -> None:
             f"commit{plural} not in {result.source_ref}; those were not pushed. "
             f"Use --from-local to send the local branch instead."
         )
+    if result.local_branch is not None:
+        _print_local_branch_update(short, result.local_branch)
 
 
 def _print_bridge_direction(src: str, src_side: str, dst: str, dst_side: str) -> None:
@@ -3010,60 +3723,6 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     return pr_info.head_ref, fetch_result.ref
 
 
-def _resolve_pr_description_update(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    *,
-    branch: str,
-    base: str,
-    title: str | None,
-    body: str | None,
-    description: bool,
-    ai_on: bool,
-    offer_regen: bool = True,
-) -> tuple[str | None, str | None] | None:
-    """Decide the (title, body) to apply on a PR update, or None to skip.
-
-    Explicit --title/--body win (either may stay None → left unchanged).
-    Otherwise --description, or an interactive TTY confirmation, triggers a
-    Claude regeneration of both fields. Returns None when nothing should change.
-
-    `offer_regen=False` suppresses only the interactive offer — used on a PR
-    jailbee did not create, where silently rewriting the author's description is
-    never what the user asked for. Explicit --description/--title/--body still
-    apply.
-    """
-    from jailbee import pr_ai
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if title is not None or body is not None:
-        return (title, body)
-
-    want_regen = description
-    if not want_regen and offer_regen and _stdin_is_interactive() and ai_on:
-        want_regen = typer.confirm("Update the PR description with Claude?", default=False)
-    if not want_regen:
-        return None
-    if not ai_on:
-        warn(
-            "Cannot regenerate the description without Claude "
-            "(needs claude.enabled + ai_pr_description, and no --no-ai). Skipping."
-        )
-        return None
-
-    from jailbee.tui import console
-
-    with console.status("Regenerating PR description with Claude…"):
-        text = pr_ai.generate_pr_text(
-            cfg, incus, full, branch=branch, base=base, fixed_title=None, fixed_body=None
-        )
-    if text is None:
-        warn("Claude PR-text generation failed; description left unchanged.")
-        return None
-    return (text.title, text.body)
-
-
 def _pick_push_source(
     cfg: "Config",
     *,
@@ -3158,6 +3817,17 @@ def git_diff_cmd(
         bool,
         typer.Option("--stat", help="Use --stat instead of full patch."),
     ] = False,
+    color: Annotated[
+        bool | None,
+        typer.Option(
+            "--color/--no-color",
+            help=(
+                "Force ANSI colour on or off. Default: colour when stdout is a "
+                "TTY. `jailbee dashboard` passes --color because it pipes the "
+                "diff into a pager."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Show diff between container and host.
@@ -3166,6 +3836,10 @@ def git_diff_cmd(
     `jailbee git pull` (3-dot diff against the container's base branch:
     origin/<base_branch>; fallback origin/<default_branch>).
     Use --wt for working-tree-only, --all for both.
+
+    Colour follows stdout by default. `--color` forces it on for a consumer
+    that pages the output (a pipe is not a TTY, so autodetection would drop
+    exactly the colour a pager can render); `--no-color` forces it off.
     """
     import sys
 
@@ -3196,7 +3870,7 @@ def git_diff_cmd(
             branch=branch,
             mode=mode,
             stat_only=stat,
-            color=sys.stdout.isatty(),
+            color=sys.stdout.isatty() if color is None else color,
         )
     except sync.SyncError as e:
         error(str(e))
@@ -3835,29 +4509,12 @@ app.command(
 )(push)
 
 
-def _confirm_pr_branch_name(proposed: str, container_branch: str) -> str:
-    """Confirm/edit the proposed PR head name on a TTY; return it unchanged off-TTY.
-
-    Enter accepts `proposed`; a typed value replaces it (re-prompts until it is a
-    valid git ref). Never prompts when the proposal equals the container branch
-    (nothing to review) or when stdin is not a TTY.
-    """
-    from jailbee import git as git_mod
-
-    if proposed == container_branch or not sys.stdin.isatty():
-        return proposed
-    while True:
-        chosen: str = typer.prompt("PR head branch name", default=proposed).strip()
-        if git_mod.check_ref_format(chosen):
-            return chosen
-        warn(f"'{chosen}' is not a valid branch name.")
-
-
 def _adopt_pr_head(
     cfg: "Config",
     incus: "IncusType",
     full: str,
     short: str,
+    state: "PrState",
     *,
     yes: bool,
 ) -> str | None:
@@ -3877,7 +4534,6 @@ def _adopt_pr_head(
     on an update-path container — not just the first.)
     """
     from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
     from jailbee.lifecycle import _stdin_is_interactive
 
     raw = incus.config_get(full, "user.jailbee.pr")
@@ -3891,11 +4547,8 @@ def _adopt_pr_head(
     ):
         return None
 
-    try:
-        number = int(raw)
-    except (TypeError, ValueError):
-        error(f"Container '{short}' has a malformed PR label (user.jailbee.pr={raw!r}).")
-        raise typer.Exit(1) from None
+    # state.read() at the call site has already validated the label.
+    number = int(raw)
 
     try:
         pr_info = pr_module.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
@@ -3945,152 +4598,17 @@ def _adopt_pr_head(
 
     # pr_branch FIRST — see the docstring: an adopted flag without a recorded
     # head name would make the next run publish to the container branch.
-    # Best-effort, like the create path's label writes.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", pr_info.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-    except IncusError as exc:
-        warn(f"Could not record the PR-head decision on '{short}': {exc}")
+    # Best-effort, like the create path's label writes. `number=None` leaves
+    # the recorded PR number alone — `new` already wrote it.
+    state.record(
+        head=pr_info.head_ref,
+        author=False,
+        adopted=True,
+        number=None,
+        context=f"Could not record the PR-head decision on '{short}'",
+    )
 
     return pr_info.head_ref
-
-
-def _adopt_existing_pr_for_branch(
-    cfg: "Config",
-    incus: "IncusType",
-    full: str,
-    short: str,
-    *,
-    container_branch: str | None,
-    yes: bool,
-) -> tuple[int, str] | None:
-    """Adopt the PR that already exists for the container's branch, if any.
-
-    A container made with `jailbee new <existing-branch>` carries no PR label, yet
-    that branch may already have a PR open — and without this lookup the create
-    path would propose a fresh head branch name and open a *second* PR for the
-    same work. (When the proposed name happens to equal the branch, `gh pr
-    create` fails with "already exists" and `pr.create_pr` recovers, but that
-    fallback also records `user.jailbee.pr_author`, claiming a PR jailbee never opened.)
-
-    Returns `(number, head_ref)` for the adopted PR, or None when the create
-    path should proceed untouched: no PR for the branch, a closed/merged one
-    (not a target for further work), or a fork PR (whose head lives in the
-    fork, so our branch is a genuinely different thing). Exits non-zero on a
-    declined or unavailable confirmation.
-
-    Records `user.jailbee.pr_branch` / `user.jailbee.pr_adopted` / `user.jailbee.pr` — but
-    deliberately not `user.jailbee.pr_author`: jailbee found this PR, it did not create
-    it, and the foreign-head guards (`--force` confirmation, no description
-    regeneration) must stay on.
-    """
-    from jailbee import pr as pr_module
-    from jailbee.incus import IncusError
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if not container_branch:
-        return None
-
-    found = pr_module.find_pr_for_branch(cfg.repo_root, container_branch)
-    if found is None:
-        return None
-
-    if found.state != "OPEN":
-        info(
-            f"Branch '{container_branch}' had PR #{found.number} ({found.state}); "
-            f"opening a new one."
-        )
-        return None
-    if found.is_cross_repository:
-        owner = found.head_repo_owner or "<fork-owner>"
-        info(
-            f"PR #{found.number} matches this branch by name but its head lives "
-            f"in the fork '{owner}', so it is a different branch; opening a new PR."
-        )
-        return None
-
-    author = f"@{found.author_login}" if found.author_login else "an unknown author"
-    info(
-        f"Branch '{container_branch}' already has PR #{found.number} by {author} "
-        f"(OPEN); head '{found.head_ref}' → base '{found.base_ref}'."
-    )
-
-    if not yes:
-        if not _stdin_is_interactive():
-            error(
-                f"Branch '{container_branch}' already has PR #{found.number}. "
-                f"Pushing this container's commits to it needs confirmation — "
-                f"re-run with --yes when there is no terminal to ask on."
-            )
-            raise typer.Exit(1)
-        if not typer.confirm(
-            f"Push this container's commits to PR #{found.number} instead of opening a new one?",
-            default=True,
-        ):
-            info(
-                "Aborted. To open a separate PR from this container, re-run with "
-                "'--as <other-branch-name>'."
-            )
-            raise typer.Abort()
-
-    # pr_branch first, pr last — same reasoning as `_adopt_pr_head` and the
-    # create path: an interrupted write must leave the container asking again
-    # rather than publishing to the wrong head.
-    try:
-        incus.config_set(full, "user.jailbee.pr_branch", found.head_ref)
-        incus.config_set(full, "user.jailbee.pr_adopted", "1")
-        incus.config_set(full, "user.jailbee.pr", str(found.number))
-    except IncusError as exc:
-        warn(f"Could not record PR #{found.number} on '{short}': {exc}")
-
-    return found.number, found.head_ref
-
-
-def _reject_as_on_pr_update(as_name: str, pr_label: str | None) -> None:
-    """Exit 2: `--as` cannot retarget the head of an already-existing PR.
-
-    The update path always pushes to the PR's recorded head branch, so an `--as`
-    name would publish some other branch and leave the PR untouched. Applies on
-    every run of a container that has a PR (jailbee-authored or adopted from
-    `jailbee new --pr`), not just the first.
-    """
-    target = f"PR #{pr_label}" if pr_label else "the container's PR"
-    error(
-        f"--as cannot be combined with {target}: pushing to '{as_name}' would "
-        f"update a different branch and leave {target} untouched. Drop --as to "
-        f"update {target}."
-    )
-    raise typer.Exit(2)
-
-
-def _confirm_foreign_force_push(short: str, pr_label: str, head: str | None, *, yes: bool) -> None:
-    """Confirm a `--force` push onto the head of a PR jailbee did not create.
-
-    Force-pushing an adopted `jailbee new --pr` container's head rewrites history on
-    a branch someone else may own, so it takes its own confirmation on top of
-    the one-time adoption. `--yes` skips it; without a TTY it is an error.
-    """
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    head_desc = f"'{head}'" if head else "head branch"
-    if yes:
-        return
-    if not _stdin_is_interactive():
-        error(
-            f"--force on '{short}' would overwrite PR #{pr_label}'s head {head_desc}, "
-            f"a PR jailbee did not create. That needs confirmation — re-run with --yes "
-            f"when there is no terminal to ask on."
-        )
-        raise typer.Exit(1)
-    warn(
-        f"--force will overwrite PR #{pr_label}'s head {head_desc} with this "
-        f"container's history. Commits pushed there by anyone else are lost."
-    )
-    if not typer.confirm(
-        f"Force-push over PR #{pr_label}'s head {head_desc}?",
-        default=False,
-    ):
-        raise typer.Abort()
 
 
 def pr_cmd(
@@ -4228,7 +4746,7 @@ def pr_cmd(
     """
     from jailbee import git as git_mod
     from jailbee import pr as pr_mod
-    from jailbee import pr_ai, sync
+    from jailbee import pr_flow, sync
     from jailbee.lifecycle import short_name
 
     if no_draft:
@@ -4241,13 +4759,17 @@ def pr_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
+    )
+    state = pr_flow.ContainerLabelState(incus, full, short=short)
 
     if open_only:
-        pr_num_raw = incus.config_get(full, "user.jailbee.pr")
         try:
-            pr_num = int(pr_num_raw) if pr_num_raw else None
-        except ValueError:
-            pr_num = None
+            pr_num = state.read().number
+        except pr_flow.MalformedPrLabelError as exc:
+            error(str(exc))
+            raise typer.Exit(1) from exc
         if pr_num is None:
             error(f"Container '{short}' has no associated PR.")
             raise typer.Exit(1)
@@ -4263,21 +4785,26 @@ def pr_cmd(
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    is_author = bool(incus.config_get(full, "user.jailbee.pr_author"))
-    stored_pr_branch = incus.config_get(full, "user.jailbee.pr_branch")
-    pr_label = incus.config_get(full, "user.jailbee.pr")
+    try:
+        record = state.read()
+    except pr_flow.MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    is_author = record.author
+    stored_pr_branch = record.head
+    pr_label = str(record.number) if record.number is not None else None
 
     # `--as` names the head of a PR still to be created. A container that
     # already has one (authored, adopted, or about to be adopted below — a PR
     # label always leads to the update path) can only push to that PR's head.
     # Checked BEFORE the adoption prompt so a usage error never adopts a PR.
     if as_name is not None and (is_author or stored_pr_branch or pr_label):
-        _reject_as_on_pr_update(as_name, pr_label)
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
     # A `jailbee new --pr` container already has a PR. Publishing its commits to
     # that PR's head is allowed once the user confirms; the confirmation is
     # recorded, so from then on this behaves like an authored-PR container.
-    adopted_head = _adopt_pr_head(cfg, incus, full, short, yes=yes)
+    adopted_head = _adopt_pr_head(cfg, incus, full, short, state, yes=yes)
     if adopted_head is not None:
         # Use the value in-process rather than re-reading the label: the run
         # must publish to the right head even if the label write failed.
@@ -4292,8 +4819,8 @@ def pr_cmd(
     # a duplicate. `--as` is a deliberate request for a different head, so it
     # skips the lookup entirely.
     if not (is_author or stored_pr_branch or pr_label) and as_name is None:
-        found_pr = _adopt_existing_pr_for_branch(
-            cfg, incus, full, short, container_branch=container_branch, yes=yes
+        found_pr = pr_flow.adopt_existing_pr_for_branch(
+            scope, state, branch=container_branch, yes=yes, record_context=f"on '{short}'"
         )
         if found_pr is not None:
             found_number, found_head = found_pr
@@ -4308,7 +4835,7 @@ def pr_cmd(
     # description?" offer is suppressed — adoption only ever promised commits.
     is_foreign_pr_head = bool(pr_label) and not is_author
     if force and pr_label and not is_author:
-        _confirm_foreign_force_push(short, pr_label, stored_pr_branch, yes=yes)
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, stored_pr_branch, yes=yes)
 
     resolved_base = base or incus.config_get(full, "user.jailbee.base_branch")
     if not resolved_base:
@@ -4319,59 +4846,35 @@ def pr_cmd(
         raise typer.Exit(1)
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
-    branch_ai_on = cfg.claude.enabled and cfg.claude.ai_pr_branch and not no_ai
-
-    # --- Decide the publish name + generate title/body (create path only) ---
-    # `ai_pr_branch` and `ai_pr_description` are INDEPENDENT toggles.
-    # `generate_pr_text` is a single call that yields title, body AND branch, so
-    # run it when EITHER feature needs it and apply each part only if its own
-    # flag is on.
-    ai_text = None  # PrText | None, reused for title/body below
-    publish_name: str | None = None
-    if is_author or stored_pr_branch:
-        # UPDATE: reuse the stored external name; never regenerate the branch.
-        publish_name = stored_pr_branch or None  # None -> publish() defaults to container branch
-    else:
-        # CREATE.
-        if as_name is not None and not git_mod.check_ref_format(as_name):
-            error(f"--as '{as_name}' is not a valid branch name.")
-            raise typer.Exit(2)
-        need_desc_ai = ai_on and not (title and body)  # AI needed for title/body
-        need_branch_ai = branch_ai_on and as_name is None  # AI needed for the branch name
-        gen = (need_desc_ai or need_branch_ai) and bool(container_branch)
-        if gen and container_branch:
-            from jailbee.tui import console
-
-            with console.status(f"Generating PR title/description with Claude in '{short}'…"):
-                ai_text = pr_ai.generate_pr_text(
-                    cfg,
-                    incus,
-                    full,
-                    branch=container_branch,
-                    base=resolved_base,
-                    fixed_title=title,
-                    fixed_body=body,
-                )
-            if ai_text is None:
-                warn(
-                    "Claude PR-text generation failed; using a placeholder. "
-                    "Edit the PR later with `jailbee pr --description`."
-                )
-        # PR head branch name: --as wins; else the AI-proposed name only when
-        # ai_pr_branch is on; else the container branch.
-        if as_name is not None:
-            publish_name = as_name
-        elif need_branch_ai and ai_text is not None and container_branch:
-            publish_name = _confirm_pr_branch_name(ai_text.branch, container_branch)
-        else:
-            publish_name = container_branch
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=bool(record.author or stored_pr_branch),
+        stored_head=stored_pr_branch,
+        source_branch=container_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}'…",
+    )
+    publish_name, ai_text = plan.publish_name, plan.ai_text
 
     # --- Publish (fetch + push under the chosen name) ---
     # On a foreign PR head the generic push-failure hint's "--as" advice does
     # not apply, so `is_foreign_pr_head` (resolved above) tailors it.
     try:
         publish = sync.publish_branch_from_container(
-            cfg, incus, short, branch=branch, publish_name=publish_name, force=force
+            cfg,
+            incus,
+            short,
+            branch=branch,
+            publish_name=publish_name,
+            force=force,
+            on_before_push=lambda result: _print_publish_progress(cfg, short, result),
         )
     except sync.SyncError as exc:
         error(str(exc))
@@ -4385,9 +4888,8 @@ def pr_cmd(
             )
         raise typer.Exit(1) from exc
 
-    _print_fetch_summary(cfg, short, publish.fetch)
-    if publish.dirty:
-        warn(f"Container '{short}' has uncommitted changes — they are NOT included in the PR.")
+    # The fetch summary and the dirty-tree warning were printed by
+    # `_print_publish_progress` before the push, not here.
 
     # --- Reconcile a local branch to the external name (create path) ---
     if not (is_author or stored_pr_branch) and publish.publish_name != publish.fetch.branch:
@@ -4413,117 +4915,66 @@ def pr_cmd(
                 except git_mod.GitError as exc:
                     warn(f"Could not rename local branch: {exc}")
 
-    if is_author or stored_pr_branch:
-        # UPDATE: the branch head was already pushed above. Never re-create,
-        # and never run AI unless the user asked to touch the description.
-        try:
-            created = pr_mod.view_existing_pr(cfg.repo_root, publish.publish_name)
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-    else:
-        # CREATE: resolve title/body (reuse the AI text decided above) and open
-        # the PR. AI title/body are applied ONLY when ai_pr_description is on,
-        # and only to the side the user did not pass explicitly.
-        resolved_title = title
-        resolved_body = body
-        if ai_on and ai_text is not None:
-            if title is None:
-                resolved_title = ai_text.title
-            if body is None:
-                resolved_body = ai_text.body
-        if resolved_title is None:
-            src_ref = f"refs/jailbee/{short}/{publish.fetch.branch}"
-            resolved_title = git_mod.commit_subject(cfg.repo_root, src_ref) or publish.publish_name
-        if resolved_body is None:
-            resolved_body = (
-                f"Draft PR created by jailbee from container '{short}'. Description pending."
-            )
+    is_update_path = bool(is_author or stored_pr_branch)
+    resolved_title, resolved_body = ("", "")
+    if not is_update_path:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=ai_text,
+            title=title,
+            body=body,
+            fallback_ref=f"refs/jailbee/{short}/{publish.fetch.branch}",
+            publish_name=publish.publish_name,
+            origin_label=f"container '{short}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update_path,
+            head=publish.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee pr",
+            record_context=f"failed to record the PR label on '{short}'",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
-        try:
-            created = pr_mod.create_pr(
-                cfg.repo_root,
-                head=publish.publish_name,
-                base=resolved_base,
-                title=resolved_title,
-                body=resolved_body,
-                remote=cfg.upstream_remote,
-                draft=ready is not True,
-            )
-        except pr_mod.PrError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-
-        from jailbee.incus import IncusError
-
-        try:
-            # Write order matters for a partial (interrupted) write; user.jailbee.pr
-            # is written LAST. The entry guard keys on user.jailbee.pr present
-            # WITHOUT pr_author (== a "jailbee new --pr" review container), so pr
-            # must never land before pr_author. pr_branch is written FIRST so
-            # that even a partially-written author container still resolves the
-            # correct PR head name on the re-run UPDATE path (a missing
-            # pr_branch would push to the container branch — the wrong head).
-            incus.config_set(full, "user.jailbee.pr_branch", publish.publish_name)
-            incus.config_set(full, "user.jailbee.pr_author", "1")
-            incus.config_set(full, "user.jailbee.pr", str(created.number))
-        except IncusError as exc:  # label write is best-effort
-            warn(
-                f"PR #{created.number} created, but failed to record the PR "
-                f"label on '{short}': {exc}"
-            )
-
-    number = created.number
     is_update = is_author or created.already_existed
-
-    title_changed = False
-    body_changed = False
+    update = None
     if is_update:
-        edit = _resolve_pr_description_update(
+        update = pr_flow.apply_pr_updates(
             cfg,
             incus,
             full,
+            scope,
+            number=created.number,
             branch=publish.fetch.branch,
             base=resolved_base,
             title=title,
             body=body,
             description=description,
+            ready=ready,
             ai_on=ai_on,
             offer_regen=not is_foreign_pr_head,
         )
-        if edit is not None:
-            try:
-                pr_mod.edit_pr(cfg.repo_root, number, title=edit[0], body=edit[1])
-                title_changed = edit[0] is not None
-                body_changed = edit[1] is not None
-            except pr_mod.PrError as exc:
-                warn(f"Updating the PR description failed: {exc}")
-
-    state_note = ""
-    if is_update and ready is not None:
-        try:
-            pr_mod.set_ready(cfg.repo_root, number, ready)
-            state_note = " (marked ready)" if ready else " (marked draft)"
-        except pr_mod.PrError as exc:
-            warn(f"Toggling PR draft state failed: {exc}")
-
-    if not is_update:
-        kind = "PR" if ready else "Draft PR"
-        success(f"{kind} #{number} created for '{publish.publish_name}': {created.url}")
-    else:
-        head_note = "head force-pushed (--force-with-lease)" if publish.forced else "head moved"
-        if title_changed and body_changed:
-            detail = f"{head_note}, title and description refreshed"
-        elif body_changed:
-            detail = f"{head_note}, description refreshed"
-        elif title_changed:
-            detail = f"{head_note}, title updated"
-        else:
-            detail = f"{head_note}; description unchanged"
-        success(f"PR #{number} updated — {detail}.{state_note} {created.url}")
-
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=is_update,
+        publish_name=publish.publish_name,
+        forced=publish.forced,
+        ready=ready,
+        update=update,
+    )
     if web:
-        pr_mod.open_pr_in_browser(cfg.repo_root, number)
+        pr_mod.open_pr_in_browser(cfg.repo_root, created.number)
 
 
 # `jailbee pr` is the visible, canonical command; `jailbee git pr` is a hidden alias.
@@ -4556,6 +5007,16 @@ def _print_submodule_report(branch: str, report: list[tuple[str, str | None]]) -
     success(f"Submodules aligned to '{branch}'.")
 
 
+def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
+    """List the submodules that have commits to publish, one per line."""
+    from jailbee.tui import console
+
+    width = max((len(c.path) for c in candidates), default=0)
+    for c in candidates:
+        count = "?" if c.commits is None else str(c.commits)
+        console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
+
+
 @submodule_app.command("checkout")
 def submodule_checkout(
     name: Annotated[
@@ -4564,21 +5025,43 @@ def submodule_checkout(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Branch to place submodules on (default: current)."),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Branch to put the tree on (default: current). On the host this "
+            "checks the branch out in the superproject too.",
+        ),
     ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option(
+            "--submodules-only",
+            help="Align submodules without checking -b out in the superproject "
+            "(host only: a container's branch is never switched here).",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Recursively place submodules on the superproject's branch.
+    """Put the repo tree — superproject and submodules — on one branch.
 
     Purely local — moves nothing between host and container (that is
-    `jailbee git push`/`pull`). With no NAME, aligns the host repo's submodules
-    to the host's current branch (or -b). With a container NAME, aligns that
-    container's submodules to its branch (or -b).
+    `jailbee git push`/`pull`).
+
+    With no NAME this works on the host repo: bare, it aligns the submodules
+    to the branch already checked out; with -b it checks that branch out in
+    the superproject first and then aligns the submodules to it, so one
+    command jumps the whole tree. Pass --submodules-only to leave the
+    superproject where it is (a deliberate mismatch, or a detached HEAD you
+    want to keep).
+
+    With a container NAME, aligns that container's submodules to its branch
+    (or -b). A container's branch is its identity, so -b never switches it.
 
     Examples:
 
-      jailbee submodule checkout               # host repo, current branch
-      jailbee submodule checkout -b feat/x     # host repo, explicit branch
+      jailbee submodule checkout               # host, align to current branch
+      jailbee submodule checkout -b master     # host, whole tree to master
+      jailbee submodule checkout -b master --submodules-only
       jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
     """
     from jailbee import sync
@@ -4588,7 +5071,11 @@ def submodule_checkout(
 
     try:
         if name is None:
-            resolved, report = sync.checkout_submodules_on_host(cfg, branch=branch)
+            resolved, report = sync.checkout_submodules_on_host(
+                cfg,
+                branch=branch,
+                switch_superproject=branch is not None and not submodules_only,
+            )
         else:
             incus, full = _resolve_existing(cfg, name)
             short = short_name(cfg, full)
@@ -4602,12 +5089,681 @@ def submodule_checkout(
     _print_submodule_report(resolved, report)
 
 
+@submodule_app.command("pr")
+def submodule_pr_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    path: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_submodule_path),
+    ] = None,
+    title: Annotated[str | None, typer.Option("--title", help="PR title")] = None,
+    body: Annotated[str | None, typer.Option("--body", help="PR body")] = None,
+    base: Annotated[
+        str | None,
+        typer.Option("--base", help="PR base branch (default: the submodule's own default)"),
+    ] = None,
+    ready: Annotated[
+        bool | None, typer.Option("--ready/--draft", help="Mark ready for review, or draft.")
+    ] = None,
+    description: Annotated[
+        bool,
+        typer.Option("--description", "-d", help="Regenerate the description (update only)."),
+    ] = False,
+    web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
+    no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Branch to publish FROM the submodule"),
+    ] = None,
+    as_name: Annotated[
+        str | None, typer.Option("--as", help="Explicit PR head branch name (new PRs only)")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Force-push with --force-with-lease")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmations")] = False,
+    open_only: Annotated[
+        bool, typer.Option("--open", help="Open the submodule's PR and exit")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Create or update a GitHub PR for one submodule.
+
+    Publishes the commits made inside a submodule in a container to that
+    submodule's own GitHub repository — a separate repo, so a separate PR from
+    the superproject's `jailbee pr`. One PR per run.
+
+    Without PATH, the submodule that has commits ahead of its base is targeted
+    automatically; when several do, they are listed and PATH is required (two
+    submodules are two repositories and two PRs).
+
+    The base branch comes from the submodule's own `.gitmodules` entry, else its
+    `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is
+    `--as`, else Claude's proposal, else the branch the commits came from.
+
+    Examples:
+
+      jailbee submodule pr feat-foo              # auto-target, draft PR
+      jailbee submodule pr feat-foo libs/foo     # explicit submodule
+      jailbee submodule pr feat-foo --ready      # mark ready for review
+      jailbee submodule pr feat-foo --open       # just open it in the browser
+    """
+    from jailbee import pr as pr_mod
+    from jailbee import pr_flow, submodule_pr, sync
+    from jailbee.lifecycle import container_repo_dir, short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    short = short_name(cfg, full)
+
+    # --open resolves from the recorded state alone: no preflight, no
+    # transport, no gh mutation (mirrors `jailbee pr --open`).
+    if open_only:
+        target_path = path
+        if target_path is None:
+            recorded = submodule_pr.recorded_paths(incus, full)
+            if not recorded:
+                error(f"Container '{short}' has no submodule PR recorded.")
+                raise typer.Exit(1)
+            if len(recorded) != 1:
+                # Same condition as AmbiguousSubmoduleTargetError on the normal
+                # path ("disambiguate with PATH") — same exit code, so a script
+                # checking $? sees one meaning regardless of --open.
+                error(
+                    f"Container '{short}' has submodule PRs recorded for "
+                    f"{len(recorded)} paths; name one with PATH."
+                )
+                raise typer.Exit(2)
+            target_path = recorded[0]
+        record = submodule_pr.SubmodulePrState(incus, full, target_path).read()
+        if record.number is None:
+            error(f"Submodule '{target_path}' has no PR recorded on '{short}'.")
+            raise typer.Exit(1)
+        pr_mod.open_pr_in_browser(cfg.repo_root / target_path, record.number)
+        return
+
+    try:
+        sync.assert_container_publishable(cfg, incus, short)
+    except sync.SyncError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    super_base = incus.config_get(full, "user.jailbee.base_branch") or cfg.default_branch
+    repo_dir = container_repo_dir(cfg, incus, full)
+    try:
+        subs = submodule_pr.detect_candidates(
+            cfg, incus, full, repo_dir=repo_dir, base_branch=super_base, short=short
+        )
+        target = submodule_pr.select_target(subs, path)
+    except submodule_pr.NoSubmoduleCandidatesError:
+        if not subs:
+            # "Name one with PATH" is unactionable advice when there is
+            # nothing to name — distinguish "no submodules at all" from
+            # "submodules exist, none are ahead".
+            info(f"Container '{short}' has no submodules.")
+        else:
+            info(
+                f"No submodule in '{short}' has commits ahead of its base — nothing to "
+                f"open a PR for. Name one with PATH to publish it anyway."
+            )
+        return
+    except submodule_pr.AmbiguousSubmoduleTargetError as exc:
+        error(f"Several submodules in '{short}' have commits to publish:")
+        _print_submodule_pr_candidates(exc.candidates)
+        info("Pick one: `jailbee submodule pr <container> <path>`.")
+        raise typer.Exit(2) from exc
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(
+            2 if isinstance(exc, submodule_pr.UnknownSubmodulePathError) else 1
+        ) from exc
+
+    subpath = target.path
+    source_branch = branch or target.branch
+
+    # Step 2 of the spec's pipeline: transport this submodule's objects to
+    # the host BEFORE anything below reads the host sub-repo. For a
+    # submodule the host has never seen (added inside the container, or a
+    # host clone where `git submodule update --init` never ran for this
+    # path), the sub-repo does not exist until this call clones it — see
+    # `submodule_pr.transport_submodule_to_host`'s docstring.
+    submodule_pr.transport_submodule_to_host(
+        cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
+    )
+
+    remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
+    resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
+    scope = pr_flow.PrScope(
+        repo_root=cfg.repo_root / subpath,
+        remote=remote,
+        prefix=f"submodule '{subpath}': ",
+        subpath=subpath,
+    )
+    state = submodule_pr.SubmodulePrState(incus, full, subpath)
+    record = state.read()
+    pr_label = str(record.number) if record.number is not None else None
+
+    if as_name is not None and (record.author or record.head or pr_label):
+        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
+
+    if target.commits is None:
+        warn(
+            f"Could not count submodule '{subpath}''s commits (no base anchor and "
+            f"no {remote}/HEAD); publishing what it has."
+        )
+    if target.gitlink_stale:
+        info(
+            f"Submodule '{subpath}''s commits are not yet in the superproject's "
+            f"gitlink — commit the bump there when this PR is ready."
+        )
+    if target.dirty:
+        warn(f"Submodule '{subpath}' has uncommitted changes — they are NOT in the PR.")
+
+    is_update = bool(record.author or record.head)
+    if not is_update and as_name is None:
+        found = pr_flow.adopt_existing_pr_for_branch(
+            scope,
+            state,
+            branch=source_branch,
+            yes=yes,
+            record_context=f"for submodule '{subpath}' on '{short}'",
+        )
+        if found is not None:
+            pr_label = str(found[0])
+            is_update = True
+            # Build the record in-process rather than re-reading it: `state.record`
+            # (called by `adopt_existing_pr_for_branch`) is best-effort, and a
+            # failed write would otherwise make `state.read()` hand back a blank
+            # `PrRecord` here — `record.head is None` then makes
+            # `resolve_pr_text_and_head` treat this as a headless detached
+            # submodule and fail with a nonsense usage error, even though the
+            # user just confirmed adopting a real PR. Same anti-pattern
+            # `jailbee pr`'s adoption path avoids above (see the "Use the value
+            # in-process" comment near `_adopt_pr_head`).
+            record = pr_flow.PrRecord(number=found[0], head=found[1], author=False, adopted=True)
+
+    is_foreign = bool(pr_label) and not record.author
+    if force and pr_label and not record.author:
+        pr_flow.confirm_foreign_force_push(scope, short, pr_label, record.head, yes=yes)
+
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg,
+        incus,
+        full,
+        scope,
+        is_update=is_update,
+        stored_head=record.head,
+        source_branch=source_branch,
+        base=resolved_base,
+        title=title,
+        body=body,
+        as_name=as_name,
+        no_ai=no_ai,
+        status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
+    )
+    publish_name = plan.publish_name
+    if publish_name is None:
+        error(
+            f"Submodule '{subpath}' is detached in '{short}' and no head branch name "
+            f"was chosen. Name one with --as, or pass --branch to publish an "
+            f"existing submodule branch."
+        )
+        raise typer.Exit(2)
+
+    # Publish step 4 of the spec: the submodule's own upstream must be a GitHub
+    # one, checked BEFORE anything is pushed. `create_pr` validates too, but
+    # only after the branch is already on the remote.
+    try:
+        pr_mod.assert_github_remote(scope.repo_root, remote, label="jailbee submodule pr")
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    try:
+        published = submodule_pr.publish_submodule_branch(
+            cfg,
+            short,
+            subpath=subpath,
+            branch=source_branch,
+            publish_name=publish_name,
+            remote=remote,
+            force=force,
+        )
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    resolved_title, resolved_body = ("", "")
+    if not is_update:
+        resolved_title, resolved_body = pr_flow.resolve_create_text(
+            scope,
+            ai_on=ai_on,
+            ai_text=plan.ai_text,
+            title=title,
+            body=body,
+            fallback_ref=published.src_ref,
+            publish_name=published.publish_name,
+            origin_label=f"container '{short}' submodule '{subpath}'",
+        )
+    try:
+        created = pr_flow.create_or_view_pr(
+            scope,
+            state,
+            is_update=is_update,
+            head=published.publish_name,
+            base=resolved_base,
+            title=resolved_title,
+            body=resolved_body,
+            draft=ready is not True,
+            label="jailbee submodule pr",
+            record_context=f"failed to record the PR label for submodule '{subpath}' on '{short}'",
+        )
+    except pr_mod.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    did_update = is_update or created.already_existed
+    update = None
+    if did_update and source_branch:
+        update = pr_flow.apply_pr_updates(
+            cfg,
+            incus,
+            full,
+            scope,
+            number=created.number,
+            branch=source_branch,
+            base=resolved_base,
+            title=title,
+            body=body,
+            description=description,
+            ready=ready,
+            ai_on=ai_on,
+            offer_regen=not is_foreign,
+        )
+    elif did_update:
+        # The submodule is detached and no --branch resolved a source: there
+        # is no branch to regenerate a description from or a state to toggle
+        # against. `render_pr_outcome` defaults a missing `update` to a no-op
+        # on the update path, so nothing further is needed here beyond the
+        # user-facing warning — and only when the user actually asked for
+        # something that needed the missing branch; a bare re-run with no
+        # such flag has nothing to silently ignore.
+        if description or title is not None or body is not None or ready is not None:
+            warn(
+                f"{scope.prefix}--description/--title/--body/--ready/--draft "
+                f"could not be applied to PR #{created.number}: the submodule "
+                f"is detached and no source branch was resolved. Pass --branch "
+                f"to select one."
+            )
+    pr_flow.render_pr_outcome(
+        scope,
+        url=created.url,
+        number=created.number,
+        is_update=did_update,
+        publish_name=published.publish_name,
+        forced=published.forced,
+        ready=ready,
+        update=update,
+    )
+    if incus.config_get(full, "user.jailbee.pr"):
+        info(
+            "Merge this submodule PR first; the superproject PR's gitlink bump "
+            "then points at a merged commit."
+        )
+    if web:
+        pr_mod.open_pr_in_browser(scope.repo_root, created.number)
+
+
 net_app = typer.Typer(
     name="net",
     help="Switch container network mode.",
     no_args_is_help=True,
 )
 app.add_typer(net_app)
+
+
+egress_app = typer.Typer(
+    name="egress",
+    help=(
+        "Allow a container — or this host's copy of the repo — to reach a "
+        "host in strict mode.\n\n"
+        "Also available as the shorter `jailbee egress ...`.\n\n"
+        "Overrides are additive: they can widen the allowlist, never narrow "
+        "it. Repo-scope overrides are host-local and are NOT committed — use "
+        "`jailbee net egress export` to promote one into `.jailbee/config.yaml`."
+    ),
+    no_args_is_help=True,
+)
+net_app.add_typer(egress_app)
+# Same group at the root as a short alias. Hidden so `jailbee --help` stays
+# readable; named explicitly in the group's own help above, because an alias
+# nobody is told about is dead code.
+app.add_typer(egress_app, name="egress", hidden=True)
+
+
+def _egress_target(
+    name: str | None,
+    repo: bool,
+    cfg: "Config",
+) -> tuple["IncusType", str | None]:
+    """Resolve the (incus, container) an egress command acts on.
+
+    `--repo` short-circuits container resolution: a repo-scope change needs
+    no container, and prompting for one would be a lie about what it touches.
+    """
+    from jailbee.incus import Incus
+
+    if repo:
+        return Incus(), None
+    return _resolve_existing(cfg, name)
+
+
+def _repin_hosts_quietly(cfg: "Config", incus: "IncusType", name: str) -> None:
+    """Best-effort /etc/hosts re-pin after an override change.
+
+    A stopped container has no /etc/hosts to write; an exec failure must not
+    make the override itself look like it failed, because it did not.
+    """
+    from jailbee.hosts import apply_hosts
+    from jailbee.incus import IncusError
+
+    try:
+        apply_hosts(cfg, incus, name, mirror_endpoint=_mirror_endpoint_or_none(cfg, incus))
+    except IncusError as e:
+        warn(f"Override stored, but /etc/hosts was not re-pinned on '{name}': {e}")
+
+
+def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """The mode to materialise a container's extra ACL under.
+
+    `apply_container_acl` owns a container-local `eth0` device, and a
+    container-local device SHADOWS the assigned network profile. Hardcoding
+    `mode="strict"` here would silently pin a currently-loose container back
+    to `incusbr0` with the strict allowlist enforced, while `jailbee ls`
+    still reported it loose. Same fallback `snapshots.restore_snapshot` uses.
+    """
+    from jailbee.lifecycle import current_network_mode
+
+    return current_network_mode(cfg, incus, name) or "strict"
+
+
+@egress_app.command("add")
+def egress_add_cmd(
+    entry: str,
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    repo: Annotated[
+        bool,
+        typer.Option("--repo", help="Apply to every container of this repo on this host."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Allow one host. Scoped to one container unless --repo is given."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.egress import NetworkResolveError, parse_egress_entry
+
+    cfg = _load_or_exit(config)
+    try:
+        parse_egress_entry(entry)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if entry in cfg.effective_egress_allow():
+        info(f"'{entry}' is already allowed by your config — nothing to do.")
+        return
+
+    # Resolve before storing: an unresolvable host is the user's typo, and
+    # they can fix it now.
+    try:
+        egress_scope.resolve_entries([entry])
+    except NetworkResolveError as e:
+        error(f"{e}\nNothing was stored.")
+        raise typer.Exit(1) from e
+
+    incus, container = _egress_target(name, repo, cfg)
+    with Session(get_engine()) as session:
+        if repo:
+            if not egress_scope.add_repo_extra(session, cfg.container_prefix, entry, now=_now()):
+                info(f"'{entry}' is already a repo override — nothing to do.")
+                return
+            success(f"Added repo override '{entry}'. Run `jailbee apply` to push it.")
+            return
+
+        assert container is not None
+        extras = egress_scope.container_extras(incus, container)
+        if entry in extras:
+            info(f"'{entry}' is already an override on '{container}' — nothing to do.")
+            return
+        egress_scope.set_container_extras(incus, container, [*extras, entry])
+        mode = _egress_container_mode(cfg, incus, container)
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    _repin_hosts_quietly(cfg, incus, container)
+    success(f"'{container}' may now reach {entry}.")
+
+
+@egress_app.command("rm")
+def egress_rm_cmd(
+    entry: str,
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    repo: Annotated[
+        bool,
+        typer.Option("--repo", help="Remove a repo-scope override."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Remove an override.
+
+    An entry that exists ONLY in config.yaml must be edited there instead —
+    overrides can only widen the allowlist, never narrow config. But an
+    entry that has ALSO been stored as an override (typically one promoted
+    with `jailbee net egress export` and then pasted, or simply re-added
+    on purpose) removes normally: it's the override row that goes away, not
+    the config line, so additive-only still holds. Checking "is this also
+    stored as an override" needs the repo/container override list, so that
+    check runs before the config-sourced refusal, not instead of it.
+    """
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+
+    cfg = _load_or_exit(config)
+    incus, container = _egress_target(name, repo, cfg)
+    with Session(get_engine()) as session:
+        if repo:
+            if not egress_scope.remove_repo_extra(session, cfg.container_prefix, entry):
+                if entry in cfg.effective_egress_allow():
+                    error(
+                        f"'{entry}' comes from your config, not from a repo "
+                        f"override — overrides can only widen the allowlist.\n"
+                        f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                    )
+                else:
+                    error(f"'{entry}' is not a repo override.")
+                raise typer.Exit(1)
+            success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
+            return
+
+        assert container is not None
+        extras = egress_scope.container_extras(incus, container)
+        if entry not in extras:
+            if entry in cfg.effective_egress_allow():
+                error(
+                    f"'{entry}' comes from your config, not from an override "
+                    f"on '{container}' — overrides can only widen the allowlist.\n"
+                    f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                )
+            else:
+                error(f"'{entry}' is not an override on '{container}'.")
+            raise typer.Exit(1)
+        egress_scope.set_container_extras(incus, container, [e for e in extras if e != entry])
+        mode = _egress_container_mode(cfg, incus, container)
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    _repin_hosts_quietly(cfg, incus, container)
+    success(f"'{container}' can no longer reach {entry}.")
+
+
+@egress_app.command("ls")
+def egress_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    config: ConfigOption = None,
+) -> None:
+    """Show every egress entry that applies, and where it came from.
+
+    With no container name, only repo-scope entries (config + repo-scope
+    overrides) are shown — a read command must not prompt for a container.
+    Pass a container name (branch or full) to also see its own overrides.
+    """
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    container: str | None = None
+    if name is not None:
+        # Resolve through the same resolver add/rm use, so a branch or short
+        # name works identically across all four commands — passing the raw
+        # argument straight to container_extras() would silently look up the
+        # wrong (or no) container and show an empty picture with no error.
+        incus, container = _resolve_existing(cfg, name)
+
+    with Session(get_engine()) as session:
+        rows = egress_scope.classify_sources(cfg, session, incus, container=container)
+
+    from jailbee.tui import console
+
+    type Row = egress_scope.EntryRow
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="entry",
+            header="ENTRY",
+            cell=lambda r: r.entry,
+            json=lambda r: r.entry,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda r: r.source,
+            json=lambda r: r.source,
+        ),
+        table_format.FieldSpec(
+            name="note",
+            header="NOTE",
+            cell=lambda r: "redundant — already in config.yaml" if r.redundant else "",
+            json=lambda r: "redundant" if r.redundant else "",
+            # Only worth a column when at least one row has something to say.
+            show_if=lambda rs: any(r.redundant for r in rs),
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=None,
+        console=console,
+        title=f"Egress entries for {cfg.container_prefix}" if fmt == "table" else None,
+        empty_message="No egress entries.",
+    )
+    if container is None:
+        from jailbee.tui import hint
+
+        # stderr, not stdout: `--format json`'s output is piped/parsed, and
+        # this notice must never land inside it.
+        hint(
+            [
+                "Container-scope overrides are not shown here — pass a "
+                "container name, e.g. `jailbee net egress ls <container>`, "
+                "to see them too."
+            ]
+        )
+
+
+@egress_app.command("export")
+def egress_export_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Print overrides as a replacement for the config's `egress_allow:` key.
+
+    With no container name, only repo-scope overrides are promoted — a read
+    command must not prompt for a container. Pass a container name to also
+    promote its own overrides.
+    """
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    config_path = _resolve_config_path(config)
+    if not config_path.is_file():
+        error(f"No repo config at {config_path} — there is no key to replace.")
+        raise typer.Exit(1)
+
+    incus = Incus()
+    container: str | None = None
+    if name is not None:
+        # Same resolver add/rm use — see egress_ls_cmd's comment.
+        incus, container = _resolve_existing(cfg, name)
+
+    with Session(get_engine()) as session:
+        overrides = list(egress_scope.repo_extras(session, cfg.container_prefix))
+        if container is not None:
+            overrides += egress_scope.container_extras(incus, container)
+
+    typer.echo(
+        egress_scope.render_config_block(
+            egress_scope.repo_file_egress_allow(config_path),
+            overrides,
+            prefix=cfg.container_prefix,
+        ),
+        nl=False,
+    )
+    if container is None:
+        from jailbee.tui import hint
+
+        # stderr, not stdout: stdout here is the literal replacement block —
+        # pasted straight into config.yaml — and must stay pure YAML.
+        hint(
+            [
+                "Container-scope overrides are not included — pass a "
+                "container name, e.g. `jailbee net egress export "
+                "<container>`, to include them too."
+            ]
+        )
 
 
 @dataclass(frozen=True)
@@ -4708,7 +5864,22 @@ def _switch(
     )
 
     incus, resolved = _resolve_existing(cfg, name)
-    mirror_endpoint = _mirror_endpoint_or_none(incus) if mode == "strict" else None
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
+    if mode == "strict" and mirror_endpoint is None:
+        # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
+        # `restart` path, where the pin is incidental. Here it is not: going
+        # strict removes the container's direct route to Docker Hub, so a repo
+        # that wants the mirror and cannot reach it ends up with a dockerd
+        # proxying to a host it can no longer resolve. `jailbee new --network
+        # loose` with the mirror down is a legitimate way to reach this state.
+        from jailbee.docker_daemon import mirror_wanted
+
+        if mirror_wanted(cfg, _load_global()):
+            warn(
+                "Registry mirror unavailable — this strict container gets no "
+                "/etc/hosts pin for it, so `docker pull` inside it will fail. "
+                "Fix with 'jailbee registry up && jailbee apply'."
+            )
 
     # Capture pre-switch mode for ``loose_revert_to``. None means no
     # recognised jailbee net profile attached — default to "strict" as the
@@ -4944,6 +6115,8 @@ def net_status_cmd() -> None:
 
     # Auto-revert: list each loose-mode container, with or without TTL.
     _print_loose_status()
+    _print_port_forward_status()
+    _print_egress_override_status()
 
 
 def _print_loose_status() -> None:
@@ -4987,6 +6160,121 @@ def _print_loose_status() -> None:
         typer.echo(
             f"  {short:<14}expires in {format_duration_short(delta):<10}(→ strict)",
         )
+
+
+def _print_port_forward_status() -> None:
+    """Render the port-forward section of `jailbee net status`.
+
+    Best-effort, like `_print_loose_status`: silent when no repo config is
+    reachable from cwd or Incus is unavailable. Forwards belong in this
+    command because Incus's forkproxy connects directly into (or out of)
+    the container's network namespace, so a forward's traffic never
+    traverses the bridge the ACL is attached to. The ACL is deny-by-default
+    on both egress and ingress (see `network.py`), so neither direction of
+    a forward is filtered by it — which means `net strict` alone no longer
+    describes the whole boundary.
+    """
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers
+
+    try:
+        cfg = _load_or_exit(None)
+    except typer.Exit:
+        return
+    try:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+    except Exception:
+        return
+
+    rows = [(i, by_container.get(i.name, [])) for i in infos]
+    active = [(i, fwds) for i, fwds in rows if fwds]
+    if not active:
+        return
+
+    total = sum(len(fwds) for _, fwds in active)
+    typer.echo("")
+    typer.echo(
+        f"Port forwards: {total} on {len(active)} container(s) — the network ACL does not see these"
+    )
+    for info_row, fwds in active:
+        for fwd in fwds:
+            # The direction word, not an arrow: it is the same word the
+            # commands use, and an arrow would raise the very "which way?"
+            # question the vocabulary exists to settle.
+            typer.echo(
+                f"  {info_row.display_name:<14}{fwd.direction:<14}"
+                f"{fwd.proto} container {fwd.container.display}  "
+                f"host {fwd.host.display}  ({fwd.source})"
+            )
+
+
+def _list_containers_for_status(cfg: "Config", incus: "IncusType") -> list[str]:
+    """Container names of this repo. Factored out so tests can patch one symbol."""
+    from jailbee.lifecycle import list_containers
+
+    return [c.name for c in list_containers(cfg, incus)]
+
+
+def _print_egress_override_status() -> None:
+    """Render the egress-override section of `jailbee net status`.
+
+    Two separate exits, because they mean different things:
+
+    - No repo config reachable from cwd is ordinary use — `net status` is a
+      global command (timer state, every registered repo), routinely run
+      outside any one repo checkout — so that case returns silently, like
+      `_print_loose_status`'s.
+    - Once a repo config is found, the rest of the fetch (container listing,
+      the DB session, every per-container `container_extras` call — each of
+      which is a real `incus config get` subprocess call) is guarded by its
+      own try so a failure there (Incus unreachable, a container destroyed
+      between the listing and its own query, the state DB unavailable)
+      can't crash the rest of `jailbee net status`. Unlike the sibling
+      sections, that failure is NOT silent: this section is the feature's
+      audit surface — it reports a widening of a security boundary that
+      never passed code review, where the siblings report conveniences —
+      so it prints a one-line note on stderr before returning. A security-
+      relevant widening that silently stops being reported is worse than a
+      noisy status command. Training the user to expect a note on every
+      routine no-repo invocation would defeat that purpose, which is why
+      the first exit stays silent.
+    """
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.tui import hint
+
+    try:
+        cfg = load_config(find_repo_config())
+    except Exception:
+        return
+
+    try:
+        from jailbee.incus import Incus
+
+        incus = Incus()
+        names = _list_containers_for_status(cfg, incus)
+        with Session(get_engine()) as session:
+            repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
+            per_container = {name: egress_scope.container_extras(incus, name) for name in names}
+    except Exception:
+        hint(["Could not gather egress-override status for `jailbee net status`."])
+        return
+
+    per_container = {k: v for k, v in per_container.items() if v}
+    if not repo_rows and not per_container:
+        return
+
+    typer.echo("")
+    typer.echo("Egress overrides (host-local, not in git):")
+    for entry in repo_rows:
+        typer.echo(f"  repo {cfg.container_prefix}: {entry}")
+    for name, entries in sorted(per_container.items()):
+        typer.echo(f"  {name}: {', '.join(entries)}")
 
 
 @net_app.command("unregister")
@@ -5251,6 +6539,8 @@ def base_build_cmd(config: ConfigOption = None) -> None:
         error(str(e))
         raise typer.Exit(1) from e
 
+    _record_upgrade_action(cfg, "base_build")
+
 
 @base_app.command("prune")
 def base_prune_cmd(
@@ -5411,7 +6701,11 @@ def _load_or_exit(config_path: Path | None) -> "Config":
         path = _resolve_config_path(config_path)
         cfg = load_config(path)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     for w in cfg.column_warnings():
         warn(f"{path}: {w}")
@@ -5437,26 +6731,30 @@ def _load_global() -> GlobalConfig:
     try:
         gcfg, warnings = load_global_config(gpath)
     except ConfigError as e:
-        error(str(e))
+        # `error_plain`: a validator message can carry square brackets — the
+        # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
+        # `error` would read them as Rich style tags and silently delete the
+        # rule the message exists to state.
+        error_plain(str(e))
         raise typer.Exit(1) from e
     for w in warnings:
         warn(f"{gpath}: {w}")
     return gcfg
 
 
-def _mirror_endpoint_or_none(incus: "IncusType") -> tuple[str, int] | None:
+def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, int] | None:
     """Resolve the registry mirror's (ip, port) best-effort.
 
-    Returns ``None`` when the mirror is disabled in global config or the
-    container isn't in a usable state (e.g. not yet started). Used by
-    operations that pin `jailbee-registry-mirror.incus` into strict containers'
-    /etc/hosts but should NOT abort the operation if the
-    mirror is unavailable — the pin is best-effort.
+    Returns ``None`` when this repo does not want the mirror or the container
+    isn't in a usable state (e.g. not yet started). Used by operations that
+    pin `jailbee-registry-mirror.incus` into strict containers' /etc/hosts but
+    should NOT abort the operation if the mirror is unavailable — the pin is
+    best-effort.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint
+    from jailbee.docker_daemon import compute_mirror_endpoint, mirror_wanted
 
     gcfg = _load_global()
-    if not gcfg.docker_registry_mirror.enabled:
+    if not mirror_wanted(cfg, gcfg):
         return None
     try:
         return compute_mirror_endpoint(incus, gcfg)
@@ -5640,7 +6938,7 @@ def snap_restore_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    restore_snapshot(incus, name, tag)
+    restore_snapshot(cfg, incus, name, tag)
     success(f"Snapshot '{tag}' restored on {short_name(cfg, name)}")
 
 
@@ -5729,6 +7027,366 @@ def snap_delete_cmd(
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
 
+# ---- Port forwarding commands ----
+
+port_app = typer.Typer(
+    name="port",
+    help="Forward ports between a container and the host.",
+    no_args_is_help=True,
+)
+app.add_typer(port_app)
+
+
+def _parse_port(raw: int) -> int:
+    """Validate a port before anything reaches Incus.
+
+    Incus accepts an out-of-range port at device-add time and fails only when
+    the device starts, so the check has to be here.
+    """
+    if not 1 <= raw <= 65535:
+        raise typer.BadParameter(f"port must be 1..65535, got {raw}")
+    return raw
+
+
+def _parse_proto(raw: str) -> str:
+    """Validate a forward's protocol before anything reaches Incus.
+
+    `config.HostPort.proto` restricts `host_ports` entries to tcp/udp; the
+    ad-hoc `jailbee port` commands must enforce the same restriction, or a
+    value like `sctp` reaches Incus and surfaces only as `ports._translate`'s
+    generic fallback error.
+    """
+    if raw not in ("tcp", "udp"):
+        raise typer.BadParameter(f"--proto must be 'tcp' or 'udp', got {raw!r}")
+    return raw
+
+
+def _parse_ip_literal(raw: str, *, option: str) -> str:
+    """Validate a forward endpoint address before anything reaches Incus.
+
+    Mirrors `config.HostPort`'s own `_validate_address`. Without this, a
+    hostname (or any other non-IP value) reaches `ports._probe_free_port` /
+    `ports.host_port_free`, which open a raw socket and let the resulting
+    `OSError`/`gaierror` escape uncaught for `--host-port auto`, or get
+    swallowed by `host_port_free`'s `except OSError: return False` into a
+    confidently wrong "already in use" diagnosis for an explicit
+    `--host-port N`.
+    """
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(raw)
+    except ValueError as e:
+        raise typer.BadParameter(f"{option} must be an IP literal, not a hostname: {raw!r}") from e
+    return raw
+
+
+@port_app.command("to-container")
+def port_to_container_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        int | None,
+        typer.Option("--host-port", help="Host-side port. Defaults to PORT."),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to connect to.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to listen on."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a host service reachable inside the container.
+
+    The container listens on PORT; connections land on the host. This is a
+    hole through `net strict` by construction — see docs/security.md.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-container",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
+        f"{short_name(cfg, name)}: connecting to {fwd.container.display} "
+        f"inside the container now reaches the host's {fwd.host.display} "
+        f"({fwd.device})"
+    )
+
+
+@port_app.command("to-host")
+def port_to_host_cmd(
+    port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    host_port: Annotated[
+        str | None,
+        typer.Option(
+            "--host-port",
+            help="Host-side port, or 'auto' to pick a free one. Defaults to PORT.",
+        ),
+    ] = None,
+    proto: Annotated[
+        str,
+        typer.Option(
+            "--proto",
+            help="tcp (default) or udp.",
+            autocompletion=completion.complete_choices("tcp", "udp"),
+        ),
+    ] = "tcp",
+    host_address: Annotated[
+        str, typer.Option("--host-address", help="Host address to listen on.")
+    ] = "127.0.0.1",
+    container_address: Annotated[
+        str,
+        typer.Option("--container-address", help="Container address to connect to."),
+    ] = "127.0.0.1",
+    config: ConfigOption = None,
+) -> None:
+    """Make a container service reachable on the host.
+
+    The host listens; connections land inside the container. Not available in
+    repo config: a host port is machine-wide, so declaring one per repo would
+    make the repo's containers fight over it.
+    """
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    container_port = _parse_port(port)
+    proto = _parse_proto(proto)
+    host_address = _parse_ip_literal(host_address, option="--host-address")
+    container_address = _parse_ip_literal(container_address, option="--container-address")
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+
+    try:
+        if host_port == "auto":
+            taken = set(ports.declared_host_ports(incus, exclude=name))
+            resolved_host_port = ports.allocate_host_port(host_address, taken)
+        else:
+            if host_port is None:
+                resolved_host_port = container_port
+            else:
+                try:
+                    numeric_host_port = int(host_port)
+                except ValueError:
+                    raise typer.BadParameter(
+                        f"--host-port must be a port number or 'auto', got {host_port!r}"
+                    ) from None
+                # Route through `_parse_port` so a numeric-but-out-of-range value
+                # (e.g. `-1`) gets the same "port must be 1..65535" message as
+                # `to-container`, instead of the "or 'auto'" message above, which
+                # is misleading once the value has already parsed as a number.
+                resolved_host_port = _parse_port(numeric_host_port)
+            ports.check_host_port(incus, host_address, resolved_host_port, container=name)
+        fwd = ports.add_forward(
+            incus,
+            name,
+            direction="to-host",
+            proto=proto,
+            container_port=container_port,
+            host_port=resolved_host_port,
+            container_address=container_address,
+            host_address=host_address,
+        )
+    except ports.PortError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    # error_plain's counterpart: an IPv6 endpoint's bracketed display
+    # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and silently
+    # deleted from the line.
+    success_plain(
+        f"{short_name(cfg, name)}: connecting to {fwd.host.display} on the "
+        f"host now reaches {fwd.container.display} inside the container "
+        f"({fwd.device})"
+    )
+
+
+@port_app.command("rm")
+def port_rm_cmd(
+    handle: Annotated[
+        str,
+        typer.Argument(
+            help="Device name, host_ports name, or container port.",
+            autocompletion=completion.complete_port_handle,
+        ),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Remove one port forward from a container."""
+    from jailbee import ports
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, name = _resolve_existing(cfg, name)
+    try:
+        fwd = ports.remove_forward(incus, name, handle)
+    except ports.PortError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(f"Removed {fwd.device} from {short_name(cfg, name)}")
+
+
+@port_app.command("ls")
+def port_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated fields. Allowed: container, device, "
+                "direction, proto, container_endpoint, host_endpoint, source."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List port forwards. With no container, lists every container of the repo.
+
+    Every proxy device is listed, including one added with `incus` directly —
+    it shows as source `other`. Hiding those would misreport what the
+    container can reach.
+    """
+    from rich.markup import escape
+
+    from jailbee import ports
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+
+    rows: list[tuple[str, ports.Forward]] = []
+    if name is None:
+        incus = Incus()
+        infos = list_containers(cfg, incus)
+        by_container = ports.list_forwards(incus, [i.name for i in infos])
+        for info_row in infos:
+            for fwd in by_container.get(info_row.name, []):
+                rows.append((info_row.display_name, fwd))
+        title = f"Port forwards for {cfg.container_prefix}"
+    else:
+        incus, resolved = _resolve_existing(cfg, name)
+        short = short_name(cfg, resolved)
+        rows = [(short, fwd) for fwd in ports.forwards_for(incus, resolved)]
+        title = f"Port forwards for {short}"
+
+    type Row = tuple[str, ports.Forward]
+    all_fields: list[table_format.FieldSpec[Row]] = [
+        table_format.FieldSpec(
+            name="container",
+            header="CONTAINER",
+            cell=lambda r: r[0],
+            json=lambda r: r[0],
+            show_if=lambda rs: len({r[0] for r in rs}) > 1,
+        ),
+        table_format.FieldSpec(
+            name="device",
+            header="HANDLE",
+            cell=lambda r: r[1].device,
+            json=lambda r: r[1].device,
+        ),
+        table_format.FieldSpec(
+            name="direction",
+            header="DIRECTION",
+            cell=lambda r: r[1].direction,
+            json=lambda r: r[1].direction,
+        ),
+        table_format.FieldSpec(
+            name="proto",
+            header="PROTO",
+            cell=lambda r: r[1].proto,
+            json=lambda r: r[1].proto,
+        ),
+        table_format.FieldSpec(
+            name="container_endpoint",
+            header="IN CONTAINER",
+            # Escaped for the table cell: an IPv6 endpoint's bracketed display
+            # (`[fd00::1]:5037`) is otherwise read as a Rich style tag and
+            # silently deleted. `json` stays unescaped — it is unstyled,
+            # pipeable output (see table_format.emit), not passed through
+            # Rich's markup parser.
+            cell=lambda r: escape(r[1].container.display),
+            json=lambda r: r[1].container.display,
+        ),
+        table_format.FieldSpec(
+            name="host_endpoint",
+            header="ON HOST",
+            cell=lambda r: escape(r[1].host.display),
+            json=lambda r: r[1].host.display,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda r: r[1].source,
+            json=lambda r: r[1].source,
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title=title if fmt == "table" else None,
+        empty_message="No port forwards.",
+    )
+
+
 # ---- GUI launcher commands ----
 
 
@@ -5750,8 +7408,8 @@ def ide_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -5782,8 +7440,8 @@ def chrome_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Launch even if the container's background creation failed "
-            "(e.g. an autostart step errored).",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -5799,16 +7457,355 @@ def chrome_cmd(
     open_chrome(cfg, incus, name, url or cfg.chrome.url)
 
 
-chrome_pool_app = typer.Typer(
-    name="chrome-pool",
-    help="Chrome profile pool management.",
+claude_app = typer.Typer(
+    name="claude",
+    help="Switch which stored Claude Code login this repo's containers use.",
     no_args_is_help=True,
 )
-app.add_typer(chrome_pool_app)
+app.add_typer(claude_app)
 
 
-@chrome_pool_app.command("ls")
-def chrome_pool_ls_cmd(
+def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
+    """The two configs every pool command needs."""
+    return _load_or_exit(config), _load_global()
+
+
+def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
+    from jailbee import table_format
+
+    return [
+        table_format.FieldSpec(
+            name="account",
+            header="ACCOUNT",
+            # `display_name`, not `name`: the ORG column already carries the
+            # `#<org8>` half, which `Slot.org_hint` parses back out of the
+            # name, so rendering both repeats the same eight characters in
+            # every row. JSON keeps the whole name — it is the reference a
+            # script feeds back to `claude use`/`claude rm`, and nothing there
+            # is reading a second column to reassemble it.
+            cell=lambda s: f"[bold]{s.display_name}[/bold]" if s.live else s.display_name,
+            json=lambda s: s.name,
+        ),
+        table_format.FieldSpec(
+            name="org",
+            header="ORG",
+            cell=lambda s: s.org_hint or "-",
+            json=lambda s: s.org_hint,
+            # A store of personal accounts has no organization anywhere, and a
+            # column of "-" earns no width. `--fields` overrides this.
+            show_if=lambda slots: any(s.org_hint for s in slots),
+        ),
+        table_format.FieldSpec(
+            name="state",
+            header="STATE",
+            cell=lambda s: "live" if s.live else "parked",
+            json=lambda s: "live" if s.live else "parked",
+        ),
+    ]
+
+
+def _claude_ref_or_pick(
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    purpose: str,
+    message: str,
+) -> str | None:
+    """`ref`, or the account the user picks when they gave none.
+
+    The store is listed only on the picker path: a caller who named an account
+    should not pay a store read this command does not need, and `switch` /
+    `resolve_removable` list it again anyway.
+
+    `None` means cancelled — callers abort without an error line.
+    """
+    from jailbee import claude_pool
+    from jailbee.tui import pick_claude_account
+
+    if ref is not None:
+        return ref
+    return claude_pool.resolve_interactively(
+        claude_pool.list_slots(cfg, gcfg),
+        None,
+        purpose=purpose,
+        picker=lambda slots: pick_claude_account(slots, message=message),
+        is_interactive=_is_tty,
+    )
+
+
+def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str) -> None:
+    """The parts of a pool change that are the same for `use` and `park`.
+
+    `session_note` is the caller's, because the two commands leave a running
+    session in opposite states: `use` swaps one credential for another, while
+    `park` leaves the holder empty and that session unauthenticated. One shared
+    sentence would be a false reassurance in the command that removes auth.
+    """
+    from jailbee import claude_pool
+
+    if change.parked_as is not None and claude_pool.is_unidentified(change.parked_as):
+        # The design requires this warning, and its absence is why an
+        # unidentified park was only ever discovered later, from `claude ls`.
+        # The file is a working login; only the record of *which* account it
+        # holds is missing, and it is missing because nothing on the host could
+        # be read to supply it.
+        warn(
+            f"`{change.parked_as}` does not say which account it holds: jailbee "
+            "could not read the account from any member repo's `.claude.json`. "
+            "The login itself is intact. To give it its real name, activate it "
+            "with `jailbee claude use`, run `claude` once in a container of this "
+            "holder, then `jailbee claude park` again."
+        )
+    if change.updated:
+        info(f"Recorded account updated in: {', '.join(change.updated)}")
+    if change.not_updated:
+        warn(
+            "Could not update the recorded account in: "
+            f"{', '.join(change.not_updated)}. Those repos keep naming the previous "
+            "account until their config is readable again — authentication is "
+            "unaffected."
+        )
+    if change.live_sessions:
+        warn(f"A Claude session looks live in: {', '.join(change.live_sessions)}. {session_note}")
+
+
+@claude_app.command("ls")
+def claude_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option("--fields", help="Comma-separated fields. Allowed: account, org, state."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List stored Claude logins and which one this repo's containers use."""
+    from jailbee import claude_pool
+    from jailbee.tui import console
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        slots = claude_pool.list_slots(cfg, gcfg)
+        found, unreachable = claude_pool.members(cfg, gcfg)
+    except (claude_pool.PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    # "on this host", not "for group X": the table mixes two scopes. Only the
+    # `live` row belongs to this holder — every `parked` row comes from the
+    # host-wide store, so the same rows appear under every group. A title
+    # naming one group read as a claim over the whole table, and a user asked
+    # why an account had "appeared in" a group they had not touched.
+    table_format.emit(
+        slots,
+        _claude_fields(),
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title="Claude logins on this host",
+        empty_message=("No stored Claude logins. `jailbee claude park` stores the one in use."),
+    )
+    # A switch is holder-wide, so who else moves with it is part of reading
+    # this table — and the in-container skill promises the command says so.
+    # Table format only: the JSON payload is a row per slot, and a per-command
+    # fact does not belong in it.
+    if fmt == "table":
+        from jailbee.paths import display_path
+
+        # The group belongs to the live row, so it is stated where the holder
+        # is, not in the title.
+        group = claude_pool.group_name(cfg)
+        where = f"group `{group}`" if group is not None else f"{cfg.container_prefix} (no group)"
+        info(f"Live in {where} → {display_path(claude_pool.holder_dir(cfg))}")
+        info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        if any(not s.live for s in slots):
+            info(
+                "Parked logins are host-wide — any of them can be activated into "
+                "any group, which is why they are listed here too."
+            )
+        if unreachable:
+            warn(
+                "Could not read the config of: "
+                f"{', '.join(unreachable)}. Those repos share this holder too."
+            )
+
+
+@claude_app.command("use")
+def claude_use_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name for an exact match. "
+            "Omit to pick from a menu.",
+            autocompletion=completion.complete_claude_account,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Switch this repo's containers to a stored login.
+
+    Omit the account to choose from a menu of the stored ones. The switch is
+    holder-wide: every repo sharing this credential group moves with it. A
+    running Claude session picks the new credential up on its next turn — no
+    restart.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        target = _claude_ref_or_pick(
+            cfg, gcfg, ref, purpose="switch to", message="Switch this repo to:"
+        )
+        if target is None:
+            raise typer.Abort()
+        change = claude_pool.switch(cfg, gcfg, target)
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    success(f"Switched to {change.activated}")
+    if change.parked_as is not None:
+        info(f"Parked the previous login as `{change.parked_as}`.")
+    _report_side_effects(
+        change,
+        session_note=(
+            "The credential swaps on that session's next turn; the account shown "
+            "in /status may lag until it restarts."
+        ),
+    )
+
+
+@claude_app.command("park")
+def claude_park_cmd(config: ConfigOption = None) -> None:
+    """Store the login in use and leave this repo's holder empty.
+
+    This is how a new account enters the pool: with no credential to find, the
+    next `claude` in a container of this holder prompts `/login`, and that
+    login lands straight in the holder.
+    """
+    from jailbee import claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        change = claude_pool.park(cfg, gcfg)
+    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if change.parked_as is None:
+        info("Nothing to park: this holder has no stored login.")
+        return
+    success(f"Parked `{change.parked_as}`")
+    _report_side_effects(
+        change,
+        session_note=(
+            "This holder is now empty, so that session has no login: it will ask "
+            "for /login on its next turn, unless you run `jailbee claude use "
+            "<account>` first."
+        ),
+    )
+    info("The next `claude` in a container of this holder will prompt /login.")
+
+
+@claude_app.command("rm")
+def claude_rm_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name. Omit to pick from a menu.",
+            autocompletion=completion.complete_claude_account,
+        ),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete a stored login permanently.
+
+    Omit the account to choose from a menu of the stored ones. JailBee never
+    contacts Anthropic, so a deleted login can only come back through a
+    browser `/login`.
+    """
+    from jailbee import claude_pool
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        target = _claude_ref_or_pick(
+            cfg, gcfg, ref, purpose="delete", message="Delete stored login:"
+        )
+        if target is None:
+            raise typer.Abort()
+        # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
+        # and a parked file is ambiguous for a switch but not for a deletion,
+        # and `rm` is the command that clears that state.
+        slot = claude_pool.resolve_removable(target, claude_pool.list_slots(cfg, gcfg))
+        if slot.live:
+            # Pre-checked so the confirmation prompt is never shown for a
+            # deletion that `remove_slot` would refuse anyway.
+            raise claude_pool.PoolError(claude_pool.live_account_refusal(slot.name))
+    except (claude_pool.PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    if not yes and not typer.confirm(
+        f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
+        default=False,
+    ):
+        raise typer.Exit(1)
+    try:
+        claude_pool.remove_slot(slot)
+    except (claude_pool.PoolError, OSError) as e:
+        error(f"could not delete `{slot.name}`: {e}")
+        raise typer.Exit(2) from e
+    success(f"Deleted `{slot.name}` — a browser /login is the only way back")
+
+
+pool_app = typer.Typer(
+    name="pool",
+    help="Per-container cache pool management.",
+    no_args_is_help=True,
+)
+app.add_typer(pool_app)
+
+
+def _pools_or_exit(cfg: "Config", name: str | None) -> "list[Pool]":
+    """Resolve the CLI's optional NAME argument to the pools to act on.
+
+    `None` means every configured pool. A given name is looked up with
+    `pool.get` (a single-pool lookup) rather than filtering the full
+    `pools_for` list ourselves, so a caller mocking `pool.get` (as the
+    `chrome-pool` alias tests do) controls this path directly.
+    """
+    from jailbee import pool as pool_mod
+
+    if name is None:
+        return pool_mod.pools_for(cfg)
+    found = pool_mod.get(cfg, name)
+    if found is not None:
+        return [found]
+    pools = pool_mod.pools_for(cfg)
+    error(f"No pooled cache named '{name}'. Pooled: {', '.join(p.name for p in pools) or '(none)'}")
+    raise typer.Exit(2)
+
+
+@pool_app.command("ls")
+def pool_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to list. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
     fmt: Annotated[
         str,
         typer.Option(
@@ -5823,36 +7820,44 @@ def chrome_pool_ls_cmd(
         typer.Option(
             "--fields",
             help=(
-                "Comma-separated list of fields to show. Allowed: slot, container, "
-                "login_data_mtime, size_bytes, size, path."
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
             ),
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """List Chrome profile pool slots."""
+    """List cache pool slots."""
     from datetime import datetime
 
-    from jailbee import chrome_pool
-    from jailbee.chrome_pool import SlotInfo
+    from jailbee import pool as pool_mod
     from jailbee.incus import Incus
     from jailbee.maintenance import humanize
+    from jailbee.pool import SlotInfo
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    slots = chrome_pool.list_slots(cfg, Incus())
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    slots = [s for p in selected for s in pool_mod.list_slots(cfg, incus, p)]
 
     def _mtime_cell(s: SlotInfo) -> str:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return "-"
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat(" ", "seconds")
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat(" ", "seconds")
 
     def _mtime_json(s: SlotInfo) -> str | None:
-        if s.login_data_mtime is None:
+        if s.warmth_mtime is None:
             return None
-        return datetime.fromtimestamp(s.login_data_mtime).isoformat()
+        return datetime.fromtimestamp(s.warmth_mtime).isoformat()
 
     all_fields: list[table_format.FieldSpec[SlotInfo]] = [
+        table_format.FieldSpec(
+            name="pool",
+            header="POOL",
+            cell=lambda s: s.pool,
+            json=lambda s: s.pool,
+        ),
         table_format.FieldSpec(
             name="slot",
             header="SLOT",
@@ -5866,8 +7871,8 @@ def chrome_pool_ls_cmd(
             json=lambda s: s.container,
         ),
         table_format.FieldSpec(
-            name="login_data_mtime",
-            header="LOGIN DATA MTIME",
+            name="warmth_mtime",
+            header="WARMTH MTIME",
             cell=_mtime_cell,
             json=_mtime_json,
         ),
@@ -5903,20 +7908,78 @@ def chrome_pool_ls_cmd(
         fmt=fmt,
         fields=fields,
         console=console,
-        title="Chrome profile pool" if fmt == "table" else None,
+        title="Cache pools" if fmt == "table" else None,
         empty_message="[dim](pool is empty)[/dim]",
     )
+
+    if fmt == "table":
+        total = sum(pool_mod.unique_bytes(p) for p in selected)
+        console.print(f"[dim]total on disk (deduplicated): {humanize(total)}[/dim]")
+
+
+@pool_app.command("prune")
+def pool_prune_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Pool to prune. Omit for every pool.",
+            autocompletion=completion.complete_pool_names,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Delete all unallocated slots."""
+    from jailbee import pool as pool_mod
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    selected = _pools_or_exit(cfg, name)
+    incus = Incus()
+    deleted = sum(pool_mod.prune(cfg, incus, p) for p in selected)
+    success(f"Pruned {deleted} free slots")
+
+
+chrome_pool_app = typer.Typer(
+    name="chrome-pool",
+    help="Deprecated alias for `jailbee pool` (Chrome profile pool).",
+    no_args_is_help=True,
+)
+app.add_typer(chrome_pool_app, hidden=True)
+
+
+@chrome_pool_app.command("ls")
+def chrome_pool_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated list of fields to show. Allowed: pool, slot, "
+                "container, warmth_mtime, size_bytes, size, path."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee pool ls chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_ls_cmd(name="chrome-profile", fmt=fmt, fields=fields, config=config)
 
 
 @chrome_pool_app.command("prune")
 def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
-    """Delete all unallocated Chrome profile slots."""
-    from jailbee import chrome_pool
-    from jailbee.incus import Incus
-
-    cfg = _load_or_exit(config)
-    deleted = chrome_pool.prune(cfg, Incus())
-    success(f"Pruned {deleted} free slots")
+    """Deprecated: use `jailbee pool prune chrome-profile`."""
+    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    pool_prune_cmd(name="chrome-profile", config=config)
 
 
 @app.command("exec")
@@ -5973,9 +8036,17 @@ def exec_cmd(
     # Route through `incus exec --user` instead of `sudo -u`: sudo
     # silently filters env vars not in env_keep, dropping any
     # `container.env` entries set on the base profile.
+    #
+    # A LOGIN shell (`-lc`), like `jailbee shell` and the PR-text bridge use:
+    # `incus exec` supplies a bare default PATH, and tools installed per-user
+    # live in ~/.local/bin, which only `/etc/profile.d/local-bin.sh` adds.
+    # Under plain `bash -c` nothing sources it, so this command's own
+    # documented example — `jailbee exec smoke -- claude` — died with
+    # "claude: command not found". Verified not to pollute stdout: a
+    # non-interactive login shell here emits nothing of its own.
     rc = incus.exec_interactive(
         resolved,
-        ["bash", "-c", f"cd {shlex.quote(target)} && exec {shell_cmd}"],
+        ["bash", "-lc", f"cd {shlex.quote(target)} && exec {shell_cmd}"],
         uid=cfg.container_user.uid,
         gid=cfg.container_user.gid,
         env={
@@ -5994,6 +8065,7 @@ def exec_cmd(
 @app.command()
 def doctor(config: ConfigOption = None) -> None:
     """Run diagnostic checks."""
+    from rich.markup import escape
     from rich.table import Table
 
     from jailbee.doctor import run_checks
@@ -6001,104 +8073,25 @@ def doctor(config: ConfigOption = None) -> None:
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    results = run_checks(cfg, Incus())
+    results = run_checks(cfg, Incus(), gcfg=_load_global())
 
     table = Table(title="Diagnostic checks")
     table.add_column("CHECK")
     table.add_column("STATUS")
     table.add_column("DETAIL")
     for r in results:
+        # The STATUS cell is markup, so the whole row is rendered with markup
+        # enabled — and details are arbitrary text: exception strings
+        # (SQLAlchemy appends `[SQL: ...] [parameters: (...)]`), absolute
+        # paths in brackets, the upgrade block's own wording. Unescaped, a
+        # bracketed run is silently swallowed as a style tag, or raises
+        # MarkupError and takes `doctor` down with it. Escape every detail.
         status = "[green]✓ OK[/green]" if r.ok else "[red]✗ FAIL[/red]"
-        table.add_row(r.name, status, r.detail)
+        table.add_row(escape(r.name), status, escape(r.detail))
     console.print(table)
 
     if any(not r.ok for r in results):
         raise typer.Exit(1)
-
-
-@app.command()
-def migrate(
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Print the plan and exit without changing anything.")
-    ] = False,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation prompt.")] = False,
-) -> None:
-    """Migrate pre-1.0 `gie` state to the jailbee namespace.
-
-    Host-level: takes no repo config, and covers every repo whose containers
-    this host knows. Removed in 1.1.0 — see docs/migrating-from-gie.md.
-    """
-    from jailbee.incus import Incus
-    from jailbee.migrate import (
-        IncompleteMigrationError,
-        build_plan,
-        execute_plan,
-        render_plan,
-        stop_refresh_timers,
-    )
-    from jailbee.tui import console, error
-
-    # Before `build_plan`, not inside `execute_plan`: a refresh tick that
-    # lands while the confirmation prompt waits would recreate
-    # `<state>/jailbee` after the plan was computed. `--dry-run` promises to
-    # change nothing at all, so it keeps its hands off the timers too.
-    if not dry_run:
-        stop_refresh_timers()
-
-    plan = build_plan(Incus())
-    console.print(render_plan(plan))
-    if plan.blockers:
-        raise typer.Exit(1)
-    if plan.is_empty or dry_run:
-        return
-
-    # Consent for each destination that holds something. An empty one is
-    # cleared without asking — there is nothing there to lose — but deleting
-    # real state is the user's call, and only they know whether the old side
-    # or the new one is the one worth keeping.
-    approved: set[Path] = set()
-    for conflict in plan.dir_conflicts:
-        if conflict.is_empty:
-            continue
-        console.print(
-            f"\n{conflict.dst} already exists and holds: {', '.join(conflict.entries)}\n"
-            f"Migrating {conflict.src} means deleting it first."
-        )
-        if yes:
-            # `--yes` means "skip the confirmation prompt", not "consent to
-            # losing state unattended". Deleting a populated directory is a
-            # decision, and an unattended run is the worst place to make it.
-            error(
-                f"--yes cannot consent to deleting {conflict.dst}. Re-run without "
-                f"--yes to decide interactively, or merge {conflict.src} into it by hand."
-            )
-            raise typer.Exit(1)
-        if typer.confirm(f"Delete {conflict.dst}?"):
-            approved.add(conflict.dst)
-        else:
-            error(
-                f"Left everything untouched. Merge {conflict.src} into {conflict.dst} "
-                f"by hand, then re-run `jailbee migrate`."
-            )
-            raise typer.Exit(1)
-
-    if not yes and not typer.confirm("Apply this migration?"):
-        raise typer.Exit(1)
-    try:
-        execute_plan(plan, Incus(), approved_removals=frozenset(approved))
-    except IncompleteMigrationError as e:
-        # Everything up to the failing step was applied; re-running picks up
-        # the remainder. Report it instead of letting a traceback escape.
-        error(str(e))
-        raise typer.Exit(1) from e
-    console.print("Migration complete. Run `jailbee doctor` to confirm.")
-    console.print(
-        "Next: run `jailbee apply` in each repo — it rewrites the profile disk "
-        "sources that moved with the data directory."
-    )
-    for repo_dir in sorted({r.repo_dir for r in plan.relabels if r.repo_dir}):
-        if (Path(repo_dir) / ".gie" / "config.yaml").is_file():
-            console.print(f"Still to do by hand, in {repo_dir}: git mv .gie .jailbee")
 
 
 @app.command("disk-usage")

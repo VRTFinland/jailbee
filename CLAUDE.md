@@ -37,9 +37,14 @@ isolated per-branch development environments using Incus system containers. See
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
-- **`registry.py`, `gui.py`, `maintenance.py`** call `subprocess` directly
-  for non-incus operations (host Docker, `subprocess.Popen` for GUI launches,
-  `du` for disk-usage). This is intentional — they're not Incus operations.
+- **Shelling out to non-incus binaries is intentional** and stays one module
+  per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
+  `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
+  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`).
+  `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
+  `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
+  `registry.py` runs the mirror through the `Incus` wrapper and calls no
+  `subprocess` of its own.
 
 ## Essential commands
 
@@ -102,6 +107,27 @@ rather than constructing dicts from scratch.
 ### No `# type: ignore` without comment
 mypy strict is on. If you must suppress, add a comment explaining why.
 
+### Changing the golden image or profiles requires an `UPGRADE_NOTES` entry
+
+`src/jailbee/upgrade.py` holds `UPGRADE_NOTES` — the hand-maintained list of
+which releases need `jb base build` or `jb apply` re-run. Users who upgrade
+between released versions are advised from it on `jb ls` / `jb new` /
+`jb shell` (a non-blocking hint on stderr) and in `jb doctor`.
+
+Add an entry whenever a change alters:
+
+- what `jb base build` produces — `provision/install.sh`,
+  `provision/install.d.available/`, the provisioning env assembled in
+  `golden.build_golden_image`, or the default stacks (`Stacks` in `config.py`)
+- what `jb apply` writes — profile rendering in `profiles.py`, the ACL in
+  `egress.py`, `/etc/hosts` pinning, the dockerd proxy config
+
+Use the **upcoming** release's version number. An entry above the running
+version is invisible until that version ships, so adding it early is safe —
+but if the release number changes before publication, the entry is wrong and
+must be corrected. A forgotten entry is silent: nothing fails, the advice
+simply never arrives.
+
 ## Test isolation
 
 - All tests are **fully mocked** — none spin up a real Incus daemon, real
@@ -143,13 +169,24 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
   references, then tests and dependencies. Short titles, descriptive
   bodies. The user noted this explicitly after a first attempt copied
   their terse Finnish style.
-- **Planning artifacts stay out of the tree.** The planning skills write
-  design specs and implementation plans under `docs/superpowers/`; that
-  directory is gitignored on purpose, as is `.local/`, which holds
-  scratch scripts, probe output and working notes. They are working
-  notes for one change, not project documentation — never `git add -f`
-  them. Anything worth keeping goes into `docs/` proper, the CHANGELOG,
-  or a GitHub issue.
+- **Planning artifacts stay out of the tree.** Design specs go in
+  `.local/superpowers/specs/`, implementation plans in
+  `.local/superpowers/plans/`, named `YYYY-MM-DD-<topic>-design.md` /
+  `-plan.md`. `.local/` is gitignored (it also holds scratch scripts,
+  probe output and working notes), so the artifacts never reach *this*
+  repo — they are working notes for one change, not project
+  documentation, so never `git add -f` them. This overrides the planning
+  skills' own default of `docs/superpowers/` (that path is gitignored
+  too, but `.local/` is where this repo keeps such notes). Anything worth
+  keeping goes into `docs/` proper, the CHANGELOG, or a GitHub issue.
+- **`.local/superpowers/` is its own git repository**, local-only and
+  with no remote — nested inside the ignored `.local/`, so it is
+  invisible here. **Commit there after each meaningful edit to a spec or
+  plan.** These documents are amended in place over long sessions (a
+  merged commit invalidates a section, a self-review finds a
+  contradiction), and without history a scripted edit that truncates one
+  is unrecoverable — which has happened. Commit from inside the
+  directory, and never add a remote or push it.
 - **Conversation language is Finnish; code and written artifacts are
   English.** The user prefers chatting in Finnish (explanations,
   questions, brainstorming dialogue), while all code, comments, commit

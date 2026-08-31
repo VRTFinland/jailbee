@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -19,6 +20,8 @@ from jailbee.incus import IncusError
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -142,6 +145,36 @@ class CleanupResult:
     skipped_reason: str | None
 
 
+FfStatus = Literal[
+    "created",
+    "fast-forwarded",
+    "up-to-date",
+    "checked-out",
+    "diverged",
+    "failed",
+]
+"""Outcome of advancing a container's own ``refs/heads/<source>``.
+
+``"checked-out"`` and ``"up-to-date"`` are both no-ops the user need not hear
+about; ``"diverged"`` and ``"failed"`` are worth a warning.
+"""
+
+
+@dataclass(frozen=True)
+class LocalBranchUpdate:
+    """What `ff_container_branch` did to the container's `refs/heads/<branch>`.
+
+    ``old_oid`` is the branch's value before the update, and None whenever it
+    was never read: the branch did not exist (``"created"``), it is HEAD's own
+    branch (``"checked-out"``), or the read itself failed.
+    """
+
+    branch: str
+    status: FfStatus
+    old_oid: str | None
+    new_oid: str
+
+
 @dataclass(frozen=True)
 class PushResult:
     """Outcome of `push_to_container` — transport only.
@@ -160,6 +193,11 @@ class PushResult:
     best-effort fetch failed, and `local_only_commits` counts commits on
     `refs/heads/<source>` that the pushed remote-tracking ref does not
     contain (0 whenever the local ref is itself what got pushed).
+
+    `local_branch` reports what happened to the *container's* own
+    `refs/heads/<source>` — see `ff_container_branch`. Never None in
+    practice; the default keeps the field optional for the many test
+    constructors that predate it.
     """
 
     source: str
@@ -170,6 +208,7 @@ class PushResult:
     fetched: bool = False
     fetch_error: str | None = None
     local_only_commits: int = 0
+    local_branch: LocalBranchUpdate | None = None
 
 
 @dataclass(frozen=True)
@@ -312,13 +351,99 @@ def _container_ref_oid(
     return oid or None
 
 
+#: Retry budget for a container-side git write blocked by `.git/index.lock`,
+#: and the linear backoff between attempts (attempt * backoff seconds).
+_INDEX_LOCK_ATTEMPTS = 3
+_INDEX_LOCK_BACKOFF_S = 0.5
+
+#: Environment for container-side git commands that only *read*. `git status`
+#: and `git diff` refresh the index and write it back, which takes
+#: `.git/index.lock` — so a read both contends for the lock and fails on one
+#: held by someone else. `GIT_OPTIONAL_LOCKS=0` makes git skip it; the only
+#: cost is that the refreshed stat cache is not persisted. The same variable is
+#: set for the listing probe (`git_status._PROBE_SNIPPET`'s exec env).
+_READ_ONLY_GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0"}
+
+#: Wall-clock bound for the container-side `git status --porcelain` probe.
+#: Generous on purpose: it is not there to police a slow repository (a cold
+#: stat cache in a large tree takes seconds), but to keep a stalled
+#: `incus exec` from hanging the caller forever with nothing on the terminal —
+#: `jailbee pr` runs this probe between the fetch and the push, where an
+#: unbounded wait looks exactly like a hung fetch.
+_STATUS_PROBE_TIMEOUT_S = 60
+
+
+def _index_lock_held(exc: Exception) -> bool:
+    """True when a container-side git command failed on `.git/index.lock`.
+
+    The match is textual because `IncusError` carries the command's stderr in
+    its message rather than a structured attribute (incus.py is the sole
+    subprocess boundary). git's wording is stable: "Unable to create
+    '<path>/.git/index.lock': File exists".
+    """
+    text = str(exc)
+    return "index.lock" in text and "File exists" in text
+
+
+def _index_lock_message(short: str, repo_dir: str, op: str) -> str:
+    """User-facing report for a lock that outlived the retry budget."""
+    return (
+        f"git {op} could not start in container '{short}': another git process "
+        f"is holding {repo_dir}/.git/index.lock "
+        f"(retried {_INDEX_LOCK_ATTEMPTS} times).\n"
+        f"\n"
+        f"Either a git command is still running in the container, or one "
+        f"crashed and left the lock file behind:\n"
+        f"  jailbee shell {short}\n"
+        f"  cd {repo_dir}\n"
+        f"  git status              # what state the tree is in\n"
+        f"  ls -l .git/index.lock   # delete it only if no git is running\n"
+        f"\n"
+        f"Then run the push again."
+    )
+
+
+def _exec_container_git_write(
+    incus: Incus,
+    full_name: str,
+    cmd: list[str],
+    *,
+    uid: int,
+    env: dict[str, str],
+) -> str:
+    """Run a writing container-side git command, retrying a held index lock.
+
+    `git merge` / `rebase` / `reset --hard` refuse to start while another git
+    process in the same repository holds `.git/index.lock`, and they refuse
+    *before* changing anything — so re-running is safe, and in practice enough:
+    the contention seen in the wild is a concurrent short-lived git command,
+    not a deadlock. A lock still held after the whole budget is either a much
+    longer operation or a leftover from a crashed git; that needs the user, so
+    the error propagates for the caller to report.
+    """
+    for attempt in range(1, _INDEX_LOCK_ATTEMPTS + 1):
+        try:
+            return incus.exec(full_name, cmd, uid=uid, env=env)
+        except IncusError as exc:
+            if attempt == _INDEX_LOCK_ATTEMPTS or not _index_lock_held(exc):
+                raise
+            time.sleep(_INDEX_LOCK_BACKOFF_S * attempt)
+    raise AssertionError("unreachable: the loop either returns or raises")
+
+
 def _container_status_dirty(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> bool:
-    """Return True if `git status --porcelain` in the container has output."""
+    """Return True if `git status --porcelain` in the container has output.
+
+    Bounded by `_STATUS_PROBE_TIMEOUT_S`; a timeout surfaces as `SyncError`
+    like any other exec failure, carrying incus's "timed out after Ns" text.
+    """
     try:
         out = incus.exec(
             full_name,
             ["git", "-C", repo_dir, "status", "--porcelain"],
             uid=uid,
+            env=_READ_ONLY_GIT_ENV,
+            timeout=_STATUS_PROBE_TIMEOUT_S,
         )
     except IncusError as exc:
         raise SyncError(f"Failed to inspect container working tree at {repo_dir}: {exc}") from exc
@@ -1085,6 +1210,7 @@ def publish_branch_from_container(
     branch: str | None = None,
     publish_name: str | None = None,
     force: bool = False,
+    on_before_push: Callable[[PublishResult], None] | None = None,
 ) -> PublishResult:
     """Fetch container `short`'s branch and push it to the GitHub origin.
 
@@ -1095,6 +1221,13 @@ def publish_branch_from_container(
 
     A failed push is offered as a retry on a TTY (see `retry.with_remote_retry`);
     only the push is re-run, never the container fetch or the lease anchor.
+
+    `on_before_push` is called with the fully-resolved `PublishResult` once
+    everything before the push is done, and is the caller's chance to flush its
+    own report of that work. This matters for the terminal: `git push` inherits
+    its output and prints nothing until the remote answers, so a push waiting on
+    authentication is indistinguishable from a hung fetch unless the fetch's
+    result is already on screen. The same object is returned on success.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -1109,6 +1242,10 @@ def publish_branch_from_container(
     lease = git.remote_branch_sha(cfg.repo_root, remote, dest) if force else None
 
     src_ref = f"refs/jailbee/{short}/{fetch.branch}"
+    result = PublishResult(fetch=fetch, dirty=dirty, publish_name=dest, forced=bool(lease))
+    if on_before_push is not None:
+        on_before_push(result)
+
     try:
         # Retry only the push. Re-fetching from the container or recomputing the
         # --force-with-lease anchor would be wrong: the lease must stay pinned to
@@ -1137,7 +1274,7 @@ def publish_branch_from_container(
         )
         raise SyncError(f"Pushing '{dest}' to {remote} failed: {exc}\n{hint}") from exc
 
-    return PublishResult(fetch=fetch, dirty=dirty, publish_name=dest, forced=bool(lease))
+    return result
 
 
 def checkout_from_container(
@@ -1218,10 +1355,18 @@ def checkout_from_container(
 
 
 def checkout_submodules_on_host(
-    cfg: Config, *, branch: str | None = None
+    cfg: Config, *, branch: str | None = None, switch_superproject: bool = False
 ) -> tuple[str, list[tuple[str, str | None]]]:
     """Place the host repo's submodules on ``branch`` (or the host's current
     branch), recursively, then return ``(resolved branch, per-submodule report)``.
+
+    With ``switch_superproject``, check the resolved branch out in the
+    superproject first, so one call moves the whole tree. That order is
+    required, not cosmetic: the superproject checkout is what rewrites the
+    gitlinks the submodule alignment then places branches at. A refused
+    checkout (dirty tree, unknown branch) raises ``SyncError`` and the
+    submodules are left alone — never aligned to a branch the superproject
+    is not on.
 
     Purely local — moves no objects between host and container. Raises
     ``SyncError`` when the host is in detached HEAD and no ``branch`` override
@@ -1232,6 +1377,11 @@ def checkout_submodules_on_host(
         raise SyncError(
             "Host is in detached HEAD; pass -b <branch> to name the branch to place submodules on."
         )
+    if switch_superproject:
+        try:
+            git.checkout_branch(cfg.repo_root, resolved)
+        except git.GitError as exc:
+            raise SyncError(f"could not check out '{resolved}' in the superproject: {exc}") from exc
     submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
     report = submodules.report_submodule_branches(git.run_capture, str(cfg.repo_root))
     return resolved, report
@@ -1507,6 +1657,72 @@ def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_br
     return True
 
 
+def ff_container_branch(
+    incus: Incus,
+    full_name: str,
+    repo_dir: str,
+    *,
+    branch: str,
+    new_oid: str,
+    uid: int,
+) -> LocalBranchUpdate:
+    """Fast-forward the container's own ``refs/heads/<branch>`` to ``new_oid``.
+
+    The transport writes only the ``refs/jailbee/*`` namespace, so without this
+    a container's local ``dev`` sits at whatever ``git clone`` gave it — and an
+    in-container ``git rebase dev`` silently uses a stale base. Nor can the
+    container fix that itself: its ``origin`` is the real upstream URL, so a
+    ``git fetch`` there needs network and credentials. The objects are already
+    present, pushed as ``refs/jailbee/host/<branch>`` by the caller.
+
+    A ref write rather than a refspec, deliberately. A rejected refspec makes
+    the whole ``git push`` exit non-zero (`git.push_url`), which would fail a
+    push whose load-bearing refs all landed, and git's inherited output would
+    print a multi-line rejection at the user.
+
+    Strictly fast-forward, and never HEAD's own branch:
+
+    * HEAD's branch is skipped (``"checked-out"``). Moving it would leave the
+      index and worktree describing a commit the branch no longer points at —
+      and ``receive.denyCurrentBranch`` refuses a push into it for the same
+      reason. `push_and_merge` already advances that branch with its
+      ``--ff-only`` merge. A detached HEAD collides with nothing, so it
+      proceeds.
+    * An absent branch is created; an already-equal one is left alone.
+    * A branch that is not an ancestor of ``new_oid`` is reported
+      (``"diverged"``) and left untouched — container-only commits are never
+      discarded here.
+    * The write uses ``update-ref``'s compare-and-swap form, so a commit made
+      in the container between the read and the write loses the race rather
+      than the commit.
+
+    Best-effort, like `refresh_container_base`: never raises, and reports a
+    transport or git failure as ``"failed"``.
+    """
+    run = submodules._container_runner(incus, full_name, uid=uid)
+    ref = f"refs/heads/{branch}"
+
+    # Non-zero here means detached HEAD: no checked-out branch to collide
+    # with. A dead container also lands here, and is caught by the write below.
+    on_branch, head = run(repo_dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    if on_branch and head.strip() == branch:
+        return LocalBranchUpdate(branch, "checked-out", None, new_oid)
+
+    old_oid = _container_ref_oid(incus, full_name, repo_dir, ref, uid=uid)
+    if old_oid is None:
+        created, _ = run(repo_dir, ["update-ref", ref, new_oid])
+        return LocalBranchUpdate(branch, "created" if created else "failed", None, new_oid)
+    if old_oid == new_oid:
+        return LocalBranchUpdate(branch, "up-to-date", old_oid, new_oid)
+
+    is_ancestor, _ = run(repo_dir, ["merge-base", "--is-ancestor", old_oid, new_oid])
+    if not is_ancestor:
+        return LocalBranchUpdate(branch, "diverged", old_oid, new_oid)
+
+    moved, _ = run(repo_dir, ["update-ref", ref, new_oid, old_oid])
+    return LocalBranchUpdate(branch, "fast-forwarded" if moved else "failed", old_oid, new_oid)
+
+
 def retarget_container(
     cfg: Config,
     incus: Incus,
@@ -1693,6 +1909,16 @@ def push_to_container(
         fetched=fetched,
         fetch_error=fetch_error,
         local_only_commits=local_only,
+        # After the transport, so the objects `new_oid` names are already in
+        # the container. Best-effort by contract — it never raises.
+        local_branch=ff_container_branch(
+            incus,
+            full_name,
+            repo_dir,
+            branch=resolved_source,
+            new_oid=new_oid,
+            uid=cfg.container_user.uid,
+        ),
     )
 
 
@@ -1939,8 +2165,14 @@ def push_and_merge(
     }
 
     try:
-        incus.exec(full_name, merge_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        # Checked before the merge-state probe: a lock failure is never a
+        # conflict, but `git merge` can have written MERGE_HEAD before it hit
+        # the lock, which would send an unfinished merge down the gitlink
+        # conflict resolver.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
         run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
@@ -2036,8 +2268,11 @@ def push_and_rebase(
         "LOGNAME": CONTAINER_USERNAME,
     }
     try:
-        incus.exec(full_name, rebase_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, rebase_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        # Before the rebase-state probe, for the reason given in push_and_merge.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "rebase")) from exc
         if _container_has_rebase_in_progress(incus, full_name, repo_dir):
             raise SyncError(
                 f"Conflict during rebase in container '{short}'.\n"
@@ -2151,8 +2386,10 @@ def push_and_reset(
     }
     reset_cmd = ["git", "-C", repo_dir, "reset", "--hard", push_result.container_ref]
     try:
-        incus.exec(full_name, reset_cmd, uid=uid, env=git_env)
+        _exec_container_git_write(incus, full_name, reset_cmd, uid=uid, env=git_env)
     except IncusError as exc:
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "reset --hard")) from exc
         raise SyncError(f"git reset --hard failed in container '{short}': {exc}") from exc
 
     # `reset --hard` moves the superproject gitlink but leaves submodule

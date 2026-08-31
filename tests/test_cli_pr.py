@@ -66,7 +66,26 @@ def _setup(mocker, tmp_path, labels=None):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
     cfg_mock.claude.enabled = False
     cfg_mock.claude.ai_pr_description = True
+    cfg_mock.upstream_remote = "origin"
     return cfg_mock, incus_mock
+
+
+def _publish_via_hook(mocker, published):
+    """Patch `publish_branch_from_container` so it runs the CLI's pre-push hook.
+
+    The real function calls `on_before_push` between the container fetch and
+    the push, and that hook is where `jailbee pr` prints its fetch summary and
+    dirty-tree warning — a stub that only returns a `PublishResult` skips all
+    of that output. Returns the patched mock.
+    """
+    mocker.patch("jailbee.git.log_oneline", return_value=["def5678 feat: do thing"])
+
+    def fake_publish(*_args, on_before_push=None, **_kwargs):
+        assert on_before_push is not None, "`jailbee pr` must pass the pre-push hook"
+        on_before_push(published)
+        return published
+
+    return mocker.patch("jailbee.sync.publish_branch_from_container", side_effect=fake_publish)
 
 
 def test_create_pr_happy_path(mocker, tmp_path):
@@ -91,6 +110,30 @@ def test_create_pr_happy_path(mocker, tmp_path):
     assert "https://github.com/acme/widgets/pull/123" in result.output
     incus_mock.config_set.assert_any_call("sampleapp-feat-foo", "user.jailbee.pr", "123")
     incus_mock.config_set.assert_any_call("sampleapp-feat-foo", "user.jailbee.pr_author", "1")
+
+
+def test_pr_reports_the_fetch_and_announces_the_push_before_pushing(mocker, tmp_path):
+    """The pre-push hook prints the fetch summary, dirty warning and push line.
+
+    `git push` inherits its output and prints nothing until the remote answers.
+    Reporting the fetch only *after* the publish returns would leave git's own
+    fetch output as the last thing on screen, so a push blocked on remote
+    authentication reads as a hung fetch.
+    """
+    _setup(mocker, tmp_path)
+    _publish_via_hook(mocker, _publish_result())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    summary = "refs/jailbee/feat-foo/feat/foo: abc1234..def5678 (2 new commits)"
+    announce = "Pushing 'feat/foo' to origin"
+    assert summary in result.output
+    assert announce in result.output
+    # The summary reaches the terminal first: the push is what may block.
+    assert result.output.index(summary) < result.output.index(announce)
 
 
 def test_create_pr_title_falls_back_to_branch_name(mocker, tmp_path):
@@ -163,10 +206,7 @@ def test_create_pr_missing_base_label_requires_flag(mocker, tmp_path):
 
 def test_create_pr_dirty_tree_warns(mocker, tmp_path):
     _setup(mocker, tmp_path)
-    mocker.patch(
-        "jailbee.sync.publish_branch_from_container",
-        return_value=_publish_result(dirty=True),
-    )
+    _publish_via_hook(mocker, _publish_result(dirty=True))
     mocker.patch("jailbee.git.commit_subject", return_value="t")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 

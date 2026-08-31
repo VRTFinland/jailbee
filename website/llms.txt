@@ -33,11 +33,24 @@ scope.
   unattended agent cannot surprise-push.
 - **The container is a git remote.** `jailbee git push/pull/fetch/checkout/diff`
   move commits between host and container without a round trip through GitHub.
-  Submodules travel with the superproject.
+  Submodules travel with the superproject. `jailbee pr` opens or updates the
+  GitHub PR from a container's branch, with the title and body written by the
+  in-container Claude — to the project's own standard when the repo states one
+  in `claude.pr_prompt`.
+- **Host services reach in, opt-in.** A declared forward
+  (`host_ports: [{ name: adb, port: 5037 }]`) makes a host service reachable on
+  every container's own localhost — an adb server with a phone attached, a
+  database — and `jailbee port` adds or removes one ad hoc, in either
+  direction. Forwards are Incus proxy devices, so they bypass the egress ACL by
+  construction; `jailbee net status` lists the open ones next to the allowlist.
+- **One dashboard across every repo.** A live TUI (`jailbee dashboard`) or Qt
+  GUI (`jailbee gui`) lists every container on the host and acts on it — shell,
+  tmux, IDE, create or update the PR, update from base, read the diff, follow a
+  background job's log — each offered only when it would do something.
 - **GUI passthrough.** A JetBrains IDE and Chrome run *inside* the container
   and render on the host's Wayland session, reaching the container's own
-  `localhost:3000`. Five containers can each serve port 3000 with no
-  forwarding and no collisions.
+  `localhost:3000`. Five containers can each serve port 3000 with nothing to
+  forward and no collisions.
 - **Snapshots** before an agent run, restore after.
 
 ## When not to use it
@@ -60,11 +73,13 @@ scope.
 
 ## Documentation
 
+- [FAQ](https://github.com/VRTFinland/jailbee/blob/main/docs/faq.md): short answers to the common questions, indexed into the rest of the documentation
 - [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md): one-time host setup — Incus, UID delegation, installing the CLI
 - [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md): concepts, configuring a repo, building the image, a typical day
 - [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md): full command and flag reference
 - [Git bridge](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md): host↔container git bridge, stacked PRs, PR review
 - [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md): every `.jailbee/config.yaml` and `global.yaml` key
+- [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md): the `agents:` config key, the six shipped presets (Claude Code plus five untested templates), and how to add one of your own
 - [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md): isolation model and known limits, including what running an agent without prompts does and does not cover
 - [Who JailBee is for](https://jailbee.gisgro.io/comparison.html): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs
 - [Full technical comparison](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): the same comparison at length, with every caveat and the sources each claim was checked against

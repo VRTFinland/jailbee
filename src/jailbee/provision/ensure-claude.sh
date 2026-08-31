@@ -13,6 +13,12 @@
 #     full — we (re)create it here;
 #   - `claude update` advances the shared store and is gated on the flag.
 #
+# This runs at `jailbee new` only, so it cannot fix the *other* direction:
+# Claude's updater prunes old releases from the shared store, so an update in
+# one container can delete the version an already-running container is pinned
+# to. That repair belongs to /etc/profile.d/jailbee-claude.sh (written by
+# provision/install.sh), which relinks a dangling launcher at every login.
+#
 # A flock on a lock file inside the shared dir serializes parallel
 # `jailbee new` invocations (full install / update both write the store).
 set -euo pipefail
@@ -38,7 +44,7 @@ if [ -z "${LATEST}" ]; then
     echo "==> ensure-claude: empty store, installing Claude Code"
     # The installer runs `claude` as a final smoke-check; that invocation can
     # exit non-zero for reasons unrelated to the binary install (historically a
-    # not-yet-valid ~/.claude.json — see _ensure_claude_json_exists). Under
+    # not-yet-valid ~/.claude.json — see init_command._seed_claude_json). Under
     # `pipefail` such a failure would abort before we (re)create the symlink,
     # leaving an empty store that later surfaces as an opaque exit-127 in the
     # autostart `claude` step. Run the installer tolerantly, then verify the

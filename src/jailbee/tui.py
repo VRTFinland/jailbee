@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import string
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 import typer
 from rich.console import Console
@@ -16,12 +18,14 @@ from rich.text import Text
 if TYPE_CHECKING:
     from rich.status import Status
 
+    from jailbee.claude_pool import Slot
     from jailbee.destroy_guard import RiskSummary
     from jailbee.lifecycle import ContainerInfo
     from jailbee.sync import BridgePlan, RefSummary
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
+hint_console = Console(stderr=True)
 
 
 def format_elapsed(seconds: float) -> str:
@@ -97,6 +101,21 @@ def success(msg: str) -> None:
     console.print(f"[green]✓[/green] {msg}")
 
 
+def success_plain(msg: str) -> None:
+    """Like `success`, but the body is never reinterpreted as Rich markup.
+
+    The `warn` / `warn_plain` hazard, on the success path: a port-forward
+    endpoint's bracketed IPv6 display (``[fd00::1]:5037``) is read as a style
+    tag and *silently deleted*, so a `jailbee port to-container`/`to-host`
+    success line reports connecting to ``:5037`` instead of the real address.
+    Highlighting is off too, so Rich doesn't recolour paths or numbers inside
+    the body.
+
+    Only the ``✓`` marker is styled; the body is emitted verbatim.
+    """
+    console.print(Text.assemble(("✓ ", "green"), msg), highlight=False)
+
+
 def warn(msg: str) -> None:
     console.print(f"[yellow]⚠[/yellow] {msg}")
 
@@ -116,6 +135,24 @@ def warn_plain(msg: str) -> None:
     highlighting off so Rich doesn't recolour paths or numbers inside it.
     """
     console.print(Text.assemble(("⚠ ", "yellow"), msg), highlight=False)
+
+
+def hint(lines: Sequence[str]) -> None:
+    """Print an advisory block on stderr, marking only its first line.
+
+    stderr rather than stdout because hints share a terminal with output that
+    is parsed by scripts — `jailbee ls`'s table, `--format json`. `err_console`
+    is unsuitable: it is styled `bold red`, which is for failures.
+
+    Bodies are emitted as `Text`, never as Rich markup, so a reason
+    containing square brackets survives verbatim — the same reason
+    `warn_plain` exists alongside `warn`.
+    """
+    if not lines:
+        return
+    hint_console.print(Text.assemble(("⚠ ", "yellow"), lines[0]), highlight=False)
+    for line in lines[1:]:
+        hint_console.print(Text(line), highlight=False)
 
 
 def error(msg: str) -> None:
@@ -164,6 +201,93 @@ def default_confirm(msg: str) -> bool:
         return Confirm.ask(msg, default=False)
     except EOFError:
         return False
+
+
+CredentialSide = Literal["group", "repo"]
+"""Which of two competing Claude logins the credential group keeps."""
+
+ChooseCredentialFn = Callable[[Path, Path, str], "CredentialSide | None"]
+"""Resolve the two-credential clash; ``None`` means the user cancelled."""
+
+
+def choose_shared_credential(
+    group_dir: Path,
+    repo_cred: Path,
+    container_prefix: str,
+) -> CredentialSide | None:
+    """Ask which login a credential group should keep; ``None`` to cancel.
+
+    Reached only from `init_command._ensure_claude_credentials_dir`, and only
+    in the one ambiguous case: the group directory and the joining repo both
+    already hold a `.credentials.json`. Exactly one can survive — the loser is
+    an independent grant that nothing would ever read again — and this is the
+    prompt that used to be a hard refusal. That refusal fired on every repo
+    but the first on any host that adopted a group after already logging in
+    per-repo, and it fired from the middle of `run_apply`, leaving the profiles
+    unwritten.
+
+    Returns ``None`` without rendering anything when stdin is not a TTY. The
+    caller turns that into the original refusal, so a piped or CI `jailbee
+    apply` still fails loudly instead of blocking on a prompt no one can
+    answer.
+
+    The printed note names the `claude_credentials.repos` opt-out, because
+    "keep this repo on its own login" is a *config* answer, not a runtime one:
+    it is not offered as a third choice (jailbee does not edit `global.yaml`),
+    so without the note a user who wants neither shared login sees no way out.
+    `container_prefix` is there only to make that note copy-pasteable — it is
+    the key `repos` is dictionaries by, and the one part of the block the user
+    cannot guess from the prompt.
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    import questionary
+
+    # warn_plain, not warn: the body is two filesystem paths, and `warn`
+    # would read any square bracket in one as a Rich style tag and silently
+    # delete it — leaving the user a path that does not exist.
+    warn_plain(
+        f"Both the credential group at {group_dir} and this repo "
+        f"({repo_cred}) hold a Claude login. Only one can be shared; the "
+        f"other becomes unused and is deleted."
+    )
+    hint(
+        [
+            "To keep this repo on its own login instead, cancel and add it "
+            "under `claude_credentials.repos` in "
+            "~/.config/jailbee/global.yaml:",
+            "  claude_credentials:",
+            "    repos:",
+            f"      {container_prefix}: null",
+            "then re-run `jailbee apply`.",
+        ]
+    )
+    choices = [
+        questionary.Choice(
+            title=f"the group's login ({group_dir.name}) — delete this repo's copy",
+            value="group",
+        ),
+        questionary.Choice(
+            title="this repo's login — replaces the group's for every member repo",
+            value="repo",
+        ),
+        # An explicit sentinel, not `value=None`: questionary falls back to
+        # the *title* when a Choice's value is None, so cancelling would
+        # return the label string and read as a valid answer.
+        questionary.Choice(title="cancel — change nothing", value="cancel"),
+    ]
+    result = questionary.select(
+        "Which login should the group keep?",
+        choices=choices,
+    ).ask()
+    # `None` is questionary's own Ctrl-C / ESC answer, which means the same.
+    if result is None or result == "cancel":
+        return None
+    # Spelled out rather than `return result`: `ask()` is typed `Any`, and
+    # narrowing here is what keeps the Literal return honest.
+    assert result in ("group", "repo"), f"unexpected picker answer: {result!r}"
+    return "group" if result == "group" else "repo"
 
 
 def confirm_destroy_risk(unknown: Sequence[str], summaries: Sequence[RiskSummary]) -> bool:
@@ -543,6 +667,41 @@ def pick_containers_multi(
     if result is None:
         return None
     return [str(v) for v in result]
+
+
+def _claude_choice_title(slot: Slot, width: int) -> str:
+    """One picker line: the account, then its organization when it has one.
+
+    Mirrors `jailbee claude ls`'s split — the account column carries
+    `display_name`, so the organization is not repeated inside it.
+    """
+    if not slot.org_hint:
+        # No padding: nothing follows, and trailing spaces are only whitespace
+        # for the terminal to render.
+        return slot.display_name
+    return f"{slot.display_name:<{width}}  {slot.org_hint}"
+
+
+def pick_claude_account(slots: Sequence[Slot], *, message: str) -> str | None:
+    """Arrow-key picker over stored Claude logins. Returns the slot *name*.
+
+    The name, not the `Slot`: it is what `claude use`/`claude rm` resolve, and
+    resolving again under the credential locks is what keeps one resolution
+    authoritative when another process is touching the store.
+
+    Returns None if the user cancels (Ctrl+C / ESC). Caller is responsible for
+    the TTY check — this function unconditionally renders the picker.
+    """
+    import questionary
+
+    width = max(len(s.display_name) for s in slots)
+    choices = [
+        questionary.Choice(title=_claude_choice_title(s, width), value=s.name) for s in slots
+    ]
+    result = questionary.select(message, choices=choices, use_shortcuts=True).ask()
+    if result is None:
+        return None
+    return str(result)
 
 
 _PLAN_HEADINGS = {

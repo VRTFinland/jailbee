@@ -6,10 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jailbee.config import NewConfig, load_config
+from jailbee.config import CONTAINER_USERNAME, NewConfig, PoolSpec, SharedCache, load_config
 from jailbee.lifecycle import (
     NewContainerOptions,
     ResolvedContainer,
+    boot_container,
     derive_container_name,
     destroy_container,
     list_containers,
@@ -17,9 +18,9 @@ from jailbee.lifecycle import (
     resolve_container_for_interactive,
     resolve_container_for_interactive_detailed,
     resolve_container_name,
-    restart_container,
     switch_network,
 )
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -330,6 +331,11 @@ def test_memory_columns_are_dashboard_only_and_json_stays_stable():
     # JSON stays backward-compatible: memory_limit is emitted, mem is opt-in.
     assert by_name["memory_limit"].default_json is True
     assert by_name["mem"].default_json is False
+    # IP matches `ls`: off in the default table and in the dashboards alike.
+    # It stays on in JSON, where scripts depend on it.
+    assert by_name["ip"].default_table is False
+    assert shows_by_default_in_dashboard(by_name["ip"]) is False
+    assert by_name["ip"].default_json is True
 
 
 def test_ls_mem_cell_formats_used_and_limit():
@@ -964,6 +970,7 @@ def test_switch_network_does_not_touch_loose_labels(make_cfg, tmp_path, mocker):
     incus.list_containers.return_value = [_container(name="myrepo-feat-x")]
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
 
     switch_network(cfg, incus, "myrepo-feat-x", "strict")
 
@@ -1085,6 +1092,183 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     assert "limits.memory" in config_set_keys
     assert "limits.cpu" in config_set_keys
     incus.start.assert_called_once_with("repo-feat-x")
+
+
+def test_new_container_relocates_legacy_claude_json(tmp_path, mocker):
+    """`jailbee new` in a repo that hasn't been re-`apply`ed yet must still
+    migrate a legacy `<shared_dir>/claude.json` — otherwise it's orphaned the
+    first time `jailbee apply` runs and finds the destination already seeded.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    legacy = shared / "claude.json"
+    legacy.write_text('{"oauthAccount": "real"}')
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    target = shared / "claude" / ".claude.json"
+    assert target.read_text() == '{"oauthAccount": "real"}'
+    assert not legacy.exists()
+
+
+def test_new_container_retires_the_claude_json_device_before_moving_it(tmp_path, mocker):
+    """Moving the file without rewriting `<prefix>-binds` leaves the profile
+    declaring a disk device whose source is gone, and Incus then refuses every
+    `start` / `profile assign` for the repo. Nothing on the `jailbee new` path
+    rewrites that profile otherwise, and the relocation is a no-op on every
+    later run — so the repo would stay broken until `jailbee apply`.
+
+    The profile write must also come *before* the move: the rendered YAML no
+    longer declares the device, so it is valid while the file is still there,
+    and a failure must leave the repo untouched.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    legacy = shared / "claude.json"
+    legacy.write_text('{"oauthAccount": "real"}')
+
+    moved_when_profile_written: list[bool] = []
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_set_yaml.side_effect = lambda *_a, **_k: moved_when_profile_written.append(
+        not legacy.exists()
+    )
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    written = [c.args[0] for c in incus.profile_set_yaml.call_args_list]
+    assert written == ["repo-binds"], f"expected exactly the binds profile, got {written}"
+    yaml_written = incus.profile_set_yaml.call_args_list[0].args[1]
+    assert "claude-json" not in yaml_written
+    assert moved_when_profile_written == [False], "profile must be written before the move"
+
+
+def test_new_container_leaves_the_binds_profile_alone_with_nothing_to_migrate(tmp_path, mocker):
+    """No legacy file means no stale device, so `jailbee new` must not touch a
+    repo-level profile — rewriting the rest of the config is `apply`'s job."""
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    incus.profile_set_yaml.assert_not_called()
+
+
+def _opts_for_new() -> NewContainerOptions:
+    return NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+
+def test_new_container_sets_claude_config_dir_on_a_stale_base_profile(tmp_path, mocker):
+    """The relocation has two halves and only one of them is on this path.
+
+    `jailbee new` retires the `shared-claude-json` device unconditionally, so a
+    repo that has not been re-`apply`ed loses the only thing that made
+    `.claude.json` shared. `CLAUDE_CONFIG_DIR` is its replacement, and on an
+    un-rebuilt image `<prefix>-base` is the only carrier — without it Claude
+    Code resolves the container-local `$HOME/.claude.json`, finds nothing and
+    onboards from scratch in every container jailbee creates.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_called_once_with(
+        "repo-base", "environment.CLAUDE_CONFIG_DIR", "/home/dev/.claude"
+    )
+
+
+def test_new_container_leaves_an_existing_claude_config_dir_alone(tmp_path, mocker):
+    """An existing value is authoritative — it is either what `apply` rendered
+    or a `container.env` override, and `jailbee new` must not second-guess
+    either."""
+    cfg = _cfg_for_new(tmp_path)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = "/custom/claude"
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_not_called()
+
+
+def test_new_container_skips_claude_config_dir_when_claude_is_disabled(tmp_path, mocker):
+    """No `~/.claude` mount, nothing to point Claude Code at."""
+    cfg = with_agent(_cfg_for_new(tmp_path), "claude", enabled=False)
+    (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
+
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    new_container(cfg, incus, _opts_for_new())
+
+    incus.profile_config_set.assert_not_called()
 
 
 def test_new_container_adds_dev_to_host_device_groups(tmp_path, mocker):
@@ -2711,6 +2895,48 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
         assert kw.get("mirror_endpoint") == ("10.234.216.1", 3128)
 
 
+def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, mocker):
+    """`jb new` is the primary path onto a pool slot, and nothing asserted
+    that it allocates at all — deleting the `allocate_startup` call left the
+    whole suite green. Two properties the surrounding comment claims and
+    only this test covers on the `new_container` path: allocation happens in
+    `--mount` mode too (the block above it is clone-only), and it precedes
+    autostart, which may run a build expecting its slot already mounted.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    events: list[str] = []
+    alloc = mocker.patch(
+        "jailbee.pool.allocate_startup",
+        side_effect=lambda *a, **kw: events.append("allocate"),
+    )
+    mocker.patch(
+        "jailbee.autostart.run_autostart",
+        side_effect=lambda *a, **kw: events.append("autostart"),
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
+
+    opts = NewContainerOptions(
+        container_branch="",
+        name="mounted",
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        mount=True,
+        autostart=True,
+    )
+    new_container(cfg, incus, opts)
+
+    alloc.assert_called_once_with(cfg, incus, "mounted")
+    assert events[0] == "allocate"
+    assert "autostart" in events[1:]
+
+
 def test_new_container_sets_pr_label(tmp_path):
     """`new_container` persists `opts.pr` as the `user.jailbee.pr` label so
     `gie ls` can render the container's PR association."""
@@ -3384,6 +3610,43 @@ def test_new_container_does_not_attach_under_repo_shared_cache_when_share_idea_o
     )
 
 
+def test_new_container_skips_pooled_under_repo_shared_cache(tmp_path, mocker):
+    """A user's own `shared_caches` entry with an explicit `pool:` block
+    and an under-repo `container_path` must NOT be attached as a plain
+    `shared-<name>` device: that would bypass pool allocation and
+    reintroduce exactly the cross-container cache sharing pooling exists
+    to remove. `pool.allocate_startup` is mocked so this test stays
+    focused on the skip, not on allocation itself.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    pooled_cache = SharedCache(
+        name="mycache",
+        host_subpath="mycache",
+        container_path="/home/dev/repo/.mycache",
+        pool=PoolSpec(),
+    )
+    cfg = cfg.model_copy(update={"shared_caches": [*cfg.shared_caches, pooled_cache]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.pool.allocate_startup")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    assert not any(c.args[1] == "shared-mycache" for c in incus.config_device_add.call_args_list)
+
+
 # ---- new_container: clone_commit (PR heads) ----
 
 
@@ -3511,46 +3774,11 @@ def test_list_containers_reads_mode_from_user_gie_mode(make_cfg, tmp_path):
     assert by_name["myrepo-b"].mode == "clone"
 
 
-# ---- restart_container ----
+# ---- boot_container ----
 
 
-def test_restart_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
-    """Detach must happen *before* `incus restart` so the four
-    socket devices don't race with logind on the next boot. attach must
-    happen *after* restart returns so logind has provisioned
-    /run/user/<uid>.
-    """
-    cfg = _cfg_for_new(tmp_path)
-    incus = MagicMock()
-    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
-
-    events: list[str] = []
-    incus.restart.side_effect = lambda _n: events.append("restart")
-    detach = mocker.patch(
-        "jailbee.runtime_mounts.detach_runtime_devices",
-        side_effect=lambda *a, **kw: events.append("detach"),
-    )
-    attach = mocker.patch(
-        "jailbee.runtime_mounts.attach_runtime_devices",
-        side_effect=lambda *a, **kw: events.append("attach") or True,
-    )
-
-    restart_container(cfg, incus, "feat-x")
-
-    detach.assert_called_once()
-    attach.assert_called_once()
-    assert events == ["detach", "restart", "attach"]
-
-
-def test_restart_container_starts_when_already_stopped(tmp_path, mocker):
-    """If the container is already stopped, `incus restart` would error out
-    ("The instance is already stopped"). Fall back to `incus start` so the
-    user-facing `gie restart` works as "ensure running + run autostart".
-    """
-    cfg = _cfg_for_new(tmp_path)
-    incus = MagicMock()
-    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
-
+def _boot_events(mocker, incus):
+    """Record the detach/boot/attach order of one `boot_container` call."""
     events: list[str] = []
     incus.restart.side_effect = lambda _n: events.append("restart")
     incus.start.side_effect = lambda _n: events.append("start")
@@ -3562,12 +3790,109 @@ def test_restart_container_starts_when_already_stopped(tmp_path, mocker):
         "jailbee.runtime_mounts.attach_runtime_devices",
         side_effect=lambda *a, **kw: events.append("attach") or True,
     )
+    return events
 
-    restart_container(cfg, incus, "feat-x")
+
+def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
+    """Detach must happen *before* `incus restart` so the four
+    socket devices don't race with logind on the next boot. attach must
+    happen *after* restart returns so logind has provisioned
+    /run/user/<uid>.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
+
+    assert events == ["detach", "restart", "attach"]
+
+
+def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
+    """If the container is already stopped, `incus restart` would error out
+    ("The instance is already stopped"). Fall back to `incus start` so the
+    user-facing `jailbee restart` works as "ensure running + run autostart".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
 
     incus.restart.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
     assert events == ["detach", "start", "attach"]
+
+
+def test_boot_container_start_mode_detaches_before_starting(tmp_path, mocker):
+    """`jailbee start` shares the reboot ordering: a stale device left over
+    from a previous boot is detached before the container comes up, not
+    after, so the attach that follows can't race the one it replaces.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    assert events == ["detach", "start", "attach"]
+
+
+def test_boot_container_start_mode_never_reboots_a_running_container(tmp_path, mocker):
+    """`restart=False` is `jailbee start`, which must not silently reboot a
+    container that is already up — `incus start` failing on it is the
+    intended, visible outcome.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    incus.restart.assert_not_called()
+    incus.start.assert_called_once_with("feat-x")
+
+
+def test_boot_container_allocates_on_start_pools(tmp_path, mocker):
+    """A container created before pooling existed (or one whose slot got
+    dropped) must acquire its on-start pool slots on every boot, not just
+    on create.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    alloc = mocker.patch("jailbee.pool.allocate_startup")
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    alloc.assert_called_once_with(cfg, incus, "feat-x")
+
+
+def test_boot_container_allocates_pools_before_starting(tmp_path, mocker):
+    """Allocation must precede `incus.start`/`incus.restart`: on the very
+    first boot of an upgraded container, the slot device has to exist
+    before autostart (which runs post-boot) can use it.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events: list[str] = []
+    mocker.patch(
+        "jailbee.pool.allocate_startup", side_effect=lambda *a, **kw: events.append("allocate")
+    )
+    incus.start.side_effect = lambda _n: events.append("start")
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    assert events == ["allocate", "start"]
 
 
 # ---- destroy_container ----
@@ -3580,7 +3905,6 @@ def _cfg_for_destroy(tmp_path):
 
 def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3595,9 +3919,63 @@ def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     incus.delete.assert_called_once_with("x", force=True)
 
 
+def test_destroy_container_bounds_the_clean_shutdown(tmp_path, mocker):
+    """Without --force, the courtesy shutdown gets a budget, not incusd's 600s."""
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Running",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    destroy_container(cfg, incus, "x", force=False)
+    incus.stop.assert_called_once_with("x", timeout=CLEAN_STOP_BUDGET)
+
+
+def test_destroy_container_forces_a_container_that_will_not_shut_down(tmp_path, mocker):
+    """The user already asked for the container to go away; `delete --force`
+    would have killed it anyway, so a stuck shutdown must not block destroy.
+    """
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Running",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    incus.stop.side_effect = lambda name, **kw: (
+        None
+        if kw.get("force")
+        else _raise(
+            IncusError(
+                "`incus stop x` failed (exit 1): Error: Failed shutting down instance, "
+                'status is "Running": context deadline exceeded'
+            )
+        )
+    )
+
+    destroy_container(cfg, incus, "x", force=False)
+
+    assert incus.stop.call_args_list[-1] == mocker.call("x", force=True)
+    incus.delete.assert_called_once_with("x", force=False)
+
+
+def _raise(exc):
+    raise exc
+
+
 def test_destroy_container_just_deletes_when_stopped(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = [
@@ -3614,16 +3992,15 @@ def test_destroy_container_just_deletes_when_stopped(tmp_path, mocker):
 
 def test_destroy_raises_if_not_exists(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
-    mocker.patch("jailbee.chrome_pool.release")
     incus = MagicMock()
     incus.exists.return_value = False
     with pytest.raises(ValueError, match="does not exist"):
         destroy_container(cfg, incus, "missing", force=True)
 
 
-def test_destroy_container_calls_chrome_pool_release(tmp_path, mocker):
-    """Destroy must release the container's Chrome profile slot
-    before deleting the container, so the slot is freed for reuse.
+def test_destroy_releases_every_pool(tmp_path, mocker):
+    """Destroy must release every pooled cache slot (Chrome, Gradle, ...)
+    for the container before deleting it, so every slot is freed for reuse.
     """
     cfg = _cfg_for_destroy(tmp_path)
     incus = MagicMock()
@@ -3635,11 +4012,62 @@ def test_destroy_container_calls_chrome_pool_release(tmp_path, mocker):
             "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
         }
     ]
-    release = mocker.patch("jailbee.chrome_pool.release")
+    release_all = mocker.patch("jailbee.pool.release_all")
 
     destroy_container(cfg, incus, "x", force=True)
 
-    release.assert_called_once_with(cfg, incus, "x")
+    release_all.assert_called_once_with(cfg, incus, "x")
+    incus.delete.assert_called_once_with("x", force=True)
+
+
+def test_destroy_deletes_even_when_pool_release_raises(tmp_path, mocker):
+    """A pool release failure (e.g. an IncusError from a stale slot device)
+    must not abort destroy: the user asked for the container to go away,
+    and a leaked slot is self-healing (the next allocate/list_slots/prune
+    reconciles it), while an undestroyable container is not.
+    """
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Stopped",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    mocker.patch("jailbee.pool.release_all", side_effect=IncusError("boom"))
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    incus.delete.assert_called_once_with("x", force=True)
+
+
+def test_destroy_warns_when_pool_release_raises(tmp_path, mocker, capsys):
+    """The swallow stays, but it must not be silent: as written
+    (`except Exception: pass`) a signature mismatch in `release_all` stopped
+    pooling working with no user-visible sign at all. Matches the ACL-drop
+    block a few lines below.
+    """
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "x",
+            "status": "Stopped",
+            "profiles": ["default", "gisgro-base", "gisgro-binds", "gisgro-net-strict"],
+        }
+    ]
+    mocker.patch("jailbee.pool.release_all", side_effect=TypeError("bad signature"))
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "release pooled cache slots" in out
+    assert "bad signature" in out
     incus.delete.assert_called_once_with("x", force=True)
 
 
@@ -3653,7 +4081,6 @@ def test_destroy_container_cleans_gie_refs(tmp_path, mocker):
     full = f"{cfg.container_prefix}-feat-foo"
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
-    mocker.patch("jailbee.chrome_pool.release")
     mock_list = mocker.patch(
         "jailbee.git.list_refs",
         return_value=[
@@ -3680,7 +4107,6 @@ def test_destroy_container_succeeds_when_ref_cleanup_fails(tmp_path, mocker):
     full = f"{cfg.container_prefix}-feat-foo"
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", side_effect=RuntimeError("git broken"))
 
     destroy_container(cfg, incus, full, force=True)
@@ -3695,7 +4121,6 @@ def test_destroy_container_prunes_background_op(make_cfg, tmp_path, monkeypatch,
     incus = MagicMock()
     incus.exists.return_value = True
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.chrome_pool.release")
 
     from datetime import UTC, datetime
 
@@ -3733,7 +4158,6 @@ def test_destroy_prunes_submodule_refs(tmp_path, mocker):
     incus.list_containers.return_value = [
         {"name": f"{cfg.container_prefix}-feat-x", "status": "Stopped", "profiles": []}
     ]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
     prune = mocker.patch("jailbee.submodules.prune_host_submodule_refs")
 
@@ -3752,7 +4176,6 @@ def test_destroy_container_fires_phase_callbacks(make_cfg, tmp_path, mocker):
     incus = mocker.MagicMock(spec=Incus)
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
 
     phases: list[str] = []
@@ -3771,7 +4194,6 @@ def test_destroy_container_stopped_skips_stopping_phase(make_cfg, tmp_path, mock
     incus = mocker.MagicMock(spec=Incus)
     incus.exists.return_value = True
     incus.list_containers.return_value = [{"name": "c", "status": "Stopped"}]
-    mocker.patch("jailbee.chrome_pool.release")
     mocker.patch("jailbee.git.list_refs", return_value=[])
 
     phases: list[str] = []
@@ -3784,7 +4206,7 @@ def test_destroy_container_stopped_skips_stopping_phase(make_cfg, tmp_path, mock
 # ---- switch_network ----
 
 
-def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path):
+def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -3796,6 +4218,7 @@ def test_switch_network_replaces_only_net_profile(make_cfg, tmp_path):
             "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
         }
     ]
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     switch_network(cfg, incus, "myrepo-feat-foo", "loose")
     incus.profile_assign.assert_called_once_with(
         "myrepo-feat-foo",
@@ -3845,6 +4268,7 @@ def test_switch_network_calls_apply_hosts_when_switching_to_strict(
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
     clear = mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -3870,6 +4294,7 @@ def test_switch_network_forwards_mirror_endpoint_when_switching_to_strict(
     repo.mkdir()
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -3893,6 +4318,7 @@ def test_switch_network_calls_clear_hosts_when_switching_to_loose(
     cfg = make_cfg(repo)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
     clear = mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
     incus = MagicMock()
     incus.list_containers.return_value = [
         {
@@ -4405,7 +4831,7 @@ def test_short_name_only_strips_leading_match(make_cfg, tmp_path):
     assert short_name(cfg, embedded) == embedded
 
 
-# ---- ensure-claude integration in new_container ----
+# ---- agent install/update integration in new_container ----
 
 
 def _new_opts(**overrides):
@@ -4429,91 +4855,57 @@ def _patch_new_container_deps(mocker):
     mocker.patch("jailbee.lifecycle.fetch_remote_ref")
 
 
-def test_new_container_runs_ensure_claude_when_enabled(make_cfg, tmp_path, mocker):
-    """claude.enabled → the ensure-claude script is exec'd in the container."""
+def test_new_container_calls_ensure_agents(make_cfg, tmp_path, mocker):
+    """`new_container` delegates agent install/update to `agents.ensure_agents`,
+    passing the in-container repo dir and the run's mirror endpoint.
+
+    The install-vs-update dispatch itself (per-agent enable/auto_update/
+    network logic) is unit-tested in tests/test_agents.py; this only pins
+    the integration boundary — that `new_container` calls `ensure_agents`
+    with the right container/repo_dir/mirror_endpoint, at all.
+    """
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
+    ensure_agents = mocker.patch("jailbee.agents.ensure_agents")
 
-    new_container(cfg, incus, _new_opts())
+    opts = _new_opts(mirror_endpoint=("10.0.0.1", 5000))
+    new_container(cfg, incus, opts)
 
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert len(ensure_calls) == 1
-    # auto_update defaults to True → env flag is "true"
-    assert ensure_calls[0].kwargs["env"]["JAILBEE_CLAUDE_AUTO_UPDATE"] == "true"
-
-
-def test_new_container_skips_ensure_claude_when_disabled(make_cfg, tmp_path, mocker):
-    """claude.enabled=false (default) → no ensure-claude exec."""
-    repo = tmp_path / "myrepo"
-    repo.mkdir()
-    cfg = make_cfg(repo, default_branch="main")  # claude disabled by default
-    incus = MagicMock()
-    incus.exists.return_value = False
-    _patch_new_container_deps(mocker)
-
-    new_container(cfg, incus, _new_opts())
-
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert ensure_calls == []
+    ensure_agents.assert_called_once()
+    call = ensure_agents.call_args
+    assert call.args[0] is cfg
+    assert call.args[1] is incus
+    assert call.args[3] == f"/home/{CONTAINER_USERNAME}/{cfg.container_prefix}"
+    assert call.kwargs["mirror_endpoint"] == ("10.0.0.1", 5000)
 
 
-def test_new_container_ensure_claude_passes_false_flag(make_cfg, tmp_path, mocker):
-    """claude.auto_update=false → env flag is "false"."""
+def test_new_container_ensure_agents_runs_before_autostart(make_cfg, tmp_path, mocker):
+    """Ordering pin: agents are installed/updated before autostart execs
+    them (see the call site's comment for why mounts/network order it)."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(
-        update={"claude": cfg.claude.model_copy(update={"enabled": True, "auto_update": False})}
+    incus = MagicMock()
+    incus.exists.return_value = False
+    _patch_new_container_deps(mocker)
+    calls: list[str] = []
+    mocker.patch(
+        "jailbee.agents.ensure_agents", side_effect=lambda *a, **kw: calls.append("agents")
     )
-    incus = MagicMock()
-    incus.exists.return_value = False
-    _patch_new_container_deps(mocker)
+    mocker.patch(
+        "jailbee.autostart.run_autostart",
+        side_effect=lambda *a, **kw: calls.append("autostart"),
+    )
 
-    new_container(cfg, incus, _new_opts())
+    new_container(cfg, incus, _new_opts(autostart=True))
 
-    ensure_calls = [
-        c
-        for c in incus.exec.call_args_list
-        if len(c.args) > 1 and "ensure-claude" in " ".join(c.args[1])
-    ]
-    assert ensure_calls[0].kwargs["env"]["JAILBEE_CLAUDE_AUTO_UPDATE"] == "false"
-
-
-def test_new_container_ensure_claude_failure_is_non_fatal(make_cfg, tmp_path, mocker):
-    """A failing ensure-claude exec must not abort container creation."""
-    repo = tmp_path / "myrepo"
-    repo.mkdir()
-    cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
-    incus = MagicMock()
-    incus.exists.return_value = False
-
-    def _exec_side_effect(name, cmd, **kwargs):
-        if len(cmd) > 1 and "ensure-claude" in " ".join(cmd):
-            raise RuntimeError("network down")
-        return ""
-
-    incus.exec.side_effect = _exec_side_effect
-    _patch_new_container_deps(mocker)
-    warn_mock = mocker.patch("jailbee.lifecycle.warn")
-
-    # Must not raise.
-    new_container(cfg, incus, _new_opts())
-
-    assert warn_mock.called
+    assert calls[0] == "agents"
+    assert "autostart" in calls[1:]
 
 
 def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
@@ -4521,7 +4913,7 @@ def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": True})})
+    cfg = with_agent(cfg, "claude", enabled=True)
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
@@ -5018,6 +5410,88 @@ def test_wait_for_background_ready_returns_early_at_autostart(make_cfg, tmp_path
     # Returned without waiting for deletion: the job row is still present.
     with Session(engine) as s:
         assert s.get(BackgroundJob, full) is not None
+
+
+def test_wait_for_background_ready_returns_early_at_autostart_for_a_boot(
+    make_cfg, tmp_path, monkeypatch
+):
+    """A background `jailbee restart` is attachable at autostart for the same
+    reason a create is: the container is up and the steps run in tmux windows
+    the user may want to watch."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-b"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT, BackgroundJob
+    from jailbee.lifecycle import wait_for_background_ready
+
+    engine = get_engine()
+    with Session(engine) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: True)
+
+    transitions = iter([background.PHASE_AUTOSTART])
+
+    def fake_sleep(_interval):
+        with Session(engine) as s:
+            background.set_phase(s, full, next(transitions), now=datetime.now(UTC))
+
+    seen: list[str] = []
+    wait_for_background_ready(cfg, full, sleep=fake_sleep, on_phase=seen.append)
+
+    assert seen == [background.PHASE_STARTING, background.PHASE_AUTOSTART]
+    with Session(engine) as s:
+        assert s.get(BackgroundJob, full) is not None
+
+
+def test_wait_for_background_ready_names_a_failed_boot(make_cfg, tmp_path, monkeypatch):
+    """The failure message says which op broke — 'boot', not 'creation'."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-c"
+
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_BOOT
+    from jailbee.lifecycle import wait_for_background_ready
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=4242,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_BOOT,
+        )
+        background.fail_job(s, full, "boom", now=datetime.now(UTC))
+
+    with pytest.raises(ValueError, match=r"background boot of .* failed: boom"):
+        wait_for_background_ready(cfg, full, sleep=MagicMock())
 
 
 def test_wait_for_background_ready_raises_on_failed(make_cfg, tmp_path, monkeypatch):
@@ -6326,3 +6800,191 @@ def test_mount_escalation_prompts_without_a_pr_too(make_cfg, tmp_path, mocker):
 
     confirm.assert_called_once()
     incus.init.assert_not_called()
+
+
+def test_new_container_attaches_config_ports(tmp_path, mocker):
+    """A `host_ports` entry becomes a proxy device on the new container."""
+    from jailbee.config import HostPort
+
+    cfg = _cfg_for_new(tmp_path)
+    cfg = cfg.model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    proxy_adds = [c for c in incus.config_device_add.call_args_list if c.args[2] == "proxy"]
+    assert len(proxy_adds) == 1
+    assert proxy_adds[0].args[0] == "repo-feat-x"
+    assert proxy_adds[0].args[1] == "port-cfg-adb"
+    assert proxy_adds[0].args[3] == {
+        "listen": "tcp:127.0.0.1:5037",
+        "connect": "tcp:127.0.0.1:5037",
+        "bind": "instance",
+    }
+
+
+def test_new_container_adds_no_proxy_device_without_host_ports(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    assert [c for c in incus.config_device_add.call_args_list if c.args[2] == "proxy"] == []
+
+
+def test_new_container_warns_and_continues_when_port_attach_fails(tmp_path, mocker):
+    """A non-"already exists" failure while attaching a config-declared
+    forward must not traceback: `new_container` has already created and
+    started the container by this point, so it warns and continues rather
+    than letting the `PortError` escape (previously uncaught here and in
+    every caller up to `entry.main`).
+    """
+    from jailbee.config import HostPort
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_new(tmp_path)
+    cfg = cfg.model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    def _add_device(_name: str, _device: str, dtype: str, _props: dict) -> None:
+        if dtype == "proxy":
+            raise IncusError("Error: the daemon is on fire")
+
+    incus.config_device_add.side_effect = _add_device
+    warn_plain = mocker.patch("jailbee.lifecycle.warn_plain")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    created = new_container(cfg, incus, opts)  # must not raise
+
+    assert created == "repo-feat-x"
+    warn_plain.assert_called_once()
+    msg = warn_plain.call_args.args[0]
+    assert "jailbee apply" in msg
+
+
+def test_switch_network_to_loose_removes_the_local_eth0_override(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import switch_network
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Running",
+            "profiles": ["myrepo-base", "myrepo-net-strict"],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    apply_acl = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    mocker.patch("jailbee.hosts.clear_hosts")
+
+    switch_network(cfg, incus, "myrepo-feat", "loose")
+
+    assert apply_acl.call_args.kwargs["mode"] == "loose"
+
+
+def test_switch_network_to_strict_rematerialises_the_override(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import switch_network
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Running",
+            "profiles": ["myrepo-base", "myrepo-net-loose"],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    apply_acl = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    mocker.patch("jailbee.hosts.apply_hosts")
+
+    switch_network(cfg, incus, "myrepo-feat", "strict")
+
+    assert apply_acl.call_args.kwargs["mode"] == "strict"
+
+
+def test_destroy_container_deletes_the_extra_acl_after_the_instance(make_cfg, tmp_path, mocker):
+    """Order matters: Incus refuses to delete an ACL still applied to a NIC."""
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    calls: list[str] = []
+    incus.delete.side_effect = lambda *a, **k: calls.append("delete")
+    mocker.patch(
+        "jailbee.egress_scope.drop_container_acl",
+        side_effect=lambda *a, **k: calls.append("drop_acl"),
+    )
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    assert calls == ["delete", "drop_acl"]
+
+
+def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mocker):
+    """The container is already gone by the time the ACL is dropped, so a
+    failure there must not turn a successful destroy into a raised error —
+    `apply._sweep_orphan_extra_acls` is the safety net that reclaims it."""
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    mocker.patch(
+        "jailbee.egress_scope.drop_container_acl",
+        side_effect=IncusError("network acl delete failed"),
+    )
+    warn = mocker.patch("jailbee.lifecycle.warn")
+
+    # Must not raise.
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    incus.delete.assert_called_once()
+    warn.assert_called_once()

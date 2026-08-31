@@ -6,8 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jailbee.config import load_config
-from jailbee.doctor import run_checks
+from jailbee.doctor import _check_pool_roots, run_checks
+from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from jailbee.registry import MirrorStatus
+from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -111,9 +113,10 @@ def test_doctor_reports_registry_running(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is True
@@ -124,9 +127,10 @@ def test_doctor_reports_registry_degraded(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.DEGRADED):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
@@ -139,9 +143,10 @@ def test_doctor_reports_registry_stopped(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.STOPPED):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
@@ -153,14 +158,105 @@ def test_doctor_reports_registry_missing(tmp_path):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING):
-        results = run_checks(cfg, incus)
+        results = run_checks(cfg, incus, gcfg=gcfg)
 
     mirror = next(r for r in results if r.name == "registry mirror")
     assert mirror.ok is False
     assert "missing" in mirror.detail
     assert "jailbee registry up" in mirror.detail
+
+
+def test_doctor_reports_the_mirror_as_not_needed_without_docker(tmp_path):
+    """A user who does not use Docker must not see a red mirror line for a
+    container they were never supposed to create."""
+    from jailbee.config import DockerRegistryMirrorRepoConfig
+
+    # The fixture declares `extra_registries`, which is itself mirror intent —
+    # clear it so this test exercises the "no signal at all" repo.
+    cfg = _cfg(tmp_path).model_copy(
+        update={"docker_registry_mirror": DockerRegistryMirrorRepoConfig()}
+    )
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING) as status:
+        results = run_checks(cfg, incus)
+
+    mirror = next(r for r in results if r.name == "registry mirror")
+    assert mirror.ok is True
+    assert "not needed" in mirror.detail
+    assert "no docker detected" in mirror.detail
+    # The `auto` gate is overridable, so the line has to say how.
+    assert "docker_registry_mirror.enabled: true" in mirror.detail
+    status.assert_not_called()
+
+
+def test_doctor_names_the_explicit_opt_out_rather_than_blaming_the_stack(tmp_path):
+    """`enabled: false` never consults the repo at all, so telling that user
+    they have "no docker stack" reports a fact the gate never checked."""
+    cfg = _cfg(tmp_path)  # full_config declares extra_registries → mirror wanted
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=False))
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.MISSING) as status:
+        results = run_checks(cfg, incus, gcfg=gcfg)
+
+    mirror = next(r for r in results if r.name == "registry mirror")
+    assert mirror.ok is True
+    assert "docker_registry_mirror.enabled: false" in mirror.detail
+    assert "no docker" not in mirror.detail
+    status.assert_not_called()
+
+
+def test_doctor_cmd_passes_the_loaded_global_config(tmp_path, mocker):
+    """The default gcfg=None is the absent-file default; the command itself
+    must hand over the user's real global config."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    gcfg = GlobalConfig(
+        docker_registry_mirror=DockerRegistryMirror(enabled=True, data_dir=tmp_path),
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=gcfg)
+    mocker.patch("jailbee.incus.Incus")
+    run = mocker.patch("jailbee.doctor.run_checks", return_value=[])
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert run.call_args.kwargs["gcfg"] is gcfg
+
+
+def test_doctor_renders_a_bracketed_detail_verbatim(tmp_path, mocker):
+    """The STATUS cell is markup, so the whole row renders with markup on.
+
+    Details are arbitrary text — SQLAlchemy appends `[SQL: ...] [parameters:
+    (...)]` to any DBAPI error, and paths get bracketed by hand. Unescaped,
+    the first shape is silently swallowed as a style tag and the second
+    raises MarkupError, which would take `doctor` itself down.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.doctor import CheckResult
+
+    detail = "boom [parameters: ('x',)] [/tmp/p]"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.doctor.run_checks", return_value=[CheckResult("db", True, detail)])
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert detail in result.stdout
 
 
 def test_doctor_warns_on_legacy_host_docker_mirror(tmp_path):
@@ -274,12 +370,13 @@ def test_doctor_does_not_flag_missing_claude_when_disabled(tmp_path):
     """When claude.enabled is false, doctor does not list claude as a
     missing subdir even if <shared_dir>/claude does not exist."""
     cfg = _cfg(tmp_path)
-    cfg = cfg.model_copy(update={"claude": cfg.claude.model_copy(update={"enabled": False})})
+    cfg = with_agent(cfg, "claude", enabled=False)
     # Create only the non-claude expected subdirs.
     for sub in (
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -309,6 +406,7 @@ def test_doctor_flags_missing_claude_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
     ):
@@ -332,6 +430,7 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "jetbrains-idea",
         "claude",
@@ -348,6 +447,42 @@ def test_doctor_flags_missing_claude_install_when_enabled(tmp_path):
     assert "claude-install" in tree.detail
 
 
+def test_doctor_flags_missing_agent_dir(tmp_path):
+    """An enabled agent's missing shared dir is reported by the tree check.
+
+    `with_agent` does not apply presets (see its docstring), so `command`
+    and `shared` must be supplied explicitly here rather than relying on
+    the `codex` preset's mounts.
+    """
+    cfg = with_agent(
+        _cfg(tmp_path),
+        "codex",
+        enabled=True,
+        command="codex",
+        shared=[{"subpath": "codex", "path": "~/.codex"}],
+    )
+    for sub in (
+        "caches/pnpm-store",
+        "caches/gradle",
+        "chrome-pool/slots",
+        "chrome-pool/by-container",
+        "jetbrains-config",
+        "jetbrains-idea",
+        "claude",
+        "claude-install",
+    ):
+        (tmp_path / "shared" / sub).mkdir(parents=True, exist_ok=True)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    tree = next(r for r in results if r.name == "shared_dir tree")
+    assert tree.ok is False
+    assert "codex" in tree.detail
+
+
 def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):
     """When jetbrains.enabled is false, doctor does not list jetbrains-config
     as a missing subdir even if <shared_dir>/jetbrains-config does not exist."""
@@ -359,6 +494,7 @@ def test_doctor_does_not_flag_missing_jetbrains_when_disabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -383,6 +519,7 @@ def test_doctor_flags_missing_jetbrains_when_enabled(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -407,6 +544,7 @@ def test_doctor_flags_missing_jetbrains_idea_when_share_idea_on(tmp_path):
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -434,6 +572,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_share_idea_off(tmp_pat
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "jetbrains-config",
         "claude",
         "claude-install",
@@ -459,6 +598,7 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
         "caches/pnpm-store",
         "caches/gradle",
         "chrome-pool/slots",
+        "chrome-pool/by-container",
         "claude",
         "claude-install",
     ):
@@ -472,6 +612,83 @@ def test_doctor_does_not_flag_missing_jetbrains_idea_when_jetbrains_disabled(tmp
     tree = next(r for r in results if r.name == "shared_dir tree")
     assert tree.ok is True, tree.detail
     assert "jetbrains-idea" not in tree.detail
+
+
+def _cfg_with_gradle_pool(tmp_path):
+    """`_cfg` loads full_config.yaml, which has no `golden.stacks` and so no
+    gradle cache — the pool-root tests need a config that actually pools one."""
+    from jailbee.config import load_config_from_text
+
+    return load_config_from_text(
+        "golden:\n  stacks:\n    java: corretto-21\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+
+
+def _pool_row(results):
+    return next(r for r in results if r.name == "cache pool roots")
+
+
+def test_doctor_reports_unmigrated_pool_root(tmp_path):
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle" / "caches").mkdir(parents=True)
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "pre-pooling cache" in row.detail
+    assert "gradle" in row.detail
+    assert "jailbee apply" in row.detail
+
+
+def test_doctor_advises_apply_not_init_for_an_uncreated_pool_root(tmp_path):
+    """A pool root that does not exist yet, or exists but is empty, is not
+    "unmigrated" — and folding its `slots` subdir into the generic
+    `shared_dir tree` row advised `jailbee init`, which errors once profiles
+    exist. On every upgrade path the fix is `jailbee apply`."""
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    (cfg.shared_dir / "caches" / "gradle").mkdir(parents=True)  # empty root
+
+    results = _check_pool_roots(cfg)
+
+    row = _pool_row(results)
+    assert row.ok is False
+    assert "layout not created" in row.detail
+    assert "jailbee apply" in row.detail
+    assert "jailbee init" not in row.detail
+
+
+def test_doctor_pool_row_is_ok_once_the_layout_exists(tmp_path):
+    from jailbee.pool import ensure_pools
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    ensure_pools(cfg)
+
+    row = _pool_row(_check_pool_roots(cfg))
+    assert row.ok is True
+    assert "gradle" in row.detail
+    # ...and `run_checks` actually emits it, so the row is wired in.
+    assert _pool_row(run_checks(cfg, _baseline_incus())).ok is True
+
+
+def test_doctor_pool_row_absent_when_nothing_is_pooled(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared", chrome={"enabled": False})
+    assert _check_pool_roots(cfg) == []
+
+
+def test_doctor_pool_reserved_entries_match_the_migrator(tmp_path):
+    """doctor classifies a pool root by `pool.RESERVED_ENTRIES` — the same
+    set `ensure_pool_dirs` migrates by. Re-spelling it inline let the two
+    drift, and doctor's report would then contradict what `apply` does."""
+    import jailbee.pool as pool_mod
+
+    cfg = _cfg_with_gradle_pool(tmp_path)
+    pool_mod.ensure_pools(cfg)
+    for entry in pool_mod.RESERVED_ENTRIES:
+        assert (cfg.shared_dir / "caches" / "gradle" / entry).exists()
+    assert _pool_row(_check_pool_roots(cfg)).ok is True
 
 
 # ---------- github integration
@@ -615,6 +832,115 @@ def test_doctor_pool_check_timer_inactive(tmp_path: Path, mocker) -> None:
     timer_check = next(r for r in results if "timer" in r.name)
     assert timer_check.ok is False
     assert "inactive" in timer_check.detail
+
+
+def _pool_session(mocker) -> None:
+    """Stub out the DB half of `_check_egress_pool` — the unit checks run first
+    and are all this file's timer/binary tests care about."""
+    fake_session = mocker.MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.get.return_value = None
+    fake_session.exec.return_value.all.return_value = []
+    mocker.patch("jailbee.doctor.Session", return_value=fake_session)
+    mocker.patch("jailbee.doctor.get_engine")
+
+
+def _systemctl(mocker, *, active: str = "active", exec_start: str = "") -> None:
+    """Answer `is-active` and `show --property=ExecStart` separately."""
+
+    def run(cmd, *a, **k):
+        if "show" in cmd:
+            return mocker.Mock(stdout=exec_start, returncode=0)
+        return mocker.Mock(stdout=f"{active}\n", returncode=0 if active == "active" else 3)
+
+    mocker.patch("jailbee.doctor.subprocess.run", side_effect=run)
+
+
+def _jailbee_on_path(path: str | None):
+    """Patch `which` as a context manager, never through `mocker`.
+
+    `jailbee.doctor.shutil` is the global shutil module, so this is a
+    process-wide patch, and the autouse `incus_on_path` fixture holds one of
+    its own. A `mocker.patch` here would be undone *after* that fixture's
+    context exits — wrong order, leaving `which` patched for the rest of the
+    session and breaking tests that shell out later (see the same note at the
+    bottom of this file).
+    """
+    return patch("jailbee.doctor.shutil.which", return_value=path)
+
+
+def test_doctor_flags_a_timer_unit_running_a_different_jailbee(tmp_path: Path, mocker) -> None:
+    """The unit freezes `which jailbee` at install time and is only rewritten
+    when its content changes, so a stale path keeps running old code every
+    minute — unprompted, and with the TTL auto-revert riding along."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(
+        mocker,
+        exec_start="{ path=/old/venv/bin/jailbee ; argv[]=/old/venv/bin/jailbee net refresh }",
+    )
+    _pool_session(mocker)
+
+    with _jailbee_on_path("/home/u/.local/bin/jailbee"):
+        results = _check_egress_pool(cfg)
+
+    check = next(r for r in results if r.name == "net refresh binary")
+    assert check.ok is False
+    assert "/old/venv/bin/jailbee" in check.detail
+    assert "/home/u/.local/bin/jailbee" in check.detail
+    assert "jailbee init" in check.detail
+
+
+def test_doctor_accepts_a_timer_unit_running_the_jailbee_on_path(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    bin_path = str(tmp_path / "bin" / "jailbee")
+    _systemctl(mocker, exec_start=f"{{ path={bin_path} ; argv[]={bin_path} net refresh }}")
+    _pool_session(mocker)
+
+    with _jailbee_on_path(bin_path):
+        results = _check_egress_pool(cfg)
+
+    check = next(r for r in results if r.name == "net refresh binary")
+    assert check.ok is True
+    assert bin_path in check.detail
+
+
+def test_doctor_omits_the_binary_check_when_the_unit_is_absent(tmp_path: Path, mocker) -> None:
+    """No unit, no second failure: the timer check above already reports it
+    and names the same fix, and doctor's exit code should not be argued twice
+    from one cause."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(mocker, active="inactive", exec_start="")
+    _pool_session(mocker)
+
+    with _jailbee_on_path("/home/u/.local/bin/jailbee"):
+        results = _check_egress_pool(cfg)
+
+    assert [r for r in results if r.name == "net refresh binary"] == []
+    assert next(r for r in results if "timer" in r.name).ok is False
+
+
+def test_doctor_omits_the_binary_check_when_jailbee_is_not_on_path(tmp_path: Path, mocker) -> None:
+    """Nothing to compare against — a `uv run` dev invocation with no global
+    install must not be reported as a broken unit."""
+    from jailbee.doctor import _check_egress_pool
+
+    cfg = _cfg(tmp_path)
+    _systemctl(
+        mocker,
+        exec_start="{ path=/home/u/.local/bin/jailbee ; argv[]=/home/u/.local/bin/jailbee }",
+    )
+    _pool_session(mocker)
+
+    with _jailbee_on_path(None):
+        results = _check_egress_pool(cfg)
+
+    assert [r for r in results if r.name == "net refresh binary"] == []
 
 
 # ---- kernel keyring quota check ----
@@ -811,72 +1137,60 @@ def test_doctor_pool_check_recent_refresh_ok(tmp_path: Path, mocker) -> None:
     assert refresh_check.ok is True
 
 
-# ---- pre-1.0 gie state checks ----
+# ---- legacy repo config: the one pre-1.0 compatibility left after 1.1.0 ----
 
 
-def test_doctor_flags_leftover_pre_1_0_state(tmp_path, mocker, make_cfg):
-    from jailbee.doctor import run_checks
-
-    mocker.patch(
-        "jailbee.migrate.leftovers",
-        return_value=("old labels on container app-feat",),
-    )
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is False
-    assert "jailbee migrate" in check.detail
-    # Name what was found, not just that something was: the migrator skips
-    # some of it, so "run migrate" alone can be advice that changes nothing.
-    assert "old labels on container app-feat" in check.detail
-    # The guide is the only place the manual steps are written down.
-    assert "docs/migrating-from-gie.md" in check.detail
+def _legacy_config(results):
+    return next(r for r in results if r.name == "legacy repo config")
 
 
-def test_doctor_is_happy_when_no_pre_1_0_state_remains(tmp_path, mocker, make_cfg):
-    from jailbee.doctor import run_checks
-
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is True
-
-
-def test_doctor_reports_state_no_migration_plan_would_show(tmp_path, mocker, make_cfg):
-    """The check must not be derived from `migrate.build_plan`.
-
-    A directory whose target already exists is a blocker, not a planned
-    move, so `plan.is_empty` is True while the state is very much still
-    there — the case that silently loses a user's whole state directory.
-    """
-    from jailbee.doctor import run_checks
-
-    build_plan = mocker.patch("jailbee.migrate.build_plan")
-    mocker.patch("jailbee.migrate.leftovers", return_value=("directory /home/u/.local/state/gie",))
-
-    results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
-
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
-    assert check.ok is False
-    assert "directory /home/u/.local/state/gie" in check.detail
-    build_plan.assert_not_called()
-
-
-def test_doctor_flags_legacy_config_in_repo(tmp_path, mocker, make_cfg):
+def test_doctor_flags_a_repo_still_reading_dot_gie(tmp_path, mocker, make_cfg):
     from jailbee.doctor import run_checks
 
     repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".gie").mkdir()
+    (repo / ".gie").mkdir(parents=True)
     (repo / ".gie" / "config.yaml").write_text("# legacy config\n")
 
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
-    results = run_checks(make_cfg(repo), mocker.MagicMock())
+    check = _legacy_config(run_checks(make_cfg(repo), mocker.MagicMock()))
 
-    check = next(r for r in results if r.name == "pre-1.0 gie state")
     assert check.ok is False
-    assert "jailbee migrate" in check.detail
+    # The fix is a `git mv` the user runs, and the deadline is the only
+    # reason to run it now rather than later — both belong in the detail.
+    assert "git mv .gie .jailbee" in check.detail
+    assert "2.0.0" in check.detail
+
+
+def test_doctor_is_happy_when_the_repo_uses_dot_jailbee(tmp_path, mocker, make_cfg):
+    from jailbee.doctor import run_checks
+
+    assert _legacy_config(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())).ok is True
+
+
+def test_doctor_checks_the_legacy_config_without_incus(tmp_path, mocker, make_cfg):
+    """The check must not sit behind the `incus` gate.
+
+    Its predecessor inspected pre-1.0 *host* state and so needed the binary.
+    What is left is a file test on the repo, and a host without Incus is
+    exactly where a stale `.gie/` is most likely to go unnoticed — doctor
+    reports plenty of red there already, and this line must still be one of
+    them rather than silently vanishing.
+    """
+    from jailbee.doctor import run_checks
+
+    repo = tmp_path / "repo"
+    (repo / ".gie").mkdir(parents=True)
+    (repo / ".gie" / "config.yaml").write_text("# legacy config\n")
+
+    # A `with` block, not `mocker.patch`: `jailbee.doctor.shutil` is the global
+    # shutil module, so this patches `shutil.which` process-wide, and mocker
+    # would undo it at fixture teardown — after the autouse `incus_on_path`
+    # context exits, i.e. in the wrong order, leaving `which` patched for the
+    # rest of the session. That broke two unrelated tests in
+    # tests/test_maintenance.py, which run later and shell out to `du`.
+    with patch("jailbee.doctor.shutil.which", return_value=None):
+        check = _legacy_config(run_checks(make_cfg(repo), mocker.MagicMock()))
+
+    assert check.ok is False
     assert "git mv .gie .jailbee" in check.detail
 
 
@@ -892,7 +1206,6 @@ def test_doctor_passes_the_graphical_check_on_wayland(tmp_path, monkeypatch, mak
 
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     monkeypatch.setenv("DISPLAY", ":0")  # a Wayland session may set both
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is True
@@ -910,7 +1223,6 @@ def test_doctor_fails_the_graphical_check_on_a_bare_x11_session(
 
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is False
@@ -925,7 +1237,6 @@ def test_doctor_fails_the_graphical_check_with_no_session_at_all(
 
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _graphical_session(run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock()))
     assert check.ok is False
@@ -961,7 +1272,6 @@ def test_doctor_flags_a_loose_bridge_that_hands_out_no_addresses(tmp_path, make_
         _running("jailbee-registry-mirror", ["default", "jailbee-registry-mirror-profile"]),
         _running("app-feat", [f"{cfg.container_prefix}-net-loose"]),
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _bridge_check(run_checks(cfg, incus))
 
@@ -979,7 +1289,6 @@ def test_doctor_passes_when_the_loose_bridge_addresses_a_container(tmp_path, mak
     incus.list_containers.return_value = [
         _running("jailbee-registry-mirror", ["default"], ipv4="10.165.192.2"),
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     check = _bridge_check(run_checks(cfg, incus))
 
@@ -1002,7 +1311,6 @@ def test_doctor_stays_silent_when_nothing_runs_on_the_loose_bridge(tmp_path, mak
         },
         {"name": "app-old", "status": "Stopped", "profiles": [f"{cfg.container_prefix}-net-loose"]},
     ]
-    mocker.patch("jailbee.migrate.leftovers", return_value=())
 
     assert _bridge_check(run_checks(cfg, incus)) is None
 
@@ -1101,3 +1409,709 @@ def test_doctor_reports_missing_incus_binary_instead_of_crashing(tmp_path):
     # prerequisite does not blank out the rest of the diagnosis.
     assert any(r.name == "shared_dir tree" for r in results)
     assert any(r.name == "container_user uid/gid" for r in results)
+
+
+def test_doctor_reports_missing_port_forwards(tmp_path):
+    from jailbee.config import HostPort
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = _baseline_incus()
+    infos = [
+        ContainerInfo(
+            name="app-a",
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo=cfg.container_prefix,
+        )
+    ]
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.lifecycle.list_containers", return_value=infos),
+        patch("jailbee.ports.list_forwards", return_value={"app-a": []}),
+    ):
+        results = run_checks(cfg, incus)
+
+    check = [r for r in results if r.name == "port forwards"]
+    assert len(check) == 1
+    assert check[0].ok is False
+    assert "port-cfg-adb" in check[0].detail
+    assert "jailbee apply" in check[0].detail
+
+
+def test_doctor_is_happy_when_forwards_are_attached(tmp_path):
+    from jailbee.config import HostPort
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.ports import parse_device
+
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = _baseline_incus()
+    infos = [
+        ContainerInfo(
+            name="app-a",
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo=cfg.container_prefix,
+        )
+    ]
+    attached = [
+        parse_device(
+            "port-cfg-adb",
+            {
+                "type": "proxy",
+                "bind": "instance",
+                "listen": "tcp:127.0.0.1:5037",
+                "connect": "tcp:127.0.0.1:5037",
+            },
+        )
+    ]
+
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.lifecycle.list_containers", return_value=infos),
+        patch("jailbee.ports.list_forwards", return_value={"app-a": attached}),
+    ):
+        results = run_checks(cfg, incus)
+
+    check = [r for r in results if r.name == "port forwards"]
+    assert len(check) == 1
+    assert check[0].ok is True
+
+
+def test_doctor_omits_the_port_check_without_host_ports(tmp_path):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    assert [r for r in results if r.name == "port forwards"] == []
+
+
+def test_doctor_skips_the_port_check_without_incus_too(tmp_path):
+    """The port-forward check needs the `incus` binary like every other
+    daemon-dependent check — it must not run standalone when `incus` is
+    missing, nor add a second "skipped" line beyond the one every other
+    Incus-dependent check already shares.
+    """
+    from jailbee.config import HostPort
+
+    cfg = _cfg(tmp_path).model_copy(update={"host_ports": [HostPort(name="adb", port=5037)]})
+    incus = _baseline_incus()
+
+    with patch("jailbee.doctor.shutil.which", return_value=None):
+        results = run_checks(cfg, incus)
+
+    assert [r for r in results if r.name == "port forwards"] == []
+    skipped = [r for r in results if "skipped" in r.detail]
+    assert len(skipped) == 1
+    assert "port forwards" in skipped[0].detail
+
+
+# ---- upgrade advice: `jb doctor` surfaces an owed base build / apply ----
+
+
+def test_doctor_reports_pending_upgrade_actions(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch(
+        "jailbee.upgrade.advice_lines",
+        return_value=[
+            "jailbee 1.4.0 changed what `jb base build` produces:",
+            "    - install.sh installs fd",
+        ],
+    )
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is False
+    assert "jb base build" in got.detail
+
+
+def test_doctor_is_happy_when_nothing_is_pending(make_cfg, tmp_path, mocker) -> None:
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+
+
+def test_doctor_upgrade_check_survives_a_broken_state_db(make_cfg, tmp_path, mocker) -> None:
+    """Same rule as the CLI hint: this check may not be the thing that makes
+    `jailbee doctor` crash."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.upgrade.advice_lines", side_effect=RuntimeError("db is locked"))
+    got = _check_upgrade_advice(cfg)
+
+    assert got.ok is True
+    assert "could not be read" in got.detail
+
+
+def test_doctor_upgrade_detail_preserves_the_structured_block(make_cfg, tmp_path, mocker) -> None:
+    """`advice_lines` returns a header line, then indented `    - reason`
+    bullets, then a `    Run ...` call-to-action — one such group per owed
+    action. Flattening that into a single "; "-joined, per-line-stripped
+    run-on destroys the indentation that distinguishes a bullet from a
+    header, so the detail must keep the newlines and the raw indentation
+    instead."""
+    from jailbee.doctor import _check_upgrade_advice
+
+    cfg = make_cfg(tmp_path)
+    lines = [
+        "jailbee 1.4.0 changed what `jb base build` produces:",
+        "    - install.sh installs fd",
+        "    - install.sh installs ripgrep",
+        "    Run `jb base build` to pick this up.",
+    ]
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=lines)
+
+    got = _check_upgrade_advice(cfg)
+
+    rendered = got.detail.split("\n")
+    assert rendered[0] == lines[0]
+    # The bullet's leading four-space "- " indentation must survive intact,
+    # not be stripped and glued onto the header with "; ".
+    assert rendered[1] == "    - install.sh installs fd"
+    assert rendered[2] == "    - install.sh installs ripgrep"
+
+
+def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    names = {r.name for r in results}
+    assert "upgrade actions" in names
+
+
+# ---- post-install user setup checks (`jailbee setup`) ----
+
+
+def _step(installed: bool, detail: str):
+    from jailbee.setup_command import StepStatus
+
+    return StepStatus(
+        key="completions", title="shell completions", installed=installed, detail=detail
+    )
+
+
+def test_doctor_flags_missing_shell_completions(tmp_path: Path, mocker) -> None:
+    """The step exists precisely because nothing else tells the user."""
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch(
+        "jailbee.setup_command.completions_status",
+        return_value=_step(False, "missing: /home/u/.local/share/bash-completion/completions/jb"),
+    )
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is False
+    assert "jb setup" in check.detail
+    assert "/home/u/.local/share/bash-completion/completions/jb" in check.detail
+
+
+def test_doctor_passes_installed_shell_completions(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="zsh")
+    mocker.patch(
+        "jailbee.setup_command.completions_status",
+        return_value=_step(True, "2 scripts in /home/u/.zfunc"),
+    )
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is True
+    assert "jb setup" not in check.detail
+
+
+def test_doctor_does_not_fail_completions_on_an_unknown_shell(tmp_path: Path, mocker) -> None:
+    """An exotic shell is not a misconfiguration; jailbee simply cannot help."""
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value=None)
+    status = mocker.patch("jailbee.setup_command.completions_status")
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "shell completions")
+    assert check.ok is True
+    assert "not detected" in check.detail
+    status.assert_not_called()
+
+
+def test_doctor_flags_missing_host_claude_skills(tmp_path: Path, mocker) -> None:
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    mocker.patch(
+        "jailbee.setup_command.skills_status",
+        return_value=_step(False, "missing in /home/u/.claude/skills: jailbee-usage"),
+    )
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "claude skills (host)")
+    assert check.ok is False
+    assert "jb setup" in check.detail
+
+
+def test_doctor_skips_host_skills_when_claude_is_disabled(tmp_path: Path, mocker) -> None:
+    """Nothing on the host would read them, so their absence is not a fault."""
+    from jailbee.doctor import _check_user_setup
+
+    # `Config.claude` is a property, so `model_copy(update={"claude": ...})`
+    # is silently ignored — `with_agent` is the only working route.
+    cfg = with_agent(_cfg(tmp_path), "claude", enabled=False)
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    skills = mocker.patch("jailbee.setup_command.skills_status")
+
+    results = _check_user_setup(cfg)
+
+    assert [r.name for r in results] == ["shell completions"]
+    skills.assert_not_called()
+
+
+def test_run_checks_includes_the_user_setup_checks(tmp_path: Path, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "ok"))
+
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        results = run_checks(cfg, incus)
+
+    names = [r.name for r in results]
+    assert "shell completions" in names
+    assert "claude skills (host)" in names
+
+
+def test_doctor_points_at_jb_setup_for_an_inactive_timer(tmp_path: Path, mocker) -> None:
+    """`jailbee init` also installs it, but it is per repo and refuses to
+    re-run; `jb setup` is the command that exists for exactly this."""
+    from jailbee.doctor import _check_egress_pool
+
+    _pool_session(mocker)
+    _systemctl(mocker, active="inactive")
+
+    with _jailbee_on_path("/usr/local/bin/jailbee"):
+        results = _check_egress_pool(_cfg(tmp_path))
+
+    timer = next(r for r in results if r.name == "net refresh timer")
+    assert "jb setup" in timer.detail
+
+
+def test_doctor_is_silent_for_a_non_group_repo(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+
+    assert _check_claude_credentials(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_a_shared_credential(tmp_path, make_cfg):
+    from jailbee.doctor import _check_claude_credentials
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    (creds / ".credentials.json").write_text("{}")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert len(results) == 1
+    assert results[0].ok
+    assert "work" in results[0].detail
+
+
+def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg):
+    """Group dir with no credential while the repo's config home still has one
+    means `jailbee apply` has not run since the group was configured."""
+    from jailbee.doctor import _check_claude_credentials
+
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    (shared / "claude" / ".credentials.json").write_text("{}")
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        claude={"enabled": True},
+        claude_credentials_dir=creds,
+    )
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    results = _check_claude_credentials(cfg, gcfg)
+
+    assert not results[0].ok
+    assert "jailbee apply" in results[0].detail
+
+
+def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, make_cfg):
+    """`_credential_group_members` must exclude the calling repo itself and
+    any repo resolving to a different group (or to none), and include a
+    genuine other member of the same group.
+
+    Rows are inserted into the real, autouse-isolated state DB
+    (`_isolate_state_dir` in tests/conftest.py) rather than mocking
+    `get_engine` — that fixture is what makes the query honest.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.doctor import _credential_group_members
+
+    creds = tmp_path / "creds" / "work"
+    creds.mkdir(parents=True)
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    gcfg = GlobalConfig.model_validate(
+        {"claude_credentials": {"group": "work", "repos": {"solo-repo": None}}}
+    )
+    when = datetime(2026, 8, 27, tzinfo=UTC)
+
+    with Session(get_engine()) as s:
+        # The calling repo itself — must never appear in its own listing.
+        s.add(
+            RegisteredRepo(
+                container_prefix=cfg.container_prefix,
+                repo_root=str(tmp_path),
+                registered_at=when,
+            )
+        )
+        # A genuine other member of the same group (default group "work").
+        s.add(
+            RegisteredRepo(
+                container_prefix="other-repo",
+                repo_root="/repos/other-repo",
+                registered_at=when,
+            )
+        )
+        # Opted out of the group entirely — resolves to no group.
+        s.add(
+            RegisteredRepo(
+                container_prefix="solo-repo",
+                repo_root="/repos/solo-repo",
+                registered_at=when,
+            )
+        )
+        s.commit()
+
+    members = _credential_group_members(gcfg, "work", exclude=cfg.container_prefix)
+
+    assert members == ["other-repo"]
+
+
+def test_doctor_is_silent_when_the_pool_is_empty(tmp_path, make_cfg, monkeypatch):
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    assert _check_claude_pool(cfg, GlobalConfig()) == []
+
+
+def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkeypatch):
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert "live@x.com" in results[0].detail
+    assert "1 parked" in results[0].detail
+
+
+def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatch):
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert "/login" in results[0].detail or "claude use" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(tmp_path, make_cfg, monkeypatch):
+    """A store holding nothing but a staging file is the one case where an
+    "empty" pool is not silent: that file is a login nothing else names."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    assert str(stage) in results[0].detail
+    assert "rename it to orphan@x.com.json" in results[0].detail
+
+
+def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The orphan is reported in addition to the ordinary pool line, not
+    instead of it."""
+    import json
+
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text("{}", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
+    )
+    (home / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert len(results) == 2
+    healthy = [r for r in results if r.ok]
+    failed = [r for r in results if not r.ok]
+    assert len(healthy) == 1
+    assert "live@x.com" in healthy[0].detail
+    assert len(failed) == 1
+    assert str(stage) in failed[0].detail
+    assert "rename it to orphan@x.com.json" in failed[0].detail
+
+
+def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A kill between the park and the write leaves exactly this state: the
+    login parked, the holder empty, and a staging file nothing else lists.
+    Both facts must be reported — the orphan is not swallowed by the failure."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "orphan@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert any(not r.ok and "orphan@x.com.json.activating" in r.detail for r in results)
+    assert any(not r.ok and "no live login" in r.detail for r in results)
+
+
+def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_cfg, monkeypatch):
+    """The staging file's own name can be taken by the time anyone reads this:
+    park a fresh login of the same account and it lands on exactly that name.
+    `mv` would overwrite it silently, so the advice must not be given."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text("{}", encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text("{}", encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+    orphan = next(r for r in results if "activating" in r.detail)
+
+    assert orphan.ok is False
+    assert "rename it to" not in orphan.detail
+    assert "already taken" in orphan.detail
+    assert "dup@x.com.json" in orphan.detail
+
+
+def _staged_grant(token: str) -> str:
+    """A credential whose refresh-token lineage is `token`."""
+    import json
+
+    return json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": token}})
+
+
+def test_doctor_says_a_staged_login_is_already_live_in_this_holder(tmp_path, make_cfg, monkeypatch):
+    """The likeliest post-kill state: the switch died between writing the
+    credential and unlinking its stage, so the grant is live *here*. Told only
+    that it "may be live in another repo's holder", a careful reader checks the
+    others, finds nothing, renames, and ends up with one refresh-token lineage
+    in two files. Doctor has `cfg`, so it can settle this case for free."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    stage = store / "orphan@x.com.json.activating"
+    stage.write_text(_staged_grant("one-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("one-lineage"), encoding="utf-8")
+
+    results = _check_claude_pool(cfg, GlobalConfig())
+
+    assert [r.ok for r in results] == [False]
+    detail = results[0].detail
+    assert "live in" in detail
+    assert "delete it" in detail
+    # The advice that would duplicate the lineage must not be given here.
+    assert "rename it to" not in detail
+
+
+def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """A different grant is still unknowable from here — but the caveat now
+    names both ways it can already exist, not just the other-holder one."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text(
+        _staged_grant("staged-lineage"), encoding="utf-8"
+    )
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "rename it to orphan@x.com.json" in detail
+    assert "parked under another name" in detail
+    assert "another repo's holder" in detail
+
+
+def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
+    tmp_path, make_cfg, monkeypatch
+):
+    """Unreadable is not the same as "yes". An unreadable file falls back to the caveat
+    rather than telling the reader to delete a login."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "orphan@x.com.json.activating").write_text("not json", encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text("not json", encoding="utf-8")
+
+    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+
+    assert "delete it" not in detail
+    assert "rename it to orphan@x.com.json" in detail
+
+
+def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_cfg, monkeypatch):
+    """Deleting one of two logins is a destructive answer to "which do you
+    want?". Keeping both is the option that was missing."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("stored"), encoding="utf-8")
+    (store / "dup@x.com.json.activating").write_text(_staged_grant("staged"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "dup@x.com~<label>.json" in detail
+    assert "rename it to" not in detail
+
+
+def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
+    tmp_path, make_cfg, monkeypatch
+):
+    """The same-holder case must win even when the plain name is also taken:
+    telling a reader to park a live grant under a free name would give one
+    refresh-token lineage two files, which is exactly the harm the
+    same-holder check exists to prevent."""
+    from jailbee import claude_pool
+    from jailbee.doctor import _check_claude_pool
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
+    store = claude_pool.store_dir()
+    store.mkdir(parents=True)
+    (store / "dup@x.com.json").write_text(_staged_grant("other-stored"), encoding="utf-8")
+    stage = store / "dup@x.com.json.activating"
+    stage.write_text(_staged_grant("live-lineage"), encoding="utf-8")
+    home = claude_pool.config_home(cfg)
+    home.mkdir(parents=True)
+    (home / ".credentials.json").write_text(_staged_grant("live-lineage"), encoding="utf-8")
+
+    detail = next(
+        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+    ).detail
+
+    assert "delete it" in detail
+    assert "dup@x.com~<label>.json" not in detail
+    assert "keep both" not in detail

@@ -17,8 +17,8 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
-from jailbee.config import Config
-from jailbee.db import _ensure_schema
+from jailbee.config import Config, resolve_agents_raw
+from jailbee.db import _ENGINES, _ensure_schema
 
 
 def make_config(
@@ -35,8 +35,13 @@ def make_config(
     repo_root/default_branch/upstream_remote/container_prefix are always set.
     Extra keyword args are forwarded to ``Config.model_validate`` so callers
     can pass e.g. ``gpg={"enabled": False}`` or ``host_mounts=[...]``.
+
+    Overrides are routed through ``resolve_agents_raw`` first — the same
+    normalisation ``load_config`` applies to YAML — so a legacy
+    ``claude={...}`` override and a preset-backed ``agents={...}`` override
+    both resolve exactly as they would from a real config file.
     """
-    cfg = Config.model_validate(overrides) if overrides else Config()
+    cfg = Config.model_validate(resolve_agents_raw(overrides)) if overrides else Config()
     object.__setattr__(cfg, "repo_root", repo_root)
     object.__setattr__(cfg, "default_branch", default_branch)
     object.__setattr__(cfg, "upstream_remote", upstream_remote)
@@ -62,6 +67,27 @@ make_cfg = make_config
 def make_cfg_fixture():
     """Pytest fixture wrapper for make_config."""
     return make_config
+
+
+def with_agent(cfg: Config, name: str, **fields: Any) -> Config:
+    """Return a copy of `cfg` with `agents[name]` updated by `fields`.
+
+    Use instead of `cfg.model_copy(update={"claude": ...})`: `Config.claude` is
+    a property, so that form is silently ignored rather than failing.
+
+    Builds the model directly and does **not** run `resolve_agents_raw`, so
+    presets are not applied here — pass `command=` explicitly when the agent
+    is not already present in `cfg`. Presets resolve on the load path only.
+    """
+    from jailbee.config import AgentConfig, ClaudeAgentConfig
+
+    model = ClaudeAgentConfig if name == "claude" else AgentConfig
+    current = cfg.agents.get(name)
+    base = current.model_dump() if current is not None else {}
+    if name == "claude":
+        base.setdefault("command", "claude")
+    merged = model.model_validate({**base, **fields})
+    return cfg.model_copy(update={"agents": {**cfg.agents, name: merged}})
 
 
 def _raw_container(name: str, *profiles: str) -> dict[str, Any]:
@@ -177,28 +203,57 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     which creates the DB at XDG_STATE_HOME/jailbee/state.sqlite. Per-test
     monkeypatch.setenv("XDG_STATE_HOME", ...) calls supersede this default
     because monkeypatch.setenv keeps the most recent value.
+
+    Teardown disposes and clears `db._ENGINES`: `get_engine` caches one
+    SQLAlchemy engine (and its open SQLite handles) per database path for the
+    life of the process — correct in production, where that is one path, but
+    here every test gets a fresh one, so the cache would grow an engine per
+    test and never drop one. Those handles are what push the process past
+    1024 open fds, at which point `select.select()` — which prompt_toolkit's
+    posix input calls with a bare fd — starts raising "filedescriptor out of
+    range". prompt_toolkit routes that into its event loop's exception
+    handler, which awaits a "Press ENTER to continue" prompt that nothing can
+    answer and allocates a fresh `PromptSession` per round: the checkbox
+    tests in `test_tui.py` then consume every byte of RAM the machine has,
+    and the suite OOMs around 96-97% with no summary and no per-test failure
+    to point at. Dispose per test and the cache never grows. See the
+    `pytest-fd-cliff-oom` memory note for the full chain.
     """
     iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
+    yield
+    for engine in _ENGINES.values():
+        engine.dispose()
+    _ENGINES.clear()
 
 
 @pytest.fixture(autouse=True)
 def _disable_cli_color(monkeypatch):
-    """Force Rich/Typer help output to be plain (no ANSI) in tests.
+    """Force Rich/Typer help output to be plain (no ANSI) and width-stable.
 
-    CI runners (e.g. GitHub Actions) export ``FORCE_COLOR``, which makes
-    Typer's Rich help formatter emit ANSI style codes. Those codes split
-    styled tokens apart — ``--pr 1234`` renders as ``-`` + ``-pr`` +
-    `` 1234`` with escape sequences interleaved — which breaks the
-    substring assertions in the CLI help tests. Locally the same tests
-    pass because ``CliRunner`` captures a plain, non-tty buffer with no
-    colour. Neutralise the colour env so ``invoke(...).output`` is plain
-    text wherever the suite runs. ``TERM=dumb`` also disables colour even
-    if ``FORCE_COLOR`` leaks back in (it wins over ``FORCE_COLOR`` in
-    Rich's detection).
+    Typer decides once, at import time, whether its help console is a
+    terminal: ``rich_utils.FORCE_TERMINAL`` is True whenever ``GITHUB_ACTIONS``,
+    ``FORCE_COLOR`` or ``PY_COLORS`` is set. On a CI runner that flips the help
+    formatter into terminal mode, with two consequences for assertions:
+
+    * ANSI style codes appear and split styled tokens apart — ``--pr 1234``
+      renders as ``-`` + ``-pr`` + `` 1234`` with escapes interleaved.
+    * Rich's ``Console.size`` takes its dumb-terminal short-circuit (a
+      hard-coded 80x25) *before* it looks at ``COLUMNS``, so help text wraps at
+      80 no matter what a test pins — and it takes that branch even when Typer
+      passes an explicit width, because the branch only yields to a console
+      with both width *and* height set. Assertions on help strings longer than
+      the 80-column layout allows then pass locally and fail in CI.
+
+    Clearing ``FORCE_TERMINAL`` puts CI back on the same path as a local run:
+    ``CliRunner`` captures a plain, non-tty buffer, so the output has no colour
+    and ``env={"COLUMNS": ...}`` decides the width. The colour env vars are
+    neutralised too, for the Rich consoles jailbee builds itself.
     """
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", None, raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("CLICOLOR_FORCE", raising=False)
+    monkeypatch.delenv("PY_COLORS", raising=False)
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("TERM", "dumb")
 
@@ -252,7 +307,7 @@ def _neutralize_kitty_autodetect(request, mocker):
 
 @pytest.fixture
 def db_engine() -> Engine:
-    """In-memory SQLite engine with the gie schema applied. One per test."""
+    """In-memory SQLite engine with the jailbee schema applied. One per test."""
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},

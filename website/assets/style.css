@@ -661,10 +661,135 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
+   Demo — #demos, one click-to-play clip.
+
+   The 1.0 page had four fifteen-second reconstructions behind tabs, all
+   autoplaying on scroll, and the note that survived that round still
+   applies: a 1200px terminal is unreadable at 512px if you put two beside
+   each other, and several moving at once tells the eye nothing. What
+   replaced them is one real recording, minutes long, that starts when the
+   reader asks — so no autoplay rule, no IntersectionObserver, no script at
+   all. The tab CSS is in git history (a68553e) and comes back with the
+   second clip.
+   ----------------------------------------------------------------------- */
+.demo {
+  margin: 2rem 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* The positioning context for the play affordance. */
+.demo__frame {
+  position: relative;
+  display: block;
+}
+
+/* Centred, and deliberately large: this is the only thing telling a reader
+   the terminal screenshot is a video. Sized in rem so it scales with the
+   reader's own text size rather than being pinned to the poster's pixels.
+   It sits well above the native control bar at the bottom edge. */
+.demo__play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 5.5rem;
+  height: 5.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* No transition: the reduced-motion rule below would have to exempt it,
+     and an instant state change is the honest behaviour for a button. */
+}
+
+.demo__play svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.demo__play circle {
+  fill: rgb(11 12 14 / 62%);
+  stroke: var(--amber);
+  stroke-width: 3;
+}
+
+.demo__play path {
+  fill: var(--amber);
+}
+
+.demo__play:hover circle,
+.demo__play:focus-visible circle {
+  fill: rgb(11 12 14 / 82%);
+}
+
+.demo__play:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 4px;
+  border-radius: 50%;
+}
+
+.demo__media {
+  /* The tape's own frame: Width 1200 (demo/workflows/common.tape) by
+     Height 900 (demo/workflows/a.tape). The poster is cut from the same
+     render, so this must keep matching the tape — any other ratio
+     letterboxes or crops a clip that was already the right shape. */
+  aspect-ratio: 1200 / 900;
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Direct child only: the caption's prose mentions `×6`, and a descendant
+   selector would turn that into its own block. */
+.demo figcaption > code {
+  display: block;
+  color: var(--amber);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  overflow-wrap: break-word;
+}
+
+.demo figcaption {
+  padding: 1rem 1.25rem;
+}
+
+.demo figcaption p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: none;
+}
+
+.demo figcaption p + p {
+  margin-top: 0.75rem;
+}
+
+/* The provenance line, not the story: same size, dimmer, so it reads as a
+   footnote to the clip rather than as part of the description. */
+.demo__note {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* Inline code inside the caption's prose, as opposed to the command line
+   above it, which the `> code` rule turns into its own block. */
+.demo figcaption p code {
+  color: var(--text);
+  font-size: 0.85em;
+}
+
+/* -----------------------------------------------------------------------
    Reduced motion — covers every transition/animation on the page. There
    happen to be none declared elsewhere yet, but a future hover/focus
-   transition must not have to remember this rule exists. (It also covered
-   the demo clips' playback before that section was pulled.)
+   transition must not have to remember this rule exists. It does not
+   need to cover #demos: that clip is click-to-play, so nothing moves
+   until the reader asks it to.
    ----------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -894,4 +1019,178 @@ footer p {
 .page-header__brand:hover .page-header__word em,
 .page-header__brand:focus-visible .page-header__word em {
   color: var(--amber);
+}
+
+/* -----------------------------------------------------------------------
+   The comb — the inline SVG in #parallel. Sized a little wider than
+   .split__img because it carries labels: below ~380px the branch names
+   stop being readable, and a diagram nobody can read is worse than no
+   diagram. Every colour is a token, so the illustration cannot drift
+   from the palette the rest of the page uses.
+   ----------------------------------------------------------------------- */
+.comb {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+}
+
+.comb text {
+  font-family: var(--mono);
+}
+
+.comb__branch {
+  fill: var(--text);
+  font-size: 24px;
+}
+
+.comb__meta,
+.comb__trunk-label {
+  fill: var(--muted);
+  font-size: 19px;
+}
+
+.comb__cell {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.comb__trunk {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+}
+
+.comb__line {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 1.75;
+}
+
+.comb__arrowhead {
+  fill: var(--amber);
+}
+
+.comb__ok {
+  fill: var(--green);
+}
+
+.comb__body {
+  fill: var(--amber);
+}
+
+/* The head is the ground colour, not amber-dim: against the amber body a
+   dim-amber head merges into it and the glyph stops reading as a bee. */
+.comb__head {
+  fill: var(--ground);
+}
+
+.comb__wing {
+  fill: var(--text);
+  opacity: 0.5;
+}
+
+.comb__wing--back {
+  opacity: 0.38;
+}
+
+.comb__stripe {
+  fill: var(--ground);
+}
+
+/* One hover per bee, offset so the three don't rise and fall as a block.
+   A CSS animation rather than SMIL on purpose: the global
+   prefers-reduced-motion rule above switches CSS animation off, and would
+   not have touched an <animate> element. */
+.comb__bee {
+  animation: comb-hover 1.25s ease-in-out infinite;
+}
+
+.comb__bee--2 {
+  animation-delay: -0.42s;
+}
+
+.comb__bee--3 {
+  animation-delay: -0.83s;
+}
+
+/* The distance is in viewBox units and the diagram renders at about 0.7 of
+   its viewBox, so 10 units is ~7px on screen — a third of the glyph's own
+   height, which is what it takes to read as movement at this size. An
+   earlier 2.5 units over 3.2s worked out to under 2px and nobody saw it.
+   Four stops rather than two so it isn't a metronome: up, sink back, up
+   again, settle. The cell is 88 units tall, so a 10-unit rise stays well
+   inside it. */
+@keyframes comb-hover {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  30% {
+    transform: translateY(-10px);
+  }
+
+  55% {
+    transform: translateY(-3px);
+  }
+
+  78% {
+    transform: translateY(-8px);
+  }
+}
+
+@media (min-width: 800px) {
+  .comb {
+    flex: 0 0 400px;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Section labels — the two turns of the argument, #problem and #parallel.
+
+   Colleagues skimming the page could not tell which section stated the
+   problem and which stated the solution, and the reason was structural: every
+   h2 is the same size and colour, and the three pain items used the very
+   same .card component as #features' six benefit cards. So a skimmer saw
+   nine equal headings and two identical sets of cards.
+
+   The signal is a word, not a colour. Red already means "no" in the
+   comparison matrix and it means the same here, but the label reads "The
+   problem" whether or not the reader sees the hue — same rule as .mx__mark.
+   ----------------------------------------------------------------------- */
+.eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-bottom: 0.7rem;
+}
+
+.eyebrow--problem {
+  color: var(--red);
+}
+
+.eyebrow--solution {
+  color: var(--amber);
+}
+
+/* The pain items are not cards. Dropping the fill and the box leaves three
+   columns behind a red rule, which cannot be mistaken for the filled cards
+   in #features — the confusion this exists to remove. */
+.cards--problem .card {
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--red);
+  border-radius: 0;
+  padding: 0.15rem 0 0.15rem 1.1rem;
+}
+
+/* The pair reads as one unit: the answer follows the problem directly, with
+   the full section rhythm resuming at #network. A class rather than
+   `#problem`, which would be this stylesheet's only ID selector. */
+.section--paired {
+  padding-bottom: 0;
 }
