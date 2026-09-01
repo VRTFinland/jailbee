@@ -479,6 +479,104 @@ def adopt_existing_pr_for_branch(
     return found.number, found.head_ref
 
 
+def bind_pr_by_number(
+    scope: PrScope,
+    state: PrState,
+    *,
+    number: int,
+    record: PrRecord,
+    yes: bool,
+    record_context: str,
+) -> PrRecord:
+    """Bind this target to PR ``number``, and return the record to run under.
+
+    `adopt_existing_pr_for_branch` can only find a PR whose head branch is
+    *named* like the container's branch. A container made with `jailbee new
+    <branch>` where that branch has nothing to do with the PR head — the
+    common case when the PR was opened from a differently-named branch — is
+    invisible to that lookup, and the create path would open a second PR for
+    the same work. Naming the number is the only thing that identifies it.
+
+    Records the resolved head and ``adopted`` but deliberately not ``author``,
+    exactly like name-based adoption: jailbee did not open this PR, so the
+    foreign-head guards (`--force` confirmation, no description regeneration)
+    must stay on.
+
+    Already bound to ``number`` -> returns ``record`` untouched, without a `gh`
+    call or a prompt; re-running with the same ``--pr`` is not a decision.
+    Bound to a *different* number -> confirms a retarget, which is also the
+    only way back out of a mistyped number.
+
+    Exits non-zero on an unresolvable, closed/merged, or fork PR, and on a
+    declined or unavailable confirmation.
+    """
+    from jailbee import pr as pr_module
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    if record.number == number and record.head:
+        return record
+
+    try:
+        found = pr_module.resolve_pr(scope.repo_root, number, remote=scope.remote)
+    except pr_module.PrError as exc:
+        error(f"{scope.prefix}{exc}")
+        raise typer.Exit(1) from exc
+
+    if found.state != "OPEN":
+        error(
+            f"{scope.prefix}PR #{number} is {found.state}. Reopen it, or drop --pr "
+            f"to open a new PR from this container."
+        )
+        raise typer.Exit(1)
+    if found.is_cross_repository:
+        owner = found.head_repo_owner or "<fork-owner>"
+        error(
+            f"{scope.prefix}PR #{number}'s head '{found.head_ref}' lives in the fork "
+            f"'{owner}', which jailbee cannot push to. Push to the fork yourself, or "
+            f"drop --pr to open a PR from this container."
+        )
+        raise typer.Exit(1)
+
+    author = f"@{found.author_login}" if found.author_login else "an unknown author"
+    info(
+        f"{scope.prefix}PR #{number} by {author} (OPEN); head '{found.head_ref}' → "
+        f"base '{found.base_ref}'."
+    )
+
+    if record.number is not None:
+        question = (
+            f"Already bound to PR #{record.number}; retarget to #{number} ('{found.head_ref}')?"
+        )
+        refusal = (
+            f"{scope.prefix}Retargeting from PR #{record.number} to #{number} needs "
+            f"confirmation — re-run with --yes when there is no terminal to ask on."
+        )
+    else:
+        question = f"Push this container's commits to PR #{number} ('{found.head_ref}')?"
+        refusal = (
+            f"{scope.prefix}Pushing this container's commits to PR #{number} needs "
+            f"confirmation — re-run with --yes when there is no terminal to ask on."
+        )
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error(refusal)
+            raise typer.Exit(1)
+        if not typer.confirm(question, default=True):
+            raise typer.Abort()
+
+    state.record(
+        head=found.head_ref,
+        author=False,
+        adopted=True,
+        number=number,
+        context=f"Could not record PR #{number} {record_context}",
+    )
+    # In-process, not a re-read: `state.record` is best-effort, and the run
+    # must publish to the right head even when the write failed.
+    return PrRecord(number=number, head=found.head_ref, author=False, adopted=True)
+
+
 def resolve_create_text(
     scope: PrScope,
     *,

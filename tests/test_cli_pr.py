@@ -1732,3 +1732,227 @@ def test_pr_found_pr_description_is_not_offered_for_regeneration(mocker, tmp_pat
     assert result.exit_code == 0, result.output
     edit.assert_not_called()
     confirm.assert_not_called()
+
+
+# --- Binding a container to an existing PR by number (`--pr N`) -------------
+
+
+def _bind_setup(mocker, tmp_path, labels=None):
+    """A plain `jailbee new <branch>` container whose branch name has nothing
+    to do with the PR head — the case `--pr N` exists for."""
+    label_map = {
+        "user.jailbee.branch": "local-scratch",
+        "user.jailbee.base_branch": "master",
+    }
+    if labels:
+        label_map.update(labels)
+    cfg, incus = _setup(mocker, tmp_path, labels=label_map)
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        return_value=_publish_result(
+            publish_name="contributor/fix-worktime", branch="local-scratch"
+        ),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    return cfg, incus, publish
+
+
+def test_pr_binds_to_a_numbered_pr_whose_head_differs_from_the_branch(mocker, tmp_path):
+    """The whole point: `gh pr view <branch>` finds nothing, so only the
+    number can name the PR."""
+    _cfg, _incus, publish = _bind_setup(mocker, tmp_path)
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    find = mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.args[1] == 456
+    assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
+    create.assert_not_called()
+    # The number-based bind replaces the name lookup rather than racing it.
+    find.assert_not_called()
+
+
+def test_pr_bind_records_the_pr_as_adopted_not_authored(mocker, tmp_path):
+    """jailbee did not open this PR, so the foreign-head guards must stay on."""
+    _cfg, incus, _publish = _bind_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    writes = {tuple(c.args[-2:]) for c in incus.config_set.call_args_list}
+    assert ("user.jailbee.pr_branch", "contributor/fix-worktime") in writes
+    assert ("user.jailbee.pr", "456") in writes
+    assert ("user.jailbee.pr_adopted", "1") in writes
+    assert not any(key == "user.jailbee.pr_author" for key, _ in writes)
+
+
+def test_pr_bind_writes_pr_branch_before_the_pr_number(mocker, tmp_path):
+    """A partial write must not leave a number without a head name — the
+    re-run would then publish to the container branch."""
+    _cfg, incus, _publish = _bind_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    writes = [tuple(c.args[-2:]) for c in incus.config_set.call_args_list]
+    assert writes.index(("user.jailbee.pr_branch", "contributor/fix-worktime")) < writes.index(
+        ("user.jailbee.pr", "456")
+    )
+
+
+def test_pr_bind_asks_before_pushing_to_someone_elses_pr(mocker, tmp_path):
+    _cfg, incus, publish = _bind_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+
+    assert result.exit_code != 0
+    confirm.assert_called_once()
+    publish.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_without_tty_requires_yes(mocker, tmp_path):
+    _cfg, incus, publish = _bind_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+
+    assert result.exit_code == 1
+    assert "--yes" in result.output
+    publish.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_refuses_a_merged_pr(mocker, tmp_path):
+    """Name-based adoption silently opens a new PR for a closed one. An
+    explicit number must not: the user named this PR on purpose."""
+    _cfg, incus, publish = _bind_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info(state="MERGED"))
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 1
+    assert "MERGED" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_refuses_a_fork_pr(mocker, tmp_path):
+    _cfg, incus, publish = _bind_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.pr.resolve_pr", return_value=_review_pr_info(cross=True, owner="contributor")
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 1
+    assert "contributor" in result.output
+    publish.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_reports_an_unresolvable_number(mocker, tmp_path):
+    from jailbee.pr import PrResolveError
+
+    _cfg, _incus, publish = _bind_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.pr.resolve_pr", side_effect=PrResolveError("PR #999 not found in this repo.")
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "999", "--yes"])
+
+    assert result.exit_code == 1
+    assert "999" in result.output
+    publish.assert_not_called()
+
+
+def test_pr_bind_rejects_as_flag(mocker, tmp_path):
+    """--pr targets an existing PR's head; --as names the head of one still to
+    be created. A usage error must not resolve or record anything."""
+    _cfg, incus, publish = _bind_setup(mocker, tmp_path)
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"])
+
+    assert result.exit_code == 2
+    assert "--as" in result.output and "--pr" in result.output
+    resolve.assert_not_called()
+    publish.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_to_the_same_number_is_a_no_op(mocker, tmp_path):
+    """Re-running with the same --pr must not re-ask or re-resolve."""
+    _cfg, _incus, publish = _bind_setup(
+        mocker,
+        tmp_path,
+        labels={
+            "user.jailbee.pr": "456",
+            "user.jailbee.pr_branch": "contributor/fix-worktime",
+            "user.jailbee.pr_adopted": "1",
+        },
+    )
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    confirm = mocker.patch("typer.confirm")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+
+    assert result.exit_code == 0, result.output
+    resolve.assert_not_called()
+    confirm.assert_not_called()
+    assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
+
+
+def test_pr_bind_retarget_to_another_number_needs_confirmation(mocker, tmp_path):
+    """Without this the only way out of a typo'd --pr is `incus config unset`."""
+    _cfg, incus, publish = _bind_setup(
+        mocker,
+        tmp_path,
+        labels={
+            "user.jailbee.pr": "111",
+            "user.jailbee.pr_branch": "old/head",
+            "user.jailbee.pr_adopted": "1",
+        },
+    )
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+
+    assert result.exit_code != 0
+    assert "111" in confirm.call_args.args[0] and "456" in confirm.call_args.args[0]
+    publish.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+def test_pr_bind_retarget_confirmed_replaces_the_recorded_head(mocker, tmp_path):
+    _cfg, incus, publish = _bind_setup(
+        mocker,
+        tmp_path,
+        labels={
+            "user.jailbee.pr": "111",
+            "user.jailbee.pr_branch": "old/head",
+            "user.jailbee.pr_adopted": "1",
+        },
+    )
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    writes = {tuple(c.args[-2:]) for c in incus.config_set.call_args_list}
+    assert ("user.jailbee.pr", "456") in writes
+    assert ("user.jailbee.pr_branch", "contributor/fix-worktime") in writes
+    assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"

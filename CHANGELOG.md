@@ -20,6 +20,19 @@
   restored on quit. The Qt window's title gained the same bee.
 - **`jailbee tui` launches the terminal dashboard**, mirroring `jailbee gui`
   for the Qt one. `jailbee dashboard` is unchanged.
+- **`jailbee pr --pr N` binds a container to an existing PR by number.**
+  JailBee could already adopt a PR it found for the container's branch, but
+  that lookup is by name — it finds nothing when the container's branch is
+  named differently from the PR's head branch, and the run then opened a
+  *second* PR for the same work. `--pr N` names the PR outright: same
+  confirmation and same `pr` / `pr_branch` / `pr_adopted` labels (so the
+  foreign-head guards stay on), but a closed/merged or fork PR is refused
+  rather than falling through to a new PR — an explicitly named PR is not
+  something to silently replace. Re-running with the same number is a no-op;
+  a different number asks before retargeting, which is also how a mistyped
+  number is corrected. `--pr` with `--as` is a usage error.
+  `jailbee submodule pr --pr N` does the same for one submodule, resolved
+  against the submodule's own repo and remote.
 
 ## 1.2.2 - 2026-08-28
 

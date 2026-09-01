@@ -645,8 +645,26 @@ PR or a fork PR falls through to opening a new PR (with a printed reason), and
 `--as` skips the check entirely. Without it the AI-proposed head branch name
 would publish the work under a new branch and open a duplicate PR.
 
+That check is by **branch name** (`gh pr view <container branch>`), so it finds
+nothing when the container's branch is named differently from the PR's head —
+the usual case when the PR was opened from another branch. `--pr N` names the
+PR outright:
+
+```bash
+jailbee pr feat-foo --pr 77     # push this container's commits to PR #77's head
+```
+
+It resolves PR N, refuses a closed/merged or fork one (an explicitly named PR
+must not be silently replaced by a new one), asks the same confirmation, and
+records the same `pr` / `pr_branch` / `pr_adopted` labels — so the hands-off
+guards apply here too. Re-running with the same number is a no-op; a
+*different* number asks before retargeting, which is also how a mistyped
+number gets corrected. `jailbee submodule pr --pr N` does the same for one
+submodule, resolved against the submodule's own repo and remote.
+
 `--as` is rejected (exit 2) on **any** container that already has a PR — its
 head is fixed, so a different branch name would leave the PR untouched.
+`--pr` and `--as` together are a usage error (exit 2).
 
 When `claude.enabled` and `claude.ai_pr_description` are on (both default), a new
 PR's **title and body are written by the container's Claude CLI**, and
