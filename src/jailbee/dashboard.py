@@ -924,7 +924,6 @@ def render(
     last_refresh_age: float,
     interval: float,
     git_enabled: bool,
-    refreshing: bool = False,
     enabled: Sequence[str] | None = None,
     overlay: Overlay | None = None,
     notice: str | None = None,
@@ -934,8 +933,9 @@ def render(
 
     One shared table (columns aligned across all repos); each repo is a
     section header row inside it. The selected container is marked with a
-    ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel with a
-    title (summary + refresh indicator) and a subtitle (refresh timing).
+    ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel whose
+    left-aligned title carries the summary, the clock and a fixed-width
+    refresh field; the subtitle carries a transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
     the table so the dashboard it acts on stays on screen. ``notice`` is a
@@ -1014,17 +1014,28 @@ def render(
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
-    mark = "  [yellow]⟳[/]" if refreshing else ""
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
     folded_note = f" · {n_folded} folded" if n_folded else ""
-    title = (
-        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers"
-        f"{folded_note}   {now:%H:%M:%S}{mark}"
-    )
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
-    note = f"[yellow]{notice}[/yellow]  ·  " if notice else ""
-    subtitle = f"{note}refreshed {last_refresh_age:.0f}s ago · every {interval:.0f}s{git_note}"
-    return Panel(Group(*body), title=title, subtitle=subtitle, box=box.ROUNDED, padding=(0, 1))
+    # Fixed-width refresh field: the age is clamped to two digits and the
+    # interval is constant for the run, so the title never changes width as
+    # the age ticks — a title that resizes drags the whole line with it.
+    age_field = f"{min(last_refresh_age, 99.0):>2.0f}s/{interval:.0f}s"
+    title = (
+        f"[bold]jailbee dashboard[/]  ·  {n_repos} repos · {n_ctr} containers"
+        f"{folded_note}{git_note}  ·  {now:%H:%M:%S}  ·  [dim]↻[/dim] {age_field}"
+    )
+    # Subtitle is notice-only: a transient message on the bottom border cannot
+    # push the table around, and the refresh timing now lives in the title.
+    subtitle = f"[yellow]{notice}[/yellow]" if notice else None
+    return Panel(
+        Group(*body),
+        title=title,
+        title_align="left",
+        subtitle=subtitle,
+        box=box.ROUNDED,
+        padding=(0, 1),
+    )
 
 
 def parse_key(data: bytes) -> str:
@@ -1317,11 +1328,10 @@ def run(
     force = threading.Event()
     shared_groups: list[RepoGroup] = []
     shared_last_full = 0.0
-    shared_refreshing = True  # first frame shows the spinner until the initial gather lands
     worker_error: list[BaseException] = []
 
     def refresher() -> None:
-        nonlocal shared_groups, shared_last_full, shared_refreshing
+        nonlocal shared_groups, shared_last_full
         last_base = 0.0
         last_full = 0.0
         first = True
@@ -1341,8 +1351,6 @@ def run(
             if do_base:
                 if forced:
                     force.clear()
-                with lock:
-                    shared_refreshing = True
                 try:
                     groups = gather_live(incus, cwd_config, with_git=do_git)
                 except Exception as exc:  # surface any gather failure to the main thread
@@ -1358,7 +1366,6 @@ def run(
                 with lock:
                     shared_groups = groups
                     shared_last_full = ts
-                    shared_refreshing = False
                 prev_groups = groups
                 last_base = ts
                 if do_git:
@@ -1366,8 +1373,6 @@ def run(
                 first = False
             # sleep until the next tick, waking early on a forced refresh or stop
             force.wait(timeout=0.1)
-        with lock:
-            shared_refreshing = False
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
@@ -1457,7 +1462,6 @@ def run(
                 with lock:
                     groups = shared_groups
                     last_full = shared_last_full
-                    refreshing = shared_refreshing
                 rows = selectable_rows(groups, folded)
                 if (
                     isinstance(overlay, MenuState)
@@ -1485,7 +1489,6 @@ def run(
                         last_refresh_age=age,
                         interval=interval,
                         git_enabled=git_enabled,
-                        refreshing=refreshing,
                         enabled=enabled,
                         overlay=overlay,
                         notice=notice,

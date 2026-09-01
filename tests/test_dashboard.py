@@ -1675,35 +1675,87 @@ def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     assert "STATE" not in header_line
 
 
-def test_render_shows_refreshing_indicator(tmp_path):
+def _title_line(groups, *, age: float = 1.0, git_enabled: bool = True, **kwargs) -> str:
+    """The panel's top border line, which carries the dashboard title."""
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=kwargs.pop("selected", None),
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=age,
+            interval=3.0,
+            git_enabled=git_enabled,
+            **kwargs,
+        )
+    )
+    return next(ln for ln in out.splitlines() if "jailbee dashboard" in ln)
+
+
+def test_render_title_has_no_blinking_refresh_indicator(tmp_path):
+    """The old `⟳` marker toggled on every gather, re-centring the whole title."""
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    out_on = _render_text(
+    assert "⟳" not in _title_line([g])
+
+
+def test_render_title_is_left_aligned(tmp_path):
+    """Left-aligned, so a widening title grows rightwards instead of shifting."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    line = _title_line([g])
+    assert line.index("jailbee dashboard") <= 3
+
+
+def test_render_title_refresh_field_is_fixed_width(tmp_path):
+    """A one- and a two-digit age must occupy the same number of columns, or
+    the title jumps every time the age ticks past 9s."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    fresh = _title_line([g], age=1.0)
+    stale = _title_line([g], age=12.0)
+
+    assert "1s/3s" in fresh
+    assert "12s/3s" in stale
+    # Same amount of border fill => the title text is the same width.
+    assert fresh.count("─") == stale.count("─")
+
+
+def test_render_title_clamps_an_absurd_refresh_age(tmp_path):
+    """A stalled gather must not widen the field past two digits."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    assert "99s/3s" in _title_line([g], age=4000.0)
+
+
+def test_render_title_carries_the_no_git_marker(tmp_path):
+    """`--no-git` is constant for the run, so it belongs in the title."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    assert "no-git" in _title_line([g], git_enabled=False)
+    assert "no-git" not in _title_line([g], git_enabled=True)
+
+
+def test_render_subtitle_is_empty_without_a_notice(tmp_path):
+    """The refresh timing moved into the title; the subtitle is notice-only."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
         dashboard.render(
             [g],
             selected=None,
-            now=now,
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
-            refreshing=True,
         )
     )
-    out_off = _render_text(
-        dashboard.render(
-            [g],
-            selected=None,
-            now=now,
-            last_refresh_age=1.0,
-            interval=3.0,
-            git_enabled=True,
-            refreshing=False,
-        )
-    )
-    assert "⟳" in out_on
-    assert "⟳" not in out_off
+    assert "refreshed" not in out
 
 
 def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):

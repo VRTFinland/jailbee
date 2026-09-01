@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- **The dashboard title row no longer jumps.** The `⟳` marker that toggled
+  on and off with every gather re-centred the whole title, and the refresh
+  timing lived in the subtitle. The title is now left-aligned and ends in a
+  fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
+  width no longer changes between frames; the subtitle carries a transient
+  notice and nothing else.
+
 ## 1.2.2 - 2026-08-28
 
 ### Fixed
