@@ -1231,6 +1231,11 @@ def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> 
     if selected is None:
         return "Select a repo or a container first"
     if selected.kind == "repo":
+        if not any(g.prefix == selected.key for g in groups):
+            # Same wording the container branch below uses for the same
+            # cause: the row's group vanished between frames. "Select a
+            # repo" would be false advice — one was selected.
+            return f"'{selected.key}' is no longer listed"
         return new_container_reject_note_for_prefix(groups, selected.key)
     group = _find_group(groups, selected.key)
     if group is None:

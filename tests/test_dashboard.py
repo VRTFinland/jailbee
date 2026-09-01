@@ -1956,6 +1956,23 @@ def test_new_container_reject_note_names_the_orphan_repo(tmp_path):
     assert note is not None and "gamma" in note
 
 
+def test_new_container_reject_note_says_a_vanished_repo_row_is_gone(tmp_path):
+    """A repo row whose group disappeared between frames must not be told to
+    "select a repo" — one was selected. Same wording the container branch
+    uses for the same cause."""
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note(groups, dashboard.Row("repo", "ghost"))
+    assert note == "'ghost' is no longer listed"
+
+
+def test_new_container_reject_note_phrases_a_vanished_row_the_same_way(tmp_path):
+    """The two row kinds must not describe one situation differently."""
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note(
+        groups, dashboard.Row("repo", "ghost")
+    ) == dashboard.new_container_reject_note(groups, dashboard.Row("container", "ghost"))
+
+
 def test_new_container_reject_note_for_prefix_is_none_when_creation_is_possible(tmp_path):
     groups = _create_groups(tmp_path)
     assert dashboard.new_container_reject_note_for_prefix(groups, "alpha") is None
