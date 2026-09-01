@@ -2827,3 +2827,33 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
 
     assert rc == 0
     save.assert_called_once()
+
+
+def test_parse_key_maps_n_to_the_new_container_token():
+    assert dashboard.parse_key(b"n") == "new"
+
+
+def test_new_binding_is_not_a_container_verb():
+    """`n` is repo-scoped. A `verb` would put it through `quick_verb`, which
+    gates on a *container's* state and would reject it everywhere."""
+    binding = dashboard.binding_for_token("new")
+    assert binding is not None
+    assert binding.verb is None
+
+
+def test_new_binding_appears_in_the_help_overlay(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay="help",
+        )
+    )
+    assert "create a container" in out

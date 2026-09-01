@@ -743,6 +743,10 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:pr-update", (b"P",), "P", "create or update the PR", "Actions", verb="pr"),
     KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
     KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
+    # Repo-scoped, not container-scoped: no `verb`, so it never reaches
+    # `quick_verb`/`actions_for_container` (those gate on a container's state).
+    # `run`'s dispatch handles it directly, with its own guard.
+    KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions", brief="new"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding(
         "settings",
@@ -1591,6 +1595,51 @@ def run(
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
                 force.set()  # an action likely changed state — refresh ASAP
 
+            def create_container() -> None:
+                """Ask for a branch and a base, then run `jailbee new` here.
+
+                The terminal is handed over rather than the command dispatched
+                detached, because `jailbee new` asks its own questions:
+                confirming reuse of an existing branch, and the branch-autostart
+                escalation gate. `--background` does not avoid that — the
+                escalation question is asked by the foreground parent before it
+                detaches (`lifecycle._autostart_approved`). The only other
+                option is `--yes`, i.e. accepting a network-widening branch
+                config unseen.
+                """
+                note = new_container_reject_note(groups, selected)
+                if note is not None:
+                    set_notice(note)
+                    return
+                group = new_container_target(groups, selected)
+                assert group is not None  # guaranteed by the note being None
+                config_path = group.config_path
+                assert config_path is not None  # ditto
+                base_default = new_container_base_default(group.repo_root)
+
+                def ask_and_run() -> int:
+                    import typer
+
+                    try:
+                        branch = typer.prompt("New branch").strip()
+                        base = typer.prompt("Base branch", default=base_default or "").strip()
+                    except (typer.Abort, EOFError, KeyboardInterrupt):
+                        # Ctrl-C answers the prompt, not the dashboard: `run`'s
+                        # own KeyboardInterrupt handler would quit outright.
+                        return 0
+                    if not branch or not base:
+                        return 0
+                    rc = subprocess.run(
+                        new_container_argv(config_path, branch, base), check=False
+                    ).returncode
+                    _wait_for_return()
+                    return rc
+
+                rc = foreground(ask_and_run)
+                if rc != 0:
+                    set_notice(f"'jailbee new' exited {rc}")
+                force.set()  # the new container should appear on the next frame
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
@@ -1711,6 +1760,8 @@ def run(
                         dispatch(container, verb)
                     else:
                         set_notice(quick_reject_note(groups, container, key))
+                elif key == "new":
+                    create_container()
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:
