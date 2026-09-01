@@ -113,7 +113,8 @@ sped up and say so on screen; nothing else is edited.
   way the state outlives `jailbee destroy` / `jailbee new` — while nothing a
   container does reaches your host's own dotfiles.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
-  TUI dashboard (`jailbee dashboard`) or Qt GUI dashboard (`jailbee gui`) spans
+  TUI dashboard (`jailbee dashboard`, alias `jailbee tui`) or Qt GUI dashboard
+  (`jailbee gui`) spans
   every repo, and acts on what it shows: attach a shell or tmux, open the IDE,
   create or update the PR, update a container from its base, read its diff —
   without leaving the view that told you it was needed.

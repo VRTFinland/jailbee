@@ -70,8 +70,8 @@ jailbee git pull feat-foo       # merge the container's branch back into its bas
 jailbee destroy feat-foo --force
 ```
 
-`jailbee dashboard` is the live, cross-repo version of `jailbee ls` — an
-auto-refreshing TUI where you navigate containers and press Enter to act
+`jailbee dashboard` (alias: `jailbee tui`) is the live, cross-repo version of
+`jailbee ls` — an auto-refreshing TUI where you navigate containers and press Enter to act
 (shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
 "Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).

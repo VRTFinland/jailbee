@@ -2260,6 +2260,24 @@ def test_dashboard_command_delegates_to_run(mocker):
     assert kwargs["cwd_config"] is None
 
 
+def test_tui_command_is_an_alias_for_the_dashboard(mocker):
+    """`jailbee tui` mirrors `jailbee gui`: the TUI frontend, same options."""
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli.find_repo_config",
+        side_effect=__import__(
+            "jailbee.config", fromlist=["ConfigNotFoundError"]
+        ).ConfigNotFoundError("none"),
+    )
+    result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
+    assert result.exit_code == 0
+    _, kwargs = run.call_args
+    assert kwargs["interval"] == 5.0
+    assert kwargs["git_interval"] == 7.0
+    assert kwargs["no_git"] is True
+
+
 def test_menu_actions_clear_job_entry_is_first_when_clearable():
     actions = dashboard.menu_actions(_ctx(job_clearable=True))
     assert actions[0] == ("Clear failed job", "job clear")

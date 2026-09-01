@@ -264,7 +264,7 @@ narrows JSON too). A repo block overrides the global one field by field
 *replaces* rather than extends, and the Qt dashboard's Compact card style
 ignores `fields` entirely.
 
-### `jailbee dashboard`
+### `jailbee dashboard` (alias: `jailbee tui`)
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos; repo headers

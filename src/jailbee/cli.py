@@ -1778,6 +1778,28 @@ def dashboard_cmd(
     )
 
 
+@app.command("tui")
+def tui_cmd(
+    interval: Annotated[
+        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+    ] = None,
+    git_interval: Annotated[
+        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
+    ] = 10.0,
+    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+) -> None:
+    """Launch the terminal dashboard — alias for `jailbee dashboard`."""
+    raise typer.Exit(
+        _run_dashboard(
+            interval=interval,
+            git_interval=git_interval,
+            no_git=no_git,
+            gui=False,
+            foreground=False,
+        )
+    )
+
+
 @app.command("gui")
 def gui_cmd(
     interval: Annotated[

@@ -18,6 +18,8 @@
   or a tab strip says which repo you are looking at instead of `bash`. The
   terminal's own title is pushed on the xterm title stack at launch and
   restored on quit. The Qt window's title gained the same bee.
+- **`jailbee tui` launches the terminal dashboard**, mirroring `jailbee gui`
+  for the Qt one. `jailbee dashboard` is unchanged.
 
 ## 1.2.2 - 2026-08-28
 
