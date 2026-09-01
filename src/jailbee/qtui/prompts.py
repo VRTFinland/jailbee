@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QLabel,
+    QLineEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -218,4 +219,71 @@ class PrOptionsDialog(QDialog):
             ready=True if self._ready.isChecked() else None,
             regenerate=self._regen.isChecked(),
             confirm_foreign=self._adopt.isChecked(),
+        )
+
+
+@dataclass(frozen=True)
+class NewContainerAnswers:
+    """The two positionals `jailbee new` needs. Both are already stripped."""
+
+    branch: str
+    base: str
+
+
+class NewContainerDialog(QDialog):
+    """Collects the branch and base for one repo's new container.
+
+    Everything else — network, memory, cpu, mount, autostart — comes from that
+    repo's config, exactly as a bare `jailbee new <branch> <base>` gets it.
+
+    The base is a field rather than an implicit default because `jailbee new`
+    forks a *new* branch off `cfg.default_branch` when no base is given, which
+    is not what "branch off what I am on" means. That is also why OK stays
+    disabled on an empty base: blank would not mean "use the default", it would
+    mean forking off the wrong branch.
+    """
+
+    def __init__(
+        self,
+        repo: str,
+        *,
+        base_default: str | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"New container in '{repo}'")
+        self._branch = QLineEdit(self)
+        self._base = QLineEdit(base_default or "", self)
+        form = QFormLayout()
+        form.addRow("Branch", self._branch)
+        form.addRow("Base branch", self._base)
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(self._buttons)
+        self._branch.textChanged.connect(self._sync_ok)
+        self._base.textChanged.connect(self._sync_ok)
+        self._sync_ok()
+
+    def _sync_ok(self) -> None:
+        """Enable OK only when both fields carry something."""
+        answers = self.answers()
+        button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        button.setEnabled(bool(answers.branch) and bool(answers.base))
+
+    @property
+    def ok_enabled(self) -> bool:
+        """Whether OK is currently clickable."""
+        return bool(self._buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled())
+
+    def answers(self) -> NewContainerAnswers:
+        """What the user typed, stripped."""
+        return NewContainerAnswers(
+            branch=self._branch.text().strip(),
+            base=self._base.text().strip(),
         )
