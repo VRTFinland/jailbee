@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 # Custom role storing the full container name on a tree item.
 _NAME_ROLE = int(Qt.ItemDataRole.UserRole)
 
+# Group rows carry their repo prefix; container rows carry their name. Two
+# roles rather than one, so `_selected_name` cannot mistake a group header for
+# a container (the tree has no other way to tell the two apart).
+_PREFIX_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
 # Built from the framework-free STATE_COLORS (shared with the card view).
 _STATE_COLORS = {state: QColor(hex_) for state, hex_ in STATE_COLORS.items()}
 
@@ -78,6 +83,7 @@ class MainWindow(QMainWindow):
     layoutChanged = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: "table" | "cards"
     cardStyleChanged = Signal(str)  # noqa: N815 - Qt signal naming; payload: "compact" | "grid"
     columnsChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the enabled column set changed
+    newContainerRequested = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: repo prefix, "" when nothing is selected
 
     def __init__(
         self,
@@ -123,6 +129,7 @@ class MainWindow(QMainWindow):
         self._build_columns_menu()
         self._build_card_style_menu(self._card_style)
         self._build_refresh_menu(interval, paused=paused)
+        self._build_container_menu()
 
     def _build_view_menu(self, layout: str) -> None:
         menu = self.menuBar().addMenu("&View")
@@ -271,12 +278,42 @@ class MainWindow(QMainWindow):
         # once this method returns.
         self._refresh_action_group = group
 
+    def _build_container_menu(self) -> None:
+        """The one repo-scoped menu: creating a container, not acting on one.
+
+        Exposed as ``self.container_menu`` for the same reason
+        ``_build_refresh_menu`` exposes its own — a submenu fetched through
+        ``menuBar().actions()`` can look deleted once the QAction wrapper it
+        came from is collected.
+        """
+        menu = self.menuBar().addMenu("&Container")
+        self.container_menu = menu
+        self.new_container_action = menu.addAction("&New…")
+        self.new_container_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.new_container_action.triggered.connect(
+            lambda: self.newContainerRequested.emit(self._selected_prefix() or "")
+        )
+
     def _selected_name(self) -> str | None:
         item = self.tree.currentItem()
         if item is None:
             return None
         name = item.data(0, _NAME_ROLE)
         return str(name) if name else None
+
+    def _selected_prefix(self) -> str | None:
+        """The repo prefix of the current row.
+
+        Its own for a group header; its parent's for a container row, so
+        "create a container" works from wherever the cursor happens to be.
+        """
+        item = self.tree.currentItem()
+        while item is not None:
+            prefix = item.data(0, _PREFIX_ROLE)
+            if prefix:
+                return str(prefix)
+            item = item.parent()
+        return None
 
     def set_groups(
         self,
@@ -316,6 +353,7 @@ class MainWindow(QMainWindow):
             label, _is_orphan = group_header(g)
             group_item = QTreeWidgetItem([label])
             group_item.setFirstColumnSpanned(True)
+            group_item.setData(0, _PREFIX_ROLE, g.prefix)
             self.tree.addTopLevelItem(group_item)
             group_item.setExpanded(True)
             for c in g.containers:
@@ -344,6 +382,17 @@ class MainWindow(QMainWindow):
     def _on_context_menu(self, pos: object) -> None:
         name = self._selected_name()
         if name is None:
+            # A group header: the only thing it can offer is creating a
+            # container in that repo.
+            prefix = self._selected_prefix()
+            if prefix is None:
+                return
+            group_menu = QMenu(self)
+            act = group_menu.addAction("New container…")
+            act.triggered.connect(
+                lambda _checked=False, p=prefix: self.newContainerRequested.emit(p)
+            )
+            group_menu.exec(self.tree.viewport().mapToGlobal(pos))  # type: ignore[call-overload]
             return
         actions = self._actions_for(name)
         menu = QMenu(self)

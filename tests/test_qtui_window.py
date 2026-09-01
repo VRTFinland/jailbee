@@ -438,3 +438,62 @@ def test_a_stale_persisted_column_name_cannot_reach_zero_columns(qtbot):
     # not merely on the phantom name still being present somewhere.
     assert win.enabled_columns() == ("name",)
     assert act.isChecked() is True  # the action snaps back
+
+
+def test_selected_prefix_of_a_group_row(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0))
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_of_a_container_row_is_its_parents(qtbot):
+    """A container row carries a name, not a prefix — the repo is the
+    parent's, and creating alongside a container must still find it."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0).child(0))
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_is_none_without_a_selection(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(None)
+    assert win._selected_prefix() is None
+
+
+def test_container_menu_offers_new(qtbot):
+    """Read the menu off the window, never via `menuBar().actions()` ->
+    `QAction.menu()`: that wrapper dies with the loop-local QAction (see
+    `_build_refresh_menu`'s docstring)."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    assert win.container_menu.title() == "&Container"
+    assert win.new_container_action.text() == "&New…"
+
+
+def test_container_menu_new_emits_the_selected_prefix(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0).child(0))
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        win.new_container_action.trigger()
+
+    assert blocker.args == ["p"]
+
+
+def test_container_menu_new_emits_empty_string_without_a_selection(qtbot):
+    """The window reports what it knows; the controller owns the message."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        win.new_container_action.trigger()
+
+    assert blocker.args == [""]
