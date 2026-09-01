@@ -1171,6 +1171,78 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
 
 
+def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoGroup | None:
+    """The repo a new container would be created in, for the current selection.
+
+    A container row yields its own group; a repo header yields that group.
+    None when nothing is selected, when the selection is stale (the row moved
+    out from under the cursor between frames), or when the group has no config
+    to create against — an orphan group is jailbee-managed containers whose
+    repo config could not be loaded, the same reason it gets no action menu.
+    """
+    if selected is None:
+        return None
+    if selected.kind == "repo":
+        group = next((g for g in groups if g.prefix == selected.key), None)
+    else:
+        group = _find_group(groups, selected.key)
+    if group is None or group.config_path is None:
+        return None
+    return group
+
+
+def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
+    """Why a container cannot be created here, or None when it can.
+
+    The counterpart to :func:`view_only_note`: a front-end that silently does
+    nothing is indistinguishable from a broken one, so every refusal has a
+    sentence naming its own cause.
+    """
+    if new_container_target(groups, selected) is not None:
+        return None
+    if selected is None:
+        return "Select a repo or a container first"
+    group = (
+        next((g for g in groups if g.prefix == selected.key), None)
+        if selected.kind == "repo"
+        else _find_group(groups, selected.key)
+    )
+    if group is None:
+        return f"'{selected.key}' is no longer listed"
+    return f"'{group.prefix}' has no jailbee config — nothing to create against"
+
+
+def new_container_base_default(repo_root: str | None) -> str | None:
+    """The branch ``repo_root``'s checkout is on, for the base field's default.
+
+    Read from the *group's* repo, not the process's cwd: both dashboards are
+    cross-repo, so the branch offered has to belong to the repo the row is in.
+    None for a null root (an orphan group) or a detached HEAD — an empty field
+    beats a guess, and `jailbee new` would fork off the wrong branch.
+    """
+    if repo_root is None:
+        return None
+    from jailbee import git
+
+    return git.get_current_branch(Path(repo_root))
+
+
+def new_container_argv(config_path: Path, branch: str, base: str) -> list[str]:
+    """``jailbee new <branch> <base> --config <path>``.
+
+    ``base`` is positional, not a flag: `jailbee new`'s second positional is
+    the branch a *new* branch forks off (`lifecycle.resolve_clone_ref`).
+    Omitted, a new branch forks off `cfg.default_branch` instead — which is
+    not what someone picking their current branch means. (`--from-base` is the
+    golden-image alias and has nothing to do with git.)
+
+    No `--yes`: `jailbee new` asks about reusing an existing branch and about
+    the branch-autostart escalation, and both front-ends give it a terminal to
+    ask in rather than answering for the user.
+    """
+    return ["jailbee", "new", branch, base, "--config", str(config_path)]
+
+
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"
 # when the container's background job failed or is unfinished. Both dashboards
 # have already shown that state in the JOB column, so the question would only

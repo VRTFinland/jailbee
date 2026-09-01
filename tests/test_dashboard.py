@@ -1897,6 +1897,106 @@ def test_terminal_title_scope_pops_even_when_the_body_raises():
     assert stream.getvalue().endswith("\x1b[23;2t")
 
 
+# --- creating a container from the dashboard --------------------------------
+
+
+def _create_groups(tmp_path):
+    return [
+        dashboard.RepoGroup(
+            "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+        ),
+        dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
+    ]
+
+
+def test_new_container_target_from_a_container_row(tmp_path):
+    groups = _create_groups(tmp_path)
+    target = dashboard.new_container_target(groups, dashboard.Row("container", "alpha-one"))
+    assert target is groups[0]
+
+
+def test_new_container_target_from_a_repo_header(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "alpha")) is groups[0]
+
+
+def test_new_container_target_is_none_without_a_selection(tmp_path):
+    assert dashboard.new_container_target(_create_groups(tmp_path), None) is None
+
+
+def test_new_container_target_is_none_for_a_stale_selection(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("container", "ghost")) is None
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "ghost")) is None
+
+
+def test_new_container_target_is_none_for_an_orphan_group(tmp_path):
+    """An orphan group has no repo config to create against — the same reason
+    it gets no action menu."""
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("container", "gamma-x")) is None
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "gamma")) is None
+
+
+def test_new_container_reject_note_is_none_when_creation_is_possible(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note(groups, dashboard.Row("repo", "alpha")) is None
+
+
+def test_new_container_reject_note_asks_for_a_selection(tmp_path):
+    note = dashboard.new_container_reject_note(_create_groups(tmp_path), None)
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_names_the_orphan_repo(tmp_path):
+    """'Nothing happened' is indistinguishable from broken — the note has to
+    say which repo has no config."""
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note(groups, dashboard.Row("repo", "gamma"))
+    assert note is not None and "gamma" in note
+
+
+def test_new_container_base_default_reads_the_groups_own_repo(mocker, tmp_path):
+    """Cross-repo dashboards: the branch offered must come from the row's
+    repo, not the process's cwd."""
+    get = mocker.patch("jailbee.git.get_current_branch", return_value="config-improvements")
+
+    assert dashboard.new_container_base_default(str(tmp_path)) == "config-improvements"
+    assert get.call_args.args[0] == Path(str(tmp_path))
+
+
+def test_new_container_base_default_is_none_on_a_detached_head(mocker, tmp_path):
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
+    assert dashboard.new_container_base_default(str(tmp_path)) is None
+
+
+def test_new_container_base_default_is_none_without_a_repo_root(mocker):
+    """An orphan group has no root to read; git must not be invoked at all."""
+    get = mocker.patch("jailbee.git.get_current_branch")
+    assert dashboard.new_container_base_default(None) is None
+    get.assert_not_called()
+
+
+def test_new_container_argv_passes_the_base_positionally(tmp_path):
+    """`--from-base` is the golden-image alias, not a git base. The base
+    branch is `jailbee new`'s second positional or it is nothing."""
+    config_path = tmp_path / ".jailbee" / "config.yaml"
+    assert dashboard.new_container_argv(config_path, "dashboard-fixes", "config-improvements") == [
+        "jailbee",
+        "new",
+        "dashboard-fixes",
+        "config-improvements",
+        "--config",
+        str(config_path),
+    ]
+
+
+def test_new_container_argv_carries_no_yes_flag(tmp_path):
+    """--yes would accept a network-widening branch autostart config unseen."""
+    argv = dashboard.new_container_argv(tmp_path / "c.yaml", "b", "base")
+    assert "--yes" not in argv and "-y" not in argv
+
+
 def test_parse_key_maps_arrows_and_letters():
     assert dashboard.parse_key(b"\x1b[A") == "up"
     assert dashboard.parse_key(b"\x1b[B") == "down"
