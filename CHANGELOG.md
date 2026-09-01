@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The grok agent preset now includes SuperGrok's auth and chat-proxy
+  hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
+  also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
+  inference, and hosted web search. Existing grok containers pick this
+  up on `jailbee apply`.
+
 ## 1.2.2 - 2026-08-28
 
 ### Fixed

@@ -66,7 +66,12 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # step runs with a wider allowlist rather than guessing hosts.
         "install_network": "loose",
         "shared": [{"subpath": "grok", "path": "~/.grok"}],
-        "egress_allow": ["api.x.ai:443", "x.ai:443"],
+        "egress_allow": [
+            "api.x.ai:443",
+            "x.ai:443",
+            "auth.x.ai:443",
+            "cli-chat-proxy.grok.com:443",
+        ],
     },
 }
 
