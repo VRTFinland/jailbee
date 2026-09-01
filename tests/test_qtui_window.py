@@ -497,3 +497,48 @@ def test_container_menu_new_emits_empty_string_without_a_selection(qtbot):
         win.new_container_action.trigger()
 
     assert blocker.args == [""]
+
+
+def test_group_row_context_menu_offers_new_container(qtbot):
+    """The group-row branch of `_on_context_menu` is the other entry point
+    into container creation (alongside the &Container menu) — right-clicking
+    a repo header must offer the same action and emit the same signal.
+
+    `QMenu.exec` is modal (blocks pumping a real event loop), so — following
+    `test_context_menu_on_a_view_only_row_explains_itself`'s established
+    pattern in this file — a zero-delay `QTimer` fires once the offscreen
+    popup is up, reads its actions, and triggers the one we want, which lets
+    `exec` return instead of hanging. Patching `QMenu.exec` directly does not
+    work here: PySide6's compiled binding does not honor a class-level
+    monkeypatch of it, so the call would go through to the real (blocking)
+    implementation regardless.
+    """
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0))
+    assert win._selected_name() is None
+    assert win._selected_prefix() == "p"
+
+    seen: list[str] = []
+
+    def interact() -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is None:
+            return
+        actions = popup.actions()
+        seen.extend(a.text() for a in actions)
+        actions[0].trigger()
+        # trigger() alone doesn't dismiss the offscreen-platform modal popup
+        # (unlike a real click), so exec() would otherwise never return.
+        popup.close()
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        QTimer.singleShot(0, interact)
+        win._on_context_menu(QPoint(0, 0))
+
+    assert seen == ["New container…"]
+    assert blocker.args == ["p"]

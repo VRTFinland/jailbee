@@ -392,6 +392,8 @@ class MainWindow(QMainWindow):
             act.triggered.connect(
                 lambda _checked=False, p=prefix: self.newContainerRequested.emit(p)
             )
+            # Same stub gap as below: pos is a QPoint at runtime, but PySide6's
+            # overload set for the signal's `object` parameter doesn't narrow to it.
             group_menu.exec(self.tree.viewport().mapToGlobal(pos))  # type: ignore[call-overload]
             return
         actions = self._actions_for(name)
