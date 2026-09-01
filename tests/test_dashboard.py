@@ -1956,6 +1956,27 @@ def test_new_container_reject_note_names_the_orphan_repo(tmp_path):
     assert note is not None and "gamma" in note
 
 
+def test_new_container_reject_note_for_prefix_is_none_when_creation_is_possible(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note_for_prefix(groups, "alpha") is None
+
+
+def test_new_container_reject_note_for_prefix_asks_for_a_selection_when_empty(tmp_path):
+    note = dashboard.new_container_reject_note_for_prefix(_create_groups(tmp_path), "")
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_for_prefix_asks_for_a_selection_when_unknown(tmp_path):
+    note = dashboard.new_container_reject_note_for_prefix(_create_groups(tmp_path), "ghost")
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_for_prefix_names_the_orphan_repo(tmp_path):
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note_for_prefix(groups, "gamma")
+    assert note is not None and "gamma" in note
+
+
 def test_new_container_base_default_reads_the_groups_own_repo(mocker, tmp_path):
     """Cross-repo dashboards: the branch offered must come from the row's
     repo, not the process's cwd."""
@@ -2827,6 +2848,27 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
 
     assert rc == 0
     save.assert_called_once()
+
+
+def test_run_dispatches_n_to_create_container(mocker):
+    """Drive the `n` key through `run()`'s real dispatch (``elif key ==
+    "new": create_container()``), not just `parse_key`/the binding shape in
+    isolation — a typo in that `elif` arm would be caught by nothing else.
+
+    ``_drive_run``'s ``gather_live`` returns no containers, so nothing is
+    selected and ``create_container`` takes its notice path (`new_container_
+    reject_note` returning "Select a repo or a container first") without
+    prompting or spawning anything. `render` is wrapped rather than replaced
+    so `Live` still gets a real renderable; its calls are inspected for the
+    notice text that would otherwise only ever be visible on a real screen.
+    """
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"n"])
+
+    assert rc == 0
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert "Select a repo or a container first" in notices
 
 
 def test_parse_key_maps_n_to_the_new_container_token():

@@ -1956,3 +1956,24 @@ def test_pr_bind_retarget_confirmed_replaces_the_recorded_head(mocker, tmp_path)
     assert ("user.jailbee.pr", "456") in writes
     assert ("user.jailbee.pr_branch", "contributor/fix-worktime") in writes
     assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
+
+
+def test_pr_bind_same_number_as_review_container_asks_to_adopt_not_retarget(mocker, tmp_path):
+    """`jailbee new --pr 456` leaves `user.jailbee.pr=456` with no
+    `pr_branch` (`_review_setup`'s exact container shape). `record.number ==
+    number` is then True but `record.head` is falsy, so the early
+    already-bound return is skipped — the fix is that the wording chosen for
+    that fall-through is the adoption question, not a retarget one (there is
+    nothing to retarget from: the number is unchanged)."""
+    _cfg, _incus, publish = _review_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+
+    assert result.exit_code == 0, result.output
+    question = confirm.call_args.args[0]
+    assert "retarget" not in question
+    assert question == "Push this container's commits to PR #456 ('contributor/fix-worktime')?"
+    assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"

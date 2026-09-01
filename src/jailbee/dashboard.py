@@ -1195,25 +1195,47 @@ def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoG
     return group
 
 
+def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -> str | None:
+    """Why a container cannot be created in the repo named ``prefix``, or None
+    when it can.
+
+    The prefix-keyed counterpart to :func:`new_container_reject_note`, shared
+    by both front-ends so a single sentence is authored per refusal reason
+    rather than each front-end wording it independently (that duplication is
+    what let the Qt dashboard's "No repo selected" dialog fire for an orphan
+    group it actually had a real prefix for). The TUI, which resolves a
+    ``Row`` rather than a bare prefix, delegates to this for its repo-header
+    case. An empty or unrecognised ``prefix`` gets the generic "select a
+    repo" wording; a real group with no loaded config names itself.
+    """
+    group = next((g for g in groups if g.prefix == prefix), None) if prefix else None
+    if group is None:
+        return "Select a repo or a container first"
+    if group.config_path is not None:
+        return None
+    return f"'{group.prefix}' has no jailbee config — nothing to create against"
+
+
 def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
     """Why a container cannot be created here, or None when it can.
 
     The counterpart to :func:`view_only_note`: a front-end that silently does
     nothing is indistinguishable from a broken one, so every refusal has a
-    sentence naming its own cause.
+    sentence naming its own cause. Delegates to
+    :func:`new_container_reject_note_for_prefix` once a ``Row`` has been
+    resolved to a prefix, so the "has no jailbee config" sentence is phrased
+    in exactly one place.
     """
     if new_container_target(groups, selected) is not None:
         return None
     if selected is None:
         return "Select a repo or a container first"
-    group = (
-        next((g for g in groups if g.prefix == selected.key), None)
-        if selected.kind == "repo"
-        else _find_group(groups, selected.key)
-    )
+    if selected.kind == "repo":
+        return new_container_reject_note_for_prefix(groups, selected.key)
+    group = _find_group(groups, selected.key)
     if group is None:
         return f"'{selected.key}' is no longer listed"
-    return f"'{group.prefix}' has no jailbee config — nothing to create against"
+    return new_container_reject_note_for_prefix(groups, group.prefix)
 
 
 def new_container_base_default(repo_root: str | None) -> str | None:
@@ -1576,6 +1598,7 @@ def run(
                 touches the terminal at all, which is what keeps the
                 dashboard on screen behind it.
                 """
+                nonlocal last_title
                 live.stop()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
                 try:
@@ -1583,6 +1606,11 @@ def run(
                 finally:
                     tty.setcbreak(fd)
                     live.start(refresh=True)
+                    # `fn` (jailbee shell / tmux) may have set its own OSC 2
+                    # title; forget the last one we wrote so the next frame's
+                    # title-changed check doesn't compare against it and skip
+                    # the rewrite, leaving the child's title on screen forever.
+                    last_title = None
 
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
@@ -1628,6 +1656,17 @@ def run(
                         # own KeyboardInterrupt handler would quit outright.
                         return 0
                     if not branch or not base:
+                        # Reachable two ways: a whitespace-only branch, and —
+                        # on a host repo in detached HEAD, where `base_default`
+                        # is empty — simply pressing Enter twice. Silently
+                        # returning here used to be indistinguishable from a
+                        # broken keypress, so say what happened before giving
+                        # the terminal back.
+                        empty = "branch" if not branch else "base branch"
+                        console.print(
+                            f"\n[yellow]No container created — {empty} was empty.[/yellow]"
+                        )
+                        _wait_for_return()
                         return 0
                     rc = subprocess.run(
                         new_container_argv(config_path, branch, base), check=False

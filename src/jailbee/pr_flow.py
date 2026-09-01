@@ -543,7 +543,7 @@ def bind_pr_by_number(
         f"base '{found.base_ref}'."
     )
 
-    if record.number is not None:
+    if record.number is not None and record.number != number:
         question = (
             f"Already bound to PR #{record.number}; retarget to #{number} ('{found.head_ref}')?"
         )

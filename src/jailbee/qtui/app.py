@@ -22,6 +22,7 @@ from jailbee.dashboard import (
     collect_config_paths,
     new_container_argv,
     new_container_base_default,
+    new_container_reject_note_for_prefix,
     seed_view_state,
 )
 from jailbee.db.view_prefs import FRONTEND_QT
@@ -425,22 +426,19 @@ class AppController(QObject):
         place the GUI deliberately spends a terminal window on a non-attach
         verb.
         """
-        group = next(
-            (g for g in self._latest if g.prefix == prefix and g.config_path is not None),
-            None,
-        )
-        if group is None or group.config_path is None:
-            # The second half of the check is unreachable in practice (the
-            # generator above already filtered on it) but mypy --strict
-            # doesn't narrow `group.config_path` through that filter, so this
-            # spells it out again where the type checker can see it.
-            QMessageBox.warning(
-                self._window,
-                "No repo selected",
-                "Select a repo group or one of its containers first, so jailbee "
-                "knows which repo to create the container in.",
-            )
+        note = new_container_reject_note_for_prefix(self._latest, prefix)
+        if note is not None:
+            # Same wording the TUI uses for the same state (dashboard.py's
+            # `new_container_reject_note`) — an orphan group's real prefix
+            # must not be reported as "no repo selected", which used to be
+            # this dialog's one hardcoded message regardless of cause.
+            QMessageBox.warning(self._window, "No repo selected", note)
             return
+        group = next((g for g in self._latest if g.prefix == prefix), None)
+        # `note` being None guarantees a matching group with a loaded config;
+        # mypy --strict doesn't narrow that through the helper call, so this
+        # spells it out again where the type checker can see it.
+        assert group is not None and group.config_path is not None
         dialog = NewContainerDialog(
             group.prefix,
             base_default=new_container_base_default(group.repo_root),

@@ -1096,7 +1096,13 @@ def test_on_new_container_warns_when_the_prefix_is_unknown(mocker):
 
 
 def test_on_new_container_warns_for_an_orphan_group(mocker):
-    """No config path, nothing to create against — same rule as the TUI."""
+    """No config path, nothing to create against — same rule as the TUI.
+
+    The message must actually name the orphan repo, not the generic "no repo
+    selected" wording — a right-click on the orphan's own header already
+    named a real prefix, so telling the user nothing was selected would be
+    false (the bug FIX 2 in the review closed).
+    """
     warn = mocker.patch.object(QMessageBox, "warning")
     popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
     controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
@@ -1105,6 +1111,8 @@ def test_on_new_container_warns_for_an_orphan_group(mocker):
     controller.on_new_container("orphan")
 
     warn.assert_called_once()
+    message = warn.call_args.args[2]
+    assert "orphan" in message
     popen.assert_not_called()
 
 

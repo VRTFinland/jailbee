@@ -302,18 +302,52 @@ class MainWindow(QMainWindow):
         return str(name) if name else None
 
     def _selected_prefix(self) -> str | None:
-        """The repo prefix of the current row.
+        """The repo prefix behind whatever is selected right now.
 
-        Its own for a group header; its parent's for a container row, so
-        "create a container" works from wherever the cursor happens to be.
+        The table and the card view keep independent, private selections —
+        ``CardView`` never writes into the tree's ``_PREFIX_ROLE`` data, so a
+        card click is invisible to a tree walk. Reading only the tree left
+        Ctrl+N dead in the default cards layout: a user could click a card,
+        press Ctrl+N, and get an unsatisfiable "select a repo" prompt with no
+        way to satisfy it in that view. So this consults whichever view is
+        actually on screen (``self._layout``) rather than always the tree:
+        the card's own group for cards mode, the current row (its own prefix
+        for a group header, its parent's for a container row) for table mode.
+
+        When that view-specific lookup finds nothing selected at all (not a
+        stale selection — something *was* highlighted but no longer resolves,
+        which stays None), a single-repo user is still rescued: if exactly
+        one configured group exists, its prefix is returned so that user can
+        never hit an unsatisfiable prompt just because nothing happens to be
+        highlighted yet. With two or more configured groups and no selection,
+        this returns None, same as before.
         """
+        if self._layout == "cards":
+            name = self.card_view.selected_name()
+            if name is None:
+                return self._sole_configured_prefix()
+            for g in self._groups:
+                if any(c.name == name for c in g.containers):
+                    return g.prefix
+            return None  # stale: the selected card's container is gone
         item = self.tree.currentItem()
+        if item is None:
+            return self._sole_configured_prefix()
         while item is not None:
             prefix = item.data(0, _PREFIX_ROLE)
             if prefix:
                 return str(prefix)
             item = item.parent()
         return None
+
+    def _sole_configured_prefix(self) -> str | None:
+        """The one configured group's prefix, if there's exactly one.
+
+        The single-repo fallback used by ``_selected_prefix`` when nothing is
+        selected in the active view.
+        """
+        configured = [g for g in self._groups if g.config_path is not None]
+        return configured[0].prefix if len(configured) == 1 else None
 
     def set_groups(
         self,
