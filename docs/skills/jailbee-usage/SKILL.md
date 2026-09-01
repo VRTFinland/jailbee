@@ -84,6 +84,16 @@ header). The chosen layout, card style, collapsed repo groups, table column
 widths/order, and refresh cadence / paused state persist across sessions
 (window size/position do not).
 
+Both dashboards can also *create* a container. In the TUI, `n` asks for a
+branch name and a base branch (pre-filled with the branch that repo's host
+checkout is on) and then runs `jailbee new` in the terminal, so its own
+questions — reusing an existing branch, and a branch autostart config that
+widens network access — still get asked. The Qt dashboard does the same from
+`&Container → New…` (Ctrl+N) or a right-click on a repo group header, opening
+a terminal window for the run. Only those two fields are asked; network,
+memory, cpu, mount and autostart come from the repo's config exactly as they
+do for `jailbee new <branch> <base>` on the command line.
+
 ## Creating containers — `jailbee new`
 
 `jailbee new` figures out what to clone from whether `<branch>` already exists

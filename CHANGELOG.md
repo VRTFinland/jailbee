@@ -33,6 +33,17 @@
   number is corrected. `--pr` with `--as` is a usage error.
   `jailbee submodule pr --pr N` does the same for one submodule, resolved
   against the submodule's own repo and remote.
+- **Both dashboards can create containers.** In the TUI, `n` asks for a
+  branch and a base branch and runs `jailbee new` in the handed-over
+  terminal; in the Qt dashboard, `&Container → New…` (Ctrl+N) and the
+  repo-group context menu open a dialog and launch the same command in a
+  terminal window. The base branch is a field, pre-filled with the branch
+  that repo's host checkout is on, because `jailbee new` forks a new branch
+  off `default_branch` when no base is given. Everything else — network,
+  memory, cpu, mount, autostart — comes from the repo's config, as it does
+  for a bare `jailbee new <branch> <base>`. Neither front-end passes
+  `--yes`: `jailbee new` keeps asking about branch reuse and about a branch
+  autostart config that widens network access.
 
 ## 1.2.2 - 2026-08-28
 

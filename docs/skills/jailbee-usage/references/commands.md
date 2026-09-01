@@ -309,6 +309,17 @@ for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
 the first writes to the host's own working tree, and the second's command
 varies with `--follow`.
 
+`n` creates a container in the repo the selected row belongs to. It asks for
+a branch name and a base branch — the base is a separate field because
+`jailbee new` forks a new branch off `default_branch` when its second
+positional is omitted, so leaving it implicit would fork off the wrong branch
+— then hands the terminal to `jailbee new`. It is deliberately not dispatched
+detached and never gets `--yes`: `jailbee new` asks about reusing an existing
+branch and about a branch autostart config that widens network access, and
+that question is asked in the foreground parent even under `--background`. A
+row in an orphan group (no repo config) gets a notice explaining why nothing
+happened.
+
 `F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
 move, `Space` toggles the row under the cursor, `Tab` switches between the
 Fields and Repos tabs, `Esc` closes. Changes apply and persist immediately
@@ -339,6 +350,11 @@ while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
 into a JailBee window with Stop and Copy buttons and the exit code on its status
 line (non-modal, so the dashboard keeps refreshing behind it). Stop is what ends
 a `job log --follow`.
+
+Creating a container joins `shell`/`tmux` as a terminal-window action, for the
+same reason: `jailbee new` has questions to ask and the GUI's detached children
+have no stdin. `&Container → New…` (Ctrl+N) and the repo-group context menu
+open a dialog for the branch and base, then run the command in a terminal.
 
 Its child process has no stdin, so anything the CLI would prompt for is asked
 first in a dialog and passed as a flag — and only where the CLI would ask:
