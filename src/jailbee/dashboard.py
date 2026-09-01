@@ -20,10 +20,11 @@ import termios
 import threading
 import time
 import tty
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TextIO
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -61,7 +62,7 @@ from jailbee.lifecycle import (
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from sqlalchemy.engine import Engine
 
@@ -1060,6 +1061,60 @@ def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
     return None
 
 
+_TERMINAL_TITLE_FALLBACK = "🐝 jailbee"
+
+
+def terminal_title(groups: list[RepoGroup], selected: Row | None) -> str:
+    """The xterm/tmux window title for the current selection.
+
+    ``🐝 <repo>/<container>`` on a container row, ``🐝 <repo>`` on a repo
+    header, and the bare tool name when nothing is selected or the selected
+    container has vanished under the cursor. An orphan group's container shows
+    its *full* name, matching the NAME column — there is no known repo prefix
+    to have stripped.
+    """
+    if selected is None:
+        return _TERMINAL_TITLE_FALLBACK
+    if selected.kind == "repo":
+        return f"🐝 {selected.key}"
+    group = _find_group(groups, selected.key)
+    if group is None:
+        return _TERMINAL_TITLE_FALLBACK
+    container = next((c for c in group.containers if c.name == selected.key), None)
+    if container is None:
+        return _TERMINAL_TITLE_FALLBACK
+    name = container.name if group.repo_root is None else container.display_name
+    return f"🐝 {group.prefix}/{name}"
+
+
+def set_terminal_title(text: str, *, stream: TextIO) -> None:
+    """Write one OSC 2 window-title sequence.
+
+    Best-effort: a terminal that does not implement it drops the sequence
+    silently, so there is nothing to detect or guard against.
+    """
+    stream.write(f"\x1b]2;{text}\x07")
+    stream.flush()
+
+
+@contextmanager
+def terminal_title_scope(stream: TextIO) -> Iterator[None]:
+    """Save the terminal's own title on entry, restore it on exit.
+
+    Uses the xterm title stack (``CSI 22;2t`` / ``CSI 23;2t``), implemented by
+    xterm and tmux and ignored elsewhere. Without the pop the terminal would
+    keep jailbee's title after the dashboard quits, since there is no way to
+    read the old one back.
+    """
+    stream.write("\x1b[22;2t")
+    stream.flush()
+    try:
+        yield
+    finally:
+        stream.write("\x1b[23;2t")
+        stream.flush()
+
+
 def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
 
@@ -1425,10 +1480,16 @@ def run(
         )
 
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
+    last_title: str | None = None
     try:
         tty.setcbreak(fd)
         worker.start()
-        with Live(console=console, screen=True, auto_refresh=False) as live:
+        # Pushed before Live takes the screen and popped after it gives it
+        # back, so the terminal's own title is saved and restored intact.
+        with (
+            terminal_title_scope(sys.stdout),
+            Live(console=console, screen=True, auto_refresh=False) as live,
+        ):
 
             def foreground(fn: Callable[[], int]) -> int:
                 """Hand the terminal to a real ``jailbee`` command, then take it back.
@@ -1480,6 +1541,12 @@ def run(
                     sel_index = rows.index(selected)
                 if notice is not None and time.monotonic() >= notice_until:
                     notice = None
+                # Only on change: an OSC 2 write on every frame makes some
+                # terminals redraw their title bar continuously.
+                title = terminal_title(groups, selected)
+                if title != last_title:
+                    set_terminal_title(title, stream=sys.stdout)
+                    last_title = title
                 age = (time.monotonic() - last_full) if last_full else 0.0
                 live.update(
                     render(

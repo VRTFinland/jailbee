@@ -179,13 +179,15 @@ def test_set_refresh_failed_shows_non_modal_status(qtbot):
 
 
 def test_window_title_stays_constant(qtbot):
+    """The Qt window has no row selection to name, so the title is constant —
+    it only has to be recognisable in a taskbar."""
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)
-    assert win.windowTitle() == "jailbee dashboard"
+    assert win.windowTitle() == "\N{HONEYBEE} JailBee dashboard"
     win.set_groups(_groups(), now=datetime.now().astimezone())
     win.set_refresh_ok(at=datetime.now().astimezone(), interval=3.0)
     win.set_refresh_failed("boom")
-    assert win.windowTitle() == "jailbee dashboard"
+    assert win.windowTitle() == "\N{HONEYBEE} JailBee dashboard"
 
 
 def test_refresh_menu_has_expected_actions(qtbot):

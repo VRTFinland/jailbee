@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import itertools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1832,6 +1834,67 @@ def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
 
     assert "view-only" in with_notice
     assert "view-only" not in without
+
+
+# --- terminal (xterm/tmux) window title -----------------------------------------
+
+
+def _title_groups(tmp_path):
+    return [
+        dashboard.RepoGroup(
+            "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+        ),
+        dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
+    ]
+
+
+def test_terminal_title_names_the_repo_and_the_selected_container(tmp_path):
+    groups = _title_groups(tmp_path)
+    title = dashboard.terminal_title(groups, dashboard.Row("container", "alpha-one"))
+    assert title == "🐝 alpha/one"
+
+
+def test_terminal_title_on_a_repo_header_names_only_the_repo(tmp_path):
+    groups = _title_groups(tmp_path)
+    assert dashboard.terminal_title(groups, dashboard.Row("repo", "alpha")) == "🐝 alpha"
+
+
+def test_terminal_title_uses_the_full_name_for_an_orphan_container(tmp_path):
+    """An orphan group stripped no prefix, so neither does the title —
+    matching the NAME column."""
+    groups = _title_groups(tmp_path)
+    title = dashboard.terminal_title(groups, dashboard.Row("container", "gamma-x"))
+    assert title == "🐝 gamma/gamma-x"
+
+
+def test_terminal_title_without_a_selection_falls_back_to_the_tool_name(tmp_path):
+    assert dashboard.terminal_title(_title_groups(tmp_path), None) == "🐝 jailbee"
+
+
+def test_terminal_title_of_an_unknown_container_falls_back(tmp_path):
+    groups = _title_groups(tmp_path)
+    assert dashboard.terminal_title(groups, dashboard.Row("container", "ghost")) == "🐝 jailbee"
+
+
+def test_set_terminal_title_writes_one_osc2_sequence():
+    stream = io.StringIO()
+    dashboard.set_terminal_title("🐝 alpha/one", stream=stream)
+    assert stream.getvalue() == "\x1b]2;🐝 alpha/one\x07"
+
+
+def test_terminal_title_scope_pushes_on_entry_and_pops_on_exit():
+    """Without the pop the terminal keeps the bee title after `q`."""
+    stream = io.StringIO()
+    with dashboard.terminal_title_scope(stream):
+        assert stream.getvalue() == "\x1b[22;2t"
+    assert stream.getvalue() == "\x1b[22;2t\x1b[23;2t"
+
+
+def test_terminal_title_scope_pops_even_when_the_body_raises():
+    stream = io.StringIO()
+    with contextlib.suppress(RuntimeError), dashboard.terminal_title_scope(stream):
+        raise RuntimeError("boom")
+    assert stream.getvalue().endswith("\x1b[23;2t")
 
 
 def test_parse_key_maps_arrows_and_letters():

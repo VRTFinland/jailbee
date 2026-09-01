@@ -11,6 +11,14 @@
   width no longer changes between frames; the subtitle carries a transient
   notice and nothing else.
 
+### Added
+
+- **The TUI dashboard now names itself in the terminal's title bar.**
+  `🐝 <repo>/<container>` follows the selected row, so a window switcher
+  or a tab strip says which repo you are looking at instead of `bash`. The
+  terminal's own title is pushed on the xterm title stack at launch and
+  restored on quit. The Qt window's title gained the same bee.
+
 ## 1.2.2 - 2026-08-28
 
 ### Fixed

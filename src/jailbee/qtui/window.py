@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         self._enabled_columns: tuple[str, ...] = (
             _filtered_columns(enabled_columns) if enabled_columns is not None else default_columns()
         )
-        self.setWindowTitle("jailbee dashboard")
+        self.setWindowTitle("🐝 JailBee dashboard")
         self.resize(1000, 640)
         self.setMinimumSize(360, 420)  # narrow-friendly: card view needs little width
 
