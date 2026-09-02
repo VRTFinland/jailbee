@@ -114,6 +114,7 @@ def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
     touched. The group belongs where the holder is stated, under the table."""
     cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._claude_authoritative", return_value={cfg.container_prefix})
     mocker.patch(
         "jailbee.claude_pool.list_slots",
         return_value=[

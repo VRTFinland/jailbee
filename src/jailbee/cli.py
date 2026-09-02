@@ -7470,6 +7470,26 @@ def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
     return _load_or_exit(config), _load_global()
 
 
+def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
+    """Members whose `oauthAccount` can be trusted for this repo's holder.
+
+    One place, so `ls`, `use`, `park` and `rm` cannot disagree about which
+    repos are authoritative. A repo that shares no group is its own only
+    member and is trivially authoritative for itself — there is no group
+    to be ambiguous about, and no `incus list` is worth paying for it.
+    """
+    from jailbee import claude_groups, claude_pool
+    from jailbee.incus import Incus
+
+    group = claude_pool.group_name(cfg)
+    if group is None:
+        return {cfg.container_prefix}
+    found, _ = claude_pool.members(cfg, gcfg)
+    return claude_groups.authoritative_prefixes(
+        gcfg, Incus(), group, [m.container_prefix for m in found]
+    )
+
+
 def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
     from jailbee import table_format
 
@@ -7525,8 +7545,9 @@ def _claude_ref_or_pick(
 
     if ref is not None:
         return ref
+    authoritative = _claude_authoritative(cfg, gcfg)
     return claude_pool.resolve_interactively(
-        claude_pool.list_slots(cfg, gcfg),
+        claude_pool.list_slots(cfg, gcfg, authoritative=authoritative),
         None,
         purpose=purpose,
         picker=lambda slots: pick_claude_account(slots, message=message),
@@ -7593,7 +7614,7 @@ def claude_ls_cmd(
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        slots = claude_pool.list_slots(cfg, gcfg)
+        slots = claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
         found, unreachable = claude_pool.members(cfg, gcfg)
     except (claude_pool.PoolError, OSError) as e:
         error(str(e))
@@ -7667,7 +7688,9 @@ def claude_use_cmd(
         )
         if target is None:
             raise typer.Abort()
-        change = claude_pool.switch(cfg, gcfg, target)
+        change = claude_pool.switch(
+            cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
+        )
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -7697,7 +7720,7 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        change = claude_pool.park(cfg, gcfg)
+        change = claude_pool.park(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -7747,7 +7770,10 @@ def claude_rm_cmd(
         # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
         # and a parked file is ambiguous for a switch but not for a deletion,
         # and `rm` is the command that clears that state.
-        slot = claude_pool.resolve_removable(target, claude_pool.list_slots(cfg, gcfg))
+        slot = claude_pool.resolve_removable(
+            target,
+            claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
+        )
         if slot.live:
             # Pre-checked so the confirmation prompt is never shown for a
             # deletion that `remove_slot` would refuse anyway.

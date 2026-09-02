@@ -250,7 +250,7 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
     return results
 
 
-def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[CheckResult]:
     """Report the parked-login store and which account this holder is on.
 
     Silent when the store is empty: the pool is optional, and reporting an
@@ -274,8 +274,20 @@ def _check_claude_pool(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
         return orphans
 
     try:
+        from jailbee import claude_groups
+
         found, _ = claude_pool.members(cfg, gcfg)
-        identity = claude_pool.live_identity(found, prefer=cfg.container_prefix)
+        group = claude_pool.group_name(cfg)
+        authoritative = (
+            {cfg.container_prefix}
+            if group is None
+            else claude_groups.authoritative_prefixes(
+                gcfg, incus, group, [m.container_prefix for m in found]
+            )
+        )
+        identity = claude_pool.live_identity(
+            found, prefer=cfg.container_prefix, authoritative=authoritative
+        )
     except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
         identity = None
 
@@ -346,7 +358,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
-    results.extend(_check_claude_pool(cfg, gcfg))
+    results.extend(_check_claude_pool(cfg, incus, gcfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
