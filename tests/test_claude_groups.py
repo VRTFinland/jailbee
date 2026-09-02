@@ -113,6 +113,7 @@ def test_ensure_group_dir_creates_it_0700(monkeypatch, tmp_path: Path):
 def test_set_container_group_overrides_the_profile_device(monkeypatch, mocker, tmp_path: Path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> override path
     # The repo has a group, so the binds profile carries the device.
     cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
     mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
@@ -132,6 +133,7 @@ def test_set_container_group_adds_the_device_when_the_profile_has_none(
 ):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> add path
     cfg = _cfg(tmp_path)  # repo shares no group -> profiles.py renders no device
     mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=False)
 
@@ -150,6 +152,7 @@ def test_set_container_group_always_sets_the_env_key(monkeypatch, mocker, tmp_pa
     """The profile carries no env key for a group-less repo, and can lose it later."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> override path
     mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(
@@ -164,6 +167,7 @@ def test_set_container_group_always_sets_the_env_key(monkeypatch, mocker, tmp_pa
 def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> override path
     mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(
@@ -174,6 +178,35 @@ def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Pat
         c for c in incus.config_set.call_args_list if c.args[1] == claude_groups.GROUP_LABEL
     ]
     assert label_calls == [mocker.call("myrepo-x", claude_groups.GROUP_LABEL, "personal")]
+
+
+def test_set_container_group_updates_an_already_local_device(monkeypatch, mocker, tmp_path: Path):
+    """A second `use` call must update the device in place, not override it.
+
+    `config_device_override` fails once a local device already shadows the
+    profile (`incus.py:504`) — the exact scenario a repeated `jailbee claude
+    group use` on the same container hits.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-x",
+            "devices": {CLAUDE_CREDS_DEVICE: {"source": "/some/old/path"}},
+        }
+    ]
+    cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
+    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
+
+    claude_groups.set_container_group(cfg, incus, "myrepo-x", "personal")
+
+    incus.config_device_set.assert_called_once_with(
+        "myrepo-x",
+        CLAUDE_CREDS_DEVICE,
+        {"source": str(claude_groups.group_dir("personal"))},
+    )
+    incus.config_device_override.assert_not_called()
+    incus.config_device_add.assert_not_called()
 
 
 def test_set_container_group_to_no_group_removes_the_device(monkeypatch, mocker, tmp_path: Path):

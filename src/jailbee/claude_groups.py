@@ -175,6 +175,26 @@ def _profile_has_creds_device(cfg: Config) -> bool:
     return cfg.claude.enabled and cfg.claude_credentials_dir is not None
 
 
+def _local_creds_device(incus: Incus, container: str) -> dict[str, str] | None:
+    """The container's own instance-local `claude-creds` device, or None.
+
+    Reads `devices` (instance-local), not `expanded_devices` (profile-merged)
+    — the question is whether a local override already shadows the profile,
+    exactly as `egress_scope._local_eth0` asks for `eth0`. Needed because
+    `config_device_override` fails once a local device already exists
+    (`incus.py:504`), which a second `set_container_group` call on the same
+    container — the feature's whole point — would otherwise hit.
+    """
+    from jailbee.profiles import CLAUDE_CREDS_DEVICE
+
+    for raw in incus.list_containers():
+        if raw.get("name") == container:
+            devices = raw.get("devices") or {}
+            device = devices.get(CLAUDE_CREDS_DEVICE)
+            return dict(device) if device else None
+    return None
+
+
 def set_container_group(
     cfg: Config,
     incus: Incus,
@@ -202,7 +222,13 @@ def set_container_group(
         return
 
     source = str(ensure_group_dir(group))
-    if _profile_has_creds_device(cfg):
+    existing = _local_creds_device(incus, container)
+    if existing is not None:
+        # A local device already shadows the profile (this container has
+        # been switched before) — update it in place, since
+        # `config_device_override` only works the first time.
+        incus.config_device_set(container, CLAUDE_CREDS_DEVICE, {"source": source})
+    elif _profile_has_creds_device(cfg):
         incus.config_device_override(container, CLAUDE_CREDS_DEVICE, {"source": source})
     else:
         incus.config_device_add(
