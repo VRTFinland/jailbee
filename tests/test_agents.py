@@ -56,6 +56,12 @@ def test_grok_install_runs_loose(tmp_path):
     cfg = make_cfg(tmp_path, agents={"grok": {"enabled": True}})
     (spec,) = enabled_agent_specs(cfg)
     assert spec.install_network == "loose"
+    assert spec.egress == (
+        "api.x.ai:443",
+        "x.ai:443",
+        "auth.x.ai:443",
+        "cli-chat-proxy.grok.com:443",
+    )
 
 
 def test_spec_autostart_reflects_config(tmp_path):
