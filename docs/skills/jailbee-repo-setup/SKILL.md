@@ -23,7 +23,7 @@ or suggest. A repo whose config still lives in `.gie/` is still read
 4. **Generate the starter file.** Run `jailbee config init` (or `uv tool run jailbee config init` if `jailbee` isn't on PATH yet). This writes a fully-defaulted `.jailbee/config.yaml`. **Don't** hand-write the file from scratch — the template's comments are the user-facing schema documentation.
 5. **Tailor the generated file.** Edit only the fields that need to change for this repo. See [Common edits per stack](#common-edits-per-stack). Leave the rest at default.
 6. **Add `install.d/` snippets only if needed.** The golden image is stack-neutral by default — the always-on `install.d/` snippets only cover locale, prompt, GUI libs, and GitHub CLI. Java, Node, Python, Docker, and the ECR/registry-mirror helpers are bundled but off; turn them on with `golden.stacks` (see [Common edits per stack](#common-edits-per-stack)) rather than writing a new snippet for them. Only add a repo-level snippet for tooling that isn't already bundled and doesn't fit `golden.extra_apt_packages`. See [When to add install.d snippets](#when-to-add-installd-snippets).
-7. **Validate.** Run `jailbee config validate`. Fix any errors. Then run `jailbee doctor` for a host-level sanity check (incus running, bridges, subuid mapping, etc.) — these aren't config errors but block `jailbee init`.
+7. **Validate.** Run `jailbee config validate`. Fix any errors. Then run `jailbee doctor` for a host-level sanity check (incus running, bridges, uid delegation, bridge reachability, etc.) — these aren't config errors but block `jailbee init`.
 8. **Tell the user the next step.** Almost always: `jailbee init && jailbee base build && jailbee new <name>`. Don't run these yourself unless asked — `jailbee base build` takes 10–15 minutes and `jailbee init` mutates host-level Incus state.
 
 ## Stack detection
@@ -382,7 +382,7 @@ After editing, run:
 ```bash
 jailbee config validate         # config-only checks (schema + cross-field)
 jailbee config show             # print merged effective config (sanity check)
-jailbee doctor                  # host-level (incus running, bridges, subuid, …)
+jailbee doctor                  # host-level (incus running, bridges, uid delegation, …)
 ```
 
 `jailbee config validate` will reject:

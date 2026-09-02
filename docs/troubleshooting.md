@@ -3,8 +3,8 @@
 ## Start with `jailbee doctor`
 
 Run `jailbee doctor` from inside your repo. It checks the host and your config
-and names most problems (missing bridge, keyring quota, Incus reachability,
-GitHub token shape, …) with a remediation hint. Fix what it reports first —
+and names most problems (uid delegation, bridge reachability, keyring quota,
+Incus reachability, GitHub token shape, …) with a remediation hint. Fix what it reports first —
 the sections below expand on the ones that need host changes.
 
 ## Common problems
@@ -31,8 +31,19 @@ nothing inside it can reach the network.
 **Cause:** a host firewall is blocking DHCP/DNS or forwarding on the JailBee
 bridges. See [Host networking](installation.md#host-networking-only-if-you-use-a-firewall)
 — add the firewalld zone entries or the UFW `route` + `before.rules` lines.
-`jailbee doctor` only checks that the `jailbee-loose` bridge *exists*; it does not
-test DHCP reachability, so a present-but-blocked bridge won't be flagged.
+
+Run `jailbee doctor` with the container still running: the `network <bridge>
+reachability` check tests the three openings in order and names the missing
+rule. The three symptoms are distinct, so the check can tell them apart:
+
+| Symptom | Missing opening |
+| --- | --- |
+| no IPv4, but IPv6 works | `--dport 67` (DHCP) in `before.rules` |
+| IPv4 fine, every name lookup hangs | `--dport 53` (DNS) in `before.rules` |
+| IPv4 and DNS fine, nothing reaches out | `ufw route allow in on <bridge>` |
+
+With no container running on a bridge there is no symptom to read, and the
+check stays silent — it never launches one of its own to find out.
 
 ### "disk quota exceeded" when starting a container or Docker
 
@@ -46,7 +57,11 @@ a handful of concurrent containers. Raise it: see
 
 **Cause:** the second `/etc/subuid` / `/etc/subgid` delegation line is
 missing (or `incus` wasn't restarted after adding it), so `raw.idmap` can't
-be installed. Re-run step 2 of the install and restart Incus: see
+be installed. The container is created and stays `STOPPED`; the message
+appears only in `incus info --show-log <name>`.
+
+`jailbee doctor`'s `uid delegation` check names the missing line directly.
+Re-run step 2 of the install and restart Incus: see
 [Why the UID mapping is needed](installation.md#why-the-uid-mapping-is-needed).
 
 ### The IDE won't launch (`jailbee ide`)
