@@ -41,6 +41,26 @@
 
 ### Added
 
+- **`jailbee doctor` now checks the `/etc/subuid` delegation `raw.idmap`
+  needs.** Every container maps the host user's own uid/gid into its
+  namespace, and `newuidmap` installs no segment `/etc/subuid` has not
+  delegated to root. `incus admin init` writes the shifted range and never
+  the single-id hole, so on a fresh host every container is created and
+  stays `STOPPED` — with the reason only in `incus info --show-log <name>`.
+  The new `uid delegation` check reads both files and names the missing
+  line. Reported from a new Ubuntu 26.04 install where `jailbee registry up`
+  hit exactly this.
+- **`jailbee doctor` now diagnoses each bridge by symptom.** The old check
+  reported one symptom (no IPv4 lease) on the loose bridge only. The three
+  openings a firewalled host needs per bridge fail independently and look
+  nothing alike from inside a container, so `network <bridge> reachability`
+  walks them in order — lease, then DNS to the bridge's own dnsmasq, then
+  egress to a destination the applied ACL already permits — for both
+  `incusbr0` and `jailbee-loose`, and names the rule to add. Probes run only
+  against containers that are already running: with nothing on a bridge the
+  check stays silent rather than launching a container of its own, and only
+  a dropped packet accuses the firewall (a refusal is a different fault and
+  is reported as no verdict).
 - **The TUI dashboard now names itself in the terminal's title bar.**
   `🐝 <repo>/<container>` follows the selected row, so a window switcher
   or a tab strip says which repo you are looking at instead of `bash`. The

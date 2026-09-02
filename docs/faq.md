@@ -84,6 +84,10 @@ the container otherwise runs unprivileged. `newuidmap` refuses to install that
 carve-out unless it is delegated. The security impact is effectively none: it
 authorises root to delegate exactly one UID — your own.
 
+Without the line, containers are created and stay `STOPPED`, with the reason
+only in `incus info --show-log <name>`. `jailbee doctor`'s `uid delegation`
+check reads both files and names the missing line.
+
 → [Why the UID mapping is needed](installation.md#why-the-uid-mapping-is-needed)
 
 ### What do I run the first time in a repo?
@@ -587,8 +591,8 @@ Presence-triggered and never auto-created; disable with `share_local: false`.
 ### Where do I start?
 
 `jailbee doctor`, from inside the repo. It checks host and config and names
-most problems — missing bridge, keyring quota, Incus reachability, GitHub token
-shape — with a remediation hint.
+most problems — uid delegation, bridge reachability, keyring quota, Incus
+reachability, GitHub token shape — with a remediation hint.
 
 → [Start with `jailbee doctor`](troubleshooting.md#start-with-jailbee-doctor)
 
@@ -596,9 +600,11 @@ shape — with a remediation hint.
 
 A host firewall is blocking DHCP/DNS or forwarding on the JailBee bridges. Add
 the firewalld zone entries, or the UFW `route` rules plus the three
-`before.rules` lines **per bridge**. Note that `jailbee doctor` only checks that
-the `jailbee-loose` bridge *exists* — it does not test DHCP reachability, so a
-present-but-blocked bridge is not flagged.
+`before.rules` lines **per bridge**. With the container left running,
+`jailbee doctor`'s `network <bridge> reachability` check tells the three
+missing openings apart — no lease, no DNS, or no forwarding — and names the
+rule to add. It needs a container on the bridge to read a symptom from, so on
+a fresh host it stays silent until one is running.
 
 → [Containers get no IPv4 address](troubleshooting.md#containers-get-no-ipv4-address),
 [Host networking](installation.md#host-networking-only-if-you-use-a-firewall)

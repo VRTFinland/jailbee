@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlmodel import Session, select
 
@@ -16,8 +18,8 @@ from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
-from jailbee.init_command import LOOSE_BRIDGE
-from jailbee.network import acl_name
+from jailbee.init_command import BRIDGE_NETWORK, LOOSE_BRIDGE
+from jailbee.network import acl_name, entries_from_acl_yaml
 from jailbee.profiles import profile_names
 from jailbee.registry import (
     MIRROR_CONTAINER_NAME,
@@ -35,6 +37,25 @@ _KERNEL_KEY_USERS = Path("/proc/key-users")
 _INCUS_MAPPED_ROOT_UID = 1000000
 _KEYRING_MAXKEYS_RECOMMENDED = 1000
 _KEYRING_USAGE_WARN_FRACTION = 0.75
+
+# Subordinate-id delegation. `raw.idmap` (profiles.py, registry.py) asks LXC
+# to punch the host user's own uid/gid through the otherwise shifted
+# namespace, and `newuidmap` refuses any segment /etc/subuid has not
+# delegated to the caller — root, since incusd runs as root.
+_SUBUID_PATH = Path("/etc/subuid")
+_SUBGID_PATH = Path("/etc/subgid")
+_SUBID_OWNERS = ("root", "0")
+# One container needs a shifted range this big; Incus draws it from root's
+# delegation too, so an /etc/subuid with only the single-id hole starts
+# nothing at all.
+_SHIFTED_RANGE_MIN = 65536
+
+# Bridge reachability probes. `timeout`'s own exit code is the signature
+# of a silently dropped SYN, which is what a firewall DROP produces and a
+# refusal does not.
+_PROBE_TIMEOUT_SECONDS = 3
+_PROBE_EXEC_TIMEOUT = 15
+_PROBE_TIMED_OUT = 124
 
 
 @dataclass
@@ -351,14 +372,19 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
             )
         )
 
-    # 2a. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
+    # 2a. ...and that root may actually map it into a namespace. Sits next to
+    # the uid/gid match because it is the same identity, one layer down: the
+    # config can agree with the host and every container still fail to start.
+    results.append(_check_uid_delegation(cfg))
+
+    # 2b. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_claude_pool(cfg, gcfg))
 
-    # 2b. Host git repo (soft requirement — only clone-mode commands need it).
+    # 2c. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
         results.append(
             CheckResult(
@@ -421,10 +447,30 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
         except IncusError as e:
             results.append(CheckResult(f"network {LOOSE_BRIDGE}", False, str(e)))
 
-        # 4c. ...and actually carries traffic
-        addressing = _check_loose_bridge_addressing(cfg, incus)
-        if addressing is not None:
-            results.append(addressing)
+        # 4c. ...and both bridges actually carry traffic. Diagnosed from the
+        # symptoms rather than by auditing the host's firewall rules: those
+        # are root-only, and live somewhere different per firewall.
+        try:
+            containers = incus.list_containers()
+        except IncusError as e:
+            results.append(CheckResult("network reachability", False, str(e)))
+        else:
+            running = [c for c in containers if c.get("status") == "Running"]
+            per_bridge = {
+                BRIDGE_NETWORK: [
+                    c for c in running if names.net_strict in (c.get("profiles") or [])
+                ],
+                LOOSE_BRIDGE: [
+                    c
+                    for c in running
+                    if c.get("name") == MIRROR_CONTAINER_NAME
+                    or names.net_loose in (c.get("profiles") or [])
+                ],
+            }
+            for bridge, on_bridge in per_bridge.items():
+                reachability = _check_bridge_reachability(cfg, incus, bridge, on_bridge)
+                if reachability is not None:
+                    results.append(reachability)
 
     # 5. Shared dir tree
     assert cfg.shared_dir is not None  # set by load_config
@@ -641,6 +687,135 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                 )
 
     return results
+
+
+def _subid_fix(uid: int, gid: int) -> str:
+    """The fix, phrased as required file contents rather than shell commands.
+
+    `doctor` renders details inside a narrow Rich table column, which wraps
+    long lines mid-token — a copy-pasteable `grep … || echo … | sudo tee`
+    one-liner arrives broken and unusable. Naming the two lines each file
+    must contain survives the wrapping, and the ids are substituted so
+    there is nothing left to work out.
+    """
+    return (
+        f"/etc/subuid must contain both `root:{uid}:1` and "
+        f"`root:1000000:1000000000`; /etc/subgid both `root:{gid}:1` and "
+        f"`root:1000000:1000000000`. Append what is missing, then "
+        f"`sudo systemctl restart incus` — incusd reads these files only at "
+        f"startup. See docs/installation.md → 'Delegate one UID/GID for "
+        f"host-file access'."
+    )
+
+
+def _parse_subid_ranges(path: Path) -> list[tuple[int, int]] | None:
+    """Root's delegated ``(start, count)`` ranges from an /etc/sub[ug]id file.
+
+    An absent file is an empty delegation (``[]``) — decisive, and the state
+    a host with no `incus admin init` is in. ``None`` is reserved for "the
+    file exists but could not be read", where no verdict is possible.
+
+    Malformed lines are skipped rather than failing the parse: shadow
+    ignores them too, and a comment is not a diagnosis.
+    """
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+
+    ranges: list[tuple[int, int]] = []
+    for line in text.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] not in _SUBID_OWNERS:
+            continue
+        try:
+            start, count = int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if count > 0:
+            ranges.append((start, count))
+    return ranges
+
+
+def _check_uid_delegation(
+    cfg: Config,
+    subuid_path: Path | None = None,
+    subgid_path: Path | None = None,
+) -> CheckResult:
+    """Verify /etc/subuid + /etc/subgid authorise this host's `raw.idmap`.
+
+    Every jailbee container carries a `raw.idmap` that maps the host user's
+    own uid/gid into the namespace — `uid <uid> <uid>` for repo containers
+    (`profiles.py`), `uid <uid> 0` for the registry mirror (`registry.py`) —
+    so host-owned mounts (`~/.gitconfig`, the GPG agent socket, the mirror's
+    cache directories) are writable from inside. `newuidmap` installs no
+    segment that /etc/subuid has not delegated to its caller, and incusd
+    calls it as root, so root needs two delegations: the host id itself, and
+    a range large enough for the rest of the shifted namespace.
+
+    `incus admin init` writes the large range and never the single-id hole,
+    which makes a fresh host the failing case. It is worth a check of its
+    own because the failure is invisible from the outside: the container is
+    created, stays STOPPED, and the reason appears only in
+    `incus info --show-log <name>`.
+    """
+    subuid = subuid_path if subuid_path is not None else _SUBUID_PATH
+    subgid = subgid_path if subgid_path is not None else _SUBGID_PATH
+
+    problems: list[str] = []
+    unreadable: list[str] = []
+    largest = 0
+    for label, path, wanted in (
+        ("uid", subuid, cfg.container_user.uid),
+        ("gid", subgid, cfg.container_user.gid),
+    ):
+        ranges = _parse_subid_ranges(path)
+        if ranges is None:
+            unreadable.append(str(path))
+            continue
+        largest = max([largest, *(count for _, count in ranges)])
+        if not any(start <= wanted < start + count for start, count in ranges):
+            problems.append(f"{path} does not delegate {label} {wanted} to root")
+        if not any(count >= _SHIFTED_RANGE_MIN for _, count in ranges):
+            problems.append(
+                f"{path} has no root range of {_SHIFTED_RANGE_MIN} or more "
+                f"{label}s for the shifted namespace"
+            )
+
+    if problems:
+        return CheckResult(
+            name="uid delegation",
+            ok=False,
+            detail=(
+                "; ".join(problems) + ". Containers will be created but stay "
+                "STOPPED, and the only trace is `newuidmap: uid range ... not "
+                "allowed` in `incus info --show-log <name>`. "
+                + _subid_fix(cfg.container_user.uid, cfg.container_user.gid)
+            ),
+        )
+
+    if unreadable:
+        return CheckResult(
+            name="uid delegation",
+            ok=True,
+            detail=(
+                f"could not read {', '.join(unreadable)} — cannot confirm "
+                f"uid {cfg.container_user.uid}/gid {cfg.container_user.gid} is "
+                f"delegated to root. Check by hand: "
+                f"`grep ^root: /etc/subuid /etc/subgid`"
+            ),
+        )
+
+    return CheckResult(
+        name="uid delegation",
+        ok=True,
+        detail=(
+            f"uid {cfg.container_user.uid}/gid {cfg.container_user.gid} "
+            f"delegated to root (largest root range: {largest} ids)"
+        ),
+    )
 
 
 def _check_kernel_keyring(
@@ -989,54 +1164,173 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
     return results
 
 
-def _check_loose_bridge_addressing(cfg: Config, incus: Incus) -> CheckResult | None:
-    """Report when nothing running on the loose bridge has an IPv4 address.
+def _bridge_gateway_ip(incus: Incus, bridge: str) -> str | None:
+    """The bridge's own IPv4 — where its dnsmasq answers DHCP and DNS.
 
-    The bridge existing says nothing about whether it carries traffic, and
-    the difference is expensive to diagnose from the symptoms: a host
-    firewall that drops DHCP to the bridge — UFW ships a silent DROP for
-    it, and a rule naming a since-renamed interface leaves exactly that —
-    produces containers with a working IPv6 address (kernel autoconfigures
-    it from router advertisements, which need nothing inbound) and no IPv4,
-    which surfaces much later as `apt-get` failing to resolve anything.
-
-    Returns ``None`` when there is nothing on the bridge to judge by; an
-    absent verdict beats a fabricated one. A container that only just
-    started may not have its lease yet, so this reports a problem only when
-    *no* container on the bridge has an address.
+    ``None`` when the bridge has no concrete subnet (``none`` / ``auto``, or
+    an unparseable value), which leaves nothing to probe.
     """
-    loose_profile = profile_names(cfg).net_loose
     try:
-        containers = incus.list_containers()
-    except IncusError as e:
-        return CheckResult(f"network {LOOSE_BRIDGE} addressing", False, str(e))
+        raw = incus.network_get(bridge, "ipv4.address")
+    except IncusError:
+        return None
+    if not isinstance(raw, str):
+        return None
+    cidr = raw.strip()
+    if not cidr or cidr in ("none", "auto"):
+        return None
+    try:
+        return str(ipaddress.IPv4Interface(cidr).ip)
+    except ValueError:
+        return None
 
-    on_bridge = [
-        c
-        for c in containers
-        if c.get("status") == "Running"
-        and (c.get("name") == MIRROR_CONTAINER_NAME or loose_profile in (c.get("profiles") or []))
-    ]
+
+def _tcp_probe(incus: Incus, container: str, ip: str, port: int) -> int | None:
+    """Exit status of a TCP connect to ``ip:port`` from inside ``container``.
+
+    Uses bash's own ``/dev/tcp``, so the probe needs nothing installed in
+    the image, under ``timeout`` so a silently dropped SYN comes back in
+    seconds instead of burning the kernel's ~130s SYN-retry budget. The
+    script always exits 0 and *prints* the connect's status, so a blocked
+    port arrives as data rather than an ``IncusError``.
+
+    ``None`` when the probe could not be run at all (exec failed, or the
+    output was not a number) — no verdict.
+    """
+    script = (
+        f"timeout {_PROBE_TIMEOUT_SECONDS} bash -c "
+        f"'exec 3<>/dev/tcp/{ip}/{port}' 2>/dev/null; echo $?"
+    )
+    try:
+        out = incus.exec(container, ["bash", "-c", script], timeout=_PROBE_EXEC_TIMEOUT)
+    except IncusError:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
+def _allowlisted_target(cfg: Config, incus: Incus) -> tuple[str, int, str] | None:
+    """An ``(ip, port, description)`` this repo's ACL already permits.
+
+    Read back from the *applied* ACL rather than re-resolved, so the probe
+    cannot pick a destination the containers are not allowed to reach: on
+    the strict bridge a non-allowlisted target would be blocked by jailbee's
+    own filtering and the result would say nothing about the host firewall.
+
+    ``None`` when the ACL is missing, empty, or holds no entry with a
+    concrete address and a single port — nothing to probe with.
+    """
+    try:
+        acl_yaml = incus.network_acl_show(acl_name(cfg))
+    except IncusError:
+        return None
+    for entry in entries_from_acl_yaml(acl_yaml):
+        if entry.port is None:
+            continue
+        for dest in entry.destinations:
+            if "/" in dest:  # a CIDR names no single host to connect to
+                continue
+            try:
+                ipaddress.IPv4Address(dest)
+            except ValueError:
+                continue
+            return dest, entry.port, entry.description
+    return None
+
+
+def _check_bridge_reachability(
+    cfg: Config,
+    incus: Incus,
+    bridge: str,
+    on_bridge: list[dict[str, Any]],
+) -> CheckResult | None:
+    """Diagnose a bridge by symptom: lease, then DNS, then egress.
+
+    A bridge existing says nothing about whether it carries traffic, and the
+    difference is expensive to diagnose from the symptoms. The three
+    openings `docs/installation.md` asks a firewalled host for fail
+    independently and look nothing alike from the inside:
+
+    * no ``--dport 67`` ACCEPT → no IPv4 lease, while IPv6 works (the kernel
+      autoconfigures it from router advertisements, which need nothing
+      inbound). Surfaces much later as `apt-get` failing to resolve.
+    * no ``--dport 53`` ACCEPTs → a lease, but the bridge's own dnsmasq
+      never answers, and every name lookup in the container hangs.
+    * no ``ufw route allow in`` → both of those work (dnsmasq runs on the
+      host) and nothing gets past it.
+
+    Each stage is only reached once the previous one is proven, since a
+    container with no lease cannot probe anything. Only a *timeout* accuses
+    the firewall: a refusal means the packet arrived and something answered,
+    which is a different fault, so it is reported as no verdict rather than
+    a false accusation.
+
+    Returns ``None`` when there is nothing running on the bridge to judge
+    by; an absent verdict beats a fabricated one.
+    """
+    name = f"network {bridge} reachability"
     if not on_bridge:
         return None
 
     addressed = [c for c in on_bridge if eth0_global_ipv4(c)]
-    if addressed:
+    if not addressed:
+        names = ", ".join(sorted(str(c.get("name")) for c in on_bridge))
         return CheckResult(
-            f"network {LOOSE_BRIDGE} addressing",
-            True,
-            f"{len(addressed)}/{len(on_bridge)} running containers have an IPv4 address",
+            name,
+            False,
+            f"no IPv4 on {names} — the bridge exists but hands out no "
+            f"addresses, so DHCP (udp/67) is not reaching its dnsmasq. A host "
+            f"firewall is the usual cause; with ufw it is the hardcoded "
+            f"silent DROP for DHCP, and /etc/ufw/before.rules "
+            f"needs `-A ufw-before-input -i {bridge} -p udp --dport 67 -j "
+            f"ACCEPT` (and the two --dport 53 lines), then `sudo ufw "
+            f"reload`. A rule naming a since-renamed interface leaves the "
+            f"same symptom. See docs/installation.md → 'Host networking'. A "
+            f"container that just started may simply not have its lease yet.",
         )
-    names = ", ".join(sorted(str(c.get("name")) for c in on_bridge))
-    return CheckResult(
-        f"network {LOOSE_BRIDGE} addressing",
-        False,
-        f"no IPv4 on {names} — the bridge exists but hands out no addresses. "
-        f"A host firewall blocking DHCP to it is the usual cause (a rule naming "
-        f"a renamed interface leaves exactly this). See docs/installation.md, "
-        f"'Host networking'. A container that just started may simply not have "
-        f"its lease yet.",
-    )
+
+    probe_from = str(addressed[0].get("name"))
+    proven = [f"IPv4 on {len(addressed)}/{len(on_bridge)} running containers"]
+
+    gateway = _bridge_gateway_ip(incus, bridge)
+    if gateway is not None:
+        status = _tcp_probe(incus, probe_from, gateway, 53)
+        if status == _PROBE_TIMED_OUT:
+            return CheckResult(
+                name,
+                False,
+                f"tcp/53 to the bridge gateway {gateway} timed out from "
+                f"{probe_from}: the containers hold a lease but cannot reach "
+                f"the dnsmasq that issued it, which is what a firewall DROP "
+                f"looks like — a refusal would answer instantly. With ufw, "
+                f"/etc/ufw/before.rules needs `-A ufw-before-input -i "
+                f"{bridge} -p udp --dport 53 -j ACCEPT` and the same line for "
+                f"tcp, then `sudo ufw reload`. Otherwise expect every name "
+                f"lookup in the container to hang. See docs/installation.md → "
+                f"'Host networking'.",
+            )
+        proven.append(f"tcp/53 to {gateway} ok" if status == 0 else "tcp/53 not verified")
+
+    target = _allowlisted_target(cfg, incus)
+    if target is not None:
+        ip, port, desc = target
+        status = _tcp_probe(incus, probe_from, ip, port)
+        if status == _PROBE_TIMED_OUT:
+            return CheckResult(
+                name,
+                False,
+                f"tcp to {ip}:{port} (allowlisted {desc}) timed out from "
+                f"{probe_from} while the bridge's own dnsmasq answers, so the "
+                f"host is reachable but nothing gets past it. Either this "
+                f"bridge is not being forwarded — `sudo ufw route allow in on "
+                f"{bridge}` — or that destination is unreachable from the "
+                f"host itself. See docs/installation.md → 'Host networking'.",
+            )
+        proven.append(f"egress to {ip}:{port} ok" if status == 0 else "egress not verified")
+
+    return CheckResult(name, True, "; ".join(proven))
 
 
 def _check_github(cfg: Config) -> list[CheckResult]:

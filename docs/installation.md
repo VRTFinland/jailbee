@@ -173,10 +173,13 @@ sudo firewall-cmd --reload
 
 If your host runs `ufw` with the default `deny (incoming)` and `deny (routed)`
 policies, containers won't get DHCP leases or reach the internet without
-opening up the JailBee bridges. `jailbee doctor` flags a *missing* `jailbee-loose`
-bridge — but that is an existence check only; it does not test DHCP/DNS
-reachability. If a bridge exists yet containers get no IPv4 lease, suspect
-the UFW rules below.
+opening up the JailBee bridges. `jailbee doctor` diagnoses this per bridge
+once at least one container is running on it — `network incusbr0
+reachability` / `network jailbee-loose reachability` report which of the
+three openings below is missing, naming the rule to add. With nothing
+running on a bridge there is no symptom to read, and the check stays
+silent — so on a fresh host, apply the rules below rather than waiting for
+`doctor` to ask for them.
 
 Both bridges need the same minimal opening: one `ufw route` rule plus three
 `before.rules` lines, repeated per bridge.
@@ -328,7 +331,8 @@ incus delete idmap-test --force
 
 If the launch fails with `newuidmap: uid range [<UID>-<UID+1>) ... not allowed`,
 the delegation lines didn't take effect — check `/etc/subuid` / `/etc/subgid`
-and confirm `incus` was restarted.
+and confirm `incus` was restarted. `jailbee doctor`'s `uid delegation` check
+reads both files and reports exactly which line is missing.
 
 **Why this is needed and what it actually means.** JailBee containers
 deliberately combine two things that are usually mutually exclusive:
