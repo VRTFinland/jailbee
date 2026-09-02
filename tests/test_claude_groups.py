@@ -244,3 +244,109 @@ def test_clear_container_group_removes_all_three(mocker):
     )
     unset = [c.args[1] for c in incus.config_unset.call_args_list]
     assert unset == [_ENV_KEY, claude_groups.GROUP_LABEL]
+
+
+from jailbee.global_config import GlobalConfig
+
+
+def _gcfg(**creds):
+    return GlobalConfig.model_validate({"claude_credentials": creds} if creds else {})
+
+
+def _raw(name: str, group: str | None = None) -> dict:
+    config = {} if group is None else {claude_groups.GROUP_LABEL: group}
+    return {"name": name, "status": "Running", "profiles": [], "config": config, "state": None}
+
+
+def test_groups_by_prefix_uses_the_repo_group_for_unlabelled_containers(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b")]
+    gcfg = _gcfg(group="work")
+    assert claude_groups.groups_by_prefix(gcfg, incus, ["myrepo"]) == {"myrepo": {"work"}}
+
+
+def test_groups_by_prefix_sees_a_deviating_container(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
+    gcfg = _gcfg(group="work")
+    assert claude_groups.groups_by_prefix(gcfg, incus, ["myrepo"]) == {
+        "myrepo": {"work", "personal"}
+    }
+
+
+def test_groups_by_prefix_falls_back_to_the_repo_group_with_no_containers(
+    mocker, monkeypatch, tmp_path
+):
+    """A repo with no containers is still authoritative for its own group."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    assert claude_groups.groups_by_prefix(_gcfg(group="work"), incus, ["myrepo"]) == {
+        "myrepo": {"work"}
+    }
+
+
+def test_groups_by_prefix_counts_stopped_containers(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    stopped = _raw("myrepo-b", "personal")
+    stopped["status"] = "Stopped"
+    incus.list_containers.return_value = [_raw("myrepo-a"), stopped]
+    assert claude_groups.groups_by_prefix(_gcfg(group="work"), incus, ["myrepo"]) == {
+        "myrepo": {"work", "personal"}
+    }
+
+
+def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("mixed-a"),
+        _raw("mixed-b", "personal"),
+        _raw("clean-a"),
+    ]
+    gcfg = _gcfg(group="work")
+    assert claude_groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {
+        "clean"
+    }
+
+
+def test_deviating_containers_lists_only_the_odd_ones_out(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
+    cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
+    assert claude_groups.deviating_containers(cfg, incus) == [("myrepo-b", "personal")]
+
+
+def test_claude_running_true(mocker, tmp_path):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "running\n"
+    assert claude_groups.claude_running(_cfg(tmp_path), incus, "myrepo-a") is True
+
+
+def test_claude_running_false(mocker, tmp_path):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "idle\n"
+    assert claude_groups.claude_running(_cfg(tmp_path), incus, "myrepo-a") is False
+
+
+def test_claude_running_unknown_when_the_probe_fails(mocker, tmp_path):
+    from jailbee.incus import IncusError
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("container is not running")
+    assert claude_groups.claude_running(_cfg(tmp_path), incus, "myrepo-a") is None
+
+
+def test_claude_running_probe_uses_pgrep_x_not_f(mocker, tmp_path):
+    """`pgrep -f` matches its own command line and would always say yes."""
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "idle\n"
+    claude_groups.claude_running(_cfg(tmp_path), incus, "myrepo-a")
+    script = incus.exec.call_args.args[1][-1]
+    assert "pgrep -u" in script
+    assert " -x " in script
+    assert " -f " not in script

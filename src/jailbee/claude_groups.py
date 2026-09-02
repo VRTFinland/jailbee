@@ -20,14 +20,16 @@ survives a wiped ``state.sqlite``.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from jailbee.config import _CREDENTIAL_GROUP_RE
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
 GROUP_LABEL = "user.jailbee.claude_group"
@@ -41,6 +43,20 @@ so it would collide. A leading underscore never can — the same property
 ``claude_pool.store_dir`` relies on for ``_parked``. The empty string is
 unusable too, because ``Incus.config_get`` returns ``None`` for it and
 that is indistinguishable from an absent label.
+"""
+
+
+class _Inherit:
+    """Type of the `INHERIT` sentinel; exists so mypy can name it."""
+
+
+INHERIT: Final = _Inherit()
+"""Returned by `_label_group` when a container has no usable override.
+
+Distinct from `None`, which is the *presence* of an override saying "no
+group". Collapsing the two would make an unlabelled container in a
+group-less repo indistinguishable from one deliberately opted out, and
+`deviating_containers` would then list every container of such a repo.
 """
 
 RESERVED_GROUP_NAMES = frozenset({"none"})
@@ -248,3 +264,115 @@ def clear_container_group(incus: Incus, container: str) -> None:
     incus.config_device_remove(container, CLAUDE_CREDS_DEVICE, missing_ok=True)
     incus.config_unset(container, _creds_env_key())
     incus.config_unset(container, GROUP_LABEL)
+
+
+def _label_group(raw_config: dict[str, str]) -> str | None | _Inherit:
+    """Read the group out of an `incus list` payload's config dict."""
+    raw = raw_config.get(GROUP_LABEL)
+    if not raw:
+        return INHERIT
+    if raw == NO_GROUP:
+        return None
+    if not _CREDENTIAL_GROUP_RE.match(raw):
+        return INHERIT
+    return raw
+
+
+def groups_by_prefix(
+    gcfg: GlobalConfig,
+    incus: Incus,
+    prefixes: Collection[str],
+) -> dict[str, set[str | None]]:
+    """For each prefix, the set of groups its containers use.
+
+    One `incus list` for all of them. A container with no override counts
+    as its repo's resolved group; a prefix with **no containers at all**
+    falls back to `{repo's resolved group}`, because with nothing writing
+    the shared config home the repo's own group is the best evidence there
+    is — and because that keeps behaviour identical for every repo that
+    never uses an override.
+
+    Stopped containers count: a stopped container keeps its label and will
+    write the config home again when it next runs.
+    """
+    rows = incus.list_containers()
+    result: dict[str, set[str | None]] = {}
+    for prefix in prefixes:
+        resolved = gcfg.claude_credentials.dir_for(prefix)
+        repo = None if resolved is None else resolved.name
+        found: set[str | None] = set()
+        for row in rows:
+            name = str(row.get("name", ""))
+            if not name.startswith(f"{prefix}-"):
+                continue
+            label = _label_group(row.get("config") or {})
+            found.add(repo if label is INHERIT else label)  # type: ignore[arg-type] # narrowed by sentinel
+        result[prefix] = found or {repo}
+    return result
+
+
+def authoritative_prefixes(
+    gcfg: GlobalConfig,
+    incus: Incus,
+    group: str,
+    prefixes: Collection[str],
+) -> set[str]:
+    """The prefixes whose `oauthAccount` can be trusted to describe `group`.
+
+    A repo is authoritative for a group only when *every* group its
+    containers use is that one. A repo spanning two groups shares one
+    `~/.claude` between them, so its `oauthAccount` names whichever
+    account ran most recently — see `claude_pool.live_account`.
+    """
+    by_prefix = groups_by_prefix(gcfg, incus, prefixes)
+    return {prefix for prefix, groups in by_prefix.items() if groups == {group}}
+
+
+def deviating_containers(cfg: Config, incus: Incus) -> list[tuple[str, str | None]]:
+    """This repo's containers whose group differs from the repo's, sorted."""
+    repo = repo_group(cfg)
+    out: list[tuple[str, str | None]] = []
+    for row in incus.list_containers():
+        name = str(row.get("name", ""))
+        if not name.startswith(f"{cfg.container_prefix}-"):
+            continue
+        label = _label_group(row.get("config") or {})
+        if label is INHERIT:
+            continue
+        if label != repo:
+            out.append((name, label))  # type: ignore[arg-type] # label narrowed to str | None by if check
+    return sorted(out)
+
+
+def claude_running(cfg: Config, incus: Incus, container: str) -> bool | None:
+    """Whether Claude Code looks to be running in `container`.
+
+    `None` means the probe could not run — a stopped container, an Incus
+    error — and callers must treat it as "cannot tell", never as "no".
+
+    `pgrep -x`, not `-f`: `-f` matches the whole command line and would
+    match the `sh -c` wrapper running the probe itself, so the answer
+    would always be yes. The shell wrapper turns pgrep's exit code into
+    stdout, because `Incus.exec` raises on a non-zero exit and pgrep exits
+    1 for the perfectly ordinary "no match".
+    """
+    import shlex
+
+    from jailbee.config import CONTAINER_USERNAME
+    from jailbee.incus import IncusError
+
+    command = Path(cfg.claude.command.split()[0]).name if cfg.claude.command.strip() else "claude"
+    script = (
+        f"pgrep -u {CONTAINER_USERNAME} -x {shlex.quote(command)} "
+        ">/dev/null && echo running || echo idle"
+    )
+    try:
+        out = incus.exec(container, ["sh", "-c", script], timeout=15)
+    except (IncusError, OSError):
+        return None
+    stripped = out.strip()
+    if stripped == "running":
+        return True
+    if stripped == "idle":
+        return False
+    return None
