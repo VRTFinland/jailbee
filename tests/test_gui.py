@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from jailbee.config import load_config
-from jailbee.gui import open_chrome, open_ide
+from jailbee.gui import host_wayland_socket, open_chrome, open_ide
 from jailbee.incus import Incus
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -375,3 +375,25 @@ def test_open_ide_rejects_unknown_app_name(mocker):
     open_ide(cfg, incus, "feat-smoke", "vim")
 
     popen.assert_not_called()
+
+
+# ---- the host's compositor socket name ----
+
+
+def test_host_wayland_socket_reads_the_env_var(monkeypatch):
+    """The socket name is per-session, not a constant: Hyprland and Sway
+    commonly hand out wayland-1 (#17).
+    """
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+
+    assert host_wayland_socket() == "wayland-1"
+
+
+def test_host_wayland_socket_falls_back_to_wayland_0_when_unset(monkeypatch):
+    """A non-graphical context (a systemd autostart run, a cron job) has no
+    WAYLAND_DISPLAY. The near-universal default keeps the base profile's
+    advertised value stable there rather than empty.
+    """
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    assert host_wayland_socket() == "wayland-0"

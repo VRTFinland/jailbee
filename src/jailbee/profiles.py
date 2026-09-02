@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from jailbee.config import CONTAINER_USERNAME, NET_DESCRIPTIONS, Config
+from jailbee.gui import host_wayland_socket
 from jailbee.network import acl_name
 
 LOOSE_PROFILE_SUFFIX = "-net-loose"
@@ -129,8 +130,9 @@ def base_profile_yaml(cfg: Config) -> str:
     Includes security flags, UID/GID mapping, GPU passthrough, fonts,
     and environment variables for Wayland/X11/SSH-via-GPG.
 
-    NOTE: The four ``/run/user/<uid>/*`` socket bind mounts (wayland-0,
-    pulse, bus, gnupg) are intentionally NOT in this profile. Profile-
+    NOTE: The four ``/run/user/<uid>/*`` socket bind mounts (the
+    compositor socket, pulse, bus, gnupg) are intentionally NOT in this
+    profile. Profile-
     level disk devices get mounted before PID 1, which forces Incus to
     auto-create ``/run/user/<uid>`` as a root-owned tmpfs that then gets
     shadowed by systemd-logind's user-owned tmpfs. Those
@@ -187,7 +189,10 @@ def base_profile_yaml(cfg: Config) -> str:
         "security.nesting": "true",
         "security.syscalls.intercept.mknod": "true",
         "raw.idmap": f"uid {uid} {uid}\ngid {gid} {gid}",
-        "environment.WAYLAND_DISPLAY": "wayland-0",
+        # The host's own compositor socket name, not a constant: this must
+        # name the socket `runtime_mounts` bind-mounts, or a GUI app started
+        # from `jailbee shell` looks for one the container does not have.
+        "environment.WAYLAND_DISPLAY": host_wayland_socket(),
         "environment.XDG_RUNTIME_DIR": runtime,
         "environment.DISPLAY": ":0",
     }

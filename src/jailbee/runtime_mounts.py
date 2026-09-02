@@ -17,26 +17,35 @@ land on logind's live tmpfs, not on a parent that gets shadowed.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from jailbee.config import Config
-from jailbee.gui import host_is_wayland
+from jailbee.gui import host_is_wayland, host_wayland_socket
 from jailbee.incus import Incus, IncusError
 from jailbee.tui import info, warn
 
-# Device names → relative path under /run/user/<uid>. Source and target
-# paths are identical (host /run/user/<host_uid>/X → container same path).
-# ``wayland-socket`` is conditional: it only exists on Wayland hosts. On
-# X11 hosts the source path /run/user/<uid>/wayland-0 doesn't exist and
-# Incus rejects the device add, so it is filtered out at attach time.
-SOCKET_DEVICES: dict[str, str] = {
-    "wayland-socket": "wayland-0",
+WAYLAND_DEVICE = "wayland-socket"
+"""Incus device name of the compositor socket mount.
+
+The *device* name is fixed even though the socket it points at is not, so
+``detach_runtime_devices`` can drop it without knowing which session
+attached it.
+"""
+
+# Device names → relative path under /run/user/<uid>, for the sockets whose
+# name is the same on every host. Source and target paths are identical
+# (host /run/user/<host_uid>/X → container same path).
+#
+# WAYLAND_DEVICE is deliberately absent: its basename is the host's
+# $WAYLAND_DISPLAY, resolved per session by `_socket_devices`.
+_FIXED_SOCKET_BASENAMES: dict[str, str] = {
     "pulse-socket": "pulse",
     "dbus-socket": "bus",
     "gpg-socket": "gnupg",
 }
 
-# Device names whose host source path is only present on Wayland sessions.
-WAYLAND_ONLY_DEVICES: frozenset[str] = frozenset({"wayland-socket"})
+# Every device this module attaches and detaches, session-independent.
+SOCKET_DEVICES: frozenset[str] = frozenset({WAYLAND_DEVICE, *_FIXED_SOCKET_BASENAMES})
 
 # Device names that belong to the gpg integration and must be skipped
 # when ``gpg.enabled`` is false.
@@ -65,24 +74,60 @@ GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket"})
 READONLY_DEVICES: frozenset[str] = frozenset({"gpg-socket", "pulse-socket"})
 
 
-def _devices_for_host(cfg: Config) -> dict[str, str]:
-    """Subset of ``SOCKET_DEVICES`` that applies to this host and config.
+def _socket_devices() -> dict[str, str]:
+    """Device name → basename under /run/user/<uid> for *this* session.
+
+    Only the compositor socket varies: its name is whatever the host's
+    ``$WAYLAND_DISPLAY`` says.
+    """
+    return {WAYLAND_DEVICE: host_wayland_socket(), **_FIXED_SOCKET_BASENAMES}
+
+
+def _host_path_exists(path: str) -> bool:
+    """Whether a host path is there. Separate function so tests can say."""
+    return Path(path).exists()
+
+
+def _wayland_skip_reason(runtime_dir: str) -> str | None:
+    """Why the compositor socket cannot be mounted, or None if it can.
+
+    Returned text completes "minus wayland-socket — <reason>, so GUI
+    launches will not display", so phrase it as a clause.
+
+    Two ways to have no socket to mount. An X11 (or headless) session
+    never had one. And ``$WAYLAND_DISPLAY`` can name a socket that isn't
+    there: a stale value inherited by a long-lived tmux or ssh environment
+    after the compositor restarted, or an absolute path — which the
+    Wayland spec allows — that is not under ``$XDG_RUNTIME_DIR`` at all.
+    Either way Incus rejects a disk device whose source is missing, and
+    that used to abort the whole create.
+    """
+    if not host_is_wayland():
+        return "this is not a Wayland session"
+    source = f"{runtime_dir}/{host_wayland_socket()}"
+    if not _host_path_exists(source):
+        return f"$WAYLAND_DISPLAY names {source}, which does not exist"
+    return None
+
+
+def _devices_for_host(cfg: Config, *, skip_wayland: bool) -> dict[str, str]:
+    """Subset of ``_socket_devices()`` that applies to this host and config.
 
     Two devices are conditional:
 
-    - ``wayland-socket`` only exists on Wayland hosts; on X11 the source
-      path /run/user/<uid>/wayland-0 is absent and Incus rejects the add.
+    - the compositor socket, per ``skip_wayland`` (see
+      ``_wayland_skip_reason``, which is also what phrases it for the user).
     - ``gpg-socket`` belongs to the gpg integration. With
       ``gpg.enabled: false`` the host may run no gpg-agent at all, so
       /run/user/<uid>/gnupg is likewise absent — and mounting the host's
       agent socket is exactly what that switch turns off.
     """
     skip: set[str] = set()
-    if not host_is_wayland():
-        skip |= WAYLAND_ONLY_DEVICES
+    if skip_wayland:
+        skip.add(WAYLAND_DEVICE)
     if not cfg.gpg.enabled:
         skip |= GPG_DEVICES
-    return {k: v for k, v in SOCKET_DEVICES.items() if k not in skip}
+    return {k: v for k, v in _socket_devices().items() if k not in skip}
 
 
 # How long to wait for logind to provision /run/user/<uid> before giving
@@ -129,7 +174,8 @@ def attach_runtime_devices(
         )
         return False
 
-    devices = _devices_for_host(cfg)
+    wayland_skip_reason = _wayland_skip_reason(runtime_dir)
+    devices = _devices_for_host(cfg, skip_wayland=wayland_skip_reason is not None)
     for device_name, basename in devices.items():
         path = f"{runtime_dir}/{basename}"
         device_config = {"source": path, "path": path}
@@ -150,16 +196,14 @@ def attach_runtime_devices(
                 continue
             raise
 
-    skipped = set(SOCKET_DEVICES) - set(devices)
-    display_skipped = sorted(skipped & WAYLAND_ONLY_DEVICES)
-    config_skipped = sorted(skipped - WAYLAND_ONLY_DEVICES)
-    if display_skipped:
+    config_skipped = sorted(set(SOCKET_DEVICES) - set(devices) - {WAYLAND_DEVICE})
+    if wayland_skip_reason is not None:
         # The missing socket is the display itself, so this is a warning
         # rather than a note: audio, D-Bus and GnuPG still reach the
         # container, but there is nothing for a window to appear on.
         warn(
-            f"Attached GUI sockets to {name}, minus {', '.join(display_skipped)} — "
-            "this is not a Wayland session, so GUI launches will not display."
+            f"Attached GUI sockets to {name}, minus {WAYLAND_DEVICE} — "
+            f"{wayland_skip_reason}, so GUI launches will not display."
         )
     else:
         info(f"Attached GUI sockets to {name}")

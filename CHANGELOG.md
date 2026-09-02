@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **`jailbee new` no longer fails on compositors that don't use
+  `wayland-0`.** jailbee decided a host was Wayland from
+  `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
+  regardless of that variable's value, so on Hyprland or Sway
+  (`wayland-1`) Incus rejected the device add with `Missing source path`
+  and the create died with a leftover instance behind it. The mount and
+  the base profile's `environment.WAYLAND_DISPLAY` now both name the
+  host's actual socket, and a socket that isn't on disk — a stale
+  `$WAYLAND_DISPLAY` inherited by a long-lived tmux session, or the
+  absolute path the Wayland spec also allows — is skipped with a warning
+  instead of aborting the create. Existing containers pick the profile
+  half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
 - **The grok agent preset now includes SuperGrok's auth and chat-proxy
   hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
   also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,

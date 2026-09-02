@@ -27,7 +27,7 @@ def _gui_env(cfg: Config) -> dict[str, str]:
     uid = cfg.container_user.uid
     return {
         "HOME": f"/home/{CONTAINER_USERNAME}",
-        "WAYLAND_DISPLAY": os.environ.get("WAYLAND_DISPLAY", "wayland-0"),
+        "WAYLAND_DISPLAY": host_wayland_socket(),
         "XDG_RUNTIME_DIR": f"/run/user/{uid}",
         "DISPLAY": os.environ.get("DISPLAY", ":0"),
     }
@@ -38,11 +38,33 @@ def host_is_wayland() -> bool:
 
     Used to pass --ozone-platform=wayland to Chrome and to decide whether
     to bind-mount the host's Wayland socket into containers (see
-    ``runtime_mounts``). On X11 hosts there is no wayland-0 socket to
+    ``runtime_mounts``). On X11 hosts there is no compositor socket to
     mount; Chrome falls back to its auto-detect (DISPLAY) and other GUI
     apps follow suit.
     """
     return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
+def host_wayland_socket() -> str:
+    """Name of the host's Wayland display socket, per ``$WAYLAND_DISPLAY``.
+
+    The single source of truth for that name across jailbee: the GUI launch
+    environment, the socket bind-mount in ``runtime_mounts`` and the base
+    profile's ``environment.WAYLAND_DISPLAY`` must all agree, or the
+    container is handed one socket and told to use another. A hardcoded
+    ``wayland-0`` broke every create on compositors that number sessions
+    differently — Hyprland and Sway commonly export ``wayland-1``.
+
+    Falls back to ``wayland-0``, the near-universal default, when the
+    variable is unset: that is what a non-graphical context (a systemd
+    autostart run, a cron job) sees, and an empty value would be worse
+    than a stale guess.
+
+    The Wayland spec also allows an absolute path here, in which case the
+    socket lives outside ``$XDG_RUNTIME_DIR`` entirely; callers that build
+    a host path from this name check that the result exists.
+    """
+    return os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
 
 
 def _detached_incus_exec(
