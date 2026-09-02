@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import io
 import os
+import stat
 import tempfile
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -90,3 +92,52 @@ def _apply(data: CommentedMap, change: YamlChange) -> None:
         node.pop(leaf, None)
     else:
         node[leaf] = change.value
+
+
+_DEFAULT_MODE = 0o600
+"""Mode for a config file this module creates.
+
+jailbee's global config can carry `github.api_tokens`, which
+`load_config` refuses to read at a wider mode. Creating the file
+world-readable and tightening it later would leave a window; creating it
+at 0600 has none, and no config file jailbee writes wants to be wider.
+"""
+
+
+def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
+    """Apply `changes` to the YAML file at `path`. Returns whether it changed.
+
+    Atomic and mode-preserving: the new content is written to a temporary
+    file in the same directory, fsynced, given the original file's mode,
+    and only then renamed over the target. A crash leaves either the old
+    file or the new one, never a truncated mix, and never a file at a
+    wider mode than it had.
+
+    A missing file is created at `_DEFAULT_MODE`. An empty change list
+    touches nothing at all — not even an mtime — so a caller can pass the
+    result of a diff without special-casing "no change".
+    """
+    if not changes:
+        return False
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    patched = patch_yaml(original, changes)
+    if patched == original and path.exists():
+        return False
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else _DEFAULT_MODE
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(patched.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.chmod(mode)
+        tmp.replace(path)
+    except BaseException:
+        with suppress(OSError):
+            tmp.unlink()
+        raise
+    return True

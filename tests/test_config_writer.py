@@ -58,3 +58,48 @@ def test_delete_of_an_absent_key_is_a_no_op():
 def test_missing_intermediate_maps_are_created():
     out = patch_yaml("", [YamlChange(("claude_credentials", "repos", "myrepo"), "work")])
     assert yaml.safe_load(out)["claude_credentials"]["repos"]["myrepo"] == "work"
+
+
+import stat
+from pathlib import Path
+
+from jailbee.config_writer import patch_file
+
+
+def test_patch_file_writes_the_change(tmp_path: Path):
+    target = tmp_path / "global.yaml"
+    target.write_text(ORIGINAL)
+    changed = patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
+    assert changed is True
+    assert yaml.safe_load(target.read_text())["claude_credentials"]["group"] == "personal"
+
+
+def test_patch_file_preserves_mode(tmp_path: Path):
+    target = tmp_path / "global.yaml"
+    target.write_text(ORIGINAL)
+    target.chmod(0o600)
+    patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_patch_file_no_op_leaves_the_bytes_alone(tmp_path: Path):
+    target = tmp_path / "global.yaml"
+    target.write_text(ORIGINAL)
+    before = target.read_bytes()
+    assert patch_file(target, []) is False
+    assert target.read_bytes() == before
+
+
+def test_patch_file_creates_a_missing_file(tmp_path: Path):
+    target = tmp_path / "global.yaml"
+    assert patch_file(target, [YamlChange(("claude_credentials", "group"), "work")]) is True
+    assert yaml.safe_load(target.read_text())["claude_credentials"]["group"] == "work"
+    # A file jailbee creates holds credentials-adjacent config; 0600 from birth.
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_patch_file_leaves_no_temp_file_behind(tmp_path: Path):
+    target = tmp_path / "global.yaml"
+    target.write_text(ORIGINAL)
+    patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["global.yaml"]
