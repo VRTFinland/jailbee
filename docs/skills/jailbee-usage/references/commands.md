@@ -83,6 +83,7 @@ use `jailbee git retarget`.
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
+| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation. See `jailbee claude group` below. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
 | `--no-autostart` | Skip the repo's autostart steps — fastest, least-risk way to get a container. Also skips reading the target branch's autostart config (see below): nothing runs, so there is nothing to diff or confirm. Enabled agents are still installed (that is infrastructure, not a user step), so `jailbee tmux` on such a container finds a session holding an `install-<agent>` window — but not the agent's own launch window. |
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
@@ -793,6 +794,35 @@ the pool — there is no `add`, because only a browser login creates a credentia
 Delete a stored login permanently; refuses the live one. Omit the account to
 pick from the same menu `claude use` offers. JailBee never contacts Anthropic,
 so this cannot be undone except by logging in again.
+
+### `jailbee claude group`
+
+Show this repo's permanent credential group (or "no credential group" if it
+keeps its own login), and list any of its containers currently overriding
+that group for their own lifetime. Host-wide, every credential group that
+exists on the machine is listed too, for context — not just this repo's.
+
+### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
+
+Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
+(`none` keeps this repo on its own login instead of sharing); `unset`
+removes the entry so the host's default group applies again. Every
+container of the repo follows the change except one with its own `use`
+override. Refuses while Claude is running in any of the repo's containers
+unless `--force` is passed, because a live session can overwrite the
+target group's login on its next token refresh. Restart Claude in the
+containers afterwards to pick up the new login.
+
+### `jailbee claude group use <name>|none [<container>] [--force]` / `jailbee claude group reset [<container>] [--force]`
+
+Temporary, single-container. `use` moves one container into another
+credential group (or, with `none`, out of grouping entirely) for as long
+as that container exists — it never touches `global.yaml` and never
+affects any other container. `reset` drops the override so the container
+inherits the repo's group again; destroying the container also drops it.
+Omit `<container>` to pick from this repo's containers. Same `--force`
+gate and same "restart Claude to pick up the new login" caveat as
+`set`/`unset`.
 
 ## GUI
 
