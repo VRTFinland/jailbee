@@ -104,6 +104,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "so two containers no longer share one set of lock files"
         ),
     ),
+    UpgradeNote(
+        version=(1, 2, 3),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the base profile's WAYLAND_DISPLAY now names the host's own "
+            "compositor socket instead of a hardcoded wayland-0"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

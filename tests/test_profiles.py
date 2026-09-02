@@ -138,12 +138,26 @@ def test_base_profile_emits_no_render_devices_when_host_has_none(mocker):
     assert "fonts" in devices
 
 
-def test_base_profile_has_env_vars():
+def test_base_profile_has_env_vars(monkeypatch):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     cfg = _cfg()
     out = base_profile_yaml(cfg)
     parsed = yaml.safe_load(out)
+    # No session to read the socket name from: the near-universal default.
     assert parsed["config"]["environment.WAYLAND_DISPLAY"] == "wayland-0"
     assert parsed["config"]["environment.XDG_RUNTIME_DIR"] == "/run/user/53023"
+
+
+def test_base_profile_advertises_the_hosts_wayland_socket(monkeypatch):
+    """The profile must name the socket `runtime_mounts` actually bind-mounts.
+    Advertising a hardcoded wayland-0 on a Hyprland host (wayland-1) points
+    every GUI app started from `jailbee shell` or a tmux pane at a socket that
+    is not in the container (#17).
+    """
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    parsed = yaml.safe_load(base_profile_yaml(_cfg()))
+
+    assert parsed["config"]["environment.WAYLAND_DISPLAY"] == "wayland-1"
 
 
 def test_base_profile_includes_container_env():
