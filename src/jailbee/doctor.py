@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlmodel import Session, select
 
@@ -16,8 +18,8 @@ from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
-from jailbee.init_command import LOOSE_BRIDGE
-from jailbee.network import acl_name
+from jailbee.init_command import BRIDGE_NETWORK, LOOSE_BRIDGE
+from jailbee.network import acl_name, entries_from_acl_yaml
 from jailbee.profiles import profile_names
 from jailbee.registry import (
     MIRROR_CONTAINER_NAME,
@@ -47,6 +49,13 @@ _SUBID_OWNERS = ("root", "0")
 # delegation too, so an /etc/subuid with only the single-id hole starts
 # nothing at all.
 _SHIFTED_RANGE_MIN = 65536
+
+# Bridge reachability probes. `timeout`'s own exit code is the signature
+# of a silently dropped SYN, which is what a firewall DROP produces and a
+# refusal does not.
+_PROBE_TIMEOUT_SECONDS = 3
+_PROBE_EXEC_TIMEOUT = 15
+_PROBE_TIMED_OUT = 124
 
 
 @dataclass
@@ -438,10 +447,30 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
         except IncusError as e:
             results.append(CheckResult(f"network {LOOSE_BRIDGE}", False, str(e)))
 
-        # 4c. ...and actually carries traffic
-        addressing = _check_loose_bridge_addressing(cfg, incus)
-        if addressing is not None:
-            results.append(addressing)
+        # 4c. ...and both bridges actually carry traffic. Diagnosed from the
+        # symptoms rather than by auditing the host's firewall rules: those
+        # are root-only, and live somewhere different per firewall.
+        try:
+            containers = incus.list_containers()
+        except IncusError as e:
+            results.append(CheckResult("network reachability", False, str(e)))
+        else:
+            running = [c for c in containers if c.get("status") == "Running"]
+            per_bridge = {
+                BRIDGE_NETWORK: [
+                    c for c in running if names.net_strict in (c.get("profiles") or [])
+                ],
+                LOOSE_BRIDGE: [
+                    c
+                    for c in running
+                    if c.get("name") == MIRROR_CONTAINER_NAME
+                    or names.net_loose in (c.get("profiles") or [])
+                ],
+            }
+            for bridge, on_bridge in per_bridge.items():
+                reachability = _check_bridge_reachability(cfg, incus, bridge, on_bridge)
+                if reachability is not None:
+                    results.append(reachability)
 
     # 5. Shared dir tree
     assert cfg.shared_dir is not None  # set by load_config
@@ -1135,54 +1164,173 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
     return results
 
 
-def _check_loose_bridge_addressing(cfg: Config, incus: Incus) -> CheckResult | None:
-    """Report when nothing running on the loose bridge has an IPv4 address.
+def _bridge_gateway_ip(incus: Incus, bridge: str) -> str | None:
+    """The bridge's own IPv4 — where its dnsmasq answers DHCP and DNS.
 
-    The bridge existing says nothing about whether it carries traffic, and
-    the difference is expensive to diagnose from the symptoms: a host
-    firewall that drops DHCP to the bridge — UFW ships a silent DROP for
-    it, and a rule naming a since-renamed interface leaves exactly that —
-    produces containers with a working IPv6 address (kernel autoconfigures
-    it from router advertisements, which need nothing inbound) and no IPv4,
-    which surfaces much later as `apt-get` failing to resolve anything.
-
-    Returns ``None`` when there is nothing on the bridge to judge by; an
-    absent verdict beats a fabricated one. A container that only just
-    started may not have its lease yet, so this reports a problem only when
-    *no* container on the bridge has an address.
+    ``None`` when the bridge has no concrete subnet (``none`` / ``auto``, or
+    an unparseable value), which leaves nothing to probe.
     """
-    loose_profile = profile_names(cfg).net_loose
     try:
-        containers = incus.list_containers()
-    except IncusError as e:
-        return CheckResult(f"network {LOOSE_BRIDGE} addressing", False, str(e))
+        raw = incus.network_get(bridge, "ipv4.address")
+    except IncusError:
+        return None
+    if not isinstance(raw, str):
+        return None
+    cidr = raw.strip()
+    if not cidr or cidr in ("none", "auto"):
+        return None
+    try:
+        return str(ipaddress.IPv4Interface(cidr).ip)
+    except ValueError:
+        return None
 
-    on_bridge = [
-        c
-        for c in containers
-        if c.get("status") == "Running"
-        and (c.get("name") == MIRROR_CONTAINER_NAME or loose_profile in (c.get("profiles") or []))
-    ]
+
+def _tcp_probe(incus: Incus, container: str, ip: str, port: int) -> int | None:
+    """Exit status of a TCP connect to ``ip:port`` from inside ``container``.
+
+    Uses bash's own ``/dev/tcp``, so the probe needs nothing installed in
+    the image, under ``timeout`` so a silently dropped SYN comes back in
+    seconds instead of burning the kernel's ~130s SYN-retry budget. The
+    script always exits 0 and *prints* the connect's status, so a blocked
+    port arrives as data rather than an ``IncusError``.
+
+    ``None`` when the probe could not be run at all (exec failed, or the
+    output was not a number) — no verdict.
+    """
+    script = (
+        f"timeout {_PROBE_TIMEOUT_SECONDS} bash -c "
+        f"'exec 3<>/dev/tcp/{ip}/{port}' 2>/dev/null; echo $?"
+    )
+    try:
+        out = incus.exec(container, ["bash", "-c", script], timeout=_PROBE_EXEC_TIMEOUT)
+    except IncusError:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
+def _allowlisted_target(cfg: Config, incus: Incus) -> tuple[str, int, str] | None:
+    """An ``(ip, port, description)`` this repo's ACL already permits.
+
+    Read back from the *applied* ACL rather than re-resolved, so the probe
+    cannot pick a destination the containers are not allowed to reach: on
+    the strict bridge a non-allowlisted target would be blocked by jailbee's
+    own filtering and the result would say nothing about the host firewall.
+
+    ``None`` when the ACL is missing, empty, or holds no entry with a
+    concrete address and a single port — nothing to probe with.
+    """
+    try:
+        acl_yaml = incus.network_acl_show(acl_name(cfg))
+    except IncusError:
+        return None
+    for entry in entries_from_acl_yaml(acl_yaml):
+        if entry.port is None:
+            continue
+        for dest in entry.destinations:
+            if "/" in dest:  # a CIDR names no single host to connect to
+                continue
+            try:
+                ipaddress.IPv4Address(dest)
+            except ValueError:
+                continue
+            return dest, entry.port, entry.description
+    return None
+
+
+def _check_bridge_reachability(
+    cfg: Config,
+    incus: Incus,
+    bridge: str,
+    on_bridge: list[dict[str, Any]],
+) -> CheckResult | None:
+    """Diagnose a bridge by symptom: lease, then DNS, then egress.
+
+    A bridge existing says nothing about whether it carries traffic, and the
+    difference is expensive to diagnose from the symptoms. The three
+    openings `docs/installation.md` asks a firewalled host for fail
+    independently and look nothing alike from the inside:
+
+    * no ``--dport 67`` ACCEPT → no IPv4 lease, while IPv6 works (the kernel
+      autoconfigures it from router advertisements, which need nothing
+      inbound). Surfaces much later as `apt-get` failing to resolve.
+    * no ``--dport 53`` ACCEPTs → a lease, but the bridge's own dnsmasq
+      never answers, and every name lookup in the container hangs.
+    * no ``ufw route allow in`` → both of those work (dnsmasq runs on the
+      host) and nothing gets past it.
+
+    Each stage is only reached once the previous one is proven, since a
+    container with no lease cannot probe anything. Only a *timeout* accuses
+    the firewall: a refusal means the packet arrived and something answered,
+    which is a different fault, so it is reported as no verdict rather than
+    a false accusation.
+
+    Returns ``None`` when there is nothing running on the bridge to judge
+    by; an absent verdict beats a fabricated one.
+    """
+    name = f"network {bridge} reachability"
     if not on_bridge:
         return None
 
     addressed = [c for c in on_bridge if eth0_global_ipv4(c)]
-    if addressed:
+    if not addressed:
+        names = ", ".join(sorted(str(c.get("name")) for c in on_bridge))
         return CheckResult(
-            f"network {LOOSE_BRIDGE} addressing",
-            True,
-            f"{len(addressed)}/{len(on_bridge)} running containers have an IPv4 address",
+            name,
+            False,
+            f"no IPv4 on {names} — the bridge exists but hands out no "
+            f"addresses, so DHCP (udp/67) is not reaching its dnsmasq. A host "
+            f"firewall is the usual cause; with ufw it is the hardcoded "
+            f"silent DROP for DHCP, and /etc/ufw/before.rules "
+            f"needs `-A ufw-before-input -i {bridge} -p udp --dport 67 -j "
+            f"ACCEPT` (and the two --dport 53 lines), then `sudo ufw "
+            f"reload`. A rule naming a since-renamed interface leaves the "
+            f"same symptom. See docs/installation.md → 'Host networking'. A "
+            f"container that just started may simply not have its lease yet.",
         )
-    names = ", ".join(sorted(str(c.get("name")) for c in on_bridge))
-    return CheckResult(
-        f"network {LOOSE_BRIDGE} addressing",
-        False,
-        f"no IPv4 on {names} — the bridge exists but hands out no addresses. "
-        f"A host firewall blocking DHCP to it is the usual cause (a rule naming "
-        f"a renamed interface leaves exactly this). See docs/installation.md, "
-        f"'Host networking'. A container that just started may simply not have "
-        f"its lease yet.",
-    )
+
+    probe_from = str(addressed[0].get("name"))
+    proven = [f"IPv4 on {len(addressed)}/{len(on_bridge)} running containers"]
+
+    gateway = _bridge_gateway_ip(incus, bridge)
+    if gateway is not None:
+        status = _tcp_probe(incus, probe_from, gateway, 53)
+        if status == _PROBE_TIMED_OUT:
+            return CheckResult(
+                name,
+                False,
+                f"tcp/53 to the bridge gateway {gateway} timed out from "
+                f"{probe_from}: the containers hold a lease but cannot reach "
+                f"the dnsmasq that issued it, which is what a firewall DROP "
+                f"looks like — a refusal would answer instantly. With ufw, "
+                f"/etc/ufw/before.rules needs `-A ufw-before-input -i "
+                f"{bridge} -p udp --dport 53 -j ACCEPT` and the same line for "
+                f"tcp, then `sudo ufw reload`. Otherwise expect every name "
+                f"lookup in the container to hang. See docs/installation.md → "
+                f"'Host networking'.",
+            )
+        proven.append(f"tcp/53 to {gateway} ok" if status == 0 else "tcp/53 not verified")
+
+    target = _allowlisted_target(cfg, incus)
+    if target is not None:
+        ip, port, desc = target
+        status = _tcp_probe(incus, probe_from, ip, port)
+        if status == _PROBE_TIMED_OUT:
+            return CheckResult(
+                name,
+                False,
+                f"tcp to {ip}:{port} (allowlisted {desc}) timed out from "
+                f"{probe_from} while the bridge's own dnsmasq answers, so the "
+                f"host is reachable but nothing gets past it. Either this "
+                f"bridge is not being forwarded — `sudo ufw route allow in on "
+                f"{bridge}` — or that destination is unreachable from the "
+                f"host itself. See docs/installation.md → 'Host networking'.",
+            )
+        proven.append(f"egress to {ip}:{port} ok" if status == 0 else "egress not verified")
+
+    return CheckResult(name, True, "; ".join(proven))
 
 
 def _check_github(cfg: Config) -> list[CheckResult]:

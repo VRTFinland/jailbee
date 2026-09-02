@@ -1246,8 +1246,16 @@ def test_doctor_fails_the_graphical_check_with_no_session_at_all(
 # ---- loose bridge: present is not the same as carrying traffic ----
 
 
-def _bridge_check(results):
-    return next((r for r in results if r.name.endswith("addressing")), None)
+def _bridge_check(results, bridge="jailbee-loose"):
+    return next((r for r in results if r.name == f"network {bridge} reachability"), None)
+
+
+def _healthy_bridge(incus, gateway="10.165.192.1/24"):
+    """Point a mock daemon at a bridge whose probes all succeed."""
+    incus.network_get.return_value = gateway
+    incus.network_acl_show.return_value = ""
+    incus.exec.return_value = "0\n"
+    return incus
 
 
 def _running(name, profiles, ipv4=None):
@@ -1279,6 +1287,7 @@ def test_doctor_flags_a_loose_bridge_that_hands_out_no_addresses(tmp_path, make_
     assert check.ok is False
     assert "jailbee-registry-mirror" in check.detail and "app-feat" in check.detail
     assert "firewall" in check.detail
+    assert "udp --dport 67" in check.detail
 
 
 def test_doctor_passes_when_the_loose_bridge_addresses_a_container(tmp_path, make_cfg, mocker):
@@ -1289,11 +1298,16 @@ def test_doctor_passes_when_the_loose_bridge_addresses_a_container(tmp_path, mak
     incus.list_containers.return_value = [
         _running("jailbee-registry-mirror", ["default"], ipv4="10.165.192.2"),
     ]
+    _healthy_bridge(incus)
 
     check = _bridge_check(run_checks(cfg, incus))
 
     assert check is not None
     assert check.ok is True
+    # The detail has to name what was actually proven, not just "ok": the
+    # three openings fail independently and pass for different reasons.
+    assert "IPv4 on 1/1" in check.detail
+    assert "tcp/53 to 10.165.192.1 ok" in check.detail
 
 
 def test_doctor_stays_silent_when_nothing_runs_on_the_loose_bridge(tmp_path, make_cfg, mocker):
@@ -2261,3 +2275,178 @@ def test_uid_delegation_ignores_other_users_and_junk_lines(tmp_path: Path, make_
 
     assert check.ok is False
     assert "does not delegate" in check.detail
+
+
+# ---- bridge reachability: the DNS and egress stages ----
+
+
+_ACL_WITH_ONE_HOST = """\
+egress:
+- action: allow
+  destination_port: '53'
+  protocol: udp
+  description: DNS
+  state: enabled
+- action: allow
+  destination: 140.82.121.4
+  destination_port: '443'
+  protocol: tcp
+  description: 'allowlisted: github.com:443'
+  state: enabled
+"""
+
+
+def _leased(name="app-feat", ipv4="10.165.192.2"):
+    return [_running(name, ["some-net-loose"], ipv4=ipv4)]
+
+
+def test_bridge_reachability_flags_dns_dropped_to_the_gateway(tmp_path, make_cfg, mocker):
+    """The lease proves udp/67 got through and says nothing about port 53.
+    Missing before.rules DNS lines leave containers holding an address whose
+    resolver never answers — every name lookup inside then hangs."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.exec.return_value = "124\n"  # `timeout`'s own status: SYN dropped
+
+    check = _check_bridge_reachability(
+        make_cfg(tmp_path / "repo"), incus, "jailbee-loose", _leased()
+    )
+
+    assert check is not None
+    assert check.ok is False
+    assert "tcp/53 to the bridge gateway 10.165.192.1 timed out" in check.detail
+    assert "app-feat" in check.detail
+    assert "--dport 53" in check.detail
+
+
+def test_bridge_reachability_probe_is_bounded_and_needs_nothing_installed(
+    tmp_path, make_cfg, mocker
+):
+    """Without the `timeout` guard a dropped SYN would hold doctor for the
+    kernel's SYN-retry budget (~130s), and any tool that has to be installed
+    in the image makes the probe unrunnable in the mirror container."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.exec.return_value = "0\n"
+    incus.network_acl_show.return_value = ""
+
+    _check_bridge_reachability(make_cfg(tmp_path / "repo"), incus, "jailbee-loose", _leased())
+
+    (container, cmd), kwargs = incus.exec.call_args
+    assert container == "app-feat"
+    assert cmd[:2] == ["bash", "-c"]
+    assert cmd[2].startswith("timeout 3 bash -c ")
+    assert "/dev/tcp/10.165.192.1/53" in cmd[2]
+    assert kwargs["timeout"] > 3  # the exec must outlive the inner timeout
+
+
+def test_bridge_reachability_withholds_a_verdict_when_a_probe_is_refused(
+    tmp_path, make_cfg, mocker
+):
+    """Only a timeout accuses the firewall. A refusal means the packet
+    arrived and something answered — a different fault, and blaming ufw for
+    it would send the user to edit rules that are already correct."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.network_acl_show.return_value = ""
+    incus.exec.return_value = "1\n"  # bash: connection refused
+
+    check = _check_bridge_reachability(
+        make_cfg(tmp_path / "repo"), incus, "jailbee-loose", _leased()
+    )
+
+    assert check is not None
+    assert check.ok is True
+    assert "tcp/53 not verified" in check.detail
+
+
+def test_bridge_reachability_flags_egress_blocked_past_a_working_bridge(tmp_path, make_cfg, mocker):
+    """The third opening: lease and DNS both work (dnsmasq runs on the host,
+    reachable through INPUT) and forwarding is still denied."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.network_acl_show.return_value = _ACL_WITH_ONE_HOST
+    incus.exec.side_effect = ["0\n", "124\n"]  # gateway ok, allowlisted host dropped
+
+    check = _check_bridge_reachability(
+        make_cfg(tmp_path / "repo"), incus, "jailbee-loose", _leased()
+    )
+
+    assert check is not None
+    assert check.ok is False
+    assert "140.82.121.4:443" in check.detail
+    assert "github.com:443" in check.detail
+    assert "ufw route allow in on jailbee-loose" in check.detail
+    # The destination may simply be down; the message must not claim
+    # certainty it does not have.
+    assert "unreachable from the host itself" in check.detail
+
+
+def test_bridge_reachability_probes_only_an_allowlisted_destination(tmp_path, make_cfg, mocker):
+    """On the strict bridge jailbee's own ACL blocks everything else, so a
+    freely chosen target would produce a firewall verdict about jailbee's
+    filtering rather than the host's."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.network_acl_show.return_value = _ACL_WITH_ONE_HOST
+    incus.exec.return_value = "0\n"
+
+    _check_bridge_reachability(make_cfg(tmp_path / "repo"), incus, "incusbr0", _leased())
+
+    scripts = [call.args[1][2] for call in incus.exec.call_args_list]
+    assert any("/dev/tcp/140.82.121.4/443" in s for s in scripts)
+
+
+def test_bridge_reachability_skips_the_egress_probe_with_no_usable_acl_entry(
+    tmp_path, make_cfg, mocker
+):
+    """A CIDR names no single host to connect to, and a portless entry no
+    port — probing either would invent a target."""
+    from jailbee.doctor import _check_bridge_reachability
+
+    incus = mocker.MagicMock()
+    incus.network_get.return_value = "10.165.192.1/24"
+    incus.network_acl_show.return_value = _ACL_WITH_ONE_HOST.replace(
+        "destination: 140.82.121.4", "destination: 10.0.0.0/8"
+    )
+    incus.exec.return_value = "0\n"
+
+    check = _check_bridge_reachability(
+        make_cfg(tmp_path / "repo"), incus, "jailbee-loose", _leased()
+    )
+
+    assert incus.exec.call_count == 1  # the gateway probe only
+    assert check is not None
+    assert check.ok is True
+    assert "egress" not in check.detail
+
+
+def test_doctor_diagnoses_the_strict_bridge_too(tmp_path, make_cfg, mocker):
+    """The gap this closes: the check only ever looked at the loose bridge,
+    while a fresh firewalled host fails on incusbr0 — where every container
+    lands by default."""
+    from jailbee.doctor import run_checks
+
+    cfg = make_cfg(tmp_path / "repo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _running("app-feat", [f"{cfg.container_prefix}-net-strict"]),
+    ]
+    _healthy_bridge(incus)
+
+    check = _bridge_check(run_checks(cfg, incus), "incusbr0")
+
+    assert check is not None
+    assert check.ok is False
+    assert "no IPv4 on app-feat" in check.detail
+    assert "incusbr0" in check.detail
