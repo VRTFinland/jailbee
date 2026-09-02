@@ -26,6 +26,8 @@ from typing import Any, Final
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
+from jailbee.claude_pool import _fsync_dir
+
 
 class _Delete:
     """Type of the `DELETE` sentinel; exists so mypy can name it."""
@@ -136,6 +138,7 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
             os.fsync(handle.fileno())
         tmp.chmod(mode)
         tmp.replace(path)
+        _fsync_dir(path.parent)
     except BaseException:
         with suppress(OSError):
             tmp.unlink()
