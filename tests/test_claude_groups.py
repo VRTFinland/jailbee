@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from jailbee import claude_groups
+from jailbee.global_config import GlobalConfig
+from jailbee.profiles import CLAUDE_CREDS_DEVICE, CLAUDE_CREDS_DIRNAME
 from tests.conftest import make_cfg
 
 
@@ -95,8 +97,6 @@ def test_group_dir_is_a_sibling_of_the_parked_store(monkeypatch, tmp_path: Path)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert claude_groups.group_dir("work").parent == claude_pool.store_dir().parent
 
-
-from jailbee.profiles import CLAUDE_CREDS_DEVICE, CLAUDE_CREDS_DIRNAME
 
 _ENV_KEY = "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"
 
@@ -246,9 +246,6 @@ def test_clear_container_group_removes_all_three(mocker):
     assert unset == [_ENV_KEY, claude_groups.GROUP_LABEL]
 
 
-from jailbee.global_config import GlobalConfig
-
-
 def _gcfg(**creds):
     return GlobalConfig.model_validate({"claude_credentials": creds} if creds else {})
 
@@ -258,7 +255,9 @@ def _raw(name: str, group: str | None = None) -> dict:
     return {"name": name, "status": "Running", "profiles": [], "config": config, "state": None}
 
 
-def test_groups_by_prefix_uses_the_repo_group_for_unlabelled_containers(mocker, monkeypatch, tmp_path):
+def test_groups_by_prefix_uses_the_repo_group_for_unlabelled_containers(
+    mocker, monkeypatch, tmp_path
+):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b")]

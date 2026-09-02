@@ -6981,7 +6981,7 @@ def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mock
         "jailbee.egress_scope.drop_container_acl",
         side_effect=IncusError("network acl delete failed"),
     )
-    warn = mocker.patch("jailbee.lifecycle.warn")
+    mocker.patch("jailbee.lifecycle.warn")
 
     # Must not raise.
     destroy_container(cfg, incus, "myrepo-feat", force=True)

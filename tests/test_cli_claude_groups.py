@@ -45,7 +45,7 @@ def test_status_names_the_repo_group_and_the_deviating_container(group_env):
 
 
 def test_use_applies_the_override(group_env, mocker):
-    _, incus = group_env
+    _, _incus = group_env
     mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
     setter = mocker.patch("jailbee.claude_groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
@@ -65,9 +65,7 @@ def test_use_refuses_while_claude_runs(group_env, mocker):
 def test_use_force_overrides_the_refusal(group_env, mocker):
     mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
     setter = mocker.patch("jailbee.claude_groups.set_container_group")
-    result = runner.invoke(
-        app, ["claude", "group", "use", "personal", "myrepo-a", "--force"]
-    )
+    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a", "--force"])
     assert result.exit_code == 0
     setter.assert_called_once()
 
@@ -155,9 +153,7 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
 
 def test_unset_removes_the_entry(group_env, mocker, tmp_path):
     global_yaml = tmp_path / "global.yaml"
-    global_yaml.write_text(
-        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
-    )
+    global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
@@ -227,9 +223,7 @@ def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
 
 def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):
     global_yaml = tmp_path / "global.yaml"
-    global_yaml.write_text(
-        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
-    )
+    global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     before = global_yaml.read_bytes()
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     writer = mocker.patch("jailbee.cli._write_repo_group")
@@ -249,9 +243,7 @@ def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker,
 
 def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     global_yaml = tmp_path / "global.yaml"
-    global_yaml.write_text(
-        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
-    )
+    global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.claude_groups.claude_running", return_value=True)

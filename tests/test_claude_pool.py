@@ -516,7 +516,12 @@ def test_park_falls_back_to_a_timestamped_name(tmp_path: Path, monkeypatch) -> N
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=datetime(2026, 8, 28, 10, 42, 33))
+    change = claude_pool.park(
+        cfg,
+        GlobalConfig(),
+        authoritative={cfg.container_prefix},
+        now=datetime(2026, 8, 28, 10, 42, 33),
+    )
 
     assert change.parked_as == "unknown-20260828-104233"
 
@@ -574,7 +579,9 @@ def test_switch_parks_the_live_login_and_activates_the_target(tmp_path: Path, mo
     _holder_with(cfg, _cred(mcpOAuth={"live": True}))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    )
 
     assert change.activated == "new@corp.com"
     assert change.parked_as == "old@corp.com"
@@ -638,20 +645,31 @@ def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, mo
     cfg = _cfg(tmp_path)
 
     _login_as(cfg, SECOND_ACCOUNT_BLOCK, "second")
-    assert claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}).parked_as == "second@corp.com#aaaabbbb"
+    assert (
+        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}).parked_as
+        == "second@corp.com#aaaabbbb"
+    )
     _login_as(cfg, ACCOUNT_BLOCK, "first")
 
-    first = claude_pool.switch(cfg, GlobalConfig(), "second@corp.com#aaaabbbb", authoritative={cfg.container_prefix})
+    first = claude_pool.switch(
+        cfg, GlobalConfig(), "second@corp.com#aaaabbbb", authoritative={cfg.container_prefix}
+    )
     assert first.parked_as == "first@corp.com#ccccdddd"
 
     # Nothing ran Claude in between, so nothing repopulated `oauthAccount`.
-    back = claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix})
+    back = claude_pool.switch(
+        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    )
 
     assert back.parked_as == "second@corp.com#aaaabbbb"
     assert [s.name for s in claude_pool.parked_slots()] == ["second@corp.com#aaaabbbb"]
     # And the holder can still say which account is live, which is what `ls`
     # rendered as `(unknown)` for every switch until a container ran Claude.
-    live = [s for s in claude_pool.list_slots(cfg, GlobalConfig(), authoritative={cfg.container_prefix}) if s.live]
+    live = [
+        s
+        for s in claude_pool.list_slots(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+        if s.live
+    ]
     assert [s.name for s in live] == ["first@corp.com#ccccdddd"]
 
 
@@ -685,7 +703,9 @@ def test_switch_restores_the_activated_accounts_record(tmp_path: Path, monkeypat
     home = claude_pool.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    )
 
     assert change.updated == [cfg.container_prefix]
     data = json.loads((home / ".claude.json").read_text())
@@ -703,7 +723,9 @@ def test_the_activated_credential_never_carries_jailbees_record(
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other", mcpOAuth={"srv": 1}))
 
-    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix})
+    claude_pool.switch(
+        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    )
 
     live = json.loads(claude_pool.live_credential_path(cfg).read_text())
     assert claude_pool.ACCOUNT_RECORD_KEY not in live
@@ -720,7 +742,9 @@ def test_the_activated_credential_drops_the_record_into_an_empty_holder(
     cfg = _cfg(tmp_path)
     claude_pool.holder_dir(cfg).mkdir(parents=True)
 
-    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix})
+    claude_pool.switch(
+        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    )
 
     live = json.loads(claude_pool.live_credential_path(cfg).read_text())
     assert claude_pool.ACCOUNT_RECORD_KEY not in live
@@ -749,7 +773,9 @@ def test_switch_ignores_a_record_that_contradicts_the_slot_name(
     home = claude_pool.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    claude_pool.switch(cfg, GlobalConfig(), "renamed@corp.com", authoritative={cfg.container_prefix})
+    claude_pool.switch(
+        cfg, GlobalConfig(), "renamed@corp.com", authoritative={cfg.container_prefix}
+    )
 
     # Invalidated, not repointed at the record's account: the pre-record
     # behaviour, which is correct and merely slower to display.
@@ -767,7 +793,12 @@ def test_a_disambiguator_is_not_a_contradiction(tmp_path: Path, monkeypatch) -> 
     home = claude_pool.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    claude_pool.switch(cfg, GlobalConfig(), f"first@corp.com#ccccdddd~{PARK_STAMP}", authoritative={cfg.container_prefix})
+    claude_pool.switch(
+        cfg,
+        GlobalConfig(),
+        f"first@corp.com#ccccdddd~{PARK_STAMP}",
+        authoritative={cfg.container_prefix},
+    )
 
     assert json.loads((home / ".claude.json").read_text())["oauthAccount"] == ACCOUNT_BLOCK
 
@@ -793,7 +824,9 @@ def test_switch_into_an_empty_holder_parks_nothing(tmp_path: Path, monkeypatch) 
     cfg = _cfg(tmp_path)
     claude_pool.holder_dir(cfg).mkdir(parents=True)
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    )
 
     assert change.parked_as is None
     assert change.activated == "new@corp.com"
@@ -835,7 +868,9 @@ def test_switch_restores_both_files_when_activation_fails(
     mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+        claude_pool.switch(
+            cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+        )
 
     assert live.read_text() == _cred()
     assert target.exists()
@@ -877,7 +912,9 @@ def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeyp
     home.mkdir(parents=True, exist_ok=True)
     (home / ".claude.json").write_text('{"oauthAccount": {"emai', encoding="utf-8")
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    )
 
     assert change.not_updated == [cfg.container_prefix]
     # A file we could not read is never overwritten.
@@ -892,7 +929,9 @@ def test_switch_reports_a_member_that_looks_busy(tmp_path: Path, monkeypatch) ->
     sessions.mkdir(parents=True)
     (sessions / "77.json").write_text("{}", encoding="utf-8")
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    )
 
     assert change.live_sessions == [cfg.container_prefix]
 
@@ -1035,7 +1074,9 @@ def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
     cfg = _cfg(tmp_path)
     claude_pool.holder_dir(cfg).mkdir(parents=True)
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "other@x.com", authoritative={cfg.container_prefix})
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "other@x.com", authoritative={cfg.container_prefix}
+    )
 
     # The switch itself completes normally...
     assert change.activated == "other@x.com"
@@ -1234,7 +1275,9 @@ def test_park_stores_a_second_independent_grant_for_one_account(
     _holder_with(cfg, _grant("lineage-2"))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+    change = claude_pool.park(
+        cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+    )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}"
     assert first.read_text() == _grant("lineage-1")
@@ -1295,7 +1338,9 @@ def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, mo
     _holder_with(cfg, _grant("lineage-3"))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+    change = claude_pool.park(
+        cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+    )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}-2"
     assert plain.read_text() == _grant("lineage-1")
@@ -1335,7 +1380,9 @@ def test_a_switch_for_another_account_survives_a_collided_one(tmp_path: Path, mo
     _holder_with(cfg, _grant("mine-live"))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "colleague@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME)
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "colleague@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
+    )
 
     assert change.activated == "colleague@x.com"
     assert change.parked_as == f"me@x.com~{PARK_STAMP}"
@@ -1385,7 +1432,9 @@ def test_switch_to_a_parked_slot_whose_name_the_live_one_shares(
     _holder_with(cfg, _grant("live"))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = claude_pool.switch(cfg, GlobalConfig(), "me@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME)
+    change = claude_pool.switch(
+        cfg, GlobalConfig(), "me@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
+    )
 
     assert change.activated == "me@x.com"
     assert change.parked_as == "me@x.com"
@@ -1479,7 +1528,13 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
     mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        claude_pool.switch(cfg, GlobalConfig(), "colleague@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME)
+        claude_pool.switch(
+            cfg,
+            GlobalConfig(),
+            "colleague@x.com",
+            authoritative={cfg.container_prefix},
+            now=PARK_TIME,
+        )
 
     assert live.read_text() == _grant("mine-live")
     assert not (claude_pool.store_dir() / f"me@x.com~{PARK_STAMP}.json").exists()

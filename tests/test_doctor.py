@@ -2006,7 +2006,9 @@ def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
 
-    detail = next(r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok).detail
+    detail = next(
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok
+    ).detail
 
     assert "rename it to orphan@x.com.json" in detail
     assert "parked under another name" in detail
@@ -2030,7 +2032,9 @@ def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text("not json", encoding="utf-8")
 
-    detail = next(r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok).detail
+    detail = next(
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok
+    ).detail
 
     assert "delete it" not in detail
     assert "rename it to orphan@x.com.json" in detail

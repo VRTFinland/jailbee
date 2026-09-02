@@ -7952,7 +7952,9 @@ def _resolve_group_container(
     return picked
 
 
-def _refuse_if_claude_running(cfg: "Config", incus: "IncusType", container: str, force: bool) -> None:
+def _refuse_if_claude_running(
+    cfg: "Config", incus: "IncusType", container: str, force: bool
+) -> None:
     """Block a group swap under a live Claude unless `--force`.
 
     A running process holds the old group's token; if it refreshes before
@@ -8242,7 +8244,8 @@ def claude_group_status(ctx: typer.Context, config: ConfigOption = None) -> None
     if repo is None:
         info(f"{cfg.container_prefix}: no credential group — this repo keeps its own login.")
     else:
-        info(f"{cfg.container_prefix}: group `{repo}` → {display_path(claude_groups.group_dir(repo))}")
+        group_path = display_path(claude_groups.group_dir(repo))
+        info(f"{cfg.container_prefix}: group `{repo}` → {group_path}")
 
     deviating = claude_groups.deviating_containers(cfg, incus)
     if deviating:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import stat
+from pathlib import Path
+
 import yaml
 
-from jailbee.config_writer import DELETE, YamlChange, patch_yaml
+from jailbee.config_writer import DELETE, YamlChange, patch_file, patch_yaml
 
 ORIGINAL = """\
 # Top-of-file banner that must survive.
@@ -58,12 +61,6 @@ def test_delete_of_an_absent_key_is_a_no_op():
 def test_missing_intermediate_maps_are_created():
     out = patch_yaml("", [YamlChange(("claude_credentials", "repos", "myrepo"), "work")])
     assert yaml.safe_load(out)["claude_credentials"]["repos"]["myrepo"] == "work"
-
-
-import stat
-from pathlib import Path
-
-from jailbee.config_writer import patch_file
 
 
 def test_patch_file_writes_the_change(tmp_path: Path):

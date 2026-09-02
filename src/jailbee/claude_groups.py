@@ -266,7 +266,7 @@ def clear_container_group(incus: Incus, container: str) -> None:
     incus.config_unset(container, GROUP_LABEL)
 
 
-def _label_group(raw_config: dict[str, str]) -> str | None | _Inherit:
+def _label_group(raw_config: dict[str, str]) -> str | _Inherit | None:
     """Read the group out of an `incus list` payload's config dict."""
     raw = raw_config.get(GROUP_LABEL)
     if not raw:
