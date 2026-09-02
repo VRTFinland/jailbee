@@ -2085,3 +2085,26 @@ def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
     assert "delete it" in detail
     assert "dup@x.com~<label>.json" not in detail
     assert "keep both" not in detail
+
+
+def test_doctor_reports_a_group_named_none(tmp_path, mocker):
+    """`none` is the CLI's word for "no group", so a group of that name is unaddressable."""
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "none"}})
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    results = doctor._check_reserved_group_name(cfg, gcfg)
+    assert results and results[0].ok is False
+    assert "none" in results[0].detail
+
+
+def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    assert doctor._check_reserved_group_name(cfg, gcfg) == []

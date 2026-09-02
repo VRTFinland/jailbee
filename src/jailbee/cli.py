@@ -7495,6 +7495,26 @@ def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
     return _load_or_exit(config), _load_global()
 
 
+def _holder_view(cfg: "Config", group: str | None) -> "Config":
+    """`cfg`, or a view of it pointed at another credential group.
+
+    A derived copy, never a mutation: `Config` is read-only after load.
+    Without this, a group reachable only as one container's temporary
+    override could not be managed at all — activating a parked login into
+    it would be impossible from any repo.
+    """
+    if group is None:
+        return cfg
+    from jailbee import claude_groups
+
+    try:
+        name = claude_groups.validate_group_name(group)
+    except claude_groups.GroupError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+    return cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir(name)})
+
+
 def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
     """Members whose `oauthAccount` can be trusted for this repo's holder.
 
@@ -7631,6 +7651,15 @@ def claude_ls_cmd(
         str | None,
         typer.Option("--fields", help="Comma-separated fields. Allowed: account, org, state."),
     ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """List stored Claude logins and which one this repo's containers use."""
@@ -7638,6 +7667,7 @@ def claude_ls_cmd(
     from jailbee.tui import console
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
         slots = claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
         found, unreachable = claude_pool.members(cfg, gcfg)
@@ -7664,14 +7694,39 @@ def claude_ls_cmd(
     # Table format only: the JSON payload is a row per slot, and a per-command
     # fact does not belong in it.
     if fmt == "table":
+        from jailbee import claude_groups
+        from jailbee.incus import Incus, IncusError
         from jailbee.paths import display_path
 
         # The group belongs to the live row, so it is stated where the holder
         # is, not in the title.
-        group = claude_pool.group_name(cfg)
-        where = f"group `{group}`" if group is not None else f"{cfg.container_prefix} (no group)"
+        holder_group = claude_pool.group_name(cfg)
+        where = (
+            f"group `{holder_group}`"
+            if holder_group is not None
+            else f"{cfg.container_prefix} (no group)"
+        )
         info(f"Live in {where} → {display_path(claude_pool.holder_dir(cfg))}")
         info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        # Best-effort: this hint is a discoverability nicety, not core to `ls`,
+        # so an unreachable Incus daemon degrades it to silence rather than
+        # failing a command that has already done its real job above.
+        try:
+            deviating = claude_groups.deviating_containers(cfg, Incus())
+        except (IncusError, OSError):
+            deviating = []
+        if deviating and group is None:
+            from jailbee.tui import hint
+
+            # stderr, so a `--format json` consumer is unaffected and a
+            # piped table stays a table.
+            hint(
+                [
+                    "Some containers of this repo use another group: "
+                    + ", ".join(f"{n} ({g or 'no group'})" for n, g in deviating),
+                    "Manage one with `jailbee claude ls -g <group>`.",
+                ]
+            )
         if any(not s.live for s in slots):
             info(
                 "Parked logins are host-wide — any of them can be activated into "
@@ -7694,6 +7749,15 @@ def claude_use_cmd(
             autocompletion=completion.complete_claude_account,
         ),
     ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Switch this repo's containers to a stored login.
@@ -7707,6 +7771,7 @@ def claude_use_cmd(
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
         target = _claude_ref_or_pick(
             cfg, gcfg, ref, purpose="switch to", message="Switch this repo to:"
@@ -7733,7 +7798,18 @@ def claude_use_cmd(
 
 
 @claude_app.command("park")
-def claude_park_cmd(config: ConfigOption = None) -> None:
+def claude_park_cmd(
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
     """Store the login in use and leave this repo's holder empty.
 
     This is how a new account enters the pool: with no credential to find, the
@@ -7744,6 +7820,7 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
         change = claude_pool.park(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:

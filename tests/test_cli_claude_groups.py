@@ -262,3 +262,33 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     import yaml
 
     assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+
+
+def test_claude_ls_group_flag_points_at_another_holder(group_env, mocker):
+    from jailbee import claude_groups
+
+    captured = {}
+
+    def fake_list_slots(cfg, gcfg, *, authoritative):
+        captured["holder"] = cfg.claude_credentials_dir
+        return []
+
+    mocker.patch("jailbee.claude_pool.list_slots", side_effect=fake_list_slots)
+    mocker.patch("jailbee.claude_pool.members", return_value=([], []))
+    runner.invoke(app, ["claude", "ls", "-g", "personal"])
+    assert captured["holder"] == claude_groups.group_dir("personal")
+
+
+def test_claude_ls_without_the_flag_uses_the_repo_group(group_env, mocker):
+    from jailbee import claude_groups
+
+    captured = {}
+
+    def fake_list_slots(cfg, gcfg, *, authoritative):
+        captured["holder"] = cfg.claude_credentials_dir
+        return []
+
+    mocker.patch("jailbee.claude_pool.list_slots", side_effect=fake_list_slots)
+    mocker.patch("jailbee.claude_pool.members", return_value=([], []))
+    runner.invoke(app, ["claude", "ls"])
+    assert captured["holder"] == claude_groups.group_dir("work")

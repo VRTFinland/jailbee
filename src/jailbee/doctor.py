@@ -153,6 +153,35 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
     return [CheckResult("claude shared credential", True, detail)]
 
 
+def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
+    """Report a configured credential group whose name the CLI cannot address.
+
+    `jailbee claude group` spells "no credential group" as the word
+    `none`, so a group literally named `none` cannot be set or selected
+    from the command line. This is reported rather than validated in
+    `ClaudeCredentials`, because a host that already has one must keep
+    loading — turning a working config into a hard load failure on upgrade
+    would be worse than the ambiguity.
+    """
+    from jailbee.claude_groups import RESERVED_GROUP_NAMES
+
+    configured = {gcfg.claude_credentials.group, *gcfg.claude_credentials.repos.values()}
+    offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
+    if not offending:
+        return []
+    return [
+        CheckResult(
+            "claude credential group name",
+            False,
+            f"`claude_credentials` names a group called {', '.join(offending)}, "
+            "which `jailbee claude group` cannot address — it uses that word "
+            "for 'no credential group'. Rename the group in "
+            "~/.config/jailbee/global.yaml and rename its directory under "
+            "<XDG_DATA_HOME>/jailbee/claude-credentials/ to match.",
+        )
+    ]
+
+
 def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -> list[str]:
     """Registered repos resolving to `group`, sorted, excluding `exclude`.
 
@@ -358,6 +387,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
+    results.extend(_check_reserved_group_name(cfg, gcfg))
     results.extend(_check_claude_pool(cfg, incus, gcfg))
 
     # 2b. Host git repo (soft requirement — only clone-mode commands need it).
