@@ -7705,7 +7705,9 @@ def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str)
         # be read to supply it.
         warn(
             f"`{change.parked_as}` does not say which account it holds: jailbee "
-            "could not read the account from any member repo's `.claude.json`. "
+            "could not read the account from any member repo's `.claude.json`, "
+            "and this holder carries no note of its own (it does once jailbee "
+            "has activated a login into it). "
             "The login itself is intact. To give it its real name, activate it "
             "with `jailbee claude use`, run `claude` once in a container of this "
             "holder, then `jailbee claude park` again."

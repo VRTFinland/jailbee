@@ -415,3 +415,30 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
     }
     assert stored.get("personal@example.com.json") != "rt-work"
     assert "rt-work" in stored.values()
+
+
+def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env):
+    """The reported bug, end to end: `-g` acts on a holder no repo resolves to,
+    so no config home describes it, and a park of the login jailbee had just
+    activated there could only be named `unknown-<timestamp>`."""
+    import json
+
+    from jailbee import claude_groups, claude_pool
+
+    _write_json(
+        claude_pool.store_dir() / "personal@example.com.json",
+        {
+            "claudeAiOauth": {"refreshToken": "rt-personal"},
+            claude_pool.ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
+        },
+    )
+    claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
+
+    assert runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code == 0
+    result = runner.invoke(app, ["claude", "park", "-g", "personal"])
+
+    assert result.exit_code == 0
+    assert "unknown-" not in result.output
+    assert "personal@example.com" in result.output
+    stored = claude_pool.store_dir() / "personal@example.com.json"
+    assert json.loads(stored.read_text())["claudeAiOauth"]["refreshToken"] == "rt-personal"

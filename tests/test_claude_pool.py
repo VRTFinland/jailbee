@@ -450,7 +450,7 @@ def test_live_identity_prefers_the_calling_repo(tmp_path: Path) -> None:
     ]
 
     assert claude_pool.live_identity(
-        found, prefer="mine", authoritative={"mine", "theirs"}
+        _cfg(tmp_path), found, prefer="mine", authoritative={"mine", "theirs"}
     ) == Identity("mine@x.com")
 
 
@@ -463,13 +463,16 @@ def test_live_identity_falls_back_to_another_member(tmp_path: Path) -> None:
     ]
 
     assert claude_pool.live_identity(
-        found, prefer="mine", authoritative={"mine", "theirs"}
+        _cfg(tmp_path), found, prefer="mine", authoritative={"mine", "theirs"}
     ) == Identity("theirs@x.com")
 
 
 def test_live_identity_is_none_when_no_member_names_an_account(tmp_path: Path) -> None:
     found = [claude_pool.Member("mine", tmp_path / "mine" / "claude")]
-    assert claude_pool.live_identity(found, prefer="mine", authoritative={"mine"}) is None
+    assert (
+        claude_pool.live_identity(_cfg(tmp_path), found, prefer="mine", authoritative={"mine"})
+        is None
+    )
 
 
 def test_live_session_prefixes_reports_members_with_session_files(
@@ -1552,9 +1555,11 @@ def test_live_account_ignores_a_non_authoritative_member(tmp_path):
     )
     found = [claude_pool.Member("mixed", home)]
 
-    assert claude_pool.live_account(found, prefer="mixed", authoritative=set()) is None
+    assert claude_pool.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
     assert (
-        claude_pool.live_account(found, prefer="mixed", authoritative={"mixed"}).identity.email
+        claude_pool.live_account(
+            _cfg(tmp_path), found, prefer="mixed", authoritative={"mixed"}
+        ).identity.email
         == "wrong@example.com"
     )
 
@@ -1641,3 +1646,125 @@ def test_switch_clears_rather_than_restores_a_non_authoritative_member(
     data = json.loads((home / ".claude.json").read_text())
     assert "oauthAccount" not in data
     assert data["projects"] == {"/x": {}}
+
+
+# --- The holder's own note of which account its login belongs to -------------
+
+
+def test_park_names_the_slot_from_the_holder_note(tmp_path: Path, monkeypatch, mocker) -> None:
+    """A group no repo resolves to has no config home to read, so before the
+    note a `jailbee claude park -g <group>` of a login jailbee had itself
+    activated could only name it `unknown-<timestamp>`."""
+    _no_git(mocker)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path, group="personal")
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    _holder_with(cfg, _grant("rt-personal"))
+    claude_pool.write_account_note(
+        claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-personal")
+    )
+
+    change = claude_pool.park(cfg, gcfg, authoritative=set(), now=PARK_TIME)
+
+    assert change.parked_as == "first@corp.com#ccccdddd"
+    stored = claude_pool.store_dir() / "first@corp.com#ccccdddd.json"
+    assert json.loads(stored.read_text())[claude_pool.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
+
+
+def test_a_holder_note_is_ignored_once_the_grant_it_names_is_gone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The fingerprint is what makes the note safe: a `/login` in a container
+    mints a new refresh-token lineage, and naming *that* login after the note's
+    account would be a wrong name — the one outcome worse than no name."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path, group="personal")
+    _holder_with(cfg, _grant("rt-old"))
+    claude_pool.write_account_note(claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-old"))
+    _holder_with(cfg, _grant("rt-after-a-fresh-login"))
+
+    change = claude_pool.park(cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
+
+    assert change.parked_as == f"unknown-{PARK_STAMP}"
+
+
+def test_the_holder_note_never_holds_the_refresh_token(tmp_path: Path) -> None:
+    """It names an account; the grant is identified by a digest, never copied."""
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("s3cr3t-lineage"))
+
+    raw = (holder / claude_pool.ACCOUNT_NOTE_FILE).read_text(encoding="utf-8")
+
+    assert "s3cr3t-lineage" not in raw
+    assert "first@corp.com" in raw
+
+
+def test_switch_notes_the_activated_account_in_the_holder(tmp_path: Path, monkeypatch) -> None:
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path, group="personal")
+    _holder_with(cfg, _grant("outgoing"))
+
+    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
+
+    account = claude_pool.note_account(cfg)
+    assert account is not None
+    assert account.identity == Identity("first@corp.com", "ccccdddd-1111")
+    assert account.record == ACCOUNT_BLOCK
+
+
+def test_switch_drops_a_stale_note_when_the_slot_carries_no_record(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A slot parked before the record existed says nothing about its account,
+    and the previous account's note must not outlive its grant."""
+    _park(tmp_path, "plain@corp.com", monkeypatch)
+    cfg = _cfg(tmp_path, group="personal")
+    _holder_with(cfg, _grant("outgoing"))
+    claude_pool.write_account_note(claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("outgoing"))
+
+    claude_pool.switch(cfg, GlobalConfig(), "plain@corp.com", authoritative=set())
+
+    assert not (claude_pool.holder_dir(cfg) / claude_pool.ACCOUNT_NOTE_FILE).exists()
+    assert claude_pool.note_account(cfg) is None
+
+
+def test_park_removes_the_note_with_the_login(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path, group="personal")
+    _holder_with(cfg, _grant("rt-personal"))
+    claude_pool.write_account_note(
+        claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-personal")
+    )
+
+    claude_pool.park(cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
+
+    assert not (claude_pool.holder_dir(cfg) / claude_pool.ACCOUNT_NOTE_FILE).exists()
+
+
+def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """The rollback puts both files back where they were; the note is part of
+    that state, and losing it would cost the restored login its name."""
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path, group="personal")
+    _holder_with(cfg, _grant("outgoing"))
+    claude_pool.write_account_note(
+        claude_pool.holder_dir(cfg), SECOND_ACCOUNT_BLOCK, _grant("outgoing")
+    )
+    real_write = claude_pool._atomic_write
+
+    def fail_the_credential(path, text):
+        if path == claude_pool.live_credential_path(cfg):
+            raise OSError("disk full")
+        real_write(path, text)
+
+    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=fail_the_credential)
+
+    with pytest.raises(OSError):
+        claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
+
+    account = claude_pool.note_account(cfg)
+    assert account is not None
+    assert account.record == SECOND_ACCOUNT_BLOCK
