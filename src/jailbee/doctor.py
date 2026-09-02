@@ -36,6 +36,18 @@ _INCUS_MAPPED_ROOT_UID = 1000000
 _KEYRING_MAXKEYS_RECOMMENDED = 1000
 _KEYRING_USAGE_WARN_FRACTION = 0.75
 
+# Subordinate-id delegation. `raw.idmap` (profiles.py, registry.py) asks LXC
+# to punch the host user's own uid/gid through the otherwise shifted
+# namespace, and `newuidmap` refuses any segment /etc/subuid has not
+# delegated to the caller — root, since incusd runs as root.
+_SUBUID_PATH = Path("/etc/subuid")
+_SUBGID_PATH = Path("/etc/subgid")
+_SUBID_OWNERS = ("root", "0")
+# One container needs a shifted range this big; Incus draws it from root's
+# delegation too, so an /etc/subuid with only the single-id hole starts
+# nothing at all.
+_SHIFTED_RANGE_MIN = 65536
+
 
 @dataclass
 class CheckResult:
@@ -351,14 +363,19 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
             )
         )
 
-    # 2a. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
+    # 2a. ...and that root may actually map it into a namespace. Sits next to
+    # the uid/gid match because it is the same identity, one layer down: the
+    # config can agree with the host and every container still fail to start.
+    results.append(_check_uid_delegation(cfg))
+
+    # 2b. Upgrade advice — owed `jailbee base build` / `jailbee apply`. Needs
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_claude_pool(cfg, gcfg))
 
-    # 2b. Host git repo (soft requirement — only clone-mode commands need it).
+    # 2c. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
         results.append(
             CheckResult(
@@ -641,6 +658,135 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                 )
 
     return results
+
+
+def _subid_fix(uid: int, gid: int) -> str:
+    """The fix, phrased as required file contents rather than shell commands.
+
+    `doctor` renders details inside a narrow Rich table column, which wraps
+    long lines mid-token — a copy-pasteable `grep … || echo … | sudo tee`
+    one-liner arrives broken and unusable. Naming the two lines each file
+    must contain survives the wrapping, and the ids are substituted so
+    there is nothing left to work out.
+    """
+    return (
+        f"/etc/subuid must contain both `root:{uid}:1` and "
+        f"`root:1000000:1000000000`; /etc/subgid both `root:{gid}:1` and "
+        f"`root:1000000:1000000000`. Append what is missing, then "
+        f"`sudo systemctl restart incus` — incusd reads these files only at "
+        f"startup. See docs/installation.md → 'Delegate one UID/GID for "
+        f"host-file access'."
+    )
+
+
+def _parse_subid_ranges(path: Path) -> list[tuple[int, int]] | None:
+    """Root's delegated ``(start, count)`` ranges from an /etc/sub[ug]id file.
+
+    An absent file is an empty delegation (``[]``) — decisive, and the state
+    a host with no `incus admin init` is in. ``None`` is reserved for "the
+    file exists but could not be read", where no verdict is possible.
+
+    Malformed lines are skipped rather than failing the parse: shadow
+    ignores them too, and a comment is not a diagnosis.
+    """
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+
+    ranges: list[tuple[int, int]] = []
+    for line in text.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] not in _SUBID_OWNERS:
+            continue
+        try:
+            start, count = int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if count > 0:
+            ranges.append((start, count))
+    return ranges
+
+
+def _check_uid_delegation(
+    cfg: Config,
+    subuid_path: Path | None = None,
+    subgid_path: Path | None = None,
+) -> CheckResult:
+    """Verify /etc/subuid + /etc/subgid authorise this host's `raw.idmap`.
+
+    Every jailbee container carries a `raw.idmap` that maps the host user's
+    own uid/gid into the namespace — `uid <uid> <uid>` for repo containers
+    (`profiles.py`), `uid <uid> 0` for the registry mirror (`registry.py`) —
+    so host-owned mounts (`~/.gitconfig`, the GPG agent socket, the mirror's
+    cache directories) are writable from inside. `newuidmap` installs no
+    segment that /etc/subuid has not delegated to its caller, and incusd
+    calls it as root, so root needs two delegations: the host id itself, and
+    a range large enough for the rest of the shifted namespace.
+
+    `incus admin init` writes the large range and never the single-id hole,
+    which makes a fresh host the failing case. It is worth a check of its
+    own because the failure is invisible from the outside: the container is
+    created, stays STOPPED, and the reason appears only in
+    `incus info --show-log <name>`.
+    """
+    subuid = subuid_path if subuid_path is not None else _SUBUID_PATH
+    subgid = subgid_path if subgid_path is not None else _SUBGID_PATH
+
+    problems: list[str] = []
+    unreadable: list[str] = []
+    largest = 0
+    for label, path, wanted in (
+        ("uid", subuid, cfg.container_user.uid),
+        ("gid", subgid, cfg.container_user.gid),
+    ):
+        ranges = _parse_subid_ranges(path)
+        if ranges is None:
+            unreadable.append(str(path))
+            continue
+        largest = max([largest, *(count for _, count in ranges)])
+        if not any(start <= wanted < start + count for start, count in ranges):
+            problems.append(f"{path} does not delegate {label} {wanted} to root")
+        if not any(count >= _SHIFTED_RANGE_MIN for _, count in ranges):
+            problems.append(
+                f"{path} has no root range of {_SHIFTED_RANGE_MIN} or more "
+                f"{label}s for the shifted namespace"
+            )
+
+    if problems:
+        return CheckResult(
+            name="uid delegation",
+            ok=False,
+            detail=(
+                "; ".join(problems) + ". Containers will be created but stay "
+                "STOPPED, and the only trace is `newuidmap: uid range ... not "
+                "allowed` in `incus info --show-log <name>`. "
+                + _subid_fix(cfg.container_user.uid, cfg.container_user.gid)
+            ),
+        )
+
+    if unreadable:
+        return CheckResult(
+            name="uid delegation",
+            ok=True,
+            detail=(
+                f"could not read {', '.join(unreadable)} — cannot confirm "
+                f"uid {cfg.container_user.uid}/gid {cfg.container_user.gid} is "
+                f"delegated to root. Check by hand: "
+                f"`grep ^root: /etc/subuid /etc/subgid`"
+            ),
+        )
+
+    return CheckResult(
+        name="uid delegation",
+        ok=True,
+        detail=(
+            f"uid {cfg.container_user.uid}/gid {cfg.container_user.gid} "
+            f"delegated to root (largest root range: {largest} ids)"
+        ),
+    )
 
 
 def _check_kernel_keyring(

@@ -2115,3 +2115,149 @@ def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
     assert "delete it" in detail
     assert "dup@x.com~<label>.json" not in detail
     assert "keep both" not in detail
+
+
+# ---- subuid/subgid delegation for raw.idmap ----
+
+
+def _write_subid_files(
+    tmp_path: Path,
+    subuid_lines: list[str],
+    subgid_lines: list[str],
+) -> tuple[Path, Path]:
+    """Fabricate a pair of /etc/sub[ug]id files."""
+    subuid = tmp_path / "subuid"
+    subuid.write_text("".join(line + "\n" for line in subuid_lines))
+    subgid = tmp_path / "subgid"
+    subgid.write_text("".join(line + "\n" for line in subgid_lines))
+    return subuid, subgid
+
+
+def test_uid_delegation_flags_a_missing_single_id_hole(tmp_path: Path, make_cfg) -> None:
+    """The reported failure: `incus admin init` writes the shifted range and
+    never the one-id hole `raw.idmap` needs, so on a fresh host every
+    container is created, stays STOPPED, and says so only in the LXC log."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    subuid, subgid = _write_subid_files(
+        tmp_path,
+        ["tuomas:100000:65536", "root:1000000:1000000000"],
+        ["tuomas:100000:65536", "root:1000000:1000000000"],
+    )
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is False
+    assert f"does not delegate uid {cfg.container_user.uid}" in check.detail
+    assert f"does not delegate gid {cfg.container_user.gid}" in check.detail
+    # The symptom the user actually sees has to be in the message, or the
+    # check is undiscoverable from the LXC log that sent them looking.
+    assert "newuidmap" in check.detail
+    assert "sudo systemctl restart incus" in check.detail
+    assert f"root:{cfg.container_user.uid}:1" in check.detail
+
+
+def test_uid_delegation_flags_a_missing_shifted_range(tmp_path: Path, make_cfg) -> None:
+    """The hole alone starts nothing: Incus draws the rest of the namespace
+    from root's delegation too."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    uid, gid = cfg.container_user.uid, cfg.container_user.gid
+    subuid, subgid = _write_subid_files(tmp_path, [f"root:{uid}:1"], [f"root:{gid}:1"])
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is False
+    assert "shifted namespace" in check.detail
+
+
+def test_uid_delegation_passes_on_a_delegated_host(tmp_path: Path, make_cfg) -> None:
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    uid, gid = cfg.container_user.uid, cfg.container_user.gid
+    subuid, subgid = _write_subid_files(
+        tmp_path,
+        ["root:1000000:1000000000", f"root:{uid}:1"],
+        ["root:1000000:1000000000", f"root:{gid}:1"],
+    )
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is True
+    assert f"uid {uid}/gid {gid} delegated to root" in check.detail
+
+
+def test_uid_delegation_accepts_a_hole_inside_a_wider_root_range(tmp_path: Path, make_cfg) -> None:
+    """A separate one-id line is the documented way to get it, not the only
+    one: a root range that already spans the host id authorises the same
+    mapping, and flagging it would be a false failure."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    subuid, subgid = _write_subid_files(tmp_path, ["root:0:2000000"], ["root:0:2000000"])
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is True
+
+
+def test_uid_delegation_flags_absent_files(tmp_path: Path, make_cfg) -> None:
+    """An absent /etc/subuid is an empty delegation — decisive, not unknown."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+
+    check = _check_uid_delegation(
+        cfg,
+        subuid_path=tmp_path / "nope_subuid",
+        subgid_path=tmp_path / "nope_subgid",
+    )
+
+    assert check.ok is False
+    assert "does not delegate" in check.detail
+
+
+def test_uid_delegation_withholds_a_verdict_on_an_unreadable_file(
+    tmp_path: Path, make_cfg, mocker
+) -> None:
+    """No evidence must not become a verdict: an unreadable file says nothing
+    about the host, so the check stays green and hands over the one command
+    that answers it."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    uid, gid = cfg.container_user.uid, cfg.container_user.gid
+    subuid, subgid = _write_subid_files(
+        tmp_path,
+        ["root:1000000:1000000000", f"root:{uid}:1"],
+        ["root:1000000:1000000000", f"root:{gid}:1"],
+    )
+    mocker.patch.object(Path, "read_text", side_effect=PermissionError("nope"))
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is True
+    assert "could not read" in check.detail
+    assert str(subuid) in check.detail and str(subgid) in check.detail
+
+
+def test_uid_delegation_ignores_other_users_and_junk_lines(tmp_path: Path, make_cfg) -> None:
+    """Only root's ranges count — incusd is what calls `newuidmap`, and a
+    delegation to the host user authorises nothing for it."""
+    from jailbee.doctor import _check_uid_delegation
+
+    cfg = make_cfg(tmp_path / "repo")
+    uid, gid = cfg.container_user.uid, cfg.container_user.gid
+    subuid, subgid = _write_subid_files(
+        tmp_path,
+        ["# a comment", "", "root:x:y", f"tuomas:{uid}:1", "root:1000000:1000000000"],
+        ["# a comment", "", "root:x:y", f"tuomas:{gid}:1", "root:1000000:1000000000"],
+    )
+
+    check = _check_uid_delegation(cfg, subuid_path=subuid, subgid_path=subgid)
+
+    assert check.ok is False
+    assert "does not delegate" in check.detail
