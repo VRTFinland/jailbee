@@ -2443,7 +2443,7 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
-    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode"})
+    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode", "claude_group"})
 
 
 def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
