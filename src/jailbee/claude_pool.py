@@ -1071,9 +1071,7 @@ def live_account(
     holds. That is a fact to report, not an error: `park` then names the file
     `unknown_slot_name`, and `ls` shows `LIVE_UNIDENTIFIED`.
     """
-    return note_account(cfg) or _member_account(
-        found, prefer=prefer, authoritative=authoritative
-    )
+    return note_account(cfg) or _member_account(found, prefer=prefer, authoritative=authoritative)
 
 
 def live_identity(

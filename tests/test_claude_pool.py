@@ -1555,7 +1555,9 @@ def test_live_account_ignores_a_non_authoritative_member(tmp_path):
     )
     found = [claude_pool.Member("mixed", home)]
 
-    assert claude_pool.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
+    assert (
+        claude_pool.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
+    )
     assert (
         claude_pool.live_account(
             _cfg(tmp_path), found, prefer="mixed", authoritative={"mixed"}

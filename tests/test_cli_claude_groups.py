@@ -325,10 +325,9 @@ def holder_view_env(mocker, tmp_path, monkeypatch):
     `oauthAccount` turns into a wrongly named park.
     """
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from tests.conftest import make_cfg
-
     from jailbee import claude_groups
     from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
     cfg = cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
@@ -353,9 +352,7 @@ def _write_json(path, payload):
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_park_on_another_group_leaves_this_repos_recorded_account_alone(
-    holder_view_env, mocker
-):
+def test_park_on_another_group_leaves_this_repos_recorded_account_alone(holder_view_env, mocker):
     """`-g` acts on a holder this repo is not a member of, so the repo's own
     `oauthAccount` — which describes *its* group's login — must not be touched.
     Clearing it there is how a later `jailbee claude park` loses its name."""
@@ -406,7 +403,10 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
     )
     claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
 
-    assert runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code == 0
+    assert (
+        runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
+        == 0
+    )
     assert runner.invoke(app, ["claude", "park"]).exit_code == 0
 
     stored = {
@@ -434,7 +434,10 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     )
     claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
 
-    assert runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code == 0
+    assert (
+        runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
+        == 0
+    )
     result = runner.invoke(app, ["claude", "park", "-g", "personal"])
 
     assert result.exit_code == 0
