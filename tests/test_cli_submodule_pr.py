@@ -490,3 +490,109 @@ def test_update_on_detached_submodule_without_branch_and_no_flags_does_not_crash
     apply_updates.assert_not_called()
     assert "--ready" not in result.output
     assert "--description" not in result.output
+
+
+# --- Binding a submodule to an existing PR by number (`--pr N`) -------------
+
+
+def _sub_pr_info(number=456, head_ref="contributor/fix-lib", state="OPEN", cross=False):
+    from jailbee.pr import PrInfo
+
+    return PrInfo(
+        number=number,
+        head_ref=head_ref,
+        head_sha="a" * 40,
+        state=state,
+        base_ref="develop",
+        author_login="someone",
+        is_cross_repository=cross,
+        head_repo_owner="contributor" if cross else "acme",
+    )
+
+
+def _bind_publish(mocker, publish_name="contributor/fix-lib"):
+    from jailbee.submodule_pr import SubPublishResult
+
+    return mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(
+            src_ref="refs/jailbee-sub/feat-foo/lib/a/heads/feat/foo",
+            publish_name=publish_name,
+            forced=False,
+        ),
+    )
+
+
+def test_submodule_pr_binds_to_a_numbered_pr(mocker, tmp_path):
+    """The submodule's branch name says nothing about the PR head either."""
+    _cfg, _incus, record = _setup(mocker, tmp_path)
+    publish = _bind_publish(mocker)
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(456, already=True))
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.args[1] == 456
+    # Resolved against the submodule's own repo and remote, not the superproject's.
+    assert resolve.call_args.args[0] == tmp_path / "lib/a"
+    assert publish.call_args.kwargs["publish_name"] == "contributor/fix-lib"
+    create.assert_not_called()
+    assert record.call_args.kwargs["number"] == 456
+    assert record.call_args.kwargs["head"] == "contributor/fix-lib"
+    assert record.call_args.kwargs["author"] is False
+    assert record.call_args.kwargs["adopted"] is True
+
+
+def test_submodule_pr_bind_refuses_a_closed_pr(mocker, tmp_path):
+    _cfg, _incus, record = _setup(mocker, tmp_path)
+    publish = _bind_publish(mocker)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(state="CLOSED"))
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 1
+    assert "CLOSED" in result.output
+    publish.assert_not_called()
+    record.assert_not_called()
+
+
+def test_submodule_pr_bind_refuses_a_fork_pr(mocker, tmp_path):
+    _cfg, _incus, record = _setup(mocker, tmp_path)
+    publish = _bind_publish(mocker)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(cross=True))
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 1
+    assert "contributor" in result.output
+    publish.assert_not_called()
+    record.assert_not_called()
+
+
+def test_submodule_pr_bind_rejects_as_flag(mocker, tmp_path):
+    _cfg, _incus, record = _setup(mocker, tmp_path)
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info())
+
+    result = runner.invoke(
+        app, ["submodule", "pr", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"]
+    )
+
+    assert result.exit_code == 2
+    assert "--as" in result.output and "--pr" in result.output
+    resolve.assert_not_called()
+    record.assert_not_called()
+
+
+def test_submodule_pr_bind_prefix_names_the_submodule_in_errors(mocker, tmp_path):
+    """One container can hold several submodule PRs, so an error that does not
+    say which submodule it is about is unactionable."""
+    _cfg, _incus, _record = _setup(mocker, tmp_path)
+    _bind_publish(mocker)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(state="MERGED"))
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+
+    assert result.exit_code == 1
+    assert "lib/a" in result.output

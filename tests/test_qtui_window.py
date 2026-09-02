@@ -5,6 +5,8 @@ pytest.importorskip("PySide6")
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 from jailbee.dashboard import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.qtui.window import MainWindow
@@ -179,13 +181,15 @@ def test_set_refresh_failed_shows_non_modal_status(qtbot):
 
 
 def test_window_title_stays_constant(qtbot):
+    """The Qt window has no row selection to name, so the title is constant —
+    it only has to be recognisable in a taskbar."""
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)
-    assert win.windowTitle() == "jailbee dashboard"
+    assert win.windowTitle() == "\N{HONEYBEE} JailBee dashboard"
     win.set_groups(_groups(), now=datetime.now().astimezone())
     win.set_refresh_ok(at=datetime.now().astimezone(), interval=3.0)
     win.set_refresh_failed("boom")
-    assert win.windowTitle() == "jailbee dashboard"
+    assert win.windowTitle() == "\N{HONEYBEE} JailBee dashboard"
 
 
 def test_refresh_menu_has_expected_actions(qtbot):
@@ -436,3 +440,151 @@ def test_a_stale_persisted_column_name_cannot_reach_zero_columns(qtbot):
     # not merely on the phantom name still being present somewhere.
     assert win.enabled_columns() == ("name",)
     assert act.isChecked() is True  # the action snaps back
+
+
+def test_selected_prefix_of_a_group_row(qtbot):
+    # Table mode: the default is cards, which reads the card view's own
+    # selection instead — see test_selected_prefix_cards_mode_* below.
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0))
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_of_a_container_row_is_its_parents(qtbot):
+    """A container row carries a name, not a prefix — the repo is the
+    parent's, and creating alongside a container must still find it."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0).child(0))
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_is_none_without_a_selection_and_two_groups(qtbot):
+    """No selection at all, and more than one configured group: the
+    single-repo fallback must not kick in and guess wrong."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    groups = [*_groups(), RepoGroup("q", "/repo2", Path("/repo2/.gie/config.yaml"), [])]
+    win.set_groups(groups, now=datetime.now().astimezone())
+    win.tree.setCurrentItem(None)
+    assert win._selected_prefix() is None
+
+
+def test_selected_prefix_falls_back_to_the_sole_configured_group(qtbot):
+    """No selection at all, but exactly one configured group: a single-repo
+    user must never hit an unsatisfiable "select a repo" prompt."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(None)
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_cards_mode_resolves_the_selected_card(qtbot):
+    """The bug this fix closes: cards is the default layout, and the tree
+    carries no selection there at all — Ctrl+N must resolve from the card
+    view's own selection instead."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="cards")
+    qtbot.addWidget(win)
+    groups = [*_groups(), RepoGroup("q", "/repo2", Path("/repo2/.gie/config.yaml"), [])]
+    win.set_groups(groups, now=datetime.now().astimezone())
+    card = win.card_view._cards["p-bar"]
+    qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
+    assert win.card_view.selected_name() == "p-bar"
+    assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_cards_mode_none_selected_two_groups(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, layout="cards")
+    qtbot.addWidget(win)
+    groups = [*_groups(), RepoGroup("q", "/repo2", Path("/repo2/.gie/config.yaml"), [])]
+    win.set_groups(groups, now=datetime.now().astimezone())
+    assert win._selected_prefix() is None
+
+
+def test_selected_prefix_cards_mode_none_selected_one_group_falls_back(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0, layout="cards")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    assert win._selected_prefix() == "p"
+
+
+def test_container_menu_offers_new(qtbot):
+    """Read the menu off the window, never via `menuBar().actions()` ->
+    `QAction.menu()`: that wrapper dies with the loop-local QAction (see
+    `_build_refresh_menu`'s docstring)."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    assert win.container_menu.title() == "&Container"
+    assert win.new_container_action.text() == "&New…"
+
+
+def test_container_menu_new_emits_the_selected_prefix(qtbot):
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0).child(0))
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        win.new_container_action.trigger()
+
+    assert blocker.args == ["p"]
+
+
+def test_container_menu_new_emits_empty_string_without_a_selection(qtbot):
+    """The window reports what it knows; the controller owns the message."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        win.new_container_action.trigger()
+
+    assert blocker.args == [""]
+
+
+def test_group_row_context_menu_offers_new_container(qtbot):
+    """The group-row branch of `_on_context_menu` is the other entry point
+    into container creation (alongside the &Container menu) — right-clicking
+    a repo header must offer the same action and emit the same signal.
+
+    `QMenu.exec` is modal (blocks pumping a real event loop), so — following
+    `test_context_menu_on_a_view_only_row_explains_itself`'s established
+    pattern in this file — a zero-delay `QTimer` fires once the offscreen
+    popup is up, reads its actions, and triggers the one we want, which lets
+    `exec` return instead of hanging. Patching `QMenu.exec` directly does not
+    work here: PySide6's compiled binding does not honor a class-level
+    monkeypatch of it, so the call would go through to the real (blocking)
+    implementation regardless.
+    """
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication
+
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0))
+    assert win._selected_name() is None
+    assert win._selected_prefix() == "p"
+
+    seen: list[str] = []
+
+    def interact() -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is None:
+            return
+        actions = popup.actions()
+        seen.extend(a.text() for a in actions)
+        actions[0].trigger()
+        # trigger() alone doesn't dismiss the offscreen-platform modal popup
+        # (unlike a real click), so exec() would otherwise never return.
+        popup.close()
+
+    with qtbot.waitSignal(win.newContainerRequested, timeout=1000) as blocker:
+        QTimer.singleShot(0, interact)
+        win._on_context_menu(QPoint(0, 0))
+
+    assert seen == ["New container…"]
+    assert blocker.args == ["p"]

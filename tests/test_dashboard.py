@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import itertools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1675,35 +1677,87 @@ def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     assert "STATE" not in header_line
 
 
-def test_render_shows_refreshing_indicator(tmp_path):
+def _title_line(groups, *, age: float = 1.0, git_enabled: bool = True, **kwargs) -> str:
+    """The panel's top border line, which carries the dashboard title."""
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=kwargs.pop("selected", None),
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=age,
+            interval=3.0,
+            git_enabled=git_enabled,
+            **kwargs,
+        )
+    )
+    return next(ln for ln in out.splitlines() if "jailbee dashboard" in ln)
+
+
+def test_render_title_has_no_blinking_refresh_indicator(tmp_path):
+    """The old `⟳` marker toggled on every gather, re-centring the whole title."""
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    out_on = _render_text(
+    assert "⟳" not in _title_line([g])
+
+
+def test_render_title_is_left_aligned(tmp_path):
+    """Left-aligned, so a widening title grows rightwards instead of shifting."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    line = _title_line([g])
+    assert line.index("jailbee dashboard") <= 3
+
+
+def test_render_title_refresh_field_is_fixed_width(tmp_path):
+    """A one- and a two-digit age must occupy the same number of columns, or
+    the title jumps every time the age ticks past 9s."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    fresh = _title_line([g], age=1.0)
+    stale = _title_line([g], age=12.0)
+
+    assert "1s/3s" in fresh
+    assert "12s/3s" in stale
+    # Same amount of border fill => the title text is the same width.
+    assert fresh.count("─") == stale.count("─")
+
+
+def test_render_title_clamps_an_absurd_refresh_age(tmp_path):
+    """A stalled gather must not widen the field past two digits."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    assert "99s/3s" in _title_line([g], age=4000.0)
+
+
+def test_render_title_carries_the_no_git_marker(tmp_path):
+    """`--no-git` is constant for the run, so it belongs in the title."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    assert "no-git" in _title_line([g], git_enabled=False)
+    assert "no-git" not in _title_line([g], git_enabled=True)
+
+
+def test_render_subtitle_is_empty_without_a_notice(tmp_path):
+    """The refresh timing moved into the title; the subtitle is notice-only."""
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
         dashboard.render(
             [g],
             selected=None,
-            now=now,
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
-            refreshing=True,
         )
     )
-    out_off = _render_text(
-        dashboard.render(
-            [g],
-            selected=None,
-            now=now,
-            last_refresh_age=1.0,
-            interval=3.0,
-            git_enabled=True,
-            refreshing=False,
-        )
-    )
-    assert "⟳" in out_on
-    assert "⟳" not in out_off
+    assert "refreshed" not in out
 
 
 def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
@@ -1780,6 +1834,205 @@ def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
 
     assert "view-only" in with_notice
     assert "view-only" not in without
+
+
+# --- terminal (xterm/tmux) window title -----------------------------------------
+
+
+def _title_groups(tmp_path):
+    return [
+        dashboard.RepoGroup(
+            "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+        ),
+        dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
+    ]
+
+
+def test_terminal_title_names_the_repo_and_the_selected_container(tmp_path):
+    groups = _title_groups(tmp_path)
+    title = dashboard.terminal_title(groups, dashboard.Row("container", "alpha-one"))
+    assert title == "🐝 alpha/one"
+
+
+def test_terminal_title_on_a_repo_header_names_only_the_repo(tmp_path):
+    groups = _title_groups(tmp_path)
+    assert dashboard.terminal_title(groups, dashboard.Row("repo", "alpha")) == "🐝 alpha"
+
+
+def test_terminal_title_uses_the_full_name_for_an_orphan_container(tmp_path):
+    """An orphan group stripped no prefix, so neither does the title —
+    matching the NAME column."""
+    groups = _title_groups(tmp_path)
+    title = dashboard.terminal_title(groups, dashboard.Row("container", "gamma-x"))
+    assert title == "🐝 gamma/gamma-x"
+
+
+def test_terminal_title_without_a_selection_falls_back_to_the_tool_name(tmp_path):
+    assert dashboard.terminal_title(_title_groups(tmp_path), None) == "🐝 jailbee"
+
+
+def test_terminal_title_of_an_unknown_container_falls_back(tmp_path):
+    groups = _title_groups(tmp_path)
+    assert dashboard.terminal_title(groups, dashboard.Row("container", "ghost")) == "🐝 jailbee"
+
+
+def test_set_terminal_title_writes_one_osc2_sequence():
+    stream = io.StringIO()
+    dashboard.set_terminal_title("🐝 alpha/one", stream=stream)
+    assert stream.getvalue() == "\x1b]2;🐝 alpha/one\x07"
+
+
+def test_terminal_title_scope_pushes_on_entry_and_pops_on_exit():
+    """Without the pop the terminal keeps the bee title after `q`."""
+    stream = io.StringIO()
+    with dashboard.terminal_title_scope(stream):
+        assert stream.getvalue() == "\x1b[22;2t"
+    assert stream.getvalue() == "\x1b[22;2t\x1b[23;2t"
+
+
+def test_terminal_title_scope_pops_even_when_the_body_raises():
+    stream = io.StringIO()
+    with contextlib.suppress(RuntimeError), dashboard.terminal_title_scope(stream):
+        raise RuntimeError("boom")
+    assert stream.getvalue().endswith("\x1b[23;2t")
+
+
+# --- creating a container from the dashboard --------------------------------
+
+
+def _create_groups(tmp_path):
+    return [
+        dashboard.RepoGroup(
+            "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+        ),
+        dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
+    ]
+
+
+def test_new_container_target_from_a_container_row(tmp_path):
+    groups = _create_groups(tmp_path)
+    target = dashboard.new_container_target(groups, dashboard.Row("container", "alpha-one"))
+    assert target is groups[0]
+
+
+def test_new_container_target_from_a_repo_header(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "alpha")) is groups[0]
+
+
+def test_new_container_target_is_none_without_a_selection(tmp_path):
+    assert dashboard.new_container_target(_create_groups(tmp_path), None) is None
+
+
+def test_new_container_target_is_none_for_a_stale_selection(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("container", "ghost")) is None
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "ghost")) is None
+
+
+def test_new_container_target_is_none_for_an_orphan_group(tmp_path):
+    """An orphan group has no repo config to create against — the same reason
+    it gets no action menu."""
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_target(groups, dashboard.Row("container", "gamma-x")) is None
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "gamma")) is None
+
+
+def test_new_container_reject_note_is_none_when_creation_is_possible(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note(groups, dashboard.Row("repo", "alpha")) is None
+
+
+def test_new_container_reject_note_asks_for_a_selection(tmp_path):
+    note = dashboard.new_container_reject_note(_create_groups(tmp_path), None)
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_names_the_orphan_repo(tmp_path):
+    """'Nothing happened' is indistinguishable from broken — the note has to
+    say which repo has no config."""
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note(groups, dashboard.Row("repo", "gamma"))
+    assert note is not None and "gamma" in note
+
+
+def test_new_container_reject_note_says_a_vanished_repo_row_is_gone(tmp_path):
+    """A repo row whose group disappeared between frames must not be told to
+    "select a repo" — one was selected. Same wording the container branch
+    uses for the same cause."""
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note(groups, dashboard.Row("repo", "ghost"))
+    assert note == "'ghost' is no longer listed"
+
+
+def test_new_container_reject_note_phrases_a_vanished_row_the_same_way(tmp_path):
+    """The two row kinds must not describe one situation differently."""
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note(
+        groups, dashboard.Row("repo", "ghost")
+    ) == dashboard.new_container_reject_note(groups, dashboard.Row("container", "ghost"))
+
+
+def test_new_container_reject_note_for_prefix_is_none_when_creation_is_possible(tmp_path):
+    groups = _create_groups(tmp_path)
+    assert dashboard.new_container_reject_note_for_prefix(groups, "alpha") is None
+
+
+def test_new_container_reject_note_for_prefix_asks_for_a_selection_when_empty(tmp_path):
+    note = dashboard.new_container_reject_note_for_prefix(_create_groups(tmp_path), "")
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_for_prefix_asks_for_a_selection_when_unknown(tmp_path):
+    note = dashboard.new_container_reject_note_for_prefix(_create_groups(tmp_path), "ghost")
+    assert note is not None and "elect" in note
+
+
+def test_new_container_reject_note_for_prefix_names_the_orphan_repo(tmp_path):
+    groups = _create_groups(tmp_path)
+    note = dashboard.new_container_reject_note_for_prefix(groups, "gamma")
+    assert note is not None and "gamma" in note
+
+
+def test_new_container_base_default_reads_the_groups_own_repo(mocker, tmp_path):
+    """Cross-repo dashboards: the branch offered must come from the row's
+    repo, not the process's cwd."""
+    get = mocker.patch("jailbee.git.get_current_branch", return_value="config-improvements")
+
+    assert dashboard.new_container_base_default(str(tmp_path)) == "config-improvements"
+    assert get.call_args.args[0] == Path(str(tmp_path))
+
+
+def test_new_container_base_default_is_none_on_a_detached_head(mocker, tmp_path):
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
+    assert dashboard.new_container_base_default(str(tmp_path)) is None
+
+
+def test_new_container_base_default_is_none_without_a_repo_root(mocker):
+    """An orphan group has no root to read; git must not be invoked at all."""
+    get = mocker.patch("jailbee.git.get_current_branch")
+    assert dashboard.new_container_base_default(None) is None
+    get.assert_not_called()
+
+
+def test_new_container_argv_passes_the_base_positionally(tmp_path):
+    """`--from-base` is the golden-image alias, not a git base. The base
+    branch is `jailbee new`'s second positional or it is nothing."""
+    config_path = tmp_path / ".jailbee" / "config.yaml"
+    assert dashboard.new_container_argv(config_path, "dashboard-fixes", "config-improvements") == [
+        "jailbee",
+        "new",
+        "dashboard-fixes",
+        "config-improvements",
+        "--config",
+        str(config_path),
+    ]
+
+
+def test_new_container_argv_carries_no_yes_flag(tmp_path):
+    """--yes would accept a network-widening branch autostart config unseen."""
+    argv = dashboard.new_container_argv(tmp_path / "c.yaml", "b", "base")
+    assert "--yes" not in argv and "-y" not in argv
 
 
 def test_parse_key_maps_arrows_and_letters():
@@ -2143,6 +2396,24 @@ def test_dashboard_command_delegates_to_run(mocker):
     assert kwargs["interval"] == 5.0
     assert kwargs["no_git"] is True
     assert kwargs["cwd_config"] is None
+
+
+def test_tui_command_is_an_alias_for_the_dashboard(mocker):
+    """`jailbee tui` mirrors `jailbee gui`: the TUI frontend, same options."""
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.cli.find_repo_config",
+        side_effect=__import__(
+            "jailbee.config", fromlist=["ConfigNotFoundError"]
+        ).ConfigNotFoundError("none"),
+    )
+    result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
+    assert result.exit_code == 0
+    _, kwargs = run.call_args
+    assert kwargs["interval"] == 5.0
+    assert kwargs["git_interval"] == 7.0
+    assert kwargs["no_git"] is True
 
 
 def test_menu_actions_clear_job_entry_is_first_when_clearable():
@@ -2594,3 +2865,54 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
 
     assert rc == 0
     save.assert_called_once()
+
+
+def test_run_dispatches_n_to_create_container(mocker):
+    """Drive the `n` key through `run()`'s real dispatch (``elif key ==
+    "new": create_container()``), not just `parse_key`/the binding shape in
+    isolation — a typo in that `elif` arm would be caught by nothing else.
+
+    ``_drive_run``'s ``gather_live`` returns no containers, so nothing is
+    selected and ``create_container`` takes its notice path (`new_container_
+    reject_note` returning "Select a repo or a container first") without
+    prompting or spawning anything. `render` is wrapped rather than replaced
+    so `Live` still gets a real renderable; its calls are inspected for the
+    notice text that would otherwise only ever be visible on a real screen.
+    """
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"n"])
+
+    assert rc == 0
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert "Select a repo or a container first" in notices
+
+
+def test_parse_key_maps_n_to_the_new_container_token():
+    assert dashboard.parse_key(b"n") == "new"
+
+
+def test_new_binding_is_not_a_container_verb():
+    """`n` is repo-scoped. A `verb` would put it through `quick_verb`, which
+    gates on a *container's* state and would reject it everywhere."""
+    binding = dashboard.binding_for_token("new")
+    assert binding is not None
+    assert binding.verb is None
+
+
+def test_new_binding_appears_in_the_help_overlay(tmp_path):
+    g = dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+    )
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            overlay="help",
+        )
+    )
+    assert "create a container" in out

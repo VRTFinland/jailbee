@@ -70,8 +70,8 @@ jailbee git pull feat-foo       # merge the container's branch back into its bas
 jailbee destroy feat-foo --force
 ```
 
-`jailbee dashboard` is the live, cross-repo version of `jailbee ls` — an
-auto-refreshing TUI where you navigate containers and press Enter to act
+`jailbee dashboard` (alias: `jailbee tui`) is the live, cross-repo version of
+`jailbee ls` — an auto-refreshing TUI where you navigate containers and press Enter to act
 (shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
 "Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).
@@ -83,6 +83,16 @@ install), and within Cards, between a denser **Compact** style and a
 header). The chosen layout, card style, collapsed repo groups, table column
 widths/order, and refresh cadence / paused state persist across sessions
 (window size/position do not).
+
+Both dashboards can also *create* a container. In the TUI, `n` asks for a
+branch name and a base branch (pre-filled with the branch that repo's host
+checkout is on) and then runs `jailbee new` in the terminal, so its own
+questions — reusing an existing branch, and a branch autostart config that
+widens network access — still get asked. The Qt dashboard does the same from
+`&Container → New…` (Ctrl+N) or a right-click on a repo group header, opening
+a terminal window for the run. Only those two fields are asked; network,
+memory, cpu, mount and autostart come from the repo's config exactly as they
+do for `jailbee new <branch> <base>` on the command line.
 
 ## Creating containers — `jailbee new`
 
@@ -645,8 +655,26 @@ PR or a fork PR falls through to opening a new PR (with a printed reason), and
 `--as` skips the check entirely. Without it the AI-proposed head branch name
 would publish the work under a new branch and open a duplicate PR.
 
+That check is by **branch name** (`gh pr view <container branch>`), so it finds
+nothing when the container's branch is named differently from the PR's head —
+the usual case when the PR was opened from another branch. `--pr N` names the
+PR outright:
+
+```bash
+jailbee pr feat-foo --pr 77     # push this container's commits to PR #77's head
+```
+
+It resolves PR N, refuses a closed/merged or fork one (an explicitly named PR
+must not be silently replaced by a new one), asks the same confirmation, and
+records the same `pr` / `pr_branch` / `pr_adopted` labels — so the hands-off
+guards apply here too. Re-running with the same number is a no-op; a
+*different* number asks before retargeting, which is also how a mistyped
+number gets corrected. `jailbee submodule pr --pr N` does the same for one
+submodule, resolved against the submodule's own repo and remote.
+
 `--as` is rejected (exit 2) on **any** container that already has a PR — its
 head is fixed, so a different branch name would leave the PR untouched.
+`--pr` and `--as` together are a usage error (exit 2).
 
 When `claude.enabled` and `claude.ai_pr_description` are on (both default), a new
 PR's **title and body are written by the container's Claude CLI**, and

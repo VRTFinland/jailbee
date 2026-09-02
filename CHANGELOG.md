@@ -10,6 +10,49 @@
   inference, and hosted web search. Existing grok containers pick this
   up on `jailbee apply`.
 
+### Changed
+
+- **The dashboard title row no longer jumps.** The `⟳` marker that toggled
+  on and off with every gather re-centred the whole title, and the refresh
+  timing lived in the subtitle. The title is now left-aligned and ends in a
+  fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
+  width no longer changes between frames; the subtitle carries a transient
+  notice and nothing else.
+
+### Added
+
+- **The TUI dashboard now names itself in the terminal's title bar.**
+  `🐝 <repo>/<container>` follows the selected row, so a window switcher
+  or a tab strip says which repo you are looking at instead of `bash`. The
+  terminal's own title is pushed on the xterm title stack at launch and
+  restored on quit. The Qt window's title gained the same bee.
+- **`jailbee tui` launches the terminal dashboard**, mirroring `jailbee gui`
+  for the Qt one. `jailbee dashboard` is unchanged.
+- **`jailbee pr --pr N` binds a container to an existing PR by number.**
+  JailBee could already adopt a PR it found for the container's branch, but
+  that lookup is by name — it finds nothing when the container's branch is
+  named differently from the PR's head branch, and the run then opened a
+  *second* PR for the same work. `--pr N` names the PR outright: same
+  confirmation and same `pr` / `pr_branch` / `pr_adopted` labels (so the
+  foreign-head guards stay on), but a closed/merged or fork PR is refused
+  rather than falling through to a new PR — an explicitly named PR is not
+  something to silently replace. Re-running with the same number is a no-op;
+  a different number asks before retargeting, which is also how a mistyped
+  number is corrected. `--pr` with `--as` is a usage error.
+  `jailbee submodule pr --pr N` does the same for one submodule, resolved
+  against the submodule's own repo and remote.
+- **Both dashboards can create containers.** In the TUI, `n` asks for a
+  branch and a base branch and runs `jailbee new` in the handed-over
+  terminal; in the Qt dashboard, `&Container → New…` (Ctrl+N) and the
+  repo-group context menu open a dialog and launch the same command in a
+  terminal window. The base branch is a field, pre-filled with the branch
+  that repo's host checkout is on, because `jailbee new` forks a new branch
+  off `default_branch` when no base is given. Everything else — network,
+  memory, cpu, mount, autostart — comes from the repo's config, as it does
+  for a bare `jailbee new <branch> <base>`. Neither front-end passes
+  `--yes`: `jailbee new` keeps asking about branch reuse and about a branch
+  autostart config that widens network access.
+
 ## 1.2.2 - 2026-08-28
 
 ### Fixed

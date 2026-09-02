@@ -20,10 +20,11 @@ import termios
 import threading
 import time
 import tty
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TextIO
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -61,7 +62,7 @@ from jailbee.lifecycle import (
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from sqlalchemy.engine import Engine
 
@@ -742,6 +743,10 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("action:pr-update", (b"P",), "P", "create or update the PR", "Actions", verb="pr"),
     KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
     KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
+    # Repo-scoped, not container-scoped: no `verb`, so it never reaches
+    # `quick_verb`/`actions_for_container` (those gate on a container's state).
+    # `run`'s dispatch handles it directly, with its own guard.
+    KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions", brief="new"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding(
         "settings",
@@ -924,7 +929,6 @@ def render(
     last_refresh_age: float,
     interval: float,
     git_enabled: bool,
-    refreshing: bool = False,
     enabled: Sequence[str] | None = None,
     overlay: Overlay | None = None,
     notice: str | None = None,
@@ -934,8 +938,9 @@ def render(
 
     One shared table (columns aligned across all repos); each repo is a
     section header row inside it. The selected container is marked with a
-    ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel with a
-    title (summary + refresh indicator) and a subtitle (refresh timing).
+    ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel whose
+    left-aligned title carries the summary, the clock and a fixed-width
+    refresh field; the subtitle carries a transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
     the table so the dashboard it acts on stays on screen. ``notice`` is a
@@ -1014,17 +1019,28 @@ def render(
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
-    mark = "  [yellow]⟳[/]" if refreshing else ""
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
     folded_note = f" · {n_folded} folded" if n_folded else ""
-    title = (
-        f"[bold]jailbee dashboard[/]   {n_repos} repos · {n_ctr} containers"
-        f"{folded_note}   {now:%H:%M:%S}{mark}"
-    )
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
-    note = f"[yellow]{notice}[/yellow]  ·  " if notice else ""
-    subtitle = f"{note}refreshed {last_refresh_age:.0f}s ago · every {interval:.0f}s{git_note}"
-    return Panel(Group(*body), title=title, subtitle=subtitle, box=box.ROUNDED, padding=(0, 1))
+    # Fixed-width refresh field: the age is clamped to two digits and the
+    # interval is constant for the run, so the title never changes width as
+    # the age ticks — a title that resizes drags the whole line with it.
+    age_field = f"{min(last_refresh_age, 99.0):>2.0f}s/{interval:.0f}s"
+    title = (
+        f"[bold]jailbee dashboard[/]  ·  {n_repos} repos · {n_ctr} containers"
+        f"{folded_note}{git_note}  ·  {now:%H:%M:%S}  ·  [dim]↻[/dim] {age_field}"
+    )
+    # Subtitle is notice-only: a transient message on the bottom border cannot
+    # push the table around, and the refresh timing now lives in the title.
+    subtitle = f"[yellow]{notice}[/yellow]" if notice else None
+    return Panel(
+        Group(*body),
+        title=title,
+        title_align="left",
+        subtitle=subtitle,
+        box=box.ROUNDED,
+        padding=(0, 1),
+    )
 
 
 def parse_key(data: bytes) -> str:
@@ -1047,6 +1063,60 @@ def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
             if c.name == name:
                 return g
     return None
+
+
+_TERMINAL_TITLE_FALLBACK = "🐝 jailbee"
+
+
+def terminal_title(groups: list[RepoGroup], selected: Row | None) -> str:
+    """The xterm/tmux window title for the current selection.
+
+    ``🐝 <repo>/<container>`` on a container row, ``🐝 <repo>`` on a repo
+    header, and the bare tool name when nothing is selected or the selected
+    container has vanished under the cursor. An orphan group's container shows
+    its *full* name, matching the NAME column — there is no known repo prefix
+    to have stripped.
+    """
+    if selected is None:
+        return _TERMINAL_TITLE_FALLBACK
+    if selected.kind == "repo":
+        return f"🐝 {selected.key}"
+    group = _find_group(groups, selected.key)
+    if group is None:
+        return _TERMINAL_TITLE_FALLBACK
+    container = next((c for c in group.containers if c.name == selected.key), None)
+    if container is None:
+        return _TERMINAL_TITLE_FALLBACK
+    name = container.name if group.repo_root is None else container.display_name
+    return f"🐝 {group.prefix}/{name}"
+
+
+def set_terminal_title(text: str, *, stream: TextIO) -> None:
+    """Write one OSC 2 window-title sequence.
+
+    Best-effort: a terminal that does not implement it drops the sequence
+    silently, so there is nothing to detect or guard against.
+    """
+    stream.write(f"\x1b]2;{text}\x07")
+    stream.flush()
+
+
+@contextmanager
+def terminal_title_scope(stream: TextIO) -> Iterator[None]:
+    """Save the terminal's own title on entry, restore it on exit.
+
+    Uses the xterm title stack (``CSI 22;2t`` / ``CSI 23;2t``), implemented by
+    xterm and tmux and ignored elsewhere. Without the pop the terminal would
+    keep jailbee's title after the dashboard quits, since there is no way to
+    read the old one back.
+    """
+    stream.write("\x1b[22;2t")
+    stream.flush()
+    try:
+        yield
+    finally:
+        stream.write("\x1b[23;2t")
+        stream.flush()
 
 
 def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tuple[str, str]]:
@@ -1103,6 +1173,105 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     if group is None or group.config_path is not None:
         return None
     return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
+
+
+def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoGroup | None:
+    """The repo a new container would be created in, for the current selection.
+
+    A container row yields its own group; a repo header yields that group.
+    None when nothing is selected, when the selection is stale (the row moved
+    out from under the cursor between frames), or when the group has no config
+    to create against — an orphan group is jailbee-managed containers whose
+    repo config could not be loaded, the same reason it gets no action menu.
+    """
+    if selected is None:
+        return None
+    if selected.kind == "repo":
+        group = next((g for g in groups if g.prefix == selected.key), None)
+    else:
+        group = _find_group(groups, selected.key)
+    if group is None or group.config_path is None:
+        return None
+    return group
+
+
+def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -> str | None:
+    """Why a container cannot be created in the repo named ``prefix``, or None
+    when it can.
+
+    The prefix-keyed counterpart to :func:`new_container_reject_note`, shared
+    by both front-ends so a single sentence is authored per refusal reason
+    rather than each front-end wording it independently (that duplication is
+    what let the Qt dashboard's "No repo selected" dialog fire for an orphan
+    group it actually had a real prefix for). The TUI, which resolves a
+    ``Row`` rather than a bare prefix, delegates to this for its repo-header
+    case. An empty or unrecognised ``prefix`` gets the generic "select a
+    repo" wording; a real group with no loaded config names itself.
+    """
+    group = next((g for g in groups if g.prefix == prefix), None) if prefix else None
+    if group is None:
+        return "Select a repo or a container first"
+    if group.config_path is not None:
+        return None
+    return f"'{group.prefix}' has no jailbee config — nothing to create against"
+
+
+def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
+    """Why a container cannot be created here, or None when it can.
+
+    The counterpart to :func:`view_only_note`: a front-end that silently does
+    nothing is indistinguishable from a broken one, so every refusal has a
+    sentence naming its own cause. Delegates to
+    :func:`new_container_reject_note_for_prefix` once a ``Row`` has been
+    resolved to a prefix, so the "has no jailbee config" sentence is phrased
+    in exactly one place.
+    """
+    if new_container_target(groups, selected) is not None:
+        return None
+    if selected is None:
+        return "Select a repo or a container first"
+    if selected.kind == "repo":
+        if not any(g.prefix == selected.key for g in groups):
+            # Same wording the container branch below uses for the same
+            # cause: the row's group vanished between frames. "Select a
+            # repo" would be false advice — one was selected.
+            return f"'{selected.key}' is no longer listed"
+        return new_container_reject_note_for_prefix(groups, selected.key)
+    group = _find_group(groups, selected.key)
+    if group is None:
+        return f"'{selected.key}' is no longer listed"
+    return new_container_reject_note_for_prefix(groups, group.prefix)
+
+
+def new_container_base_default(repo_root: str | None) -> str | None:
+    """The branch ``repo_root``'s checkout is on, for the base field's default.
+
+    Read from the *group's* repo, not the process's cwd: both dashboards are
+    cross-repo, so the branch offered has to belong to the repo the row is in.
+    None for a null root (an orphan group) or a detached HEAD — an empty field
+    beats a guess, and `jailbee new` would fork off the wrong branch.
+    """
+    if repo_root is None:
+        return None
+    from jailbee import git
+
+    return git.get_current_branch(Path(repo_root))
+
+
+def new_container_argv(config_path: Path, branch: str, base: str) -> list[str]:
+    """``jailbee new <branch> <base> --config <path>``.
+
+    ``base`` is positional, not a flag: `jailbee new`'s second positional is
+    the branch a *new* branch forks off (`lifecycle.resolve_clone_ref`).
+    Omitted, a new branch forks off `cfg.default_branch` instead — which is
+    not what someone picking their current branch means. (`--from-base` is the
+    golden-image alias and has nothing to do with git.)
+
+    No `--yes`: `jailbee new` asks about reusing an existing branch and about
+    the branch-autostart escalation, and both front-ends give it a terminal to
+    ask in rather than answering for the user.
+    """
+    return ["jailbee", "new", branch, base, "--config", str(config_path)]
 
 
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"
@@ -1317,11 +1486,10 @@ def run(
     force = threading.Event()
     shared_groups: list[RepoGroup] = []
     shared_last_full = 0.0
-    shared_refreshing = True  # first frame shows the spinner until the initial gather lands
     worker_error: list[BaseException] = []
 
     def refresher() -> None:
-        nonlocal shared_groups, shared_last_full, shared_refreshing
+        nonlocal shared_groups, shared_last_full
         last_base = 0.0
         last_full = 0.0
         first = True
@@ -1341,8 +1509,6 @@ def run(
             if do_base:
                 if forced:
                     force.clear()
-                with lock:
-                    shared_refreshing = True
                 try:
                     groups = gather_live(incus, cwd_config, with_git=do_git)
                 except Exception as exc:  # surface any gather failure to the main thread
@@ -1358,7 +1524,6 @@ def run(
                 with lock:
                     shared_groups = groups
                     shared_last_full = ts
-                    shared_refreshing = False
                 prev_groups = groups
                 last_base = ts
                 if do_git:
@@ -1366,8 +1531,6 @@ def run(
                 first = False
             # sleep until the next tick, waking early on a forced refresh or stop
             force.wait(timeout=0.1)
-        with lock:
-            shared_refreshing = False
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
@@ -1420,10 +1583,16 @@ def run(
         )
 
     worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
+    last_title: str | None = None
     try:
         tty.setcbreak(fd)
         worker.start()
-        with Live(console=console, screen=True, auto_refresh=False) as live:
+        # Pushed before Live takes the screen and popped after it gives it
+        # back, so the terminal's own title is saved and restored intact.
+        with (
+            terminal_title_scope(sys.stdout),
+            Live(console=console, screen=True, auto_refresh=False) as live,
+        ):
 
             def foreground(fn: Callable[[], int]) -> int:
                 """Hand the terminal to a real ``jailbee`` command, then take it back.
@@ -1434,6 +1603,7 @@ def run(
                 touches the terminal at all, which is what keeps the
                 dashboard on screen behind it.
                 """
+                nonlocal last_title
                 live.stop()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
                 try:
@@ -1441,6 +1611,11 @@ def run(
                 finally:
                     tty.setcbreak(fd)
                     live.start(refresh=True)
+                    # `fn` (jailbee shell / tmux) may have set its own OSC 2
+                    # title; forget the last one we wrote so the next frame's
+                    # title-changed check doesn't compare against it and skip
+                    # the rewrite, leaving the child's title on screen forever.
+                    last_title = None
 
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
@@ -1453,11 +1628,66 @@ def run(
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
                 force.set()  # an action likely changed state — refresh ASAP
 
+            def create_container() -> None:
+                """Ask for a branch and a base, then run `jailbee new` here.
+
+                The terminal is handed over rather than the command dispatched
+                detached, because `jailbee new` asks its own questions:
+                confirming reuse of an existing branch, and the branch-autostart
+                escalation gate. `--background` does not avoid that — the
+                escalation question is asked by the foreground parent before it
+                detaches (`lifecycle._autostart_approved`). The only other
+                option is `--yes`, i.e. accepting a network-widening branch
+                config unseen.
+                """
+                note = new_container_reject_note(groups, selected)
+                if note is not None:
+                    set_notice(note)
+                    return
+                group = new_container_target(groups, selected)
+                assert group is not None  # guaranteed by the note being None
+                config_path = group.config_path
+                assert config_path is not None  # ditto
+                base_default = new_container_base_default(group.repo_root)
+
+                def ask_and_run() -> int:
+                    import typer
+
+                    try:
+                        branch = typer.prompt("New branch").strip()
+                        base = typer.prompt("Base branch", default=base_default or "").strip()
+                    except (typer.Abort, EOFError, KeyboardInterrupt):
+                        # Ctrl-C answers the prompt, not the dashboard: `run`'s
+                        # own KeyboardInterrupt handler would quit outright.
+                        return 0
+                    if not branch or not base:
+                        # Reachable two ways: a whitespace-only branch, and —
+                        # on a host repo in detached HEAD, where `base_default`
+                        # is empty — simply pressing Enter twice. Silently
+                        # returning here used to be indistinguishable from a
+                        # broken keypress, so say what happened before giving
+                        # the terminal back.
+                        empty = "branch" if not branch else "base branch"
+                        console.print(
+                            f"\n[yellow]No container created — {empty} was empty.[/yellow]"
+                        )
+                        _wait_for_return()
+                        return 0
+                    rc = subprocess.run(
+                        new_container_argv(config_path, branch, base), check=False
+                    ).returncode
+                    _wait_for_return()
+                    return rc
+
+                rc = foreground(ask_and_run)
+                if rc != 0:
+                    set_notice(f"'jailbee new' exited {rc}")
+                force.set()  # the new container should appear on the next frame
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
                     last_full = shared_last_full
-                    refreshing = shared_refreshing
                 rows = selectable_rows(groups, folded)
                 if (
                     isinstance(overlay, MenuState)
@@ -1476,6 +1706,12 @@ def run(
                     sel_index = rows.index(selected)
                 if notice is not None and time.monotonic() >= notice_until:
                     notice = None
+                # Only on change: an OSC 2 write on every frame makes some
+                # terminals redraw their title bar continuously.
+                title = terminal_title(groups, selected)
+                if title != last_title:
+                    set_terminal_title(title, stream=sys.stdout)
+                    last_title = title
                 age = (time.monotonic() - last_full) if last_full else 0.0
                 live.update(
                     render(
@@ -1485,7 +1721,6 @@ def run(
                         last_refresh_age=age,
                         interval=interval,
                         git_enabled=git_enabled,
-                        refreshing=refreshing,
                         enabled=enabled,
                         overlay=overlay,
                         notice=notice,
@@ -1569,6 +1804,8 @@ def run(
                         dispatch(container, verb)
                     else:
                         set_notice(quick_reject_note(groups, container, key))
+                elif key == "new":
+                    create_container()
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:

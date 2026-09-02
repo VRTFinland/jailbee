@@ -264,7 +264,7 @@ narrows JSON too). A repo block overrides the global one field by field
 *replaces* rather than extends, and the Qt dashboard's Compact card style
 ignores `fields` entirely.
 
-### `jailbee dashboard`
+### `jailbee dashboard` (alias: `jailbee tui`)
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos; repo headers
@@ -309,6 +309,17 @@ for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
 the first writes to the host's own working tree, and the second's command
 varies with `--follow`.
 
+`n` creates a container in the repo the selected row belongs to. It asks for
+a branch name and a base branch — the base is a separate field because
+`jailbee new` forks a new branch off `default_branch` when its second
+positional is omitted, so leaving it implicit would fork off the wrong branch
+— then hands the terminal to `jailbee new`. It is deliberately not dispatched
+detached and never gets `--yes`: `jailbee new` asks about reusing an existing
+branch and about a branch autostart config that widens network access, and
+that question is asked in the foreground parent even under `--background`. A
+row in an orphan group (no repo config) gets a notice explaining why nothing
+happened.
+
 `F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
 move, `Space` toggles the row under the cursor, `Tab` switches between the
 Fields and Repos tabs, `Esc` closes. Changes apply and persist immediately
@@ -339,6 +350,11 @@ while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
 into a JailBee window with Stop and Copy buttons and the exit code on its status
 line (non-modal, so the dashboard keeps refreshing behind it). Stop is what ends
 a `job log --follow`.
+
+Creating a container joins `shell`/`tmux` as a terminal-window action, for the
+same reason: `jailbee new` has questions to ask and the GUI's detached children
+have no stdin. `&Container → New…` (Ctrl+N) and the repo-group context menu
+open a dialog for the branch and base, then run the command in a terminal.
 
 Its child process has no stdin, so anything the CLI would prompt for is asked
 first in a dialog and passed as a flag — and only where the CLI would ask:
@@ -559,6 +575,15 @@ at `--as`). Adopting records `pr` / `pr_branch` / `pr_adopted` but **not**
 through to opening a new PR with a printed reason; `--as` skips the lookup; the
 lookup itself is best-effort (no `gh`/network → ordinary create path).
 
+That lookup is by **name**, so it finds nothing when the container's branch is
+not named like the PR's head branch. `--pr N` names the PR outright: it resolves
+PR N, refuses a closed/merged or fork one (an explicitly named PR is not
+something to silently replace with a new one), asks the same confirmation, and
+records the same `pr` / `pr_branch` / `pr_adopted` labels — so the hands-off
+rules apply here too. Already bound to N → no `gh` call and no prompt; bound to
+a *different* number → confirms a retarget, which is also how a mistyped number
+is corrected.
+
 Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 
 | Flag | Effect |
@@ -568,6 +593,7 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create, unchanged on update. (`--no-draft` is a hidden back-compat alias for `--ready`.) |
 | `--description` / `-d` | Update only: regenerate the PR description with Claude and apply it. |
 | `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. |
+| `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Skip the confirmations asked on a `jailbee new --pr` container: the one-time adoption, and the `--force` overwrite gate. Required when there is no TTY. |
 | `--no-ai` | Skip AI generation of the title/body; keep the container branch name as-is. |
 | `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
@@ -664,6 +690,7 @@ yet in the superproject's gitlink"), never as an error.
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create. |
 | `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
+| `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Skip confirmations. Required when there is no TTY. Does **not** skip the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |

@@ -1072,3 +1072,126 @@ def test_run_uses_persisted_interval_when_cli_none(mocker):
     _args, kwargs = mock_window_cls.call_args
     assert kwargs["interval"] == 7.0
     assert kwargs["layout"] == "table"
+
+
+def _new_container_groups():
+    return [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]
+
+
+def test_on_new_container_warns_when_the_prefix_is_unknown(mocker):
+    warn = mocker.patch.object(QMessageBox, "warning")
+    # Patching subprocess.Popen also disables subprocess.run (run is built on
+    # top of Popen), so no test in this group may perform other subprocess
+    # work while this patch is active — see the repo history for a prior
+    # incident where this silently broke an unrelated real subprocess.run
+    # call in the same test.
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(_new_container_groups())
+
+    controller.on_new_container("")
+
+    warn.assert_called_once()
+    popen.assert_not_called()
+
+
+def test_on_new_container_warns_for_an_orphan_group(mocker):
+    """No config path, nothing to create against — same rule as the TUI.
+
+    The message must actually name the orphan repo, not the generic "no repo
+    selected" wording — a right-click on the orphan's own header already
+    named a real prefix, so telling the user nothing was selected would be
+    false (the bug FIX 2 in the review closed).
+    """
+    warn = mocker.patch.object(QMessageBox, "warning")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups([RepoGroup("orphan", None, None, [])])
+
+    controller.on_new_container("orphan")
+
+    warn.assert_called_once()
+    message = warn.call_args.args[2]
+    assert "orphan" in message
+    popen.assert_not_called()
+
+
+def test_on_new_container_launches_in_a_terminal(mocker):
+    """`jailbee new` asks its own questions, so it needs a real TTY — a
+    detached Popen would hit the escalation prompt with no stdin."""
+    from jailbee.qtui.prompts import NewContainerAnswers
+
+    mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    dialog = mocker.Mock()
+    dialog.exec.return_value = QDialog.DialogCode.Accepted
+    dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")
+    mocker.patch("jailbee.qtui.app.NewContainerDialog", return_value=dialog)
+    mocker.patch("jailbee.qtui.app.detect_terminal", return_value=mocker.sentinel.term)
+    resolve = mocker.patch(
+        "jailbee.qtui.app.resolve_launch", return_value=["xterm", "-e", "jailbee", "new"]
+    )
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    worker = mocker.Mock()
+    controller = qapp.AppController(mocker.Mock(), worker, interval=3.0)
+    controller.on_groups(_new_container_groups())
+
+    controller.on_new_container("p")
+
+    action = resolve.call_args.args[0]
+    assert action.launch == "terminal"
+    assert action.argv == [
+        "jailbee",
+        "new",
+        "feat-x",
+        "main",
+        "--config",
+        "/repo/.jailbee/config.yaml",
+    ]
+    popen.assert_called_once()
+    worker.force.assert_called_once()
+
+
+def test_on_new_container_does_nothing_when_the_dialog_is_cancelled(mocker):
+    mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    dialog = mocker.Mock()
+    dialog.exec.return_value = QDialog.DialogCode.Rejected
+    mocker.patch("jailbee.qtui.app.NewContainerDialog", return_value=dialog)
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(_new_container_groups())
+
+    controller.on_new_container("p")
+
+    popen.assert_not_called()
+
+
+def test_on_new_container_reports_a_missing_terminal(mocker):
+    from jailbee.qtui.actions import TerminalNotFoundError
+    from jailbee.qtui.prompts import NewContainerAnswers
+
+    mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    dialog = mocker.Mock()
+    dialog.exec.return_value = QDialog.DialogCode.Accepted
+    dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")
+    mocker.patch("jailbee.qtui.app.NewContainerDialog", return_value=dialog)
+    mocker.patch("jailbee.qtui.app.detect_terminal", return_value=None)
+    mocker.patch(
+        "jailbee.qtui.app.resolve_launch", side_effect=TerminalNotFoundError("no terminal")
+    )
+    warn = mocker.patch.object(QMessageBox, "warning")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(_new_container_groups())
+
+    controller.on_new_container("p")
+
+    warn.assert_called_once()
+    popen.assert_not_called()
+
+
+def test_run_wires_new_container_signal(mocker):
+    """A signal nobody connected is a dead menu item."""
+    window = mocker.Mock()
+    controller = mocker.Mock()
+    qapp._wire(window, mocker.Mock(), controller)
+    window.newContainerRequested.connect.assert_called_once_with(controller.on_new_container)

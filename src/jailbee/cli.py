@@ -1778,6 +1778,28 @@ def dashboard_cmd(
     )
 
 
+@app.command("tui")
+def tui_cmd(
+    interval: Annotated[
+        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+    ] = None,
+    git_interval: Annotated[
+        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
+    ] = 10.0,
+    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+) -> None:
+    """Launch the terminal dashboard — alias for `jailbee dashboard`."""
+    raise typer.Exit(
+        _run_dashboard(
+            interval=interval,
+            git_interval=git_interval,
+            no_git=no_git,
+            gui=False,
+            foreground=False,
+        )
+    )
+
+
 @app.command("gui")
 def gui_cmd(
     interval: Annotated[
@@ -4677,6 +4699,18 @@ def pr_cmd(
             ),
         ),
     ] = None,
+    pr_number: Annotated[
+        int | None,
+        typer.Option(
+            "--pr",
+            metavar="N",
+            help=(
+                "Push to existing PR N instead of opening a new one. For a container "
+                "whose branch is not named like the PR's head branch, which is what "
+                "the automatic lookup needs."
+            ),
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -4756,6 +4790,13 @@ def pr_cmd(
         error("--force requires an explicit container name (no interactive picker).")
         raise typer.Exit(2)
 
+    if pr_number is not None and as_name is not None:
+        error(
+            "--pr and --as are mutually exclusive: --pr targets an existing PR's head "
+            "branch, --as names the head of a PR still to be created."
+        )
+        raise typer.Exit(2)
+
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
@@ -4801,14 +4842,29 @@ def pr_cmd(
     if as_name is not None and (is_author or stored_pr_branch or pr_label):
         pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
-    # A `jailbee new --pr` container already has a PR. Publishing its commits to
-    # that PR's head is allowed once the user confirms; the confirmation is
-    # recorded, so from then on this behaves like an authored-PR container.
-    adopted_head = _adopt_pr_head(cfg, incus, full, short, state, yes=yes)
-    if adopted_head is not None:
-        # Use the value in-process rather than re-reading the label: the run
-        # must publish to the right head even if the label write failed.
-        stored_pr_branch = adopted_head
+    if pr_number is not None:
+        # An explicitly named PR settles the head outright, so it replaces both
+        # adoption paths below rather than racing them.
+        record = pr_flow.bind_pr_by_number(
+            scope,
+            state,
+            number=pr_number,
+            record=record,
+            yes=yes,
+            record_context=f"on '{short}'",
+        )
+        is_author = record.author
+        stored_pr_branch = record.head
+        pr_label = str(record.number) if record.number is not None else None
+    else:
+        # A `jailbee new --pr` container already has a PR. Publishing its commits to
+        # that PR's head is allowed once the user confirms; the confirmation is
+        # recorded, so from then on this behaves like an authored-PR container.
+        adopted_head = _adopt_pr_head(cfg, incus, full, short, state, yes=yes)
+        if adopted_head is not None:
+            # Use the value in-process rather than re-reading the label: the run
+            # must publish to the right head even if the label write failed.
+            stored_pr_branch = adopted_head
 
     # The container branch that will be fetched/published (also feeds the
     # existing-PR lookup below, the AI prompt, and the local-branch reconcile).
@@ -5121,6 +5177,17 @@ def submodule_pr_cmd(
     as_name: Annotated[
         str | None, typer.Option("--as", help="Explicit PR head branch name (new PRs only)")
     ] = None,
+    pr_number: Annotated[
+        int | None,
+        typer.Option(
+            "--pr",
+            metavar="N",
+            help=(
+                "Push to the submodule's existing PR N instead of opening a new one "
+                "(for a branch not named like that PR's head branch)."
+            ),
+        ),
+    ] = None,
     force: Annotated[
         bool, typer.Option("--force", help="Force-push with --force-with-lease")
     ] = False,
@@ -5154,6 +5221,13 @@ def submodule_pr_cmd(
     from jailbee import pr as pr_mod
     from jailbee import pr_flow, submodule_pr, sync
     from jailbee.lifecycle import container_repo_dir, short_name
+
+    if pr_number is not None and as_name is not None:
+        error(
+            "--pr and --as are mutually exclusive: --pr targets an existing PR's head "
+            "branch, --as names the head of a PR still to be created."
+        )
+        raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
@@ -5244,6 +5318,19 @@ def submodule_pr_cmd(
     )
     state = submodule_pr.SubmodulePrState(incus, full, subpath)
     record = state.read()
+    if pr_number is not None:
+        # After the transport, not before: for a submodule the host has never
+        # seen, `scope.repo_root` does not exist as a git repo until the
+        # transport clones it — and `resolve_pr` runs `git remote get-url`
+        # there.
+        record = pr_flow.bind_pr_by_number(
+            scope,
+            state,
+            number=pr_number,
+            record=record,
+            yes=yes,
+            record_context=f"for submodule '{subpath}' on '{short}'",
+        )
     pr_label = str(record.number) if record.number is not None else None
 
     if as_name is not None and (record.author or record.head or pr_label):

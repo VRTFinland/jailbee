@@ -3,6 +3,8 @@ import pytest
 pytest.importorskip("PySide6")
 
 from jailbee.qtui.prompts import (
+    NewContainerAnswers,
+    NewContainerDialog,
     PrAnswers,
     PrOptionsDialog,
     PushAnswers,
@@ -133,3 +135,57 @@ def test_pr_dialog_all_checked_maps_to_all_three_flags(qtbot):
 
     assert dlg.answers() == PrAnswers(ready=True, regenerate=True, confirm_foreign=True)
     assert pr_flags(dlg.answers()) == ["--ready", "--description", "--yes"]
+
+
+def test_new_container_dialog_prefills_the_base_with_the_current_branch(qtbot):
+    dialog = NewContainerDialog("alpha", base_default="config-improvements")
+    qtbot.addWidget(dialog)
+    assert dialog.answers() == NewContainerAnswers(branch="", base="config-improvements")
+
+
+def test_new_container_dialog_starts_empty_on_a_detached_head(qtbot):
+    dialog = NewContainerDialog("alpha", base_default=None)
+    qtbot.addWidget(dialog)
+    assert dialog.answers() == NewContainerAnswers(branch="", base="")
+
+
+def test_new_container_dialog_names_the_repo_in_its_title(qtbot):
+    """One window can show several repos; the dialog has to say which."""
+    dialog = NewContainerDialog("alpha", base_default=None)
+    qtbot.addWidget(dialog)
+    assert "alpha" in dialog.windowTitle()
+
+
+def test_new_container_dialog_ok_needs_a_branch(qtbot):
+    dialog = NewContainerDialog("alpha", base_default="main")
+    qtbot.addWidget(dialog)
+    assert dialog.ok_enabled is False
+    dialog._branch.setText("dashboard-fixes")
+    assert dialog.ok_enabled is True
+
+
+def test_new_container_dialog_ok_needs_a_base(qtbot):
+    """An empty base is not "use the default": `jailbee new` would fork off
+    cfg.default_branch instead of the branch the field showed."""
+    dialog = NewContainerDialog("alpha", base_default="main")
+    qtbot.addWidget(dialog)
+    dialog._branch.setText("dashboard-fixes")
+    dialog._base.setText("")
+    assert dialog.ok_enabled is False
+
+
+def test_new_container_dialog_ok_ignores_whitespace_only_input(qtbot):
+    dialog = NewContainerDialog("alpha", base_default="main")
+    qtbot.addWidget(dialog)
+    dialog._branch.setText("   ")
+    assert dialog.ok_enabled is False
+
+
+def test_new_container_dialog_strips_surrounding_whitespace(qtbot):
+    dialog = NewContainerDialog("alpha", base_default=None)
+    qtbot.addWidget(dialog)
+    dialog._branch.setText("  dashboard-fixes  ")
+    dialog._base.setText("  config-improvements ")
+    assert dialog.answers() == NewContainerAnswers(
+        branch="dashboard-fixes", base="config-improvements"
+    )

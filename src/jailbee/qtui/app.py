@@ -18,15 +18,23 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
-from jailbee.dashboard import collect_config_paths, seed_view_state
+from jailbee.dashboard import (
+    collect_config_paths,
+    new_container_argv,
+    new_container_base_default,
+    new_container_reject_note_for_prefix,
+    seed_view_state,
+)
 from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.qtui.actions import (
+    ActionCommand,
     TerminalNotFoundError,
     build_action,
     resolve_launch,
 )
 from jailbee.qtui.output import CommandOutputDialog
 from jailbee.qtui.prompts import (
+    NewContainerDialog,
     PrOptionsDialog,
     PushOptionsDialog,
     confirm_text,
@@ -406,6 +414,56 @@ class AppController(QObject):
             return
         self._worker.force()  # an action likely changed state — refresh ASAP
 
+    @Slot(str)
+    def on_new_container(self, prefix: str) -> None:
+        """Collect a branch and a base, then launch `jailbee new` in a terminal.
+
+        A terminal, not a detached `Popen`: `jailbee new` asks about reusing an
+        existing branch and about the branch-autostart escalation, and it asks
+        in the foreground parent even under `--background`
+        (`lifecycle._autostart_approved`). The alternative is `--yes`, which
+        accepts a network-widening branch config unseen — so this is the one
+        place the GUI deliberately spends a terminal window on a non-attach
+        verb.
+        """
+        note = new_container_reject_note_for_prefix(self._latest, prefix)
+        if note is not None:
+            # Same wording the TUI uses for the same state (dashboard.py's
+            # `new_container_reject_note`) — an orphan group's real prefix
+            # must not be reported as "no repo selected", which used to be
+            # this dialog's one hardcoded message regardless of cause.
+            QMessageBox.warning(self._window, "No repo selected", note)
+            return
+        group = next((g for g in self._latest if g.prefix == prefix), None)
+        # `note` being None guarantees a matching group with a loaded config;
+        # mypy --strict doesn't narrow that through the helper call, so this
+        # spells it out again where the type checker can see it.
+        assert group is not None and group.config_path is not None
+        dialog = NewContainerDialog(
+            group.prefix,
+            base_default=new_container_base_default(group.repo_root),
+            parent=self._window,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        answers = dialog.answers()
+        action = ActionCommand(
+            argv=new_container_argv(group.config_path, answers.branch, answers.base),
+            launch="terminal",
+            confirm=False,
+        )
+        try:
+            argv = resolve_launch(action, detect_terminal(env=_env(), which=shutil.which))
+        except TerminalNotFoundError as exc:
+            QMessageBox.warning(self._window, "No terminal", str(exc))
+            return
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+        except OSError as exc:
+            QMessageBox.warning(self._window, "Launch failed", str(exc))
+            return
+        self._worker.force()
+
     def _open_output(self, argv: list[str], title: str) -> None:
         """Show a command's output in its own window.
 
@@ -442,6 +500,7 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
     worker.groupsReady.connect(controller.on_groups)
     worker.failed.connect(controller.on_failed)
     window.actionRequested.connect(controller.on_action)
+    window.newContainerRequested.connect(controller.on_new_container)
     window.refreshRequested.connect(controller.on_refresh_requested)
     window.intervalChanged.connect(controller.on_interval_changed)
     window.autoRefreshDisabled.connect(controller.on_auto_refresh_disabled)

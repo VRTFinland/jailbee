@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 # Custom role storing the full container name on a tree item.
 _NAME_ROLE = int(Qt.ItemDataRole.UserRole)
 
+# Group rows carry their repo prefix; container rows carry their name. Two
+# roles rather than one, so `_selected_name` cannot mistake a group header for
+# a container (the tree has no other way to tell the two apart).
+_PREFIX_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
 # Built from the framework-free STATE_COLORS (shared with the card view).
 _STATE_COLORS = {state: QColor(hex_) for state, hex_ in STATE_COLORS.items()}
 
@@ -78,6 +83,7 @@ class MainWindow(QMainWindow):
     layoutChanged = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: "table" | "cards"
     cardStyleChanged = Signal(str)  # noqa: N815 - Qt signal naming; payload: "compact" | "grid"
     columnsChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the enabled column set changed
+    newContainerRequested = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: repo prefix, "" when nothing is selected
 
     def __init__(
         self,
@@ -99,7 +105,7 @@ class MainWindow(QMainWindow):
         self._enabled_columns: tuple[str, ...] = (
             _filtered_columns(enabled_columns) if enabled_columns is not None else default_columns()
         )
-        self.setWindowTitle("jailbee dashboard")
+        self.setWindowTitle("🐝 JailBee dashboard")
         self.resize(1000, 640)
         self.setMinimumSize(360, 420)  # narrow-friendly: card view needs little width
 
@@ -123,6 +129,7 @@ class MainWindow(QMainWindow):
         self._build_columns_menu()
         self._build_card_style_menu(self._card_style)
         self._build_refresh_menu(interval, paused=paused)
+        self._build_container_menu()
 
     def _build_view_menu(self, layout: str) -> None:
         menu = self.menuBar().addMenu("&View")
@@ -271,12 +278,76 @@ class MainWindow(QMainWindow):
         # once this method returns.
         self._refresh_action_group = group
 
+    def _build_container_menu(self) -> None:
+        """The one repo-scoped menu: creating a container, not acting on one.
+
+        Exposed as ``self.container_menu`` for the same reason
+        ``_build_refresh_menu`` exposes its own — a submenu fetched through
+        ``menuBar().actions()`` can look deleted once the QAction wrapper it
+        came from is collected.
+        """
+        menu = self.menuBar().addMenu("&Container")
+        self.container_menu = menu
+        self.new_container_action = menu.addAction("&New…")
+        self.new_container_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.new_container_action.triggered.connect(
+            lambda: self.newContainerRequested.emit(self._selected_prefix() or "")
+        )
+
     def _selected_name(self) -> str | None:
         item = self.tree.currentItem()
         if item is None:
             return None
         name = item.data(0, _NAME_ROLE)
         return str(name) if name else None
+
+    def _selected_prefix(self) -> str | None:
+        """The repo prefix behind whatever is selected right now.
+
+        The table and the card view keep independent, private selections —
+        ``CardView`` never writes into the tree's ``_PREFIX_ROLE`` data, so a
+        card click is invisible to a tree walk. Reading only the tree left
+        Ctrl+N dead in the default cards layout: a user could click a card,
+        press Ctrl+N, and get an unsatisfiable "select a repo" prompt with no
+        way to satisfy it in that view. So this consults whichever view is
+        actually on screen (``self._layout``) rather than always the tree:
+        the card's own group for cards mode, the current row (its own prefix
+        for a group header, its parent's for a container row) for table mode.
+
+        When that view-specific lookup finds nothing selected at all (not a
+        stale selection — something *was* highlighted but no longer resolves,
+        which stays None), a single-repo user is still rescued: if exactly
+        one configured group exists, its prefix is returned so that user can
+        never hit an unsatisfiable prompt just because nothing happens to be
+        highlighted yet. With two or more configured groups and no selection,
+        this returns None, same as before.
+        """
+        if self._layout == "cards":
+            name = self.card_view.selected_name()
+            if name is None:
+                return self._sole_configured_prefix()
+            for g in self._groups:
+                if any(c.name == name for c in g.containers):
+                    return g.prefix
+            return None  # stale: the selected card's container is gone
+        item = self.tree.currentItem()
+        if item is None:
+            return self._sole_configured_prefix()
+        while item is not None:
+            prefix = item.data(0, _PREFIX_ROLE)
+            if prefix:
+                return str(prefix)
+            item = item.parent()
+        return None
+
+    def _sole_configured_prefix(self) -> str | None:
+        """The one configured group's prefix, if there's exactly one.
+
+        The single-repo fallback used by ``_selected_prefix`` when nothing is
+        selected in the active view.
+        """
+        configured = [g for g in self._groups if g.config_path is not None]
+        return configured[0].prefix if len(configured) == 1 else None
 
     def set_groups(
         self,
@@ -316,6 +387,7 @@ class MainWindow(QMainWindow):
             label, _is_orphan = group_header(g)
             group_item = QTreeWidgetItem([label])
             group_item.setFirstColumnSpanned(True)
+            group_item.setData(0, _PREFIX_ROLE, g.prefix)
             self.tree.addTopLevelItem(group_item)
             group_item.setExpanded(True)
             for c in g.containers:
@@ -344,6 +416,19 @@ class MainWindow(QMainWindow):
     def _on_context_menu(self, pos: object) -> None:
         name = self._selected_name()
         if name is None:
+            # A group header: the only thing it can offer is creating a
+            # container in that repo.
+            prefix = self._selected_prefix()
+            if prefix is None:
+                return
+            group_menu = QMenu(self)
+            act = group_menu.addAction("New container…")
+            act.triggered.connect(
+                lambda _checked=False, p=prefix: self.newContainerRequested.emit(p)
+            )
+            # Same stub gap as below: pos is a QPoint at runtime, but PySide6's
+            # overload set for the signal's `object` parameter doesn't narrow to it.
+            group_menu.exec(self.tree.viewport().mapToGlobal(pos))  # type: ignore[call-overload]
             return
         actions = self._actions_for(name)
         menu = QMenu(self)
