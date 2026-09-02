@@ -1793,6 +1793,18 @@ unreachable through this repo — e.g. one only a container override uses,
 with no repo permanently assigned to it via `claude_credentials` — since
 without the flag those commands only ever see the repo's own group.
 
+**A `-g` command does not touch this repo's own config home.** A repo is a
+member of the holder its `claude_credentials` entry resolves to, and of no
+other: its `~/.claude` records the account of *that* group's login, so a
+command aimed elsewhere neither reads it (it would name the wrong account)
+nor rewrites it (it would destroy the name of the login this repo does use).
+The account of a login in such a holder is known from the note JailBee keeps
+beside a login it activated there itself; one that arrived by `/login` in a
+group no repo resolves to has no record to read, and `jailbee claude park`
+stores it as `unknown-<timestamp>` — a working login whose account name is
+missing, recoverable by activating it, running `claude` once in a container of
+that holder, and parking it again.
+
 ## `--config / -c` override
 
 `jailbee -c /path/to/config.yaml <subcommand>` bypasses discovery and uses

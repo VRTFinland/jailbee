@@ -827,6 +827,21 @@ the pool — there is no `add`, because only a browser login creates a credentia
 `-g/--group <name>` parks that group's live login instead of the repo's own,
 the same escape hatch `claude ls`/`claude use` offer above.
 
+**How the parked file gets its name, with and without `-g`.** JailBee names it
+after the account, read from `oauthAccount` in a member repo's `~/.claude` —
+and with `-g <group>` **this repo is not a member of that holder**: its own
+`~/.claude` describes the login of the group it really uses, so it is neither
+read nor written by a `-g` command (which is why `-g` cannot disturb the name
+or the login of the group this repo does use). What names the file instead is
+the note JailBee keeps beside a login it activated itself, so a
+`claude use -g X` followed by a `claude park -g X` keeps the account name.
+
+A login that arrived by `/login` in a container of a group no repo resolves to
+has neither source, and is parked as `unknown-<timestamp>`. The login is
+intact — only the record of which account it holds is missing. To give it its
+real name: activate it (`jailbee claude use`), let one container run `claude`
+once so a config home records the account, then park it again.
+
 ### `jailbee claude rm [<email|slot>] [--yes]`
 
 Delete a stored login permanently; refuses the live one. Omit the account to
