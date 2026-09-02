@@ -7710,12 +7710,16 @@ def claude_ls_cmd(
         info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
         # Best-effort: this hint is a discoverability nicety, not core to `ls`,
         # so an unreachable Incus daemon degrades it to silence rather than
-        # failing a command that has already done its real job above.
-        try:
-            deviating = claude_groups.deviating_containers(cfg, Incus())
-        except (IncusError, OSError):
-            deviating = []
-        if deviating and group is None:
+        # failing a command that has already done its real job above. Only
+        # relevant when `group` is None (the repo's own group), so skip the
+        # real Incus call entirely otherwise rather than discarding its result.
+        deviating: list[tuple[str, str | None]] = []
+        if group is None:
+            try:
+                deviating = claude_groups.deviating_containers(cfg, Incus())
+            except (IncusError, OSError):
+                deviating = []
+        if deviating:
             from jailbee.tui import hint
 
             # stderr, so a `--format json` consumer is unaffected and a
@@ -8075,7 +8079,7 @@ def claude_group_set_cmd(
     override from `jailbee claude group use`. Use `jailbee claude group
     unset` to fall back to the host-wide default instead.
     """
-    from jailbee import claude_groups
+    from jailbee import claude_groups, claude_pool
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -8099,6 +8103,11 @@ def claude_group_set_cmd(
         error(f"Could not write the global config: {e}")
         raise typer.Exit(2) from e
 
+    # The repo's `oauthAccount` now describes an account this repo may no
+    # longer use. Left in place it would make the repo look authoritative
+    # for the wrong account — see the spec's §7.2.
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
     where = "no credential group" if value is None else f"group `{value}`"
     success(f"This repo now uses {where}.")
     info("Restart Claude in this repo's containers to pick up the new login.")
@@ -8116,7 +8125,7 @@ def claude_group_unset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
-    from jailbee import claude_groups, config_writer
+    from jailbee import claude_groups, claude_pool, config_writer
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -8130,6 +8139,12 @@ def claude_group_unset_cmd(
         raise typer.Exit(2) from e
 
     cfg = _load_or_exit(config)
+
+    # The repo's `oauthAccount` now describes an account this repo may no
+    # longer use. Left in place it would make the repo look authoritative
+    # for the wrong account — see the spec's §7.2.
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
     repo = claude_groups.repo_group(cfg)
     where = "no credential group" if repo is None else f"group `{repo}`"
     success(f"Entry removed. This repo now follows the host default: {where}.")

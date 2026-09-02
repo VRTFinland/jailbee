@@ -118,6 +118,36 @@ def test_use_invalidates_the_repos_recorded_account(group_env, mocker):
     invalidate.assert_called_once()
 
 
+def test_set_invalidates_the_repos_recorded_account(group_env, mocker, tmp_path):
+    """§7.2: a stale `oauthAccount` would make the repo authoritative for the wrong account."""
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+
+    assert result.exit_code == 0
+    invalidate.assert_called_once()
+
+
+def test_unset_invalidates_the_repos_recorded_account(group_env, mocker, tmp_path):
+    """§7.2: same rule as `set` — the recorded account can go stale either way."""
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "unset"])
+
+    assert result.exit_code == 0
+    invalidate.assert_called_once()
+
+
 def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
     global_yaml = tmp_path / "global.yaml"
     global_yaml.write_text("claude_credentials:\n  group: work\n")

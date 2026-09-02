@@ -745,11 +745,16 @@ above), with no separate apply step needed.
 
 ## Claude accounts
 
-### `jailbee claude ls [-o json] [--fields account,org,state]`
+### `jailbee claude ls [-o json] [--fields account,org,state] [-g/--group <name>]`
 
 Every stored login on the host, the one live for this repo's holder first. The
 store is host-wide, not per group: a login parked from one credential group can
 be activated into another.
+
+`-g/--group <name>` points the command at that group's holder instead of
+the repo's own — the only way to reach a group that no repo permanently
+uses (e.g. one only a container override, see `jailbee claude group use`
+below, ever puts to use).
 
 The table's `ACCOUNT` column shows the **email** and `ORG` the truncated
 organization, because the org is parsed back out of the slot name and printing
@@ -767,7 +772,7 @@ a login that leaked between groups. The title says "on this host" for that
 reason, and the group, the holder directory and the member repos are stated
 under the table, where they describe the live row.
 
-### `jailbee claude use [<email|slot>]`
+### `jailbee claude use [<email|slot>] [-g/--group <name>]`
 
 Park the live login and activate a stored one. Holder-wide — every repo sharing
 the credential group moves with it. Pass the bare email unless two stored
@@ -776,6 +781,9 @@ accounts share it, in which case the error names the full slot names
 adopts the new credential on its next turn; only the account name in `/status`
 can lag until it restarts.
 
+`-g/--group <name>` acts on that group's holder instead of the repo's own,
+the same escape hatch `claude ls` offers above.
+
 **Omit the account entirely to pick from an arrow-key menu** of the stored
 logins — the same affordance `jailbee shell`/`jailbee tmux` offer for
 containers. The live login is never a candidate (`use` would refuse it), so a
@@ -783,11 +791,14 @@ holder whose only login is the live one reports that there is nothing to switch
 to rather than opening an empty menu. Without a TTY the menu is impossible, so
 the error names the candidate references for a script to pass explicitly.
 
-### `jailbee claude park`
+### `jailbee claude park [-g/--group <name>]`
 
 Store the live login and leave the holder empty, so the next `claude` in a
 container of this holder prompts `/login`. This is how a second account enters
 the pool — there is no `add`, because only a browser login creates a credential.
+
+`-g/--group <name>` parks that group's live login instead of the repo's own,
+the same escape hatch `claude ls`/`claude use` offer above.
 
 ### `jailbee claude rm [<email|slot>] [--yes]`
 

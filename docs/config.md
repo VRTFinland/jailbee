@@ -1780,6 +1780,13 @@ teammate** — there is nothing to `git add`. Restarting Claude in the
 affected container is still required to pick up the new login either way;
 none of these commands touch a running session.
 
+`jailbee claude ls`, `jailbee claude use` and `jailbee claude park` all take
+a `-g/--group <name>` flag that points the command at that group's holder
+instead of the repo's own. This matters when a group is otherwise
+unreachable through this repo — e.g. one only a container override uses,
+with no repo permanently assigned to it via `claude_credentials` — since
+without the flag those commands only ever see the repo's own group.
+
 ## `--config / -c` override
 
 `jailbee -c /path/to/config.yaml <subcommand>` bypasses discovery and uses

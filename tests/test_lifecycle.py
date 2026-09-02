@@ -6981,12 +6981,67 @@ def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mock
         "jailbee.egress_scope.drop_container_acl",
         side_effect=IncusError("network acl delete failed"),
     )
-    mocker.patch("jailbee.lifecycle.warn")
+    warn = mocker.patch("jailbee.lifecycle.warn")
 
     # Must not raise.
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
     incus.delete.assert_called_once()
+    warn.assert_called_once()
+
+
+def test_destroy_container_invalidates_the_recorded_account_for_an_override(
+    make_cfg, tmp_path, mocker
+):
+    """Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    and the destroy path." A container that had a claude_group override may
+    have been using an account the repo's shared config home does not
+    record; destroying it must invalidate that stale `oauthAccount`.
+    """
+    from jailbee import claude_pool
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {"user.jailbee.claude_group": "personal"},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_called_once_with(claude_pool.config_home(cfg))
+
+
+def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_path, mocker):
+    """No override means the repo's recorded account was never at risk of
+    going stale from this container, so destroy must not pay the cost."""
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_not_called()
 
 
 def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker):

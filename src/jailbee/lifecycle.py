@@ -1572,10 +1572,22 @@ def destroy_container(
     if not incus.exists(name):
         raise ValueError(f"Container '{name}' does not exist")
 
+    from jailbee import claude_groups
+
     state = "Stopped"
+    had_claude_override = False
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
+            # Read while the container still exists: the override lives in a
+            # label on the instance itself, gone once it is deleted. Any
+            # label at all — a named group or the explicit "no group"
+            # marker — counts; only its presence matters here, not its
+            # validity (spec §7.2), so this reads the raw config directly
+            # rather than through `claude_groups.container_override` (which
+            # also validates and would need a second `incus.config_get`
+            # round trip for data already in hand).
+            had_claude_override = bool((raw.get("config") or {}).get(claude_groups.GROUP_LABEL))
             break
 
     if state == "Running":
@@ -1631,6 +1643,17 @@ def destroy_container(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    # The container had a temporary credential-group override, so the
+    # repo's shared config home may still record `oauthAccount` for a login
+    # this container was actually using instead. Gated on the override so a
+    # repo that never touches `jailbee claude group` pays nothing extra.
+    # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    # and the destroy path."
+    if had_claude_override:
+        from jailbee import claude_pool
+
+        claude_pool.invalidate_identity(claude_pool.config_home(cfg))
 
     # After the instance is gone, never before: Incus refuses to delete an
     # ACL still referenced by an instance NIC. The label died with the
