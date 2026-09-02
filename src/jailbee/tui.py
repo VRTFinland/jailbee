@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     from rich.status import Status
 
     from jailbee.claude_pool import Slot
+    from jailbee.config import Config
     from jailbee.destroy_guard import RiskSummary
+    from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
     from jailbee.sync import BridgePlan, RefSummary
 
@@ -702,6 +704,27 @@ def pick_claude_account(slots: Sequence[Slot], *, message: str) -> str | None:
     if result is None:
         return None
     return str(result)
+
+
+def pick_container_for_group(cfg: Config, incus: Incus, names: Sequence[str]) -> str | None:
+    """Arrow-key picker over this repo's containers. Returns the name.
+
+    Each row carries the container's current credential group, because
+    that is the fact the user is about to change. Returns None if the user
+    cancels; the caller does the TTY check.
+    """
+    import questionary
+
+    from jailbee import claude_groups
+
+    width = max(len(n) for n in names)
+    choices = []
+    for name in names:
+        group = claude_groups.effective_group(cfg, incus, name)
+        label = "no group" if group is None else group
+        choices.append(questionary.Choice(title=f"{name:<{width}}  {label}", value=name))
+    result = questionary.select("Change the group of:", choices=choices).ask()
+    return None if result is None else str(result)
 
 
 _PLAN_HEADINGS = {
