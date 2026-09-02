@@ -823,6 +823,15 @@ def new_cmd(
             ),
         ),
     ] = False,
+    claude_group: Annotated[
+        str | None,
+        typer.Option(
+            "--claude-group",
+            help="Claude credential group for this container only, for its "
+            "lifetime. Use `none` for no group.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option(
@@ -1150,6 +1159,20 @@ def new_cmd(
                 f"'jailbee registry up && jailbee apply'."
             )
 
+    resolved_claude_group: str | None = None
+    if claude_group is not None:
+        from jailbee import claude_groups
+
+        try:
+            resolved_claude_group = (
+                claude_groups.NO_GROUP
+                if claude_group == "none"
+                else claude_groups.validate_group_name(claude_group)
+            )
+        except claude_groups.GroupError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+
     if mount:
         full_name = name or f"{cfg.container_prefix}-{container_branch}"
         opts = NewContainerOptions(
@@ -1166,6 +1189,7 @@ def new_cmd(
             base=None,
             mount=True,
             assume_yes=yes,
+            claude_group=resolved_claude_group,
         )
     else:
         opts = NewContainerOptions(
@@ -1187,6 +1211,7 @@ def new_cmd(
             untrusted_head=pr is not None and pr_info.is_cross_repository,
             clone_commit=pr_clone_commit,
             assume_yes=yes,
+            claude_group=resolved_claude_group,
         )
 
     # Register this repo with the refresh timer and resolve the pool

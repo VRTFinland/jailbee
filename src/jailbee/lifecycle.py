@@ -544,6 +544,12 @@ class NewContainerOptions:
     # newer commit than the one the operator was shown. Mirror in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     autofetch_done: bool = False
+    # Credential group this container joins for its lifetime
+    # (`jailbee new --claude-group`). None means it inherits the repo's
+    # group. Applied before `incus start` so Claude finds the right
+    # credential on its first run. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    claude_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1005,6 +1011,20 @@ def new_container(
                 "source": str(cfg.repo_root),
                 "path": repo_dir,
             },
+        )
+
+    # Before `start`: the credential mount and its env key must be in place
+    # when autostart first runs `claude`, or the container's first session
+    # authenticates against the repo's group and only picks up the override
+    # after a restart.
+    if opts.claude_group is not None:
+        from jailbee import claude_groups
+
+        claude_groups.set_container_group(
+            cfg,
+            incus,
+            name,
+            None if opts.claude_group == claude_groups.NO_GROUP else opts.claude_group,
         )
 
     incus.start(name)

@@ -226,6 +226,19 @@ def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
     return [s.name for s in parked_slots() if s.name.startswith(incomplete)]
 
 
+@_never_raises
+def complete_claude_group(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a credential group name from the ones present on this host."""
+    from jailbee.claude_groups import group_dir
+
+    root = group_dir("x").parent
+    try:
+        names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
+    except OSError:
+        names = []
+    return [n for n in [*names, "none"] if n.startswith(incomplete)]
+
+
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:
     """Map a user-typed container name to its full Incus name, or None.
 

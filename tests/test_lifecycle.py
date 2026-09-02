@@ -7045,3 +7045,63 @@ def test_ls_hides_the_group_column_when_nothing_deviates():
         )
     ]
     assert field.show_if(deviating) is True
+
+
+def test_new_container_applies_the_group_before_start(tmp_path, mocker):
+    """Claude must find the right credential on its first run, not after a restart."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    calls: list[str] = []
+    incus.start.side_effect = lambda *a, **k: calls.append("start")
+    set_group = mocker.patch(
+        "jailbee.claude_groups.set_container_group",
+        side_effect=lambda *a, **k: calls.append("set_group"),
+    )
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+            claude_group="personal",
+        ),
+    )
+
+    set_group.assert_called_once()
+    assert set_group.call_args.args[3] == "personal"
+    assert calls == ["set_group", "start"]
+
+
+def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+        ),
+    )
+
+    set_group.assert_not_called()

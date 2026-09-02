@@ -491,3 +491,45 @@ def test_job_to_opts_tolerates_a_job_file_without_assume_yes():
     # False, so that worker does its own fetch: the gie that wrote this job file
     # had no foreground pre-flight to do it.
     assert restored.autofetch_done is False
+
+
+def test_claude_group_survives_the_job_round_trip():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+        claude_group="personal",
+    )
+    job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    back, _, _ = job_to_opts(job)
+    assert back.claude_group == "personal"
+
+
+def test_claude_group_defaults_to_none_for_an_older_job_file():
+    """An in-flight background `jailbee new` must survive an upgrade."""
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    job = op_to_job(
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="4GiB",
+            cpu=2,
+            from_base="base",
+            clone=True,
+        ),
+        container_name="myrepo-feat-x",
+        log_path="/tmp/l",
+    )
+    del job["opts"]["claude_group"]
+    back, _, _ = job_to_opts(job)
+    assert back.claude_group is None

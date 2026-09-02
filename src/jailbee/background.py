@@ -277,6 +277,7 @@ def op_to_job(
             "assume_yes": opts.assume_yes,
             "approved_autostart_ref": opts.approved_autostart_ref,
             "autofetch_done": opts.autofetch_done,
+            "claude_group": opts.claude_group,
         },
     }
 
@@ -313,5 +314,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # False for an older job file: its worker then does its own fetch, as
         # that jailbee version's foreground never did one.
         autofetch_done=o.get("autofetch_done", False),
+        # `.get`: a job file written by an older jailbee predates this key.
+        claude_group=o.get("claude_group"),
     )
     return opts, job["container_name"], job["log_path"]
