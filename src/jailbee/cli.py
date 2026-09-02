@@ -7794,7 +7794,15 @@ def claude_ls_cmd(
             else f"{cfg.container_prefix} (no group)"
         )
         info(f"Live in {where} → {display_path(claude_pool.holder_dir(cfg))}")
-        info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        # No member repo is the ordinary state of a group reachable only as a
+        # container override (`-g` on a group no repo resolves to): the holder
+        # is real and holds a login, but no repo's `.claude.json` describes it.
+        info(
+            f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}"
+            if found
+            else "No repo resolves to this holder — only containers moved here "
+            "with `jailbee claude group use` read it."
+        )
         # Best-effort: this hint is a discoverability nicety, not core to `ls`,
         # so an unreachable Incus daemon degrades it to silence rather than
         # failing a command that has already done its real job above. Only

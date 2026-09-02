@@ -314,3 +314,104 @@ def test_claude_ls_without_the_flag_uses_the_repo_group(group_env, mocker):
     mocker.patch("jailbee.claude_pool.members", return_value=([], []))
     runner.invoke(app, ["claude", "ls"])
     assert captured["holder"] == claude_groups.group_dir("work")
+
+
+@pytest.fixture
+def holder_view_env(mocker, tmp_path, monkeypatch):
+    """A repo in group `work`, registered, with one container that inherits.
+
+    Deliberately *not* `group_env`: every container inherits, so the repo is
+    authoritative for its own group — the state in which a poisoned
+    `oauthAccount` turns into a wrongly named park.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from tests.conftest import make_cfg
+
+    from jailbee import claude_groups
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    cfg = cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "work"}}),
+    )
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-a", "status": "Running", "profiles": [], "config": {}, "state": None},
+    ]
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.claude_pool._registered_repos", return_value=[("myrepo", cfg.repo_root)])
+    return cfg
+
+
+def _write_json(path, payload):
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_park_on_another_group_leaves_this_repos_recorded_account_alone(
+    holder_view_env, mocker
+):
+    """`-g` acts on a holder this repo is not a member of, so the repo's own
+    `oauthAccount` — which describes *its* group's login — must not be touched.
+    Clearing it there is how a later `jailbee claude park` loses its name."""
+    import json
+
+    from jailbee import claude_groups, claude_pool
+
+    cfg = holder_view_env
+    home = claude_pool.config_home(cfg)
+    _write_json(home / ".claude.json", {"oauthAccount": {"emailAddress": "work@example.com"}})
+    _write_json(
+        claude_groups.group_dir("personal") / ".credentials.json",
+        {"claudeAiOauth": {"refreshToken": "rt-personal"}},
+    )
+
+    result = runner.invoke(app, ["claude", "park", "-g", "personal"])
+
+    assert result.exit_code == 0
+    assert "myrepo" not in result.output.replace("myrepo-a", "")
+    assert json.loads((home / ".claude.json").read_text())["oauthAccount"] == {
+        "emailAddress": "work@example.com"
+    }
+
+
+def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env):
+    """The severe half: `use -g` wrote the other group's account into this
+    repo's config home, and the next `park` of the repo's *own* holder then
+    named that file after the wrong account — name and record agreeing, both
+    wrong, which is the failure the authoritative-member rule exists to
+    prevent."""
+    import json
+
+    from jailbee import claude_groups, claude_pool
+
+    cfg = holder_view_env
+    home = claude_pool.config_home(cfg)
+    _write_json(home / ".claude.json", {"oauthAccount": {"emailAddress": "work@example.com"}})
+    _write_json(
+        claude_pool.store_dir() / "personal@example.com.json",
+        {
+            "claudeAiOauth": {"refreshToken": "rt-personal"},
+            claude_pool.ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
+        },
+    )
+    _write_json(
+        claude_groups.group_dir("work") / ".credentials.json",
+        {"claudeAiOauth": {"refreshToken": "rt-work"}},
+    )
+    claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
+
+    assert runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code == 0
+    assert runner.invoke(app, ["claude", "park"]).exit_code == 0
+
+    stored = {
+        p.name: json.loads(p.read_text())["claudeAiOauth"]["refreshToken"]
+        for p in claude_pool.store_dir().glob("*.json")
+    }
+    assert stored.get("personal@example.com.json") != "rt-work"
+    assert "rt-work" in stored.values()

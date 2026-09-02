@@ -647,12 +647,24 @@ def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
 
 
 def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
-    """Every repo sharing this repo's holder, plus the ones we could not read.
+    """Every repo sharing `cfg`'s holder, plus the ones we could not read.
 
     A repo that shares nothing is its own only member, with no registry read.
     An unreadable member is *named*, not skipped: skipping is right for a
     read-only listing (`dashboard.py:240`), but here it would leave that
     repo's `oauthAccount` stale and silently naming the wrong account.
+
+    **The calling repo is a member only when it resolves to this holder's
+    group**, which is not a given: `cli._holder_view` hands us a `Config`
+    pointed at *another* group, so that `jailbee claude use -g` can fill a
+    holder no repo lives in. The config home in that view is still the calling
+    repo's own, and it describes the login of the group that repo really uses —
+    so counting it here would read one group's account for another
+    (`unknown-<timestamp>` at best, the wrong name at worst) and, on the write
+    side, destroy the naming evidence for the group the repo actually uses.
+    Membership is decided by `_resolves_to` rather than by a registry row: a
+    repo that was never registered, or whose rows were wiped, still reads the
+    holder its own config resolves to.
     """
     from jailbee.config import load_config
     from jailbee.paths import repo_config_path
@@ -663,7 +675,7 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
 
     group = group_name(cfg)
     assert group is not None  # the None case returned above
-    found = [me]
+    found = [me] if _resolves_to(gcfg, cfg.container_prefix, group) else []
     unreachable: list[str] = []
     for prefix, repo_root in _registered_repos():
         if prefix == cfg.container_prefix or not _resolves_to(gcfg, prefix, group):
@@ -1074,6 +1086,7 @@ def _rewrite_identities(
     found: Sequence[Member],
     unreachable: Sequence[str],
     record: dict[str, Any] | None,
+    authoritative: Collection[str],
 ) -> tuple[list[str], list[str]]:
     """Point every member's recorded account at the login now live.
 
@@ -1084,16 +1097,26 @@ def _rewrite_identities(
     deleted and Claude Code repopulates it on its next run, which is what every
     switch did before.
 
+    **A record is written only into an authoritative member**, for the same
+    reason `live_account` reads only those: a repo whose containers span two
+    groups shares one config home between them, so stamping this group's
+    account into it would make that home name the wrong login for the other
+    group's containers — and a later `park` of *that* group would then park it
+    under the wrong name, name and record agreeing. Every other member is
+    cleared instead, which is always safe: Claude Code repopulates the block
+    from whichever credential the container actually reads.
+
     Reports which members took the change, so the caller can name the ones that
     are still naming the previous account.
     """
     done: list[str] = []
     failed: list[str] = list(unreachable)
     for member in found:
+        trusted = member.container_prefix in authoritative
         ok = (
-            invalidate_identity(member.config_home)
-            if record is None
-            else restore_identity(member.config_home, record)
+            restore_identity(member.config_home, record)
+            if record is not None and trusted
+            else invalidate_identity(member.config_home)
         )
         (done if ok else failed).append(member.container_prefix)
     return sorted(done), sorted(failed)
@@ -1188,7 +1211,7 @@ def park(
         )
     # No record to restore: `park` leaves the holder empty on purpose, so there
     # is no live login for the members to name.
-    updated, not_updated = _rewrite_identities(found, unreachable, None)
+    updated, not_updated = _rewrite_identities(found, unreachable, None, authoritative)
     return PoolChange(
         parked_as=_slot_name(parked),
         activated=None,
@@ -1259,7 +1282,7 @@ def switch(
             raise
 
     updated, not_updated = _rewrite_identities(
-        found, unreachable, trusted_record_in(target, target_raw)
+        found, unreachable, trusted_record_in(target, target_raw), authoritative
     )
     return PoolChange(
         parked_as=_slot_name(parked) if parked is not None else None,

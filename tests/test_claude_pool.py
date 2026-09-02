@@ -1583,3 +1583,61 @@ def test_park_names_the_file_unknown_when_nothing_is_authoritative(tmp_path, moc
     assert change.parked_as is not None
     assert claude_pool.is_unidentified(change.parked_as)
     assert "wrong@example.com" not in change.parked_as
+
+
+def test_members_excludes_a_caller_that_does_not_resolve_to_the_holder(
+    tmp_path: Path, mocker
+) -> None:
+    """`cli._holder_view` points a command at a group the repo is not in.
+
+    The repo's config home describes its *own* group's login, so it is not a
+    member of this holder: reading it would name the wrong account, and writing
+    it would destroy the naming evidence for the group the repo really uses.
+    """
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="personal")
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    found, unreachable = claude_pool.members(cfg, gcfg)
+
+    assert found == []
+    assert unreachable == []
+
+
+def test_members_include_an_unregistered_caller_that_resolves_to_the_holder(
+    tmp_path: Path, mocker
+) -> None:
+    """Registry membership is not what makes the caller a member.
+
+    A repo that has never been registered — or one whose registry rows were
+    wiped — still reads the holder its own config resolves to.
+    """
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="work")
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    found, _ = claude_pool.members(cfg, gcfg)
+
+    assert [m.container_prefix for m in found] == [cfg.container_prefix]
+
+
+def test_switch_clears_rather_than_restores_a_non_authoritative_member(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A repo whose containers span two groups shares one config home between
+    them, so writing *this* group's account into it would make that home name
+    the wrong login for the other group's containers. Clearing is the only safe
+    write, and it is what every switch did before the record existed."""
+    _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
+    cfg = _cfg(tmp_path, group="work")
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    home = claude_pool.config_home(cfg)
+    _write_identity(home, {"emailAddress": "other@corp.com"})
+
+    change = claude_pool.switch(cfg, gcfg, "first@corp.com#ccccdddd", authoritative=set())
+
+    assert change.updated == [cfg.container_prefix]
+    data = json.loads((home / ".claude.json").read_text())
+    assert "oauthAccount" not in data
+    assert data["projects"] == {"/x": {}}
