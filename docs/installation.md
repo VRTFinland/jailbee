@@ -6,7 +6,12 @@
 - Incus **6.0.5-8 or newer** — ships in Ubuntu 26.04's `universe` repository.
   That build carries the nested-Docker AppArmor fix (CVE-2025-52881 fallout,
   backported to the 6.0 LTS series), so nested Docker works out of the box
-  with `security.nesting=true` — no AppArmor workaround required.
+  with `security.nesting=true` — no AppArmor workaround required. The 6.0 LTS
+  series and the current 7.x feature releases both work: `jailbee` detects the
+  client version and adapts where the CLI changed between them (`incus profile
+  assign` switched from a comma-joined profile list to separate arguments in
+  7.3). If the version cannot be read, `jailbee` assumes the 6.0 LTS syntax.
+  `jailbee doctor` reports the version it detected.
 - A way to install a Python CLI application — [`uv`](https://docs.astral.sh/uv/)
   or [`pipx`](https://pipx.pypa.io/). JailBee itself needs neither at runtime;
   pick whichever you already have:

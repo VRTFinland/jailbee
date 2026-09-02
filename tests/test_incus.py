@@ -175,12 +175,116 @@ def test_exec_init_groups_ignored_for_root(incus, mocker):
     assert "--user" in args
 
 
-def test_profile_assign_uses_comma_list(incus, mocker):
+def test_profile_assign_uses_separate_args_on_incus_7_3(incus, mocker):
+    mocker.patch.object(incus, "client_version", return_value=(7, 3))
     run = _mock_run(mocker)
-    incus.profile_assign("feat-foo", ["default", "gisgro-base", "gisgro-binds"])
-    args = run.call_args[0][0]
-    # incus profile assign <container> <comma-list>
-    assert "default,gisgro-base,gisgro-binds" in args
+    incus.profile_assign("feat-foo", ["default", "jailbee-base", "jailbee-binds"])
+    # incus 7.3+: profile assign <container> <profile>...
+    assert run.call_args[0][0] == [
+        "incus",
+        "profile",
+        "assign",
+        "feat-foo",
+        "default",
+        "jailbee-base",
+        "jailbee-binds",
+    ]
+
+
+def test_profile_assign_uses_comma_list_on_incus_6(incus, mocker):
+    mocker.patch.object(incus, "client_version", return_value=(6, 0, 5))
+    run = _mock_run(mocker)
+    incus.profile_assign("feat-foo", ["default", "jailbee-base", "jailbee-binds"])
+    # incus <= 7.2: profile assign <container> <comma-list>
+    assert run.call_args[0][0] == [
+        "incus",
+        "profile",
+        "assign",
+        "feat-foo",
+        "default,jailbee-base,jailbee-binds",
+    ]
+
+
+def test_profile_assign_uses_comma_list_on_last_legacy_release(incus, mocker):
+    mocker.patch.object(incus, "client_version", return_value=(7, 2))
+    run = _mock_run(mocker)
+    incus.profile_assign("feat-foo", ["default", "jailbee-x"])
+    assert run.call_args[0][0][-1] == "default,jailbee-x"
+
+
+def test_profile_assign_falls_back_to_lts_syntax_when_version_unknown(incus, mocker):
+    mocker.patch.object(incus, "client_version", return_value=None)
+    run = _mock_run(mocker)
+    incus.profile_assign("feat-foo", ["default", "jailbee-x"])
+    # Unknown version → the comma-joined form: correct on the documented
+    # 6.0 LTS floor and on everything up to 7.2, i.e. the widest support.
+    assert run.call_args[0][0][-1] == "default,jailbee-x"
+
+
+def test_profile_assign_skips_version_probe_for_single_profile(incus, mocker):
+    version = mocker.patch.object(incus, "client_version")
+    run = _mock_run(mocker)
+    incus.profile_assign("feat-foo", ["default"])
+    # A lone profile is spelled the same in both syntaxes.
+    version.assert_not_called()
+    assert run.call_args[0][0] == ["incus", "profile", "assign", "feat-foo", "default"]
+
+
+def test_client_version_parses_bare_version(incus, mocker):
+    _mock_run(mocker, stdout="7.3\n")
+    assert incus.client_version() == (7, 3)
+
+
+def test_client_version_probe_uses_daemon_free_flag_and_a_timeout(incus, mocker):
+    run = _mock_run(mocker, stdout="6.0.5\n")
+    assert incus.client_version() == (6, 0, 5)
+    # `--version`, not the `version` subcommand: the latter dials the daemon
+    # socket, so a wedged daemon could hang every profile assignment.
+    assert run.call_args[0][0] == ["incus", "--version"]
+    assert run.call_args[1]["timeout"] == Incus._VERSION_PROBE_TIMEOUT
+
+
+def test_client_version_tolerates_surrounding_lines(incus, mocker):
+    _mock_run(mocker, stdout="warning: something\n6.0.5\n")
+    assert incus.client_version() == (6, 0, 5)
+
+
+def test_client_version_parses_despite_nonzero_exit(incus, mocker):
+    _mock_run(mocker, stdout="7.3\n", stderr="Error: something later", returncode=1)
+    assert incus.client_version() == (7, 3)
+
+
+def test_client_version_none_when_unparsable(incus, mocker):
+    _mock_run(mocker, stdout="something else entirely\n")
+    assert incus.client_version() is None
+
+
+def test_client_version_none_when_probe_times_out(incus, mocker):
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["incus", "--version"], timeout=5),
+    )
+    assert incus.client_version() is None
+
+
+def test_client_version_none_when_binary_unusable(incus, mocker):
+    # A binary that lost its executable bit must not take down `jailbee doctor`.
+    mocker.patch("jailbee.incus.subprocess.run", side_effect=PermissionError)
+    assert incus.client_version() is None
+
+
+def test_client_version_probed_once(incus, mocker):
+    run = _mock_run(mocker, stdout="7.3\n")
+    assert incus.client_version() == (7, 3)
+    assert incus.client_version() == (7, 3)
+    assert run.call_count == 1
+
+
+def test_client_version_unknown_probed_once(incus, mocker):
+    run = _mock_run(mocker, stdout="")
+    assert incus.client_version() is None
+    assert incus.client_version() is None
+    assert run.call_count == 1
 
 
 def test_profile_show_returns_stdout(incus, mocker):
@@ -605,6 +709,8 @@ def test_config_device_remove_retries_on_etag_mismatch(incus, mocker):
 
 def test_profile_assign_retries_on_etag_mismatch(incus, mocker):
     mocker.patch("jailbee.incus.time.sleep")
+    # Pinned so the version probe doesn't consume a scripted subprocess result.
+    mocker.patch.object(incus, "client_version", return_value=(7, 3))
     run = mocker.patch(
         "jailbee.incus.subprocess.run",
         side_effect=[_cp(returncode=1, stderr=_ETAG_ERROR), _cp(returncode=0)],
