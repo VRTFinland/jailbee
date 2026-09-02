@@ -49,7 +49,7 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -695,16 +695,31 @@ class LiveAccount:
     record: dict[str, Any]
 
 
-def live_account(found: Sequence[Member], *, prefer: str) -> LiveAccount | None:
+def live_account(
+    found: Sequence[Member],
+    *,
+    prefer: str,
+    authoritative: Collection[str],
+) -> LiveAccount | None:
     """The account the holder's live credential belongs to, with its record.
 
-    Read from a config home, never from the credential. The calling repo is
-    consulted first; any member will do, since they share one login. None
-    means no member names an account yet — a fresh group, or the window a
-    `switch` opens before any container has run Claude again, which is exactly
-    what `ACCOUNT_RECORD_KEY` exists to close.
+    Read from a config home, never from the credential. `authoritative`
+    names the members whose config home can be trusted to describe *this
+    holder's* login: a repo whose containers span two credential groups
+    shares one `~/.claude` between them, so its `oauthAccount` names
+    whichever account ran most recently, and naming a parked file from it
+    would store one account's grant under another's name. See
+    `claude_groups.authoritative_prefixes`, which is its only producer.
+
+    The calling repo is consulted first among the authoritative ones; any
+    of them will do, since they share one login. None means no
+    authoritative member names an account yet — a fresh group, the window
+    a `switch` opens before any container has run Claude again (which is
+    what `ACCOUNT_RECORD_KEY` exists to close), or a caller with nothing
+    authoritative to read.
     """
-    ordered = sorted(found, key=lambda m: m.container_prefix != prefer)
+    usable = [m for m in found if m.container_prefix in authoritative]
+    ordered = sorted(usable, key=lambda m: m.container_prefix != prefer)
     for member in ordered:
         record = read_account_record(member.config_home)
         if record is None:
@@ -715,9 +730,14 @@ def live_account(found: Sequence[Member], *, prefer: str) -> LiveAccount | None:
     return None
 
 
-def live_identity(found: Sequence[Member], *, prefer: str) -> Identity | None:
+def live_identity(
+    found: Sequence[Member],
+    *,
+    prefer: str,
+    authoritative: Collection[str],
+) -> Identity | None:
     """The identity half of `live_account`, for callers that only display it."""
-    account = live_account(found, prefer=prefer)
+    account = live_account(found, prefer=prefer, authoritative=authoritative)
     return None if account is None else account.identity
 
 
@@ -960,7 +980,9 @@ def _disambiguated_slot(store: Path, name: str, live: Path, dest: Path, when: da
     return candidate
 
 
-def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], LiveAccount | None]:
+def _slots_for(
+    cfg: Config, found: Sequence[Member], authoritative: Collection[str]
+) -> tuple[list[Slot], LiveAccount | None]:
     """Every slot for this holder, the live account alongside.
 
     The live slot's name is derived from an identity, so it can equal a parked
@@ -971,7 +993,7 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], LiveAc
     because there is only ever one of them, and it reads as what it is in
     `jailbee claude ls`.
     """
-    account = live_account(found, prefer=cfg.container_prefix)
+    account = live_account(found, prefer=cfg.container_prefix, authoritative=authoritative)
     slots = parked_slots()
     live = live_slot(cfg, None if account is None else account.identity)
     if live is not None:
@@ -981,10 +1003,10 @@ def _slots_for(cfg: Config, found: Sequence[Member]) -> tuple[list[Slot], LiveAc
     return sorted(slots, key=lambda s: (not s.live, s.name)), account
 
 
-def list_slots(cfg: Config, gcfg: GlobalConfig) -> list[Slot]:
+def list_slots(cfg: Config, gcfg: GlobalConfig, *, authoritative: Collection[str]) -> list[Slot]:
     """Every stored login, the live one first."""
     found, _ = members(cfg, gcfg)
-    return _slots_for(cfg, found)[0]
+    return _slots_for(cfg, found, authoritative)[0]
 
 
 def invalidate_identity(home: Path) -> bool:
@@ -1129,7 +1151,13 @@ def _park_locked(cfg: Config, account: LiveAccount | None, when: datetime) -> Pa
     return dest
 
 
-def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> PoolChange:
+def park(
+    cfg: Config,
+    gcfg: GlobalConfig,
+    *,
+    authoritative: Collection[str],
+    now: datetime | None = None,
+) -> PoolChange:
     """Store the live login and leave the holder empty.
 
     This is how a *new* account enters the pool: with no credential to find,
@@ -1143,7 +1171,7 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     `_park_locked`, which is what makes it safe to do it early.
     """
     found, unreachable = members(cfg, gcfg)
-    account = live_account(found, prefer=cfg.container_prefix)
+    account = live_account(found, prefer=cfg.container_prefix, authoritative=authoritative)
     parked: Path | None = None
     if live_credential_path(cfg).exists():
         holder = holder_dir(cfg)
@@ -1170,7 +1198,14 @@ def park(cfg: Config, gcfg: GlobalConfig, *, now: datetime | None = None) -> Poo
     )
 
 
-def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = None) -> PoolChange:
+def switch(
+    cfg: Config,
+    gcfg: GlobalConfig,
+    ref: str,
+    *,
+    authoritative: Collection[str],
+    now: datetime | None = None,
+) -> PoolChange:
     """Park the live login and activate a stored one.
 
     The target is renamed out of the store *before* anything else moves, so no
@@ -1187,7 +1222,7 @@ def switch(cfg: Config, gcfg: GlobalConfig, ref: str, *, now: datetime | None = 
     the slot was carrying rather than deleting what the previous account left.
     """
     found, unreachable = members(cfg, gcfg)
-    slots, account = _slots_for(cfg, found)
+    slots, account = _slots_for(cfg, found, authoritative)
     target = resolve_ref(ref, slots)
     if target.live:
         raise PoolError(f"`{target.name}` is already the live account for this holder.")

@@ -29,6 +29,13 @@
   also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
   inference, and hosted web search. Existing grok containers pick this
   up on `jailbee apply`.
+- **A repo whose containers used two credential groups could park a login
+  under the wrong account's name.** `jailbee claude park`/`use` named a
+  parked slot from whichever container's config home had run Claude most
+  recently, even when that container belonged to a different credential
+  group than the one being parked from — silently mislabeling the stored
+  login. Parking and switching now only trust a container's config home
+  when it is an *authoritative* member of the group in question.
 
 ### Changed
 
@@ -92,6 +99,18 @@
   for a bare `jailbee new <branch> <base>`. Neither front-end passes
   `--yes`: `jailbee new` keeps asking about branch reuse and about a branch
   autostart config that widens network access.
+- **`jailbee claude group` manages which Claude credential group a repo, or
+  one container, uses.** `status` shows the repo's group and any container
+  deviating from it; `set <name>|none` and `unset` change the repo's
+  permanent group (written to `global.yaml`, followed by every container
+  that has no override of its own); `use <name>|none [<container>]` and
+  `reset [<container>]` set or clear a *temporary* override on a single
+  container, stored on the Incus instance rather than in any file, so it
+  dies with the container and never reaches a teammate. `jailbee new
+  --claude-group <name>` applies that same per-container override at
+  creation time. A running Claude session blocks a group change unless
+  `--force` is passed, since a live token refresh could otherwise overwrite
+  the target group's login.
 
 ## 1.2.2 - 2026-08-28
 

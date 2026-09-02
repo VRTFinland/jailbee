@@ -43,6 +43,7 @@ def test_ls_renders_the_live_account_first(repo, mocker):
             Slot("other@x.com", Path("/s/other@x.com.json"), live=False),
         ],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"])
     assert result.exit_code == 0, result.output
     assert result.output.index("me@corp.com") < result.output.index("other@x.com")
@@ -70,6 +71,7 @@ def test_ls_does_not_print_the_organization_twice(repo, mocker):
         "jailbee.claude_pool.list_slots",
         return_value=[Slot("me@corp.com#a1b2c3d4", Path("/h/.credentials.json"), live=True)],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     assert result.output.count("a1b2c3d4") == 1
@@ -87,6 +89,7 @@ def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
             Slot("me@corp.com#a1b2c3d4~20260828-101500", Path("/s/x.json"), live=False),
         ],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     assert "me@corp.com~live" in result.output
@@ -100,6 +103,7 @@ def test_ls_hides_the_org_column_when_no_account_has_one(repo, mocker):
         "jailbee.claude_pool.list_slots",
         return_value=[Slot("me@personal.com", Path("/h/.credentials.json"), live=True)],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     assert "ORG" not in result.output
@@ -114,6 +118,7 @@ def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
     touched. The group belongs where the holder is stated, under the table."""
     cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._claude_authoritative", return_value={cfg.container_prefix})
     mocker.patch(
         "jailbee.claude_pool.list_slots",
         return_value=[
@@ -121,6 +126,7 @@ def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
             Slot("unknown-20260828-163305", Path("/s/u.json"), live=False),
         ],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
@@ -137,6 +143,7 @@ def test_ls_names_the_repo_when_it_shares_no_group(repo, mocker):
         "jailbee.claude_pool.list_slots",
         return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
@@ -151,6 +158,7 @@ def test_ls_omits_the_host_wide_note_when_nothing_is_parked(repo, mocker):
         "jailbee.claude_pool.list_slots",
         return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     assert "host-wide" not in _flat(result.output)
@@ -158,6 +166,7 @@ def test_ls_omits_the_host_wide_note_when_nothing_is_parked(repo, mocker):
 
 def test_ls_says_so_when_the_pool_is_empty(repo, mocker):
     mocker.patch("jailbee.claude_pool.list_slots", return_value=[])
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
     result = runner.invoke(app, ["claude", "ls"])
     assert result.exit_code == 0, result.output
     assert "park" in result.output
@@ -420,6 +429,7 @@ def test_ls_names_the_repos_that_share_the_holder(repo, mocker):
             ["broken"],
         ),
     )
+    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
 
     result = runner.invoke(app, ["claude", "ls"])
 

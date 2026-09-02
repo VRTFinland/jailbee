@@ -1750,6 +1750,49 @@ repos.
 
 If the file is absent, defaults apply silently. Invalid YAML → error.
 
+#### Per-container override: `jailbee claude group`
+
+Everything above is the repo's *permanent* group, written to `global.yaml`
+and shared by every container of that repo. A single container can also
+carry a **temporary** override, stored in its own `user.jailbee.claude_group`
+instance label rather than in any file:
+
+* `jailbee claude group use <name>|none [<container>]` sets it — `<name>`
+  moves that one container into another group (creating the group directory
+  if needed), `none` opts it out of grouping entirely, for as long as the
+  container lives.
+* `jailbee claude group reset [<container>]` drops the override, so the
+  container falls back to inheriting the repo's group again.
+* `jailbee new --claude-group <name>|none` applies the override at creation
+  time, in one step.
+
+**Precedence: container override beats the repo's `claude_credentials` entry,
+which beats the host's `group` default.** A container with no override reads
+the repo's setting (`repos.<container_prefix>` if present, else `group`); a
+container with an override ignores both.
+
+`jailbee claude group` with no subcommand prints this repo's permanent group
+plus any of its containers currently deviating from it. `jailbee claude
+group set <name>|none` and `jailbee claude group unset` are the permanent,
+repo-wide equivalents of `use`/`reset` — they write `global.yaml`'s
+`claude_credentials.repos.<container_prefix>` instead of a container label,
+so unlike `use`/`reset` they affect every container of the repo that has no
+override of its own.
+
+The override lives on the Incus instance, not in any file under version
+control: it **dies with the container**, a recreated same-named container
+starts without it, and it is **not committable and cannot reach a
+teammate** — there is nothing to `git add`. Restarting Claude in the
+affected container is still required to pick up the new login either way;
+none of these commands touch a running session.
+
+`jailbee claude ls`, `jailbee claude use` and `jailbee claude park` all take
+a `-g/--group <name>` flag that points the command at that group's holder
+instead of the repo's own. This matters when a group is otherwise
+unreachable through this repo — e.g. one only a container override uses,
+with no repo permanently assigned to it via `claude_credentials` — since
+without the flag those commands only ever see the repo's own group.
+
 ## `--config / -c` override
 
 `jailbee -c /path/to/config.yaml <subcommand>` bypasses discovery and uses

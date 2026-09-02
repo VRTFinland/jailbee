@@ -626,7 +626,7 @@ def list_cmd(
                 "full_name, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, "
                 "ahead_count, conflict, local_diff, local_count, git_status, "
-                "pr."
+                "claude_group, pr."
             ),
         ),
     ] = None,
@@ -823,6 +823,15 @@ def new_cmd(
             ),
         ),
     ] = False,
+    claude_group: Annotated[
+        str | None,
+        typer.Option(
+            "--claude-group",
+            help="Claude credential group for this container only, for its "
+            "lifetime. Use `none` for no group.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option(
@@ -1150,6 +1159,20 @@ def new_cmd(
                 f"'jailbee registry up && jailbee apply'."
             )
 
+    resolved_claude_group: str | None = None
+    if claude_group is not None:
+        from jailbee import claude_groups
+
+        try:
+            resolved_claude_group = (
+                claude_groups.NO_GROUP
+                if claude_group == "none"
+                else claude_groups.validate_group_name(claude_group)
+            )
+        except claude_groups.GroupError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+
     if mount:
         full_name = name or f"{cfg.container_prefix}-{container_branch}"
         opts = NewContainerOptions(
@@ -1166,6 +1189,7 @@ def new_cmd(
             base=None,
             mount=True,
             assume_yes=yes,
+            claude_group=resolved_claude_group,
         )
     else:
         opts = NewContainerOptions(
@@ -1187,6 +1211,7 @@ def new_cmd(
             untrusted_head=pr is not None and pr_info.is_cross_repository,
             clone_commit=pr_clone_commit,
             assume_yes=yes,
+            claude_group=resolved_claude_group,
         )
 
     # Register this repo with the refresh timer and resolve the pool
@@ -7557,6 +7582,46 @@ def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
     return _load_or_exit(config), _load_global()
 
 
+def _holder_view(cfg: "Config", group: str | None) -> "Config":
+    """`cfg`, or a view of it pointed at another credential group.
+
+    A derived copy, never a mutation: `Config` is read-only after load.
+    Without this, a group reachable only as one container's temporary
+    override could not be managed at all — activating a parked login into
+    it would be impossible from any repo.
+    """
+    if group is None:
+        return cfg
+    from jailbee import claude_groups
+
+    try:
+        name = claude_groups.validate_group_name(group)
+    except claude_groups.GroupError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+    return cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir(name)})
+
+
+def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
+    """Members whose `oauthAccount` can be trusted for this repo's holder.
+
+    One place, so `ls`, `use`, `park` and `rm` cannot disagree about which
+    repos are authoritative. A repo that shares no group is its own only
+    member and is trivially authoritative for itself — there is no group
+    to be ambiguous about, and no `incus list` is worth paying for it.
+    """
+    from jailbee import claude_groups, claude_pool
+    from jailbee.incus import Incus
+
+    group = claude_pool.group_name(cfg)
+    if group is None:
+        return {cfg.container_prefix}
+    found, _ = claude_pool.members(cfg, gcfg)
+    return claude_groups.authoritative_prefixes(
+        gcfg, Incus(), group, [m.container_prefix for m in found]
+    )
+
+
 def _claude_fields() -> "list[table_format.FieldSpec[claude_pool.Slot]]":
     from jailbee import table_format
 
@@ -7612,8 +7677,9 @@ def _claude_ref_or_pick(
 
     if ref is not None:
         return ref
+    authoritative = _claude_authoritative(cfg, gcfg)
     return claude_pool.resolve_interactively(
-        claude_pool.list_slots(cfg, gcfg),
+        claude_pool.list_slots(cfg, gcfg, authoritative=authoritative),
         None,
         purpose=purpose,
         picker=lambda slots: pick_claude_account(slots, message=message),
@@ -7672,6 +7738,15 @@ def claude_ls_cmd(
         str | None,
         typer.Option("--fields", help="Comma-separated fields. Allowed: account, org, state."),
     ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """List stored Claude logins and which one this repo's containers use."""
@@ -7679,8 +7754,9 @@ def claude_ls_cmd(
     from jailbee.tui import console
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
-        slots = claude_pool.list_slots(cfg, gcfg)
+        slots = claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
         found, unreachable = claude_pool.members(cfg, gcfg)
     except (claude_pool.PoolError, OSError) as e:
         error(str(e))
@@ -7705,14 +7781,43 @@ def claude_ls_cmd(
     # Table format only: the JSON payload is a row per slot, and a per-command
     # fact does not belong in it.
     if fmt == "table":
+        from jailbee import claude_groups
+        from jailbee.incus import Incus, IncusError
         from jailbee.paths import display_path
 
         # The group belongs to the live row, so it is stated where the holder
         # is, not in the title.
-        group = claude_pool.group_name(cfg)
-        where = f"group `{group}`" if group is not None else f"{cfg.container_prefix} (no group)"
+        holder_group = claude_pool.group_name(cfg)
+        where = (
+            f"group `{holder_group}`"
+            if holder_group is not None
+            else f"{cfg.container_prefix} (no group)"
+        )
         info(f"Live in {where} → {display_path(claude_pool.holder_dir(cfg))}")
         info(f"Repos sharing this holder: {', '.join(m.container_prefix for m in found)}")
+        # Best-effort: this hint is a discoverability nicety, not core to `ls`,
+        # so an unreachable Incus daemon degrades it to silence rather than
+        # failing a command that has already done its real job above. Only
+        # relevant when `group` is None (the repo's own group), so skip the
+        # real Incus call entirely otherwise rather than discarding its result.
+        deviating: list[tuple[str, str | None]] = []
+        if group is None:
+            try:
+                deviating = claude_groups.deviating_containers(cfg, Incus())
+            except (IncusError, OSError):
+                deviating = []
+        if deviating:
+            from jailbee.tui import hint
+
+            # stderr, so a `--format json` consumer is unaffected and a
+            # piped table stays a table.
+            hint(
+                [
+                    "Some containers of this repo use another group: "
+                    + ", ".join(f"{n} ({g or 'no group'})" for n, g in deviating),
+                    "Manage one with `jailbee claude ls -g <group>`.",
+                ]
+            )
         if any(not s.live for s in slots):
             info(
                 "Parked logins are host-wide — any of them can be activated into "
@@ -7735,6 +7840,15 @@ def claude_use_cmd(
             autocompletion=completion.complete_claude_account,
         ),
     ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Switch this repo's containers to a stored login.
@@ -7748,13 +7862,16 @@ def claude_use_cmd(
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
         target = _claude_ref_or_pick(
             cfg, gcfg, ref, purpose="switch to", message="Switch this repo to:"
         )
         if target is None:
             raise typer.Abort()
-        change = claude_pool.switch(cfg, gcfg, target)
+        change = claude_pool.switch(
+            cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
+        )
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -7772,7 +7889,18 @@ def claude_use_cmd(
 
 
 @claude_app.command("park")
-def claude_park_cmd(config: ConfigOption = None) -> None:
+def claude_park_cmd(
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
     """Store the login in use and leave this repo's holder empty.
 
     This is how a new account enters the pool: with no credential to find, the
@@ -7783,8 +7911,9 @@ def claude_park_cmd(config: ConfigOption = None) -> None:
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
+    cfg = _holder_view(cfg, group)
     try:
-        change = claude_pool.park(cfg, gcfg)
+        change = claude_pool.park(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
     except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -7834,7 +7963,10 @@ def claude_rm_cmd(
         # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
         # and a parked file is ambiguous for a switch but not for a deletion,
         # and `rm` is the command that clears that state.
-        slot = claude_pool.resolve_removable(target, claude_pool.list_slots(cfg, gcfg))
+        slot = claude_pool.resolve_removable(
+            target,
+            claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
+        )
         if slot.live:
             # Pre-checked so the confirmation prompt is never shown for a
             # deletion that `remove_slot` would refuse anyway.
@@ -7854,6 +7986,387 @@ def claude_rm_cmd(
         error(f"could not delete `{slot.name}`: {e}")
         raise typer.Exit(2) from e
     success(f"Deleted `{slot.name}` — a browser /login is the only way back")
+
+
+group_app = typer.Typer(
+    name="group",
+    help="Which Claude credential group a repo — or one container — uses.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
+claude_app.add_typer(group_app)
+
+
+def _resolve_group_container(
+    cfg: "Config",
+    incus: "IncusType",
+    name: str | None,
+) -> str:
+    """The container a `claude group use`/`reset` acts on.
+
+    One container in the repo → that one, named out loud. Several → a
+    picker. No TTY → an error listing the candidates, so a script author
+    learns the invocation from the failure. The same three-way shape
+    `claude_pool.resolve_interactively` uses for slots.
+    """
+    from jailbee.lifecycle import resolve_container_for_interactive
+    from jailbee.tui import pick_container_for_group
+
+    if name is not None:
+        # `resolve_container_for_interactive` directly, not `_resolve_existing`:
+        # that helper builds its own `Incus`, and this command already has one
+        # whose calls the tests assert on.
+        try:
+            return resolve_container_for_interactive(cfg, incus, name)
+        except ValueError as e:
+            error(str(e))
+            raise typer.Exit(1) from e
+    rows = [
+        r
+        for r in incus.list_containers()
+        if str(r.get("name", "")).startswith(f"{cfg.container_prefix}-")
+    ]
+    if not rows:
+        error(f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one.")
+        raise typer.Exit(2)
+    if len(rows) == 1:
+        only = str(rows[0]["name"])
+        info(f"Only one container for this repo: {only}")
+        return only
+    names = sorted(str(r["name"]) for r in rows)
+    if not _is_tty():
+        error("Name the container explicitly (or run in a TTY): " + ", ".join(names))
+        raise typer.Exit(2)
+    picked = pick_container_for_group(cfg, incus, names)
+    if picked is None:
+        raise typer.Abort()
+    return picked
+
+
+def _refuse_if_claude_running(
+    cfg: "Config", incus: "IncusType", container: str, force: bool
+) -> None:
+    """Block a group swap under a live Claude unless `--force`.
+
+    A running process holds the old group's token; if it refreshes before
+    it re-reads, it writes that grant into the *target* group's file and
+    the target's login is gone. Whether Claude Code really orders it that
+    way is unverified — see the spec's §8 — so this is a precaution
+    against an irrecoverable outcome, not a description of observed
+    behaviour. `None` from the probe means "cannot tell" and must not
+    read as a refusal.
+    """
+    from jailbee import claude_groups
+
+    if force:
+        return
+    if claude_groups.claude_running(cfg, incus, container) is not True:
+        return
+    error(
+        f"Claude is running in {container}. Swapping the credential group under a "
+        "live session can overwrite the target group's login with this one's on "
+        "the next token refresh, and that login cannot be recovered.\n"
+        "Close Claude in that container and run this again, or pass --force if "
+        "you are sure."
+    )
+    raise typer.Exit(2)
+
+
+def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
+    """Block a repo-wide group change under a live Claude unless `--force`.
+
+    `jb claude group set`/`unset` reconciles credentials across every
+    container of the repo (`_ensure_claude_credentials_dir`'s four-case
+    handling), so the single-container hazard `_refuse_if_claude_running`
+    guards applies here too, but to every container at once — see the
+    design's §6.1/§8.
+    """
+    from jailbee import claude_groups
+
+    if force:
+        return
+    running = sorted(
+        str(row["name"])
+        for row in incus.list_containers()
+        if str(row.get("name", "")).startswith(f"{cfg.container_prefix}-")
+        and claude_groups.claude_running(cfg, incus, str(row["name"])) is True
+    )
+    if not running:
+        return
+    error(
+        "Claude is running in " + ", ".join(running) + ". Changing this repo's "
+        "credential group under a live session can overwrite another group's "
+        "login on the next token refresh, and that login cannot be recovered.\n"
+        "Close Claude in those containers and run this again, or pass --force if "
+        "you are sure."
+    )
+    raise typer.Exit(2)
+
+
+def _global_config_path_for_write() -> Path:
+    """Where `jailbee claude group set` writes. A seam for tests."""
+    from jailbee.global_config import default_global_config_path
+
+    return default_global_config_path()
+
+
+def _reapply_binds_profile(config: Path | None) -> None:
+    """Re-render `<prefix>-binds` after the repo's group changed.
+
+    Two steps, both existing code. `_ensure_claude_credentials_dir` is not
+    just a `mkdir`: it carries the four-case credential reconciliation,
+    including the case where **both** the target group and this repo hold
+    a login — which prompts for which to keep and deletes the other.
+    Moving a repo into a populated group is exactly how that case is
+    reached, so this must not create the directory itself.
+    """
+    from jailbee.incus import Incus
+    from jailbee.init_command import _ensure_claude_credentials_dir
+    from jailbee.profiles import binds_profile_yaml, profile_names
+
+    cfg = _load_or_exit(config)  # reloaded, so it sees the new group
+    _ensure_claude_credentials_dir(cfg)
+    Incus().profile_set_yaml(profile_names(cfg).binds, binds_profile_yaml(cfg))
+
+
+def _write_repo_group(config: Path | None, value: object) -> None:
+    """Apply one `claude_credentials.repos.<prefix>` change and re-render."""
+    from jailbee import config_writer
+
+    cfg = _load_or_exit(config)
+    path = _global_config_path_for_write()
+    config_writer.patch_file(
+        path,
+        [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
+    )
+    _reapply_binds_profile(config)
+
+
+@group_app.command("set")
+def claude_group_set_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Group name, or `none` to keep this repo on its own login.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if Claude is running in any of this repo's containers.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Set this repo's credential group. Permanent — writes `global.yaml`.
+
+    Every container of this repo follows it, except any with a temporary
+    override from `jailbee claude group use`. Use `jailbee claude group
+    unset` to fall back to the host-wide default instead.
+    """
+    from jailbee import claude_groups, claude_pool
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    _refuse_if_claude_running_in_repo(cfg, incus, force)
+
+    value: object
+    if group == "none":
+        value = None
+    else:
+        try:
+            value = claude_groups.validate_group_name(group)
+        except claude_groups.GroupError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+        claude_groups.ensure_group_dir(str(value))
+
+    try:
+        _write_repo_group(config, value)
+    except OSError as e:
+        error(f"Could not write the global config: {e}")
+        raise typer.Exit(2) from e
+
+    # The repo's `oauthAccount` now describes an account this repo may no
+    # longer use. Left in place it would make the repo look authoritative
+    # for the wrong account — see the spec's §7.2.
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
+    where = "no credential group" if value is None else f"group `{value}`"
+    success(f"This repo now uses {where}.")
+    info("Restart Claude in this repo's containers to pick up the new login.")
+
+
+@group_app.command("unset")
+def claude_group_unset_cmd(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if Claude is running in any of this repo's containers.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Remove this repo's entry so the host-wide default applies again."""
+    from jailbee import claude_groups, claude_pool, config_writer
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    _refuse_if_claude_running_in_repo(cfg, incus, force)
+
+    try:
+        _write_repo_group(config, config_writer.DELETE)
+    except OSError as e:
+        error(f"Could not write the global config: {e}")
+        raise typer.Exit(2) from e
+
+    cfg = _load_or_exit(config)
+
+    # The repo's `oauthAccount` now describes an account this repo may no
+    # longer use. Left in place it would make the repo look authoritative
+    # for the wrong account — see the spec's §7.2.
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
+    repo = claude_groups.repo_group(cfg)
+    where = "no credential group" if repo is None else f"group `{repo}`"
+    success(f"Entry removed. This repo now follows the host default: {where}.")
+
+
+@group_app.command("use")
+def claude_group_use_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Group name, or `none` for no group.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ],
+    container: Annotated[
+        str | None,
+        typer.Argument(
+            help="Container to change. Omit to pick from this repo's containers.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Change the group even if Claude is running.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Move one container to another credential group, for its lifetime.
+
+    This does not touch `global.yaml` and does not affect any other
+    container. `jailbee claude group reset` puts the container back on the
+    repo's group; destroying the container drops the override with it.
+
+    Claude must be restarted in that container afterwards to pick up the
+    new login — this command never kills a session.
+    """
+    from jailbee import claude_groups, claude_pool
+
+    cfg = _load_or_exit(config)
+    target: str | None
+    try:
+        target = None if group == "none" else claude_groups.validate_group_name(group)
+    except claude_groups.GroupError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    from jailbee.incus import Incus
+
+    incus = Incus()
+    name = _resolve_group_container(cfg, incus, container)
+    _refuse_if_claude_running(cfg, incus, name, force)
+
+    try:
+        claude_groups.set_container_group(cfg, incus, name, target)
+    except (claude_groups.GroupError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    # The repo's `oauthAccount` now describes an account this container may
+    # no longer use. Left in place it would make the repo look authoritative
+    # for the wrong account — see the spec's §7.2.
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
+    where = "no credential group" if target is None else f"group `{target}`"
+    success(f"{name} now uses {where}.")
+    info("Restart Claude in that container to pick up the new login.")
+
+
+@group_app.command("reset")
+def claude_group_reset_cmd(
+    container: Annotated[
+        str | None,
+        typer.Argument(
+            help="Container to reset. Omit to pick from this repo's containers.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Reset even if Claude is running.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Drop a container's override so it inherits the repo's group again."""
+    from jailbee import claude_groups, claude_pool
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    name = _resolve_group_container(cfg, incus, container)
+    _refuse_if_claude_running(cfg, incus, name, force)
+
+    claude_groups.clear_container_group(incus, name)
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+
+    repo = claude_groups.repo_group(cfg)
+    where = "no credential group" if repo is None else f"group `{repo}`"
+    success(f"{name} now inherits the repo's setting: {where}.")
+    info("Restart Claude in that container to pick up the change.")
+
+
+@group_app.callback(invoke_without_command=True)
+def claude_group_status(ctx: typer.Context, config: ConfigOption = None) -> None:
+    """Show this repo's credential group, and any container that deviates."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from jailbee import claude_groups
+    from jailbee.incus import Incus
+    from jailbee.paths import display_path
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    repo = claude_groups.repo_group(cfg)
+    if repo is None:
+        info(f"{cfg.container_prefix}: no credential group — this repo keeps its own login.")
+    else:
+        group_path = display_path(claude_groups.group_dir(repo))
+        info(f"{cfg.container_prefix}: group `{repo}` → {group_path}")
+
+    deviating = claude_groups.deviating_containers(cfg, incus)
+    if deviating:
+        info("Containers with a temporary override:")
+        for name, group in deviating:
+            info(f"  {name} → {'no group' if group is None else f'group `{group}`'}")
+    else:
+        info("No container overrides. Every container follows the repo.")
+
+    # Host-wide, and the heading has to say so: the groups below are every
+    # group on this machine, not this repo's. A table that mixed the two
+    # scopes caused real confusion during design review.
+    root = claude_groups.group_dir("x").parent
+    try:
+        names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
+    except OSError:
+        names = []
+    if names:
+        info(f"Credential groups on this host: {', '.join(names)}")
 
 
 pool_app = typer.Typer(

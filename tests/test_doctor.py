@@ -1848,7 +1848,7 @@ def test_doctor_is_silent_when_the_pool_is_empty(tmp_path, make_cfg, monkeypatch
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    assert _check_claude_pool(cfg, GlobalConfig()) == []
+    assert _check_claude_pool(cfg, MagicMock(), GlobalConfig()) == []
 
 
 def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkeypatch):
@@ -1869,7 +1869,7 @@ def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkey
     )
     (home / ".credentials.json").write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert len(results) == 1
     assert results[0].ok is True
@@ -1887,7 +1887,7 @@ def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatc
     store.mkdir(parents=True)
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert len(results) == 1
     assert results[0].ok is False
@@ -1907,7 +1907,7 @@ def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(tmp_path, mak
     stage = store / "orphan@x.com.json.activating"
     stage.write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert [r.ok for r in results] == [False]
     assert str(stage) in results[0].detail
@@ -1938,7 +1938,7 @@ def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
     )
     (home / ".credentials.json").write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert len(results) == 2
     healthy = [r for r in results if r.ok]
@@ -1966,7 +1966,7 @@ def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
     (store / "orphan@x.com.json.activating").write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert any(not r.ok and "orphan@x.com.json.activating" in r.detail for r in results)
     assert any(not r.ok and "no live login" in r.detail for r in results)
@@ -1986,7 +1986,7 @@ def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_c
     (store / "dup@x.com.json").write_text("{}", encoding="utf-8")
     (store / "dup@x.com.json.activating").write_text("{}", encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
     orphan = next(r for r in results if "activating" in r.detail)
 
     assert orphan.ok is False
@@ -2021,7 +2021,7 @@ def test_doctor_says_a_staged_login_is_already_live_in_this_holder(tmp_path, mak
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("one-lineage"), encoding="utf-8")
 
-    results = _check_claude_pool(cfg, GlobalConfig())
+    results = _check_claude_pool(cfg, MagicMock(), GlobalConfig())
 
     assert [r.ok for r in results] == [False]
     detail = results[0].detail
@@ -2050,7 +2050,9 @@ def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
 
-    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+    detail = next(
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok
+    ).detail
 
     assert "rename it to orphan@x.com.json" in detail
     assert "parked under another name" in detail
@@ -2074,7 +2076,9 @@ def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text("not json", encoding="utf-8")
 
-    detail = next(r for r in _check_claude_pool(cfg, GlobalConfig()) if not r.ok).detail
+    detail = next(
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if not r.ok
+    ).detail
 
     assert "delete it" not in detail
     assert "rename it to orphan@x.com.json" in detail
@@ -2094,7 +2098,7 @@ def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_c
     (store / "dup@x.com.json.activating").write_text(_staged_grant("staged"), encoding="utf-8")
 
     detail = next(
-        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if "activating" in r.detail
     ).detail
 
     assert "dup@x.com~<label>.json" in detail
@@ -2123,7 +2127,7 @@ def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
     (home / ".credentials.json").write_text(_staged_grant("live-lineage"), encoding="utf-8")
 
     detail = next(
-        r for r in _check_claude_pool(cfg, GlobalConfig()) if "activating" in r.detail
+        r for r in _check_claude_pool(cfg, MagicMock(), GlobalConfig()) if "activating" in r.detail
     ).detail
 
     assert "delete it" in detail
@@ -2450,3 +2454,26 @@ def test_doctor_diagnoses_the_strict_bridge_too(tmp_path, make_cfg, mocker):
     assert check.ok is False
     assert "no IPv4 on app-feat" in check.detail
     assert "incusbr0" in check.detail
+
+
+def test_doctor_reports_a_group_named_none(tmp_path, mocker):
+    """`none` is the CLI's word for "no group", so a group of that name is unaddressable."""
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "none"}})
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    results = doctor._check_reserved_group_name(cfg, gcfg)
+    assert results and results[0].ok is False
+    assert "none" in results[0].detail
+
+
+def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    assert doctor._check_reserved_group_name(cfg, gcfg) == []

@@ -60,6 +60,10 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
+    # The container's Claude credential group, from
+    # `user.jailbee.claude_group`. None means it inherits the repo's group;
+    # `claude_groups.NO_GROUP` means it deliberately shares none.
+    claude_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
     git_status: GitStatus | None = None
@@ -232,6 +236,8 @@ def list_containers(
                 pr_number = None
         pr_author = config.get("user.jailbee.pr_author") == "1"
 
+        claude_group_raw = config.get("user.jailbee.claude_group")
+
         loose_until_raw = config.get("user.jailbee.loose_until")
         loose_until: datetime | None = None
         if isinstance(loose_until_raw, str) and loose_until_raw:
@@ -256,6 +262,7 @@ def list_containers(
                 repo_dir=repo_dir,
                 pr_number=pr_number,
                 pr_author=pr_author,
+                claude_group=claude_group_raw or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
             )
@@ -537,6 +544,12 @@ class NewContainerOptions:
     # newer commit than the one the operator was shown. Mirror in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     autofetch_done: bool = False
+    # Credential group this container joins for its lifetime
+    # (`jailbee new --claude-group`). None means it inherits the repo's
+    # group. Applied before `incus start` so Claude finds the right
+    # credential on its first run. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    claude_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -998,6 +1011,20 @@ def new_container(
                 "source": str(cfg.repo_root),
                 "path": repo_dir,
             },
+        )
+
+    # Before `start`: the credential mount and its env key must be in place
+    # when autostart first runs `claude`, or the container's first session
+    # authenticates against the repo's group and only picks up the override
+    # after a restart.
+    if opts.claude_group is not None:
+        from jailbee import claude_groups
+
+        claude_groups.set_container_group(
+            cfg,
+            incus,
+            name,
+            None if opts.claude_group == claude_groups.NO_GROUP else opts.claude_group,
         )
 
     incus.start(name)
@@ -1545,10 +1572,22 @@ def destroy_container(
     if not incus.exists(name):
         raise ValueError(f"Container '{name}' does not exist")
 
+    from jailbee import claude_groups
+
     state = "Stopped"
+    had_claude_override = False
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
+            # Read while the container still exists: the override lives in a
+            # label on the instance itself, gone once it is deleted. Any
+            # label at all — a named group or the explicit "no group"
+            # marker — counts; only its presence matters here, not its
+            # validity (spec §7.2), so this reads the raw config directly
+            # rather than through `claude_groups.container_override` (which
+            # also validates and would need a second `incus.config_get`
+            # round trip for data already in hand).
+            had_claude_override = bool((raw.get("config") or {}).get(claude_groups.GROUP_LABEL))
             break
 
     if state == "Running":
@@ -1604,6 +1643,17 @@ def destroy_container(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    # The container had a temporary credential-group override, so the
+    # repo's shared config home may still record `oauthAccount` for a login
+    # this container was actually using instead. Gated on the override so a
+    # repo that never touches `jailbee claude group` pays nothing extra.
+    # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    # and the destroy path."
+    if had_claude_override:
+        from jailbee import claude_pool
+
+        claude_pool.invalidate_identity(claude_pool.config_home(cfg))
 
     # After the instance is gone, never before: Incus refuses to delete an
     # ACL still referenced by an instance NIC. The label died with the
@@ -2201,5 +2251,15 @@ def ls_field_specs(
             cell=_pr_cell,
             json=_pr_json,
             show_if=lambda rows: any(c.pr_number is not None for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="claude_group",
+            header="CLAUDE",
+            cell=lambda c: c.claude_group or "",
+            json=lambda c: c.claude_group,
+            # Only worth a column when a container actually deviates: on
+            # every other host every row would carry the same value, or
+            # none at all.
+            show_if=lambda rows: any(c.claude_group for c in rows),
         ),
     ]

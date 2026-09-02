@@ -6988,3 +6988,175 @@ def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mock
 
     incus.delete.assert_called_once()
     warn.assert_called_once()
+
+
+def test_destroy_container_invalidates_the_recorded_account_for_an_override(
+    make_cfg, tmp_path, mocker
+):
+    """Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    and the destroy path." A container that had a claude_group override may
+    have been using an account the repo's shared config home does not
+    record; destroying it must invalidate that stale `oauthAccount`.
+    """
+    from jailbee import claude_pool
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {"user.jailbee.claude_group": "personal"},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_called_once_with(claude_pool.config_home(cfg))
+
+
+def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_path, mocker):
+    """No override means the repo's recorded account was never at risk of
+    going stale from this container, so destroy must not pay the cost."""
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_not_called()
+
+
+def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    payload = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {"user.jailbee.claude_group": "personal"},
+            "state": None,
+        }
+    ]
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = payload
+    rows = list_containers(cfg, incus)
+    assert rows[0].claude_group == "personal"
+
+
+def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
+    rows = list_containers(cfg, incus)
+    assert rows[0].claude_group is None
+
+
+def test_ls_hides_the_group_column_when_nothing_deviates():
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=datetime.now(UTC))}
+    field = specs["claude_group"]
+    plain = [ContainerInfo(name="a", state="Running", network=None, ip=None, memory_limit=None)]
+    assert field.show_if is not None
+    assert field.show_if(plain) is False
+    deviating = [
+        ContainerInfo(
+            name="a",
+            state="Running",
+            network=None,
+            ip=None,
+            memory_limit=None,
+            claude_group="personal",
+        )
+    ]
+    assert field.show_if(deviating) is True
+
+
+def test_new_container_applies_the_group_before_start(tmp_path, mocker):
+    """Claude must find the right credential on its first run, not after a restart."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    calls: list[str] = []
+    incus.start.side_effect = lambda *a, **k: calls.append("start")
+    set_group = mocker.patch(
+        "jailbee.claude_groups.set_container_group",
+        side_effect=lambda *a, **k: calls.append("set_group"),
+    )
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+            claude_group="personal",
+        ),
+    )
+
+    set_group.assert_called_once()
+    assert set_group.call_args.args[3] == "personal"
+    assert calls == ["set_group", "start"]
+
+
+def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+        ),
+    )
+
+    set_group.assert_not_called()

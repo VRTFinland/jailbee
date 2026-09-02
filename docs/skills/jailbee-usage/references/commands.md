@@ -83,6 +83,7 @@ use `jailbee git retarget`.
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
+| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation. See `jailbee claude group` below. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
 | `--no-autostart` | Skip the repo's autostart steps — fastest, least-risk way to get a container. Also skips reading the target branch's autostart config (see below): nothing runs, so there is nothing to diff or confirm. Enabled agents are still installed (that is infrastructure, not a user step), so `jailbee tmux` on such a container finds a session holding an `install-<agent>` window — but not the agent's own launch window. |
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
@@ -771,11 +772,16 @@ above), with no separate apply step needed.
 
 ## Claude accounts
 
-### `jailbee claude ls [-o json] [--fields account,org,state]`
+### `jailbee claude ls [-o json] [--fields account,org,state] [-g/--group <name>]`
 
 Every stored login on the host, the one live for this repo's holder first. The
 store is host-wide, not per group: a login parked from one credential group can
 be activated into another.
+
+`-g/--group <name>` points the command at that group's holder instead of
+the repo's own — the only way to reach a group that no repo permanently
+uses (e.g. one only a container override, see `jailbee claude group use`
+below, ever puts to use).
 
 The table's `ACCOUNT` column shows the **email** and `ORG` the truncated
 organization, because the org is parsed back out of the slot name and printing
@@ -793,7 +799,7 @@ a login that leaked between groups. The title says "on this host" for that
 reason, and the group, the holder directory and the member repos are stated
 under the table, where they describe the live row.
 
-### `jailbee claude use [<email|slot>]`
+### `jailbee claude use [<email|slot>] [-g/--group <name>]`
 
 Park the live login and activate a stored one. Holder-wide — every repo sharing
 the credential group moves with it. Pass the bare email unless two stored
@@ -802,6 +808,9 @@ accounts share it, in which case the error names the full slot names
 adopts the new credential on its next turn; only the account name in `/status`
 can lag until it restarts.
 
+`-g/--group <name>` acts on that group's holder instead of the repo's own,
+the same escape hatch `claude ls` offers above.
+
 **Omit the account entirely to pick from an arrow-key menu** of the stored
 logins — the same affordance `jailbee shell`/`jailbee tmux` offer for
 containers. The live login is never a candidate (`use` would refuse it), so a
@@ -809,17 +818,49 @@ holder whose only login is the live one reports that there is nothing to switch
 to rather than opening an empty menu. Without a TTY the menu is impossible, so
 the error names the candidate references for a script to pass explicitly.
 
-### `jailbee claude park`
+### `jailbee claude park [-g/--group <name>]`
 
 Store the live login and leave the holder empty, so the next `claude` in a
 container of this holder prompts `/login`. This is how a second account enters
 the pool — there is no `add`, because only a browser login creates a credential.
+
+`-g/--group <name>` parks that group's live login instead of the repo's own,
+the same escape hatch `claude ls`/`claude use` offer above.
 
 ### `jailbee claude rm [<email|slot>] [--yes]`
 
 Delete a stored login permanently; refuses the live one. Omit the account to
 pick from the same menu `claude use` offers. JailBee never contacts Anthropic,
 so this cannot be undone except by logging in again.
+
+### `jailbee claude group`
+
+Show this repo's permanent credential group (or "no credential group" if it
+keeps its own login), and list any of its containers currently overriding
+that group for their own lifetime. Host-wide, every credential group that
+exists on the machine is listed too, for context — not just this repo's.
+
+### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
+
+Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
+(`none` keeps this repo on its own login instead of sharing); `unset`
+removes the entry so the host's default group applies again. Every
+container of the repo follows the change except one with its own `use`
+override. Refuses while Claude is running in any of the repo's containers
+unless `--force` is passed, because a live session can overwrite the
+target group's login on its next token refresh. Restart Claude in the
+containers afterwards to pick up the new login.
+
+### `jailbee claude group use <name>|none [<container>] [--force]` / `jailbee claude group reset [<container>] [--force]`
+
+Temporary, single-container. `use` moves one container into another
+credential group (or, with `none`, out of grouping entirely) for as long
+as that container exists — it never touches `global.yaml` and never
+affects any other container. `reset` drops the override so the container
+inherits the repo's group again; destroying the container also drops it.
+Omit `<container>` to pick from this repo's containers. Same `--force`
+gate and same "restart Claude to pick up the new login" caveat as
+`set`/`unset`.
 
 ## GUI
 
