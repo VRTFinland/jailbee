@@ -16,6 +16,14 @@
   absolute path the Wayland spec also allows — is skipped with a warning
   instead of aborting the create. Existing containers pick the profile
   half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
+- **A renumbered compositor socket no longer needs a `jailbee apply`.** The
+  profile's `WAYLAND_DISPLAY` is only ever an apply-time snapshot of the
+  session that ran it, while the socket mount is recomputed on every boot —
+  so a reboot that renumbers the socket left the two disagreeing, and a GUI
+  app started by hand from `jailbee shell` looked for the wrong one. Each
+  container start now pins `WAYLAND_DISPLAY` on the instance alongside the
+  mount that decides it, and clears it when no socket was mounted. A
+  `WAYLAND_DISPLAY` set in `container.env` still wins.
 - **The grok agent preset now includes SuperGrok's auth and chat-proxy
   hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
   also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,

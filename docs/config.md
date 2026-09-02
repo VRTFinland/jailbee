@@ -312,6 +312,12 @@ User entries also win over JailBee's own GUI/SSH defaults
 (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `SSH_AUTH_SOCK`) — set them
 only if you know why you want to.
 
+`WAYLAND_DISPLAY` is the exception to "profile changes need `jailbee apply`":
+unless you pin it here, JailBee re-points it at the compositor socket it
+bind-mounts on every container start, so a host whose socket is renumbered
+(`wayland-1`) needs no re-apply. That is why `incus config show <container>`
+lists the key on the instance and not only on the profile.
+
 Profile changes take effect after `jailbee apply` (which prompts to restart
 running containers).
 

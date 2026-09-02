@@ -73,6 +73,24 @@ GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket"})
 # unlinking the bind-mount point returns EBUSY — already protected.
 READONLY_DEVICES: frozenset[str] = frozenset({"gpg-socket", "pulse-socket"})
 
+WAYLAND_DISPLAY_ENV = "WAYLAND_DISPLAY"
+WAYLAND_DISPLAY_KEY = f"environment.{WAYLAND_DISPLAY_ENV}"
+"""Instance config key holding the socket name for this boot.
+
+The `<prefix>-base` profile renders the same key, but only when `jailbee
+apply` runs — an apply-time snapshot of whatever session happened to invoke
+it. The socket name is session state, so a reboot that renumbers it (a
+nested compositor, a different login order) leaves that snapshot naming a
+socket the container no longer has, while the *mount* — recomputed on every
+boot — is right. Setting it per container, next to the mount that decides
+it, keeps the two in lockstep; the profile stays the fallback for a
+container jailbee has not booted (one created by an older version, or
+started with plain `incus start`).
+
+Instance config outranks profile config in Incus, which is the precedence
+we want — with one exception, see `_pin_wayland_display`.
+"""
+
 
 def _socket_devices() -> dict[str, str]:
     """Device name → basename under /run/user/<uid> for *this* session.
@@ -128,6 +146,33 @@ def _devices_for_host(cfg: Config, *, skip_wayland: bool) -> dict[str, str]:
     if not cfg.gpg.enabled:
         skip |= GPG_DEVICES
     return {k: v for k, v in _socket_devices().items() if k not in skip}
+
+
+def _pin_wayland_display(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    socket: str | None,
+) -> None:
+    """Point the container's ``WAYLAND_DISPLAY`` at the socket just mounted.
+
+    ``socket=None`` means none was mounted; the key is then cleared rather
+    than left naming a socket from an earlier boot that is no longer there.
+
+    A ``WAYLAND_DISPLAY`` in ``container.env`` is documented to win over the
+    value jailbee picks (`ContainerConfig`), and it is rendered into the
+    profile — which an instance-level key would outrank. So that case clears
+    the key too, leaving the user's profile value in force.
+
+    Takes effect without a restart: Incus reads ``environment.*`` from the
+    instance config on every ``incus exec``, and this runs before the
+    autostart steps.
+    """
+    if socket is None or WAYLAND_DISPLAY_ENV in cfg.container.env:
+        incus.config_unset(name, WAYLAND_DISPLAY_KEY)
+        return
+    incus.config_set(name, WAYLAND_DISPLAY_KEY, socket)
 
 
 # How long to wait for logind to provision /run/user/<uid> before giving
@@ -196,6 +241,13 @@ def attach_runtime_devices(
                 continue
             raise
 
+    _pin_wayland_display(
+        cfg,
+        incus,
+        name,
+        socket=None if wayland_skip_reason is not None else host_wayland_socket(),
+    )
+
     config_skipped = sorted(set(SOCKET_DEVICES) - set(devices) - {WAYLAND_DEVICE})
     if wayland_skip_reason is not None:
         # The missing socket is the display itself, so this is a warning
@@ -219,11 +271,16 @@ def detach_runtime_devices(
     incus: Incus,
     name: str,
 ) -> None:
-    """Remove the four socket devices. Tolerates devices that don't exist
-    (defensive — call before `start` to ensure no leftover devices race
-    with logind on the next boot).
+    """Remove the four socket devices and the boot's ``WAYLAND_DISPLAY``.
+    Tolerates devices that don't exist (defensive — call before `start` to
+    ensure no leftover devices race with logind on the next boot).
+
+    Clearing the env key matters when the next boot's attach never gets to
+    run (logind timeout): the container then falls back to the profile's
+    value instead of keeping this session's.
     """
     _ = cfg  # kept for symmetry / future config-driven device list
+    incus.config_unset(name, WAYLAND_DISPLAY_KEY)
     for device_name in SOCKET_DEVICES:
         try:
             incus.config_device_remove(name, device_name)

@@ -449,3 +449,88 @@ def test_attach_mounts_the_shared_socket_dirs_read_only(wayland_session):
     # flag would only risk breaking a writer we haven't thought of.
     assert "readonly" not in added["wayland-socket"]
     assert "readonly" not in added["dbus-socket"]
+
+
+# ---- WAYLAND_DISPLAY, pinned per boot next to the mount ----
+#
+# The base profile carries an apply-time snapshot of the socket name. The
+# mount is recomputed on every boot, so after a reboot that renumbers the
+# compositor socket the two disagree: the container gets the right mount and
+# the wrong variable, until someone happens to run `jailbee apply`. These
+# pin the variable where the mount is decided.
+
+
+def test_attach_pins_the_containers_wayland_display_to_the_mounted_socket(monkeypatch, mocker):
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=True)
+    cfg = _cfg()
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_set.assert_called_once_with(
+        "feat-smoke", "environment.WAYLAND_DISPLAY", "wayland-1"
+    )
+    incus.config_unset.assert_not_called()
+
+
+def test_attach_clears_the_containers_wayland_display_when_no_socket_is_mounted(
+    monkeypatch, mocker
+):
+    """Nothing was mounted, so the container must not keep a per-boot value
+    from the session that did have a socket — that would name a path which
+    is no longer in the container at all.
+    """
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    mocker.patch("jailbee.runtime_mounts.warn")
+    cfg = _cfg()
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
+    incus.config_set.assert_not_called()
+
+
+def test_attach_leaves_a_wayland_display_pinned_in_config_alone(monkeypatch, mocker):
+    """`container.env` overriding a key jailbee sets itself is documented to
+    win. A per-container override outranks the profile the user's value is
+    rendered into, so writing one here would silently beat their config —
+    clear it instead and let the profile speak.
+    """
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=True)
+    cfg = _cfg()
+    cfg = cfg.model_copy(
+        update={
+            "container": cfg.container.model_copy(update={"env": {"WAYLAND_DISPLAY": "wayland-7"}})
+        }
+    )
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
+
+
+def test_detach_clears_the_containers_wayland_display():
+    """Detach undoes what attach did, so a boot whose attach never gets to
+    run (logind timeout) starts from the profile's value, not the last
+    session's.
+    """
+    cfg = _cfg()
+    incus = MagicMock()
+
+    detach_runtime_devices(cfg, incus, "feat-smoke")
+
+    incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
