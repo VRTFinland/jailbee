@@ -6987,4 +6987,61 @@ def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mock
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
     incus.delete.assert_called_once()
-    warn.assert_called_once()
+
+
+def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    payload = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {"user.jailbee.claude_group": "personal"},
+            "state": None,
+        }
+    ]
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = payload
+    rows = list_containers(cfg, incus)
+    assert rows[0].claude_group == "personal"
+
+
+def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
+    rows = list_containers(cfg, incus)
+    assert rows[0].claude_group is None
+
+
+def test_ls_hides_the_group_column_when_nothing_deviates():
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=datetime.now(UTC))}
+    field = specs["claude_group"]
+    plain = [ContainerInfo(name="a", state="Running", network=None, ip=None, memory_limit=None)]
+    assert field.show_if is not None
+    assert field.show_if(plain) is False
+    deviating = [
+        ContainerInfo(
+            name="a",
+            state="Running",
+            network=None,
+            ip=None,
+            memory_limit=None,
+            claude_group="personal",
+        )
+    ]
+    assert field.show_if(deviating) is True

@@ -60,6 +60,10 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
+    # The container's Claude credential group, from
+    # `user.jailbee.claude_group`. None means it inherits the repo's group;
+    # `claude_groups.NO_GROUP` means it deliberately shares none.
+    claude_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
     git_status: GitStatus | None = None
@@ -232,6 +236,8 @@ def list_containers(
                 pr_number = None
         pr_author = config.get("user.jailbee.pr_author") == "1"
 
+        claude_group_raw = config.get("user.jailbee.claude_group")
+
         loose_until_raw = config.get("user.jailbee.loose_until")
         loose_until: datetime | None = None
         if isinstance(loose_until_raw, str) and loose_until_raw:
@@ -256,6 +262,7 @@ def list_containers(
                 repo_dir=repo_dir,
                 pr_number=pr_number,
                 pr_author=pr_author,
+                claude_group=claude_group_raw or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
             )
@@ -2201,5 +2208,15 @@ def ls_field_specs(
             cell=_pr_cell,
             json=_pr_json,
             show_if=lambda rows: any(c.pr_number is not None for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="claude_group",
+            header="CLAUDE",
+            cell=lambda c: c.claude_group or "",
+            json=lambda c: c.claude_group,
+            # Only worth a column when a container actually deviates: on
+            # every other host every row would carry the same value, or
+            # none at all.
+            show_if=lambda rows: any(c.claude_group for c in rows),
         ),
     ]
