@@ -7902,6 +7902,103 @@ def _refuse_if_claude_running(cfg: "Config", incus: "IncusType", container: str,
     raise typer.Exit(2)
 
 
+def _global_config_path_for_write() -> Path:
+    """Where `jailbee claude group set` writes. A seam for tests."""
+    from jailbee.global_config import default_global_config_path
+
+    return default_global_config_path()
+
+
+def _reapply_binds_profile(config: Path | None) -> None:
+    """Re-render `<prefix>-binds` after the repo's group changed.
+
+    Two steps, both existing code. `_ensure_claude_credentials_dir` is not
+    just a `mkdir`: it carries the four-case credential reconciliation,
+    including the case where **both** the target group and this repo hold
+    a login — which prompts for which to keep and deletes the other.
+    Moving a repo into a populated group is exactly how that case is
+    reached, so this must not create the directory itself.
+    """
+    from jailbee.incus import Incus
+    from jailbee.init_command import _ensure_claude_credentials_dir
+    from jailbee.profiles import binds_profile_yaml, profile_names
+
+    cfg = _load_or_exit(config)  # reloaded, so it sees the new group
+    _ensure_claude_credentials_dir(cfg)
+    Incus().profile_set_yaml(profile_names(cfg).binds, binds_profile_yaml(cfg))
+
+
+def _write_repo_group(config: Path | None, value: object) -> None:
+    """Apply one `claude_credentials.repos.<prefix>` change and re-render."""
+    from jailbee import config_writer
+
+    cfg = _load_or_exit(config)
+    path = _global_config_path_for_write()
+    config_writer.patch_file(
+        path,
+        [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
+    )
+    _reapply_binds_profile(config)
+
+
+@group_app.command("set")
+def claude_group_set_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Group name, or `none` to keep this repo on its own login.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ],
+    config: ConfigOption = None,
+) -> None:
+    """Set this repo's credential group. Permanent — writes `global.yaml`.
+
+    Every container of this repo follows it, except any with a temporary
+    override from `jailbee claude group use`. Use `jailbee claude group
+    unset` to fall back to the host-wide default instead.
+    """
+    from jailbee import claude_groups
+
+    value: object
+    if group == "none":
+        value = None
+    else:
+        try:
+            value = claude_groups.validate_group_name(group)
+        except claude_groups.GroupError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+        claude_groups.ensure_group_dir(str(value))
+
+    try:
+        _write_repo_group(config, value)
+    except OSError as e:
+        error(f"Could not write the global config: {e}")
+        raise typer.Exit(2) from e
+
+    where = "no credential group" if value is None else f"group `{value}`"
+    success(f"This repo now uses {where}.")
+    info("Restart Claude in this repo's containers to pick up the new login.")
+
+
+@group_app.command("unset")
+def claude_group_unset_cmd(config: ConfigOption = None) -> None:
+    """Remove this repo's entry so the host-wide default applies again."""
+    from jailbee import claude_groups, config_writer
+
+    try:
+        _write_repo_group(config, config_writer.DELETE)
+    except OSError as e:
+        error(f"Could not write the global config: {e}")
+        raise typer.Exit(2) from e
+
+    cfg = _load_or_exit(config)
+    repo = claude_groups.repo_group(cfg)
+    where = "no credential group" if repo is None else f"group `{repo}`"
+    success(f"Entry removed. This repo now follows the host default: {where}.")
+
+
 @group_app.command("use")
 def claude_group_use_cmd(
     group: Annotated[

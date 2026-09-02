@@ -118,3 +118,71 @@ def test_use_invalidates_the_repos_recorded_account(group_env, mocker):
     invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
     runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     invalidate.assert_called_once()
+
+
+def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+
+    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+    assert result.exit_code == 0
+
+    import yaml
+
+    loaded = yaml.safe_load(global_yaml.read_text())
+    assert loaded["claude_credentials"]["repos"]["myrepo"] == "personal"
+    # The host default is untouched — `set` is repo-scoped.
+    assert loaded["claude_credentials"]["group"] == "work"
+
+
+def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+
+    runner.invoke(app, ["claude", "group", "set", "none"])
+
+    import yaml
+
+    repos = yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+    assert "myrepo" in repos and repos["myrepo"] is None
+
+
+def test_unset_removes_the_entry(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text(
+        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
+    )
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+
+    runner.invoke(app, ["claude", "group", "unset"])
+
+    import yaml
+
+    assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+
+
+def test_set_rejects_the_reserved_name_before_writing(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    before = global_yaml.read_bytes()
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+
+    # `none` is the CLI's word for "no group", so it can never be written as a
+    # group name; the refusal must come from a name that only *looks* usable.
+    result = runner.invoke(app, ["claude", "group", "set", "Work"])
+    assert result.exit_code != 0
+    assert global_yaml.read_bytes() == before
+
+
+def test_set_takes_no_container_argument(group_env):
+    """Scope separation: the permanent verb must not accept a container."""
+    result = runner.invoke(app, ["claude", "group", "set", "personal", "myrepo-a"])
+    assert result.exit_code != 0
