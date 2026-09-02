@@ -186,3 +186,79 @@ def test_set_takes_no_container_argument(group_env):
     """Scope separation: the permanent verb must not accept a container."""
     result = runner.invoke(app, ["claude", "group", "set", "personal", "myrepo-a"])
     assert result.exit_code != 0
+
+
+def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    before = global_yaml.read_bytes()
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    writer = mocker.patch("jailbee.cli._write_repo_group")
+    # myrepo-b, not myrepo-a, is the one Claude is running in.
+    mocker.patch(
+        "jailbee.claude_groups.claude_running",
+        side_effect=lambda cfg, incus, container: container == "myrepo-b",
+    )
+
+    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+
+    assert result.exit_code != 0
+    assert "--force" in result.output
+    assert "myrepo-b" in result.output
+    writer.assert_not_called()
+    assert global_yaml.read_bytes() == before
+
+
+def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "set", "personal", "--force"])
+
+    assert result.exit_code == 0
+    import yaml
+
+    loaded = yaml.safe_load(global_yaml.read_text())
+    assert loaded["claude_credentials"]["repos"]["myrepo"] == "personal"
+
+
+def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text(
+        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
+    )
+    before = global_yaml.read_bytes()
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    writer = mocker.patch("jailbee.cli._write_repo_group")
+    mocker.patch(
+        "jailbee.claude_groups.claude_running",
+        side_effect=lambda cfg, incus, container: container == "myrepo-a",
+    )
+
+    result = runner.invoke(app, ["claude", "group", "unset"])
+
+    assert result.exit_code != 0
+    assert "--force" in result.output
+    assert "myrepo-a" in result.output
+    writer.assert_not_called()
+    assert global_yaml.read_bytes() == before
+
+
+def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text(
+        "claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n"
+    )
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "unset", "--force"])
+
+    assert result.exit_code == 0
+    import yaml
+
+    assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]

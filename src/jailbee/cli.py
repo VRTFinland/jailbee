@@ -7902,6 +7902,37 @@ def _refuse_if_claude_running(cfg: "Config", incus: "IncusType", container: str,
     raise typer.Exit(2)
 
 
+def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
+    """Block a repo-wide group change under a live Claude unless `--force`.
+
+    `jb claude group set`/`unset` reconciles credentials across every
+    container of the repo (`_ensure_claude_credentials_dir`'s four-case
+    handling), so the single-container hazard `_refuse_if_claude_running`
+    guards applies here too, but to every container at once — see the
+    design's §6.1/§8.
+    """
+    from jailbee import claude_groups
+
+    if force:
+        return
+    running = sorted(
+        str(row["name"])
+        for row in incus.list_containers()
+        if str(row.get("name", "")).startswith(f"{cfg.container_prefix}-")
+        and claude_groups.claude_running(cfg, incus, str(row["name"])) is True
+    )
+    if not running:
+        return
+    error(
+        "Claude is running in " + ", ".join(running) + ". Changing this repo's "
+        "credential group under a live session can overwrite another group's "
+        "login on the next token refresh, and that login cannot be recovered.\n"
+        "Close Claude in those containers and run this again, or pass --force if "
+        "you are sure."
+    )
+    raise typer.Exit(2)
+
+
 def _global_config_path_for_write() -> Path:
     """Where `jailbee claude group set` writes. A seam for tests."""
     from jailbee.global_config import default_global_config_path
@@ -7950,6 +7981,13 @@ def claude_group_set_cmd(
             autocompletion=completion.complete_claude_group,
         ),
     ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if Claude is running in any of this repo's containers.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Set this repo's credential group. Permanent — writes `global.yaml`.
@@ -7959,6 +7997,11 @@ def claude_group_set_cmd(
     unset` to fall back to the host-wide default instead.
     """
     from jailbee import claude_groups
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    _refuse_if_claude_running_in_repo(cfg, incus, force)
 
     value: object
     if group == "none":
@@ -7983,9 +8026,23 @@ def claude_group_set_cmd(
 
 
 @group_app.command("unset")
-def claude_group_unset_cmd(config: ConfigOption = None) -> None:
+def claude_group_unset_cmd(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if Claude is running in any of this repo's containers.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
     from jailbee import claude_groups, config_writer
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    _refuse_if_claude_running_in_repo(cfg, incus, force)
 
     try:
         _write_repo_group(config, config_writer.DELETE)
