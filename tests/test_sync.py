@@ -5115,6 +5115,48 @@ def test_retarget_refuses_stopped_container(mocker, make_cfg, tmp_path):
         sync.retarget_container(cfg, incus, "feat-b", "main")
 
 
+def test_retarget_source_ref_anchors_the_new_base_elsewhere(mocker, make_cfg, tmp_path):
+    """`jailbee pr --stacked` retargets onto a PR head, which deliberately
+    lives in no branch — so the anchor comes from `source_ref`, while the
+    label still records the branch name the PR head belongs to."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = _retarget_setup(mocker)
+    rev_parse = mocker.patch("jailbee.sync.git.rev_parse", return_value="abc1234")
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+
+    result = sync.retarget_container(
+        cfg, incus, "feat-b", "feat/x", source_ref="refs/jailbee/pr/1234/head"
+    )
+
+    rev_parse.assert_called_once_with(cfg.repo_root, "refs/jailbee/pr/1234/head")
+    push_multi.assert_called_once_with(
+        cfg.repo_root,
+        "ext::receive",
+        [
+            "+refs/jailbee/pr/1234/head:refs/jailbee/base/feat/x",
+            ":refs/jailbee/base/feat/a",
+        ],
+    )
+    incus.config_set.assert_called_once_with("p-feat-b", "user.jailbee.base_branch", "feat/x")
+    assert result.new_base == "feat/x"
+    assert result.base_oid == "abc1234"
+
+
+def test_retarget_missing_source_ref_names_the_ref_not_a_branch(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = _retarget_setup(mocker)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value=None)
+
+    with pytest.raises(sync.SyncError, match=r"refs/jailbee/pr/1234/head.*does not exist"):
+        sync.retarget_container(
+            cfg, incus, "feat-b", "feat/x", source_ref="refs/jailbee/pr/1234/head"
+        )
+
+
 # ---------------------------------------------------------------------------
 # SubmoduleMove + compute_submodule_moves
 # ---------------------------------------------------------------------------

@@ -1136,7 +1136,7 @@ def test_pr_adopts_review_container_after_confirmation(mocker, tmp_path):
     _cfg, _incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
     create = mocker.patch("jailbee.pr.create_pr")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
@@ -1152,7 +1152,7 @@ def test_pr_adopt_writes_pr_branch_before_pr_adopted(mocker, tmp_path):
     _cfg, incus, _publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
@@ -1164,10 +1164,11 @@ def test_pr_adopt_writes_pr_branch_before_pr_adopted(mocker, tmp_path):
 
 
 def test_pr_adopt_declined_does_nothing(mocker, tmp_path):
+    """Cancelling the publish menu must leave the container untouched."""
     _cfg, incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value=None)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
@@ -1180,25 +1181,25 @@ def test_pr_adopt_without_tty_requires_yes(mocker, tmp_path):
     _cfg, _incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
-    confirm = mocker.patch("typer.confirm")
+    pick = mocker.patch("jailbee.pr_flow._pick_review_action")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
-    confirm.assert_not_called()
+    pick.assert_not_called()
     publish.assert_not_called()
 
 
 def test_pr_adopt_yes_skips_the_prompt(mocker, tmp_path):
     _cfg, _incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
-    confirm = mocker.patch("typer.confirm")
+    pick = mocker.patch("jailbee.pr_flow._pick_review_action")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
-    confirm.assert_not_called()
+    pick.assert_not_called()
     assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
 
 
@@ -1287,14 +1288,14 @@ def test_pr_already_adopted_container_skips_gh_and_prompt(mocker, tmp_path):
         },
     )
     resolve = mocker.patch("jailbee.pr.resolve_pr")
-    confirm = mocker.patch("typer.confirm")
+    pick = mocker.patch("jailbee.pr_flow._pick_review_action")
     create = mocker.patch("jailbee.pr.create_pr")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     resolve.assert_not_called()
-    confirm.assert_not_called()
+    pick.assert_not_called()
     create.assert_not_called()
     assert publish.call_args.kwargs["publish_name"] == "alice/worktime-stomp"
 
@@ -1977,3 +1978,294 @@ def test_pr_bind_same_number_as_review_container_asks_to_adopt_not_retarget(mock
     assert "retarget" not in question
     assert question == "Push this container's commits to PR #456 ('contributor/fix-worktime')?"
     assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
+
+
+# --- `jailbee pr --stacked`: a PR against the reviewed PR's head -----------
+
+
+def _stacked_setup(
+    mocker,
+    tmp_path,
+    extra_labels=None,
+    publish_name="fix/worktime-review",
+    pr_info=None,
+):
+    """A `jailbee new --pr 456` container whose branch IS the PR head."""
+    labels = {
+        "user.jailbee.pr": "456",
+        "user.jailbee.branch": "contributor/fix-worktime",
+        "user.jailbee.base_branch": "master",
+    }
+    if extra_labels:
+        labels.update(extra_labels)
+    _cfg, incus = _setup(mocker, tmp_path, labels=labels)
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        return_value=_publish_result(publish_name=publish_name, branch="contributor/fix-worktime"),
+    )
+    mocker.patch("jailbee.pr.resolve_pr", return_value=pr_info if pr_info else _review_pr_info())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
+    mocker.patch("jailbee.git.commit_subject", return_value="fix: worktime")
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    retarget = mocker.patch("jailbee.sync.retarget_container")
+    return incus, publish, create, retarget
+
+
+def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
+    _incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert publish.call_args.kwargs["publish_name"] == "fix/worktime-review"
+    kwargs = create.call_args.kwargs
+    assert kwargs["head"] == "fix/worktime-review"
+    assert kwargs["base"] == "contributor/fix-worktime"  # the reviewed PR's head
+
+
+def test_stacked_records_its_own_labels_and_leaves_the_parent_alone(mocker, tmp_path):
+    incus, _publish, _create, _retarget = _stacked_setup(mocker, tmp_path)
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    writes = [tuple(c.args[-2:]) for c in incus.config_set.call_args_list]
+    assert ("user.jailbee.stacked_pr", "123") in writes
+    assert ("user.jailbee.stacked_pr_branch", "fix/worktime-review") in writes
+    assert ("user.jailbee.stacked_pr_author", "1") in writes
+    assert ("user.jailbee.stacked_pr_base", "contributor/fix-worktime") in writes
+    # The reviewed PR stays the container's `pr` label: `jailbee ls` and
+    # `jailbee git push --pr` go on meaning #456.
+    assert not [w for w in writes if w[0] in {"user.jailbee.pr", "user.jailbee.pr_adopted"}]
+
+
+def test_stacked_refuses_to_publish_under_the_reviewed_head(mocker, tmp_path):
+    """Without --as the proposed head defaults to the container branch, which
+    IS the reviewed PR's head — publishing there would silently update that PR
+    instead of opening a stacked one."""
+    _incus, publish, create, _retarget = _stacked_setup(
+        mocker, tmp_path, publish_name="contributor/fix-worktime"
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--no-ai"])
+
+    assert result.exit_code == 2
+    assert "--as" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+
+
+def test_stacked_and_pr_number_are_mutually_exclusive(mocker, tmp_path):
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--pr", "77"])
+
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+
+
+def test_review_container_without_a_tty_names_both_flags(mocker, tmp_path):
+    _incus, publish, _create, _retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 1
+    assert "--yes" in result.output
+    assert "--stacked" in result.output
+    publish.assert_not_called()
+
+
+def test_menu_stacked_choice_opens_the_stacked_pr(mocker, tmp_path):
+    _incus, _publish, create, _retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value="stacked")
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--as", "fix/worktime-review", "--no-retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["base"] == "contributor/fix-worktime"
+
+
+def test_rerun_updates_the_stacked_pr_without_asking_again(mocker, tmp_path):
+    _incus, publish, create, _retarget = _stacked_setup(
+        mocker,
+        tmp_path,
+        publish_name="fix/worktime-review",
+        extra_labels={
+            "user.jailbee.stacked_pr": "123",
+            "user.jailbee.stacked_pr_branch": "fix/worktime-review",
+            "user.jailbee.stacked_pr_author": "1",
+            "user.jailbee.stacked_pr_base": "contributor/fix-worktime",
+        },
+    )
+    pick = mocker.patch("jailbee.pr_flow._pick_review_action")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_not_called()
+    create.assert_not_called()
+    assert publish.call_args.kwargs["publish_name"] == "fix/worktime-review"
+
+
+def test_stacked_flag_is_a_no_op_on_an_already_stacked_container(mocker, tmp_path):
+    _incus, _publish, create, retarget = _stacked_setup(
+        mocker,
+        tmp_path,
+        extra_labels={
+            "user.jailbee.stacked_pr": "123",
+            "user.jailbee.stacked_pr_branch": "fix/worktime-review",
+            "user.jailbee.stacked_pr_author": "1",
+            "user.jailbee.stacked_pr_base": "contributor/fix-worktime",
+        },
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+
+    assert result.exit_code == 0, result.output
+    create.assert_not_called()
+    retarget.assert_not_called()
+
+
+def test_stacked_refused_on_an_adopted_container(mocker, tmp_path):
+    _incus, publish, create, _retarget = _stacked_setup(
+        mocker,
+        tmp_path,
+        extra_labels={
+            "user.jailbee.pr_adopted": "1",
+            "user.jailbee.pr_branch": "contributor/fix-worktime",
+        },
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+
+    assert result.exit_code == 2
+    assert "already publishes" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+
+
+def test_stacked_refused_without_a_reviewed_pr(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    publish = mocker.patch("jailbee.sync.publish_branch_from_container")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+
+    assert result.exit_code == 2
+    assert "review container" in result.output
+    publish.assert_not_called()
+
+
+def test_stacked_refused_on_a_fork_pr(mocker, tmp_path):
+    _incus, publish, create, _retarget = _stacked_setup(
+        mocker, tmp_path, pr_info=_review_pr_info(cross=True, owner="contributor")
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/x"])
+
+    assert result.exit_code == 1
+    assert "contributor" in result.output
+    publish.assert_not_called()
+    create.assert_not_called()
+
+
+def test_stacked_never_renames_the_hosts_copy_of_the_reviewed_branch(mocker, tmp_path):
+    """The container's branch is the PR author's branch, and the host may well
+    have its own copy. The create path's rename-to-match-the-PR-head step must
+    not touch it."""
+    _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.git.local_branch_exists", return_value=True)
+    rename = mocker.patch("jailbee.git.rename_branch")
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    rename.assert_not_called()
+
+
+def test_stacked_retargets_the_container_base_when_confirmed(mocker, tmp_path):
+    _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+
+    assert result.exit_code == 0, result.output
+    args, kwargs = retarget.call_args.args, retarget.call_args.kwargs
+    assert args[3] == "contributor/fix-worktime"
+    assert kwargs["source_ref"] == "refs/jailbee/pr/456/head"
+
+
+def test_stacked_retarget_declined_leaves_the_base_alone(mocker, tmp_path):
+    _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+
+    assert result.exit_code == 0, result.output
+    retarget.assert_not_called()
+
+
+def test_stacked_retarget_skipped_without_a_tty_and_prints_the_command(mocker, tmp_path):
+    _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+
+    assert result.exit_code == 0, result.output
+    retarget.assert_not_called()
+    assert "jailbee git retarget" in result.output
+
+
+def test_stacked_retarget_failure_does_not_fail_the_publish(mocker, tmp_path):
+    from jailbee.sync import SyncError
+
+    _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
+    retarget.side_effect = SyncError("container is not running")
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not running" in result.output
+    assert "pull/123" in result.output
+
+
+def test_stacked_retarget_skipped_when_the_base_already_matches(mocker, tmp_path):
+    _incus, _publish, _create, retarget = _stacked_setup(
+        mocker, tmp_path, extra_labels={"user.jailbee.base_branch": "contributor/fix-worktime"}
+    )
+
+    result = CliRunner().invoke(
+        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
+    )
+
+    assert result.exit_code == 0, result.output
+    retarget.assert_not_called()
+
+
+def test_open_prefers_the_stacked_pr(mocker, tmp_path):
+    _setup(
+        mocker,
+        tmp_path,
+        labels={
+            "user.jailbee.pr": "456",
+            "user.jailbee.stacked_pr": "123",
+            "user.jailbee.stacked_pr_branch": "fix/worktime-review",
+        },
+    )
+    open_browser = mocker.patch("jailbee.pr.open_pr_in_browser")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--open"])
+
+    assert result.exit_code == 0, result.output
+    open_browser.assert_called_once_with(tmp_path, 123)

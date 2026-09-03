@@ -560,12 +560,14 @@ container's branch to the GitHub `origin` by **fetching it to the host, then
 fast-forward pushing under the host's credentials** — so, unlike `jailbee git push
 --pr`, the network call happens host-side and needs no `jailbee net loose` on the
 container. No PR yet → opens a **draft** PR; PR exists → the push updates it. On a
-`jailbee new --pr N` container it asks once whether to push the container's commits
-to PR #N's head, records the answer (`user.jailbee.pr_adopted`) and updates that PR
-on every later run; cross-repository (fork) PRs are refused with a manual-push
-recipe. On such a container (a PR JailBee did not create) the PR description is
-never regenerated unless you ask — the interactive "update the description?"
-offer is suppressed — and `--force` takes a second confirmation.
+`jailbee new --pr N` container it asks once, as an arrow-key menu, what to
+publish: the container's commits **into** PR #N's head, or a **new PR based on**
+it (`--stacked`, below). The answer is recorded (`user.jailbee.pr_adopted` for
+the first) and later runs need no flag; off a TTY the choice must come from
+`--yes` or `--stacked`. Cross-repository (fork) PRs are refused with a
+manual-push recipe. Once adopted (a PR JailBee did not create) the PR
+description is never regenerated unless you ask — the interactive "update the
+description?" offer is suppressed — and `--force` takes a second confirmation.
 
 A container with no PR label gets the same treatment when its **branch** already
 has one: before opening anything JailBee runs `gh pr view <container branch>` and, on
@@ -585,6 +587,21 @@ rules apply here too. Already bound to N → no `gh` call and no prompt; bound t
 a *different* number → confirms a retarget, which is also how a mistyped number
 is corrected.
 
+**`--stacked`** publishes to a PR whose **base is the reviewed PR's head
+branch** instead of pushing into that PR — the "PR against a PR" case. It needs
+a head branch of its own (`--as`, or Claude's proposal); publishing under the
+reviewed head is exit 2, which is what `--stacked --no-ai` hits since the
+proposed name then defaults to the container branch, which *is* that head. The
+stacked PR is recorded under `user.jailbee.stacked_pr` / `stacked_pr_branch` /
+`stacked_pr_author` / `stacked_pr_base`, leaving `user.jailbee.pr` — and with it
+`jailbee ls`'s PR column and `jailbee git push --pr` — pointed at the parent.
+Opening one also offers to retarget the container's base branch onto the PR head
+(`--retarget`/`--no-retarget`), anchored from `refs/jailbee/pr/<N>/head`, so
+AHEAD and `jailbee git diff` count only this container's own commits. Refused on
+a fork PR (its head is not a branch in your origin, so it cannot be a base), on
+a container already publishing to a PR's head, and on one never created from a
+PR. Later runs update it silently; `--open` prefers it over the parent.
+
 Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 
 | Flag | Effect |
@@ -593,9 +610,11 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--base <branch>` | PR base branch (default: the container's recorded base branch). |
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create, unchanged on update. (`--no-draft` is a hidden back-compat alias for `--ready`.) |
 | `--description` / `-d` | Update only: regenerate the PR description with Claude and apply it. |
-| `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. |
+| `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. On an undecided review container the rejection waits for the adopt-or-stack choice: legal with `--stacked`, refused (before any push or label write) when the run adopts. |
+| `--stacked` | On a `jailbee new --pr` container: open a NEW PR based on the reviewed PR's head instead of pushing into it. See above. Mutually exclusive with `--pr N` (exit 2). |
+| `--retarget` / `--no-retarget` | Move (or don't) the container's base branch to the stacked PR's base after opening it. Default: ask on a TTY, otherwise skip and print the command. Only acted on when a stacked PR is opened. |
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
-| `--yes` / `-y` | Skip the confirmations asked on a `jailbee new --pr` container: the one-time adoption, and the `--force` overwrite gate. Required when there is no TTY. |
+| `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
 | `--no-ai` | Skip AI generation of the title/body; keep the container branch name as-is. |
 | `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
 | `--web` | Open the PR in the browser afterwards. |

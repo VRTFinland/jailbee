@@ -520,17 +520,81 @@ own branch has its head downstream of the container, where the refresh
 could only be a no-op. The Qt dashboard asks the action in a dialog and
 never asks for a source, because `--pr` already is one.
 
-Push your own commits back to the PR's head branch:
+Publish your own commits — either into the PR, or as a PR of your own:
 
 ```bash
-jailbee pr <name>                        # asks once, then updates PR #N
-jailbee pr <name> --yes                  # skip the confirmation
+jailbee pr <name>                        # asks once (menu), then updates PR #N
+jailbee pr <name> --yes                  # non-interactive: push into PR #N's head
+jailbee pr <name> --stacked --as fix/x   # non-interactive: open a PR based on PR #N
+```
+
+The first run on a review container asks what to publish, because both
+answers are legitimate:
+
+```
+Container 'review-1234' was created from PR #1234 by @alice (OPEN);
+  head 'alice/work-type' → base 'main'.
+? What should jailbee publish?  (Use arrow keys)
+ ❯ push these commits to PR #1234's head 'alice/work-type'
+   open a NEW PR based on 'alice/work-type'  (stacked)
+   cancel
 ```
 
 The confirmation is recorded on the container (`user.jailbee.pr_adopted`), so
 later `jailbee pr` runs push new commits without asking again. Fork PRs are
 refused: their head lives in another repository, so pushing to `origin`
 would create an unrelated branch instead of updating the PR.
+
+Off a TTY the choice must come from a flag — `--yes` or `--stacked` — since
+neither can be guessed; `--yes` keeps the meaning it had before `--stacked`
+existed.
+
+### A PR against the PR — `--stacked`
+
+Reviewing a PR often produces work of its own: a fix on top of the author's
+branch, a test they asked for. `--stacked` publishes it as a PR **based on**
+PR #N's head branch rather than pushing into it, so the author reviews your
+commits separately and merges them into their own branch.
+
+```bash
+jailbee pr review-1234 --stacked --as fix/worktime-review
+```
+
+That PR is JailBee's own, so it needs a head branch of its own: `--as`, or
+Claude's proposal (confirmed on a TTY). Publishing under the reviewed PR's
+head is refused with exit 2 — it would silently update that PR instead. This
+is what `--no-ai --stacked` hits, since the proposed name then defaults to
+the container's branch, which *is* that head.
+
+It is recorded separately, under `user.jailbee.stacked_pr` /
+`stacked_pr_branch` / `stacked_pr_author` / `stacked_pr_base`.
+`user.jailbee.pr` goes on naming the **reviewed** PR, which is the point:
+`jailbee ls`'s PR column and `jailbee git push --pr` ("refresh from PR
+head", above) keep tracking the parent, so the author's new commits still
+come to you over the bridge. Later `jailbee pr` runs read the stacked labels
+and update your PR with no question asked, and `--open` prefers it over the
+parent.
+
+Two more things follow from the container's own base anchor being the
+reviewed PR's *base* (e.g. `main`), not its head:
+
+- Opening a stacked PR offers to **retarget** the container onto the PR head
+  (`--retarget` / `--no-retarget`; the default asks on a TTY and otherwise
+  skips, printing the command). Only then do `jailbee ls`'s AHEAD and
+  `jailbee git diff` count this container's own commits alone instead of
+  folding in the whole reviewed PR. The anchor comes from JailBee's own
+  `refs/jailbee/pr/<N>/head` — the PR head deliberately lives in no branch on
+  the host, so a same-named local branch cannot decide it.
+- When PR #N merges, `jailbee git retarget <name> main` moves your stacked PR's
+  container onto the merged base as usual.
+
+A **fork** PR cannot be stacked on: its head is not a branch in your origin,
+so it cannot be the base of a PR opened there. JailBee says so and names the
+fork branch to open the stacked PR against instead. `--stacked` is also
+refused on a container that already publishes to a PR's head (adopted or
+JailBee-authored) — that head is fixed, and a stacked PR needs its own — and
+on a container that was never created from a PR, where `jailbee new <branch>
+<base>` is the way to base work on another branch.
 
 The PR is still not JailBee's own, so on every run it stays hands-off in ways a
 jailbee-authored PR does not:
@@ -543,7 +607,10 @@ jailbee-authored PR does not:
   overwrite; `--yes` skips that too, and without a TTY it is an error.
 - **`--as` is rejected** (exit 2). That holds for any container with a PR,
   jailbee-authored ones included: the PR's head branch is fixed, so pushing to
-  a different name would leave the PR untouched.
+  a different name would leave the PR untouched. On a review container that
+  has not decided yet, the rejection waits for the choice: `--as` is legal
+  with `--stacked` (it names the new PR's head) and refused — before any push
+  or label write — when the run adopts.
 
 ### A branch that already has a PR
 
