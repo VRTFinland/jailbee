@@ -102,6 +102,25 @@
   number is corrected. `--pr` with `--as` is a usage error.
   `jailbee submodule pr --pr N` does the same for one submodule, resolved
   against the submodule's own repo and remote.
+- **`jailbee pr --stacked` opens a PR *against* the PR a container was
+  created from.** A `jailbee new --pr N` container could only ever publish
+  into PR #N's head: `jailbee pr` asked yes/no and exited on "no", so work
+  done while reviewing had no way to become a PR of its own without leaving
+  JailBee for `jailbee git checkout --as` plus a hand-rolled `gh pr create`.
+  The first run on a review container now asks what to publish — an
+  arrow-key menu — and `--stacked` picks "a new PR based on that head"
+  non-interactively (`--yes` keeps meaning "into PR #N"). The stacked PR is
+  JailBee's own, so it takes a head branch of its own (`--as`, or Claude's
+  proposal; publishing under the reviewed head is refused) and is recorded
+  under `user.jailbee.stacked_pr*` — `user.jailbee.pr` goes on naming the
+  reviewed PR, which keeps `jailbee ls`'s PR column and `jailbee git push
+  --pr` ("Refresh from PR head") pointed at the parent, exactly what a
+  stacked container wants when the author pushes more commits. Opening one
+  also offers to retarget the container's base branch onto the PR head
+  (`--retarget`/`--no-retarget`), anchored from `refs/jailbee/pr/<N>/head`,
+  so `jailbee ls` AHEAD counts the stacked work alone instead of folding in
+  the whole reviewed PR. Refused on a fork PR, whose head is not a branch in
+  your origin and so cannot be a base.
 - **Both dashboards can create containers.** In the TUI, `n` asks for a
   branch and a base branch and runs `jailbee new` in the handed-over
   terminal; in the Qt dashboard, `&Container → New…` (Ctrl+N) and the

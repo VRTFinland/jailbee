@@ -585,7 +585,7 @@ does not — the container's setup never finished, so it stays until acknowledge
 jailbee new --pr 1234            # fetch PR #1234's head, create a container on it
 jailbee shell <derived-name>     # review/test
 jailbee git push <derived-name> --pr --rebase   # pull in commits the author pushed since
-jailbee pr <derived-name>        # push your own commits to PR #1234's head (asks once)
+jailbee pr <derived-name>        # publish your own commits (asks once: into PR #1234, or stacked)
 jailbee destroy <derived-name> --force
 ```
 
@@ -595,8 +595,11 @@ stored as `user.jailbee.pr` on the container.
 
 Neither step needs `jailbee net loose`: `jailbee git push --pr` fetches the PR head on the
 **host** and moves it in over the bridge, and `jailbee pr` publishes host-side too.
-The first `jailbee pr` asks for confirmation and records it (`user.jailbee.pr_adopted`);
-`--yes` skips the prompt for non-interactive use.
+The first `jailbee pr` asks — an arrow-key menu — what to publish, and records
+the answer: the container's commits **into** PR #1234's head
+(`user.jailbee.pr_adopted`), or a **new PR based on** that head (a stacked PR,
+see below). Off a TTY the choice must come from a flag: `--yes` for the first,
+`--stacked` for the second.
 
 `git push --pr` needs the container named explicitly (it reads the container's
 own `user.jailbee.pr` label, so there is nothing for a picker to offer), but the
@@ -611,6 +614,42 @@ head downstream of the container, so refreshing could only be a no-op).
 commit. So reviewing your own PR works with its branch checked out on the host
 (git refuses to fetch into a checked-out branch), and a stale or diverging local
 branch of the same name cannot leak into the container.
+
+### A PR against the PR — `jailbee pr --stacked`
+
+Reviewing often produces work of its own. `--stacked` publishes it as a PR
+whose **base is the reviewed PR's head branch**, instead of pushing into that
+PR:
+
+```bash
+jailbee pr <derived-name> --stacked --as fix/worktime-review
+```
+
+Five things to know when explaining it:
+
+- **It needs a head branch of its own** — `--as`, or Claude's proposal
+  confirmed on a TTY. Publishing under the reviewed PR's head is refused
+  (exit 2): that would silently update the reviewed PR. `--stacked --no-ai`
+  hits this, because the proposed name then defaults to the container's
+  branch, which *is* that head.
+- **The reviewed PR keeps `user.jailbee.pr`.** The stacked PR is recorded
+  separately (`user.jailbee.stacked_pr` / `stacked_pr_branch` /
+  `stacked_pr_author` / `stacked_pr_base`), so `jailbee ls`'s PR column and
+  `jailbee git push --pr` ("Refresh from PR head") go on tracking the parent
+  — which is what you want when the author pushes more commits.
+- **It offers to retarget the container** onto the PR head
+  (`--retarget`/`--no-retarget`; the default asks on a TTY and otherwise
+  prints the command). Only then do `jailbee ls` AHEAD and `jailbee git diff`
+  count this container's own commits instead of folding in the whole reviewed
+  PR. When the parent merges, `jailbee git retarget <name> <base>` moves it on
+  as usual.
+- **Later runs need no flag.** They read the stacked labels, update that PR
+  silently, and `--open` prefers it over the parent.
+- **Refused** on a fork PR (its head is not a branch in your origin, so it
+  cannot be a base — open the stacked PR in the fork instead), on a container
+  that already publishes to a PR's head (that head is fixed), and on one never
+  created from a PR (there `jailbee new <branch> <base>` is the way to base
+  work on another branch).
 
 `jailbee new --pr` fetches two things: the PR head, and the PR's base branch into
 `origin/<baseRefName>`. The base fetch is what makes `jailbee ls` AHEAD (`±`/`↑`)
