@@ -1728,6 +1728,7 @@ def retarget_container(
     incus: Incus,
     short: str,
     new_base: str,
+    source_ref: str | None = None,
 ) -> RetargetResult:
     """Re-point container ``short`` at a new base branch.
 
@@ -1738,6 +1739,14 @@ def retarget_container(
     ``user.jailbee.base_branch`` label (label last, so a transport failure
     leaves it pointing at the old, still-seeded base). Does NOT merge the
     new base into the container's branch — that is ``jailbee git push --merge``.
+
+    ``source_ref`` overrides the host ref the anchor is taken from, exactly as
+    it does in `push_to_container`. Default is ``refs/heads/<new_base>``, but
+    `jailbee pr --stacked` retargets onto a PR head, which lives in jailbee's
+    own ``refs/jailbee/pr/<N>/head`` and deliberately in no branch at all — a
+    same-named local branch, stale or ahead, must not decide the anchor. The
+    ``user.jailbee.base_branch`` label still records ``new_base``: it names the
+    branch the work is stacked on, not the ref the anchor came from.
     """
     from jailbee import background
     from jailbee.lifecycle import (
@@ -1767,10 +1776,13 @@ def retarget_container(
     if not _container_is_running(incus, full_name):
         raise SyncError(f"Container '{short}' is not running. Start it with: jailbee start {short}")
 
-    base_oid = git.rev_parse(cfg.repo_root, f"refs/heads/{new_base}")
+    anchor_ref = source_ref if source_ref is not None else f"refs/heads/{new_base}"
+    base_oid = git.rev_parse(cfg.repo_root, anchor_ref)
     if base_oid is None:
         raise SyncError(
-            f"Branch '{new_base}' does not exist on host (refs/heads/{new_base}). "
+            f"Base ref '{anchor_ref}' does not exist on host. Create or fetch it first."
+            if source_ref is not None
+            else f"Branch '{new_base}' does not exist on host (refs/heads/{new_base}). "
             f"Create or fetch it first."
         )
 
@@ -1780,7 +1792,7 @@ def retarget_container(
         raise SyncError(f"Container '{short}' already targets base branch '{new_base}'.")
 
     url = _build_receive_url(cfg, incus, full_name)
-    refspecs = [f"+refs/heads/{new_base}:refs/jailbee/base/{new_base}"]
+    refspecs = [f"+{anchor_ref}:refs/jailbee/base/{new_base}"]
     if old_base is not None:
         refspecs.append(f":refs/jailbee/base/{old_base}")  # empty source = delete
     git.push_url_multi(cfg.repo_root, url, refspecs)
