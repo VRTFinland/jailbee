@@ -837,9 +837,7 @@ def test_container_label_state_reads_the_stacked_labels(mocker):
         "user.jailbee.stacked_pr_author": "1",
     }.get(key)
 
-    record = pr_flow.ContainerLabelState(
-        incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX
-    ).read()
+    record = pr_flow.ContainerLabelState(incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX).read()
 
     assert record == pr_flow.PrRecord(number=40, head="fix/x", author=True, adopted=False)
 
@@ -865,7 +863,7 @@ def test_malformed_stacked_label_names_the_stacked_key(mocker):
         "user.jailbee.stacked_pr": "not-a-number"
     }.get(key)
 
-    with pytest.raises(pr_flow.MalformedPrLabelError, match="user.jailbee.stacked_pr="):
+    with pytest.raises(pr_flow.MalformedPrLabelError, match=r"user\.jailbee\.stacked_pr="):
         pr_flow.ContainerLabelState(incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX).read()
 
 

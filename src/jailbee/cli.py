@@ -1942,7 +1942,6 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
-    from jailbee.pr_flow import PrState
     from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import (
         BridgePlan,
@@ -4926,8 +4925,10 @@ def pr_cmd(
     # to open a PR from that branch onto itself. Reached with `--no-ai` (the
     # name defaults to the container branch, which IS the reviewed head) or an
     # AI proposal that echoed it.
-    if review_target is not None and review_target.stacked and publish_name == (
-        review_target.parent_head
+    if (
+        review_target is not None
+        and review_target.stacked
+        and publish_name == (review_target.parent_head)
     ):
         error(
             f"A stacked PR needs a head branch of its own: '{publish_name}' is PR "
@@ -5059,9 +5060,7 @@ def pr_cmd(
             f"(base '{review_target.parent_head}'). Merge that one first."
         )
         pr_flow.record_stacked_base(incus, full, short, review_target.parent_head)
-        pr_flow.maybe_retarget_to_parent(
-            cfg, incus, full, short, review_target, retarget=retarget
-        )
+        pr_flow.maybe_retarget_to_parent(cfg, incus, full, short, review_target, retarget=retarget)
     elif retarget is not None:
         warn(
             "--retarget/--no-retarget is only acted on when a stacked PR is opened; "

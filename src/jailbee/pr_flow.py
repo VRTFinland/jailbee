@@ -380,8 +380,7 @@ class ContainerLabelState:
                 number = int(raw)
             except ValueError as exc:
                 raise MalformedPrLabelError(
-                    f"Container '{self._short}' has a malformed PR label "
-                    f"({self._prefix}={raw!r})."
+                    f"Container '{self._short}' has a malformed PR label ({self._prefix}={raw!r})."
                 ) from exc
         else:
             number = None

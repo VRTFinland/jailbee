@@ -2001,13 +2001,9 @@ def _stacked_setup(
     _cfg, incus = _setup(mocker, tmp_path, labels=labels)
     publish = mocker.patch(
         "jailbee.sync.publish_branch_from_container",
-        return_value=_publish_result(
-            publish_name=publish_name, branch="contributor/fix-worktime"
-        ),
+        return_value=_publish_result(publish_name=publish_name, branch="contributor/fix-worktime"),
     )
-    mocker.patch(
-        "jailbee.pr.resolve_pr", return_value=pr_info if pr_info else _review_pr_info()
-    )
+    mocker.patch("jailbee.pr.resolve_pr", return_value=pr_info if pr_info else _review_pr_info())
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
     mocker.patch("jailbee.git.commit_subject", return_value="fix: worktime")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
@@ -2016,7 +2012,7 @@ def _stacked_setup(
 
 
 def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
-    incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
+    _incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
 
     result = CliRunner().invoke(
         app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
@@ -2118,7 +2114,7 @@ def test_rerun_updates_the_stacked_pr_without_asking_again(mocker, tmp_path):
 
 
 def test_stacked_flag_is_a_no_op_on_an_already_stacked_container(mocker, tmp_path):
-    _incus, publish, create, retarget = _stacked_setup(
+    _incus, _publish, create, retarget = _stacked_setup(
         mocker,
         tmp_path,
         extra_labels={
@@ -2199,9 +2195,7 @@ def test_stacked_retargets_the_container_base_when_confirmed(mocker, tmp_path):
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
-    )
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     args, kwargs = retarget.call_args.args, retarget.call_args.kwargs
@@ -2214,9 +2208,7 @@ def test_stacked_retarget_declined_leaves_the_base_alone(mocker, tmp_path):
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
-    )
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
@@ -2226,9 +2218,7 @@ def test_stacked_retarget_skipped_without_a_tty_and_prints_the_command(mocker, t
     _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
 
-    result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
-    )
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
