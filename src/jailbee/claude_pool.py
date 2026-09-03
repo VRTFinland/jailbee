@@ -21,13 +21,19 @@ never one account per file.
 
 **No state but the filesystem.** A file in `store_dir()` is parked; the file in
 `holder_dir(cfg)` is live. There is no ledger, so nothing can disagree with the
-directory about what the directory contains.
+directory about what the directory contains. The two places that record *which
+account* a credential belongs to — `ACCOUNT_RECORD_KEY` inside a parked file
+and `ACCOUNT_NOTE_FILE` beside a live one — are not ledgers either: each
+describes only the file it travels with, and each is checked against that file
+before it is believed, so neither can be repaired and neither needs to be.
 
-**What this module reads.** Account identity comes from `oauthAccount` in a
-config home's `.claude.json`, never from the credential. The credential file
-itself is parsed only to carry the machine-shared sibling keys across a switch
-(see `compose_credential`) — `claudeAiOauth` is moved, never read, logged or
-transmitted.
+**What this module reads.** Account identity comes from `oauthAccount` as
+Claude Code writes it — in a config home's `.claude.json`, or in the copy of
+that block jailbee keeps with a grant it moved itself — never from the
+credential's own contents. The credential file is parsed only to carry the
+machine-shared sibling keys across a switch (see `compose_credential`) and to
+fingerprint its refresh-token lineage (see `ACCOUNT_NOTE_FILE`);
+`claudeAiOauth` is moved, never logged or transmitted.
 
 **An interrupted switch is reported, not healed.** A hard kill inside
 `switch`'s staging window leaves `<name>.json.activating` in the store, a file
@@ -43,6 +49,7 @@ recovers it instead; nothing here moves, adopts or deletes it.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -647,12 +654,24 @@ def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
 
 
 def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
-    """Every repo sharing this repo's holder, plus the ones we could not read.
+    """Every repo sharing `cfg`'s holder, plus the ones we could not read.
 
     A repo that shares nothing is its own only member, with no registry read.
     An unreadable member is *named*, not skipped: skipping is right for a
     read-only listing (`dashboard.py:240`), but here it would leave that
     repo's `oauthAccount` stale and silently naming the wrong account.
+
+    **The calling repo is a member only when it resolves to this holder's
+    group**, which is not a given: `cli._holder_view` hands us a `Config`
+    pointed at *another* group, so that `jailbee claude use -g` can fill a
+    holder no repo lives in. The config home in that view is still the calling
+    repo's own, and it describes the login of the group that repo really uses —
+    so counting it here would read one group's account for another
+    (`unknown-<timestamp>` at best, the wrong name at worst) and, on the write
+    side, destroy the naming evidence for the group the repo actually uses.
+    Membership is decided by `_resolves_to` rather than by a registry row: a
+    repo that was never registered, or whose rows were wiped, still reads the
+    holder its own config resolves to.
     """
     from jailbee.config import load_config
     from jailbee.paths import repo_config_path
@@ -663,7 +682,7 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
 
     group = group_name(cfg)
     assert group is not None  # the None case returned above
-    found = [me]
+    found = [me] if _resolves_to(gcfg, cfg.container_prefix, group) else []
     unreachable: list[str] = []
     for prefix, repo_root in _registered_repos():
         if prefix == cfg.container_prefix or not _resolves_to(gcfg, prefix, group):
@@ -683,25 +702,25 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
 
 @dataclass(frozen=True)
 class LiveAccount:
-    """The holder's live login, as one member's config home describes it.
+    """The holder's live login: an account, and the record that names it.
 
     The identity and the record come from the *same* read, which is why they
     are one object: the name a park writes and the record it stores must
-    describe the same account, and two separate scans of the members could
-    land on two different files.
+    describe the same account, and two separate reads could land on two
+    different files.
     """
 
     identity: Identity
     record: dict[str, Any]
 
 
-def live_account(
+def _member_account(
     found: Sequence[Member],
     *,
     prefer: str,
     authoritative: Collection[str],
 ) -> LiveAccount | None:
-    """The account the holder's live credential belongs to, with its record.
+    """The account a member repo's config home says the holder holds.
 
     Read from a config home, never from the credential. `authoritative`
     names the members whose config home can be trusted to describe *this
@@ -713,10 +732,10 @@ def live_account(
 
     The calling repo is consulted first among the authoritative ones; any
     of them will do, since they share one login. None means no
-    authoritative member names an account yet — a fresh group, the window
-    a `switch` opens before any container has run Claude again (which is
-    what `ACCOUNT_RECORD_KEY` exists to close), or a caller with nothing
-    authoritative to read.
+    authoritative member names an account — a fresh group, the window a
+    `switch` opens before any container has run Claude again (which is what
+    `ACCOUNT_RECORD_KEY` exists to close), or a holder no repo resolves to.
+    Callers want `live_account`, which falls back to the holder's own note.
     """
     usable = [m for m in found if m.container_prefix in authoritative]
     ordered = sorted(usable, key=lambda m: m.container_prefix != prefer)
@@ -728,17 +747,6 @@ def live_account(
         if identity is not None:
             return LiveAccount(identity=identity, record=record)
     return None
-
-
-def live_identity(
-    found: Sequence[Member],
-    *,
-    prefer: str,
-    authoritative: Collection[str],
-) -> Identity | None:
-    """The identity half of `live_account`, for callers that only display it."""
-    account = live_account(found, prefer=prefer, authoritative=authoritative)
-    return None if account is None else account.identity
 
 
 def live_session_prefixes(found: Sequence[Member]) -> list[str]:
@@ -889,9 +897,19 @@ def _login_of(path: Path) -> dict[str, Any] | None:
     never as "different".
     """
     try:
-        data = _credential_object(path.read_text(encoding="utf-8"))
+        return _login_block(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
         return None
+
+
+def _login_block(raw: str | None) -> dict[str, Any] | None:
+    """The `claudeAiOauth` block of credential *text* — `_login_of` for a path.
+
+    One definition of "the login inside a credential", so the fingerprint a
+    note is written with and the one it is checked against cannot be read out
+    of two differently-shaped dicts.
+    """
+    data = _credential_object(raw)
     if data is None:
         return None
     block = data.get("claudeAiOauth")
@@ -925,6 +943,147 @@ def holds_same_login(left: Path, right: Path) -> bool:
     a = _login_of(left)
     b = _login_of(right)
     return a is not None and b is not None and _same_grant(a, b)
+
+
+ACCOUNT_NOTE_FILE = ".jailbee-account.json"
+"""Where a holder keeps the account of the login *jailbee* put there.
+
+**Why a second place at all.** Every other identity source is a config home,
+and a config home belongs to a *repo*, not to a holder: one `~/.claude` is
+shared by every container of the repo whatever group each reads, so it can name
+only one account while such a repo has two live logins. For a group no repo
+resolves to — the one `jailbee claude use -g` exists to fill — there is no
+config home to read at all, and a `park` of a login jailbee had itself just
+activated could only name the file `unknown-<timestamp>`, losing the one record
+of what it contains (`ACCOUNT_RECORD_KEY` documents the same loss for the other
+window it closes).
+
+**Why it cannot go stale into a wrong name.** The note carries a fingerprint of
+the grant it describes — a digest of `claudeAiOauth.refreshToken`, the same
+refresh-token lineage `_same_grant` compares — and `note_account` returns
+nothing unless it still matches the credential beside it. A `/login` in a
+container mints a new lineage, so a note left over from the previous account
+stops being read the moment it stops being true. The digest, never the token:
+this file names an account, and a second copy of a secret is exactly what this
+module refuses to make elsewhere.
+
+**Trust.** A group holder is mounted into its containers, so a container can
+write this file. That is the same trust level as the `.claude.json` every
+identity read already comes from, and the account it names goes through
+`slug_for` like any other, so a forged note can misname a parked file and can
+do nothing else — no new surface.
+
+Not a manifest: it describes the one directory it lives in, so it moves and
+dies with the holder, and nothing has to repair it.
+"""
+
+
+def account_note_path(holder: Path) -> Path:
+    """Where `holder` keeps its account note."""
+    return holder / ACCOUNT_NOTE_FILE
+
+
+def _grant_fingerprint(login: dict[str, Any] | None) -> str | None:
+    """A stable id for a login's refresh-token lineage, or None for no lineage.
+
+    Access tokens rotate; the refresh token behind them does not (the property
+    `_same_grant` already rests on), so this survives every ordinary token
+    refresh and changes on a fresh `/login`. Hashed so the note holds no
+    secret, and truncation would only weaken a comparison that costs nothing.
+
+    None for a credential carrying no refresh token — a managed `sk-ant-…` key,
+    or any opaque shape — which leaves such a holder with no note and the
+    pre-note behaviour.
+    """
+    token = None if login is None else login.get("refreshToken")
+    if not isinstance(token, str) or not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def write_account_note(holder: Path, record: dict[str, Any] | None, credential_raw: str) -> None:
+    """Note that `credential_raw` — now the login in `holder` — is `record`'s.
+
+    Removes any existing note when there is nothing to say: no record (a slot
+    parked before `ACCOUNT_RECORD_KEY` existed, or one whose record contradicts
+    its name) or no fingerprintable grant. Leaving the previous account's note
+    in place would be harmless — the fingerprint no longer matches — but a file
+    that says something untrue about the directory it sits in is worth deleting
+    rather than explaining.
+
+    Best-effort, like `_stamp_account_record` and for the same reason: the
+    credential is already in place by the time this runs, and a failure costs a
+    future `park` its account name, never the login.
+    """
+    path = account_note_path(holder)
+    fingerprint = _grant_fingerprint(_login_block(credential_raw))
+    if record is None or fingerprint is None:
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
+        return
+    try:
+        _atomic_write(path, json.dumps({"account": record, "grant": fingerprint}, indent=2))
+    except OSError:
+        log.debug("could not note the account of the login in %s", holder, exc_info=True)
+
+
+def note_account(cfg: Config) -> LiveAccount | None:
+    """The account this holder's note names, while it still describes the grant.
+
+    None for every other case: no note, an unreadable or malformed one, one
+    whose fingerprint no longer matches the credential beside it, and one whose
+    record names no account. A missing credential is a mismatch too, so the
+    note a `park` failed to delete cannot name a holder's next login.
+    """
+    try:
+        data = json.loads(account_note_path(holder_dir(cfg)).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    record = data.get("account")
+    grant = data.get("grant")
+    if not isinstance(record, dict) or not isinstance(grant, str):
+        return None
+    if grant != _grant_fingerprint(_login_of(live_credential_path(cfg))):
+        return None
+    identity = identity_of(record)
+    return None if identity is None else LiveAccount(identity=identity, record=record)
+
+
+def live_account(
+    cfg: Config,
+    found: Sequence[Member],
+    *,
+    prefer: str,
+    authoritative: Collection[str],
+) -> LiveAccount | None:
+    """The account the holder's live credential belongs to, with its record.
+
+    Two sources, and the holder's own note comes first: it is the only one tied
+    to the grant being named — `note_account` checks its fingerprint against
+    the very credential a `park` is about to move — while a config home is tied
+    to a repo and merely *usually* describes this holder (see
+    `_member_account`). Where both speak they agree; where they disagree the
+    note is the one that was verified.
+
+    None means nothing on this host says which account the live credential
+    holds. That is a fact to report, not an error: `park` then names the file
+    `unknown_slot_name`, and `ls` shows `LIVE_UNIDENTIFIED`.
+    """
+    return note_account(cfg) or _member_account(found, prefer=prefer, authoritative=authoritative)
+
+
+def live_identity(
+    cfg: Config,
+    found: Sequence[Member],
+    *,
+    prefer: str,
+    authoritative: Collection[str],
+) -> Identity | None:
+    """The identity half of `live_account`, for callers that only display it."""
+    account = live_account(cfg, found, prefer=prefer, authoritative=authoritative)
+    return None if account is None else account.identity
 
 
 def _disambiguated_slot(store: Path, name: str, live: Path, dest: Path, when: datetime) -> Path:
@@ -993,7 +1152,7 @@ def _slots_for(
     because there is only ever one of them, and it reads as what it is in
     `jailbee claude ls`.
     """
-    account = live_account(found, prefer=cfg.container_prefix, authoritative=authoritative)
+    account = live_account(cfg, found, prefer=cfg.container_prefix, authoritative=authoritative)
     slots = parked_slots()
     live = live_slot(cfg, None if account is None else account.identity)
     if live is not None:
@@ -1074,6 +1233,7 @@ def _rewrite_identities(
     found: Sequence[Member],
     unreachable: Sequence[str],
     record: dict[str, Any] | None,
+    authoritative: Collection[str],
 ) -> tuple[list[str], list[str]]:
     """Point every member's recorded account at the login now live.
 
@@ -1084,16 +1244,26 @@ def _rewrite_identities(
     deleted and Claude Code repopulates it on its next run, which is what every
     switch did before.
 
+    **A record is written only into an authoritative member**, for the same
+    reason `live_account` reads only those: a repo whose containers span two
+    groups shares one config home between them, so stamping this group's
+    account into it would make that home name the wrong login for the other
+    group's containers — and a later `park` of *that* group would then park it
+    under the wrong name, name and record agreeing. Every other member is
+    cleared instead, which is always safe: Claude Code repopulates the block
+    from whichever credential the container actually reads.
+
     Reports which members took the change, so the caller can name the ones that
     are still naming the previous account.
     """
     done: list[str] = []
     failed: list[str] = list(unreachable)
     for member in found:
+        trusted = member.container_prefix in authoritative
         ok = (
-            invalidate_identity(member.config_home)
-            if record is None
-            else restore_identity(member.config_home, record)
+            restore_identity(member.config_home, record)
+            if record is not None and trusted
+            else invalidate_identity(member.config_home)
         )
         (done if ok else failed).append(member.container_prefix)
     return sorted(done), sorted(failed)
@@ -1136,6 +1306,11 @@ def _park_locked(cfg: Config, account: LiveAccount | None, when: datetime) -> Pa
     Returns the path rather than the name because after `_disambiguated_slot`
     the two are no longer interchangeable: `switch`'s rollback has to move back
     the file that was actually written, not the one its name was derived from.
+
+    The holder's account note goes with the grant it describes: the record it
+    carried is now stamped inside the parked file, and the holder holds nothing
+    for a note to be about. `switch` writes the incoming login's note after
+    this, and restores this one if the activation fails.
     """
     live = live_credential_path(cfg)
     if not live.exists():
@@ -1148,6 +1323,8 @@ def _park_locked(cfg: Config, account: LiveAccount | None, when: datetime) -> Pa
         dest = _disambiguated_slot(store, name, live, dest, when)
     _move_file(live, dest)
     _stamp_account_record(dest, None if account is None else account.record)
+    with suppress(OSError):
+        account_note_path(holder_dir(cfg)).unlink(missing_ok=True)
     return dest
 
 
@@ -1171,7 +1348,7 @@ def park(
     `_park_locked`, which is what makes it safe to do it early.
     """
     found, unreachable = members(cfg, gcfg)
-    account = live_account(found, prefer=cfg.container_prefix, authoritative=authoritative)
+    account = live_account(cfg, found, prefer=cfg.container_prefix, authoritative=authoritative)
     parked: Path | None = None
     if live_credential_path(cfg).exists():
         holder = holder_dir(cfg)
@@ -1188,7 +1365,7 @@ def park(
         )
     # No record to restore: `park` leaves the holder empty on purpose, so there
     # is no live login for the members to name.
-    updated, not_updated = _rewrite_identities(found, unreachable, None)
+    updated, not_updated = _rewrite_identities(found, unreachable, None, authoritative)
     return PoolChange(
         parked_as=_slot_name(parked),
         activated=None,
@@ -1234,13 +1411,18 @@ def switch(
 
     with credential_locks(holder):
         target_raw = target.path.read_text(encoding="utf-8")
+        record = trusted_record_in(target, target_raw)
         live_raw = live_path.read_text(encoding="utf-8") if live_path.exists() else None
         target.path.replace(staged)
         parked: Path | None = None
         try:
             parked = _park_locked(cfg, account, now or datetime.now())
-            _atomic_write(live_path, compose_credential(target_raw, shared_fields(live_raw)))
+            activated = compose_credential(target_raw, shared_fields(live_raw))
+            _atomic_write(live_path, activated)
             staged.unlink()
+            # Under the lock, and last: the note describes what is now in the
+            # holder, so it must not exist before the credential it names does.
+            write_account_note(holder, record, activated)
         except BaseException:
             # The target first: a same-directory rename cannot fail for EXDEV,
             # while putting the live credential back can, and a failure there
@@ -1249,6 +1431,11 @@ def switch(
                 staged.replace(target.path)
             if parked is not None:
                 _move_file(parked, live_path)
+                # `_park_locked` took the note with the grant; both go back.
+                if live_raw is not None:
+                    write_account_note(
+                        holder, None if account is None else account.record, live_raw
+                    )
             elif live_raw is None:
                 # The holder started empty and nothing was parked, so whatever
                 # is at live_path is the grant we just wrote — and the target
@@ -1258,9 +1445,7 @@ def switch(
                     live_path.unlink()
             raise
 
-    updated, not_updated = _rewrite_identities(
-        found, unreachable, trusted_record_in(target, target_raw)
-    )
+    updated, not_updated = _rewrite_identities(found, unreachable, record, authoritative)
     return PoolChange(
         parked_as=_slot_name(parked) if parked is not None else None,
         activated=target.name,

@@ -343,7 +343,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
             )
         )
         identity = claude_pool.live_identity(
-            found, prefer=cfg.container_prefix, authoritative=authoritative
+            cfg, found, prefer=cfg.container_prefix, authoritative=authoritative
         )
     except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
         identity = None
