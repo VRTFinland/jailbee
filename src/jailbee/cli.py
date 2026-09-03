@@ -6015,6 +6015,10 @@ def _switch(
             # (e.g. unparseable or >24h) must not break --no-revert.
             chosen = None
         else:
+            # `net_loose` has already parsed this policy's `after` — it is the
+            # only caller that passes one, and it refuses the command outright
+            # when the value is malformed rather than switching first and
+            # failing here, with the container already in loose.
             chosen = policy.duration() if policy is not None else None
         if no_revert or chosen is None:
             incus.config_unset(resolved, "user.jailbee.loose_until")
@@ -6105,6 +6109,26 @@ def net_loose(
         # _switch's fallback TTL are the same policy. --for and --no-revert
         # skip this entirely, so neither pays for the global-config read.
         policy = cfg.effective_loose_auto_revert(_load_global())
+        if policy is not None:
+            # `after` is a plain `str | int` in the schema — nothing on the
+            # load path parses it, so a malformed value arrives here inside a
+            # perfectly valid config. Check it once, before anything acts on
+            # it: the prompt below would otherwise offer an unparseable
+            # default and die on the answer, and without a TTY `_switch`
+            # reached `.duration()` only *after* `switch_network` had run,
+            # leaving the container in loose with no TTL. `--for` and
+            # `--no-revert` never resolve a policy, so both still work.
+            try:
+                policy.duration()
+            except ValueError as e:
+                error_plain(
+                    f"Cannot use the configured loose TTL: {e}. Fix "
+                    "loose_auto_revert.after in .jailbee/config.yaml or "
+                    "~/.config/jailbee/global.yaml (`jailbee config validate` "
+                    "checks it), or decide the TTL here with `--for "
+                    "<duration>` / `--no-revert`."
+                )
+                raise typer.Exit(2) from e
         # A configured-off policy means there is no auto-revert to schedule,
         # so asking would be misleading.
         if policy is not None and _stdin_is_interactive():

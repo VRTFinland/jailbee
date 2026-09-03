@@ -378,6 +378,47 @@ def test_validate_runtime_flags_deprecated_golden_python(tmp_path):
     assert any("golden.python" in issue for issue in issues)
 
 
+def test_validate_runtime_flags_unparseable_loose_after(tmp_path):
+    """`loose_auto_revert.after` is only checked by `.duration()`.
+
+    Nothing on the load path parses it, so `jailbee config validate` is the
+    only place that can tell the user before `jailbee net loose` does.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = Config.model_validate({"loose_auto_revert": {"after": "30min"}})
+    object.__setattr__(cfg, "repo_root", repo)
+    object.__setattr__(cfg, "default_branch", "main")
+    object.__setattr__(cfg, "container_prefix", repo.name)
+    object.__setattr__(cfg, "shared_dir", tmp_path / "shared")
+    issues = cfg.validate_runtime()
+    assert any("loose_auto_revert.after" in issue and "30min" in issue for issue in issues)
+
+
+def test_validate_runtime_flags_loose_after_over_the_cap(tmp_path):
+    """The 24h cap is the same class of problem as an unparseable unit."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = Config.model_validate({"loose_auto_revert": {"after": "30h"}})
+    object.__setattr__(cfg, "repo_root", repo)
+    object.__setattr__(cfg, "default_branch", "main")
+    object.__setattr__(cfg, "container_prefix", repo.name)
+    object.__setattr__(cfg, "shared_dir", tmp_path / "shared")
+    assert any("loose_auto_revert.after" in issue for issue in cfg.validate_runtime())
+
+
+def test_validate_runtime_silent_for_disabled_loose_policy(tmp_path):
+    """A disabled policy is never parsed, so its `after` is not a problem."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = Config.model_validate({"loose_auto_revert": {"enabled": False, "after": "30min"}})
+    object.__setattr__(cfg, "repo_root", repo)
+    object.__setattr__(cfg, "default_branch", "main")
+    object.__setattr__(cfg, "container_prefix", repo.name)
+    object.__setattr__(cfg, "shared_dir", tmp_path / "shared")
+    assert cfg.validate_runtime() == []
+
+
 def test_validate_runtime_does_not_require_git_repo(tmp_path):
     """Mount mode works on plain directories; .git is no longer required."""
     repo = tmp_path / "not-git"

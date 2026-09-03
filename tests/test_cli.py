@@ -5066,6 +5066,70 @@ def test_net_loose_no_revert_survives_malformed_policy(tmp_path, mocker):
     assert "user.jailbee.loose_revert_to" in unset_keys
 
 
+def test_net_loose_unparseable_policy_errors_before_touching_the_network(tmp_path, mocker):
+    """A malformed policy must fail the command, not the switch half-way.
+
+    `after` is only validated by `.duration()`, so `30min` loads as a
+    perfectly valid config and breaks at the first thing that parses it.
+    That used to be `_switch`, *after* `switch_network` had already run —
+    leaving the container in loose with no TTL label and an uncaught
+    `ValueError` traceback in the user's face.
+    """
+    switch = mocker.patch("jailbee.lifecycle.switch_network")
+    incus, _ = _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"loose_auto_revert": {"after": "30min"}},
+        pre_mode="strict",
+    )
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
+
+    assert result.exit_code == 2, result.stdout
+    assert "loose_auto_revert.after" in result.output
+    assert "30min" in result.output
+    assert switch.call_count == 0
+    assert incus.config_set.call_count == 0
+    assert incus.config_unset.call_count == 0
+
+
+def test_net_loose_unparseable_policy_is_never_offered_as_a_prompt_default(tmp_path, mocker):
+    """The prompt's default comes from the same unvalidated config field.
+
+    Offering it meant the user pressed Enter on `30min  (config default)`
+    and got the parse error as a traceback from inside the prompt.
+    """
+    _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"loose_auto_revert": {"after": "30min"}},
+        pre_mode="strict",
+    )
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
+
+    assert result.exit_code == 2, result.stdout
+    prompt.assert_not_called()
+
+
+def test_net_loose_for_flag_bypasses_an_unparseable_policy(tmp_path, mocker):
+    """--for decides the TTL itself, so the broken policy is never read."""
+    incus, _ = _setup_net_test(
+        tmp_path,
+        mocker,
+        cfg_overrides={"loose_auto_revert": {"after": "30min"}},
+        pre_mode="strict",
+    )
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x", "--for", "2h"])
+
+    assert result.exit_code == 0, result.stdout
+    keys = {c.args[1]: c.args[2] for c in incus.config_set.call_args_list}
+    assert keys["user.jailbee.loose_until"] == "2026-05-20T14:00:00+00:00"
+
+
 def test_net_loose_for_flag_sets_custom_ttl(tmp_path, mocker):
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
 

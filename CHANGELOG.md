@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **A malformed `loose_auto_revert.after` no longer crashes `jailbee net
+  loose` with a traceback.** The field is typed `str | int` and parsed
+  only by `LooseAutoRevert.duration()`, so a value like `30min` or `30h`
+  loads as a valid config and breaks at the first thing that reads it.
+  On a TTY that was the interactive prompt, which offered the
+  unparseable value as its pre-selected default and raised
+  `ValueError` out of `_prompt_loose_ttl` the moment it was accepted;
+  without a TTY it was `_switch`, *after* `switch_network` had already
+  run — leaving the container in loose with no TTL label and no
+  auto-revert. `jailbee net loose` now parses the effective policy once,
+  before it touches the network, and reports a fixable error (exit 2)
+  naming the file to edit; `--for` and `--no-revert` decide the TTL
+  themselves and keep working regardless. `jailbee config validate` also
+  flags the value now, so it can be found before a switch fails.
 - **`jailbee new` no longer fails on compositors that don't use
   `wayland-0`.** jailbee decided a host was Wayland from
   `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
