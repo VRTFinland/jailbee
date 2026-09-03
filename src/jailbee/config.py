@@ -2452,6 +2452,17 @@ class Config(BaseModel):
                             f"autostart.{trigger_name}[{step.name}].mounts "
                             f"references unknown optional_mount: '{m}'"
                         )
+        if self.loose_auto_revert.enabled:
+            # The schema types `after` as `str | int` and stops there, so an
+            # unparseable value (or one over the 24h cap) loads cleanly and
+            # only fails when something parses it — `jailbee net loose`, which
+            # refuses to run until it is fixed. This is the one command that
+            # can say so first. Global and repo values both land here: the
+            # global block is merged into `Config` on the load path.
+            try:
+                self.loose_auto_revert.duration()
+            except ValueError as e:
+                issues.append(f"loose_auto_revert.after is unusable: {e}")
         if self.jetbrains.enabled and self.jetbrains.userprefs_from_host:
             host_path = Path.home() / ".java" / ".userPrefs" / "jetbrains"
             if not host_path.is_dir():
