@@ -62,20 +62,33 @@ class PrScope:
         return "jailbee submodule pr" if self.subpath else "jailbee pr"
 
 
-def reject_as_on_pr_update(scope: PrScope, as_name: str, pr_label: str | None) -> Never:
+def reject_as_on_pr_update(
+    scope: PrScope, as_name: str, pr_label: str | None, *, stacked_hint: bool = False
+) -> Never:
     """Exit 2: `--as` cannot retarget the head of an already-existing PR.
 
     The update path always pushes to the PR's recorded head branch, so an `--as`
     name would publish some other branch and leave the PR untouched. Applies on
     every run of a container that has a PR (jailbee-authored or adopted from
     `jailbee new --pr`), not just the first.
+
+    `stacked_hint` names `--stacked` as the way to publish under a different
+    head after all. Set for a review container that has not yet decided where
+    it publishes — there `--as` is a reasonable thing to have reached for, and
+    `--stacked` is what makes it legal.
     """
     target = scope.noun(pr_label)
-    error(
+    message = (
         f"--as cannot be combined with {target}: pushing to '{as_name}' would "
         f"update a different branch and leave {target} untouched. Drop --as to "
         f"update {target}."
     )
+    if stacked_hint:
+        message += (
+            f" To publish under '{as_name}' instead, add --stacked: that opens a "
+            f"new PR based on {target}'s head."
+        )
+    error(message)
     raise typer.Exit(2)
 
 
@@ -471,6 +484,7 @@ def resolve_review_target(
     *,
     yes: bool,
     stacked: bool,
+    as_name: str | None = None,
 ) -> ReviewTarget | None:
     """Settle what a `jailbee new --pr` container publishes; None when moot.
 
@@ -520,6 +534,14 @@ def resolve_review_target(
         return None
 
     number = record.number
+
+    # Settle the flag-driven action before the `gh` call, so a usage error
+    # costs no round-trip: adopting publishes to the reviewed PR's own head,
+    # which `--as` cannot rename.
+    action: str | None = "stacked" if stacked else ("adopt" if yes else None)
+    if action == "adopt" and as_name is not None:
+        reject_as_on_pr_update(scope, as_name, str(number), stacked_hint=True)
+
     try:
         pr_info = pr_module.resolve_pr(scope.repo_root, number, remote=scope.remote)
     except pr_module.PrError as exc:
@@ -534,22 +556,21 @@ def resolve_review_target(
         f"({pr_info.state}); head '{pr_info.head_ref}' → base '{pr_info.base_ref}'."
     )
 
-    if stacked:
-        action = "stacked"
-    elif yes:
-        action = "adopt"
-    elif not _stdin_is_interactive():
-        error(
-            f"Container '{short}' was created from PR #{number}. Publishing needs "
-            f"a choice: --yes pushes its commits to that PR's head, --stacked opens "
-            f"a new PR based on it. Pass one when there is no terminal to ask on."
-        )
-        raise typer.Exit(1)
-    else:
-        picked = _pick_review_action(number, pr_info.head_ref)
-        if picked is None:
+    if action is None:
+        if not _stdin_is_interactive():
+            error(
+                f"Container '{short}' was created from PR #{number}. Publishing needs "
+                f"a choice: --yes pushes its commits to that PR's head, --stacked opens "
+                f"a new PR based on it. Pass one when there is no terminal to ask on."
+            )
+            raise typer.Exit(1)
+        action = _pick_review_action(number, pr_info.head_ref)
+        if action is None:
             raise typer.Abort()
-        action = picked
+        # The same rule as above, now that the menu has settled the action —
+        # still before anything is recorded or pushed.
+        if action == "adopt" and as_name is not None:
+            reject_as_on_pr_update(scope, as_name, str(number), stacked_hint=True)
 
     if pr_info.is_cross_repository:
         owner = pr_info.head_repo_owner or "<fork-owner>"
@@ -604,6 +625,82 @@ def resolve_review_target(
         context=f"Could not record the PR-head decision on '{short}'",
     )
     return target
+
+
+def record_stacked_base(incus: IncusType, full: str, short: str, base: str) -> None:
+    """Remember which branch a stacked PR was opened against, best-effort.
+
+    `ContainerLabelState` records the head, the number and the authorship; the
+    base is jailbee's own, so it gets its own label. Later runs take the update
+    path, where the base is no longer settled from the reviewed PR — they read
+    it here instead of paying a `gh` call, and it stays correct even when the
+    user declined the retarget and `user.jailbee.base_branch` still names the
+    reviewed PR's own base.
+    """
+    from jailbee.incus import IncusError
+
+    try:
+        incus.config_set(full, f"{STACKED_LABEL_PREFIX}_base", base)
+    except IncusError as exc:
+        warn(
+            f"Could not record the stacked PR's base branch on '{short}': {exc}. "
+            f"A later run will fall back to the container's base branch label."
+        )
+
+
+def maybe_retarget_to_parent(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    short: str,
+    target: ReviewTarget,
+    *,
+    retarget: bool | None,
+) -> None:
+    """Offer to re-point the container's base branch at the stacked PR's base.
+
+    A review container's base anchor is the reviewed PR's *base* (e.g. `dev`),
+    so `jailbee ls`'s AHEAD and `jailbee git diff` fold the reviewed PR's own
+    commits into this container's numbers. Moving the anchor to the PR head
+    makes them count the stacked work alone, and points `jailbee git pull` at
+    the branch this work belongs on.
+
+    `retarget` is the `--retarget/--no-retarget` flag: None asks on a TTY and
+    otherwise skips with the command printed. Never raises — the PR is already
+    published by the time this runs, so a transport failure is a warning.
+    """
+    from jailbee import sync
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    if retarget is False:
+        return
+    old_base = incus.config_get(full, "user.jailbee.base_branch")
+    if old_base == target.parent_head:
+        return
+    old_desc = f"'{old_base}'" if old_base else "unset"
+    if retarget is None:
+        if not _stdin_is_interactive():
+            info(
+                f"Base branch left at {old_desc}; AHEAD still counts PR "
+                f"#{target.parent_number}'s own commits. To move it: "
+                f"git fetch {cfg.upstream_remote} && jailbee git retarget {short} "
+                f"{target.parent_head}"
+            )
+            return
+        if not typer.confirm(
+            f"Retarget '{short}' base branch {old_desc} → '{target.parent_head}', "
+            f"so AHEAD and diffs count only this container's own commits?",
+            default=True,
+        ):
+            return
+    try:
+        result = sync.retarget_container(
+            cfg, incus, short, target.parent_head, source_ref=target.parent_head_ref
+        )
+    except sync.SyncError as exc:
+        warn(f"Could not retarget '{short}': {exc}")
+        return
+    success(f"Retargeted '{short}' base: {result.old_base or 'unset'} → {result.new_base}")
 
 
 def adopt_existing_pr_for_branch(
