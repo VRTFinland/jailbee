@@ -293,6 +293,20 @@ class MalformedPrLabelError(RuntimeError):
     """`user.jailbee.pr` is set but is not a valid integer."""
 
 
+PR_LABEL_PREFIX = "user.jailbee.pr"
+"""Labels for the PR the container's branch itself publishes to."""
+
+STACKED_LABEL_PREFIX = "user.jailbee.stacked_pr"
+"""Labels for a PR opened *against* the reviewed PR's head (`jailbee pr --stacked`).
+
+Deliberately a second namespace rather than a reuse of `PR_LABEL_PREFIX`:
+`user.jailbee.pr` keeps naming the PR the container was created from, so
+`jailbee ls`'s PR column and `jailbee git push --pr` ("refresh from PR head")
+go on meaning the parent — which is exactly what a stacked container wants
+when the PR author pushes new commits.
+"""
+
+
 class PrState(Protocol):
     """Where a target's PR decision is persisted.
 
@@ -314,12 +328,26 @@ class PrState(Protocol):
 
 
 class ContainerLabelState:
-    """`PrState` over the container's `user.jailbee.pr*` labels."""
+    """`PrState` over one of the container's `user.jailbee.*pr*` label sets.
 
-    def __init__(self, incus: IncusType, full: str, short: str | None = None) -> None:
+    `prefix` selects the set: `PR_LABEL_PREFIX` (the default — the PR the
+    container's own branch publishes to) or `STACKED_LABEL_PREFIX` (a PR
+    opened against the reviewed PR's head). The two are independent records
+    on the same container.
+    """
+
+    def __init__(
+        self,
+        incus: IncusType,
+        full: str,
+        short: str | None = None,
+        *,
+        prefix: str = PR_LABEL_PREFIX,
+    ) -> None:
         self._incus = incus
         self._full = full
         self._short = short or full
+        self._prefix = prefix
 
     def read(self) -> PrRecord:
         """Read the labels into a `PrRecord`.
@@ -333,21 +361,22 @@ class ContainerLabelState:
         wrote itself always parses; anything else needs a human, not a
         silent fallback.
         """
-        raw = self._incus.config_get(self._full, "user.jailbee.pr")
+        raw = self._incus.config_get(self._full, self._prefix)
         if raw:
             try:
                 number = int(raw)
             except ValueError as exc:
                 raise MalformedPrLabelError(
-                    f"Container '{self._short}' has a malformed PR label (user.jailbee.pr={raw!r})."
+                    f"Container '{self._short}' has a malformed PR label "
+                    f"({self._prefix}={raw!r})."
                 ) from exc
         else:
             number = None
         return PrRecord(
             number=number,
-            head=self._incus.config_get(self._full, "user.jailbee.pr_branch") or None,
-            author=bool(self._incus.config_get(self._full, "user.jailbee.pr_author")),
-            adopted=bool(self._incus.config_get(self._full, "user.jailbee.pr_adopted")),
+            head=self._incus.config_get(self._full, f"{self._prefix}_branch") or None,
+            author=bool(self._incus.config_get(self._full, f"{self._prefix}_author")),
+            adopted=bool(self._incus.config_get(self._full, f"{self._prefix}_adopted")),
         )
 
     def record(
@@ -361,12 +390,12 @@ class ContainerLabelState:
     ) -> None:
         """Write the decision, best-effort.
 
-        Write order matters for a partial (interrupted) write. `pr_branch` goes
-        FIRST so that even a partially-written container resolves the correct
-        PR head on the re-run UPDATE path (a missing `pr_branch` would push to
-        the container branch — the wrong head). `user.jailbee.pr` goes LAST
-        because the entry guard keys on `pr` present WITHOUT `pr_author` (== a
-        `jailbee new --pr` review container).
+        Write order matters for a partial (interrupted) write. `<prefix>_branch`
+        goes FIRST so that even a partially-written container resolves the
+        correct PR head on the re-run UPDATE path (a missing branch label would
+        push to the container branch — the wrong head). `<prefix>` itself goes
+        LAST because the entry guard keys on `user.jailbee.pr` present WITHOUT
+        `pr_author` (== a `jailbee new --pr` review container).
 
         `context` replaces the generic failure warning with a caller-supplied
         one — used on the create path, where a label-write failure means the
@@ -376,15 +405,205 @@ class ContainerLabelState:
         from jailbee.incus import IncusError
 
         try:
-            self._incus.config_set(self._full, "user.jailbee.pr_branch", head)
+            self._incus.config_set(self._full, f"{self._prefix}_branch", head)
             if author:
-                self._incus.config_set(self._full, "user.jailbee.pr_author", "1")
+                self._incus.config_set(self._full, f"{self._prefix}_author", "1")
             if adopted:
-                self._incus.config_set(self._full, "user.jailbee.pr_adopted", "1")
+                self._incus.config_set(self._full, f"{self._prefix}_adopted", "1")
             if number is not None:
-                self._incus.config_set(self._full, "user.jailbee.pr", str(number))
+                self._incus.config_set(self._full, self._prefix, str(number))
         except IncusError as exc:
             warn(f"{context or 'Could not record the PR decision'}: {exc}")
+
+
+@dataclass(frozen=True)
+class ReviewTarget:
+    """What a `jailbee new --pr` container's run publishes.
+
+    Two outcomes, settled once per container: push the container's commits to
+    the reviewed PR's own head (`stacked=False` — the PR is updated), or open a
+    new PR *based on* that head (`stacked=True` — a stacked PR, whose own head
+    branch is named later by `--as` or by Claude).
+
+    `parent_head` is the reviewed PR's head branch: the branch to publish to
+    when adopting, the base branch of the new PR when stacking.
+    `parent_head_ref` is the host ref holding its tip — jailbee's own
+    `refs/jailbee/pr/<N>/head`, since the head deliberately lives in no branch
+    on the host — and is what anchors the container's base after a retarget.
+    """
+
+    stacked: bool
+    parent_number: int
+    parent_head: str
+    parent_head_ref: str
+
+
+def _pick_review_action(number: int, head: str) -> str | None:
+    """Open a questionary.select for a review container's publish target.
+
+    Returns 'adopt' / 'stacked', or None if the user cancels.
+    """
+    import questionary
+
+    # Explicit sentinel: `questionary.Choice` treats `value=None` as *unset* and
+    # falls back to the title, so a cancel entry with `value=None` would answer
+    # the string "cancel" and get published as an action.
+    cancel = "__cancel__"
+    choices = [
+        questionary.Choice(
+            title=f"push these commits to PR #{number}'s head '{head}'", value="adopt"
+        ),
+        questionary.Choice(title=f"open a NEW PR based on '{head}'  (stacked)", value="stacked"),
+        questionary.Choice(title="cancel", value=cancel),
+    ]
+    result = questionary.select("What should jailbee publish?", choices=choices).ask()
+    # `None` is Ctrl-C; `cancel` is the menu entry. Both abort.
+    if result is None or result == cancel:
+        return None
+    return str(result)
+
+
+def resolve_review_target(
+    scope: PrScope,
+    state: PrState,
+    short: str,
+    record: PrRecord,
+    *,
+    yes: bool,
+    stacked: bool,
+) -> ReviewTarget | None:
+    """Settle what a `jailbee new --pr` container publishes; None when moot.
+
+    A review container carries `user.jailbee.pr` without `user.jailbee.pr_author`.
+    Publishing its commits to PR #N's head is a legitimate move — the PR is
+    often the user's own, opened from another container or machine — but it
+    mutates a PR jailbee did not create, so it is confirmed once and then
+    recorded on `user.jailbee.pr_adopted`. Later runs take the ordinary update
+    path silently, which is what `None` means here.
+
+    `stacked` (the `--stacked` flag) skips the question and settles on a new PR
+    based on the reviewed head. Nothing is recorded for that outcome: the
+    stacked PR does not exist until `pr.create_pr` opens it, and its labels are
+    written from the create path under `STACKED_LABEL_PREFIX`.
+
+    Off a TTY the choice must come from a flag: `--yes` adopts (its meaning
+    before `--stacked` existed, and the only one that keeps a script updating
+    the reviewed PR), `--stacked` opens the new PR. Exits non-zero on a fork
+    PR, on a `gh` failure, and on a declined or unavailable choice.
+    """
+    from jailbee import pr as pr_module
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    if record.number is None:
+        if stacked:
+            error(
+                f"--stacked needs a review container: '{short}' was not created "
+                f"from a PR (no user.jailbee.pr label), so there is no PR head to "
+                f"stack onto. Open an ordinary PR with '{scope.command} {short}', or "
+                f"base the container on the branch you want with "
+                f"'jailbee new <branch> <base>'."
+            )
+            raise typer.Exit(2)
+        return None
+    # `pr_branch` alone does NOT count as decided: a lone branch label means a
+    # previous adoption was interrupted between the two label writes, and
+    # asking again is the safe outcome.
+    if record.author or record.adopted:
+        if stacked:
+            error(
+                f"--stacked cannot be combined with {scope.noun(str(record.number))}: "
+                f"'{short}' already publishes to that PR's head, which is fixed. A "
+                f"stacked PR needs a head branch of its own, so the two are "
+                f"mutually exclusive on one container."
+            )
+            raise typer.Exit(2)
+        return None
+
+    number = record.number
+    try:
+        pr_info = pr_module.resolve_pr(scope.repo_root, number, remote=scope.remote)
+    except pr_module.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    # Unconditional — a `--yes` or `--stacked` run must also state which PR it
+    # is about to act on, BEFORE the push rather than after it.
+    author = f"@{pr_info.author_login}" if pr_info.author_login else "an unknown author"
+    info(
+        f"Container '{short}' was created from PR #{number} by {author} "
+        f"({pr_info.state}); head '{pr_info.head_ref}' → base '{pr_info.base_ref}'."
+    )
+
+    if stacked:
+        action = "stacked"
+    elif yes:
+        action = "adopt"
+    elif not _stdin_is_interactive():
+        error(
+            f"Container '{short}' was created from PR #{number}. Publishing needs "
+            f"a choice: --yes pushes its commits to that PR's head, --stacked opens "
+            f"a new PR based on it. Pass one when there is no terminal to ask on."
+        )
+        raise typer.Exit(1)
+    else:
+        picked = _pick_review_action(number, pr_info.head_ref)
+        if picked is None:
+            raise typer.Abort()
+        action = picked
+
+    if pr_info.is_cross_repository:
+        owner = pr_info.head_repo_owner or "<fork-owner>"
+        if action == "stacked":
+            error(
+                f"PR #{number}'s head branch lives in the fork '{owner}', so it is "
+                f"not a branch in this origin and cannot be the base of a PR opened "
+                f"here. Open the stacked PR in the fork instead, against "
+                f"'{owner}:{pr_info.head_ref}'."
+            )
+        else:
+            error(
+                f"PR #{number}'s head branch lives in the fork '{owner}'. Pushing to "
+                f"origin would create an unrelated branch there and leave the PR "
+                f"untouched, so jailbee refuses.\n"
+                f"To update a fork PR you need push access to the fork (the PR's "
+                f"'maintainer can modify' box); then push by hand:\n"
+                f"  jailbee git fetch {short}\n"
+                f"  git push git@github.com:{owner}/<repo>.git "
+                f"refs/jailbee/{short}/<branch>:refs/heads/{pr_info.head_ref}"
+            )
+        raise typer.Exit(1)
+
+    if pr_info.state != "OPEN":
+        if action == "stacked":
+            warn(
+                f"PR #{number} is {pr_info.state}; basing a new PR on "
+                f"'{pr_info.head_ref}' anyway (a merged PR's head branch is often "
+                f"deleted, which GitHub will reject as a base)."
+            )
+        else:
+            warn(f"PR #{number} is {pr_info.state}; updating its head anyway.")
+
+    target = ReviewTarget(
+        stacked=action == "stacked",
+        parent_number=number,
+        parent_head=pr_info.head_ref,
+        parent_head_ref=pr_module.pr_head_ref(number),
+    )
+    if target.stacked:
+        return target
+
+    # pr_branch FIRST — see `ContainerLabelState.record`: an adopted flag
+    # without a recorded head name would make the next run publish to the
+    # container branch. Best-effort, like the create path's label writes.
+    # `number=None` leaves the recorded PR number alone — `new` already wrote it.
+    state.record(
+        head=pr_info.head_ref,
+        author=False,
+        adopted=True,
+        number=None,
+        context=f"Could not record the PR-head decision on '{short}'",
+    )
+    return target
 
 
 def adopt_existing_pr_for_branch(

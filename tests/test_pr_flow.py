@@ -820,3 +820,242 @@ def test_render_outcome_update_defaults_a_missing_update_to_a_no_op(tmp_path, mo
         update=None,
     )
     success.assert_called_once_with("PR #1 updated — head moved; description unchanged. U")
+
+
+# ---- stacked PR labels ----------------------------------------------------
+
+
+def test_container_label_state_reads_the_stacked_labels(mocker):
+    """A stacked PR is jailbee's own, recorded beside the review container's
+    parent PR rather than on top of it — so the same state class reads a
+    different label prefix."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.pr": "12",  # the parent PR, must not be read here
+        "user.jailbee.stacked_pr": "40",
+        "user.jailbee.stacked_pr_branch": "fix/x",
+        "user.jailbee.stacked_pr_author": "1",
+    }.get(key)
+
+    record = pr_flow.ContainerLabelState(
+        incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX
+    ).read()
+
+    assert record == pr_flow.PrRecord(number=40, head="fix/x", author=True, adopted=False)
+
+
+def test_container_label_state_writes_the_stacked_labels(mocker):
+    incus = mocker.MagicMock()
+
+    pr_flow.ContainerLabelState(incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX).record(
+        head="fix/x", author=True, adopted=False, number=40
+    )
+
+    keys = [call.args[1] for call in incus.config_set.call_args_list]
+    assert keys == [
+        "user.jailbee.stacked_pr_branch",
+        "user.jailbee.stacked_pr_author",
+        "user.jailbee.stacked_pr",
+    ]
+
+
+def test_malformed_stacked_label_names_the_stacked_key(mocker):
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.stacked_pr": "not-a-number"
+    }.get(key)
+
+    with pytest.raises(pr_flow.MalformedPrLabelError, match="user.jailbee.stacked_pr="):
+        pr_flow.ContainerLabelState(incus, "c1", prefix=pr_flow.STACKED_LABEL_PREFIX).read()
+
+
+# ---- resolve_review_target ------------------------------------------------
+
+
+def _record(number=7, head=None, author=False, adopted=False):
+    return pr_flow.PrRecord(number=number, head=head, author=author, adopted=adopted)
+
+
+def _resolve(tmp_path, record, state, **kwargs):
+    return pr_flow.resolve_review_target(
+        _super_scope(tmp_path),
+        state,
+        "review-7",
+        record,
+        **kwargs,
+    )
+
+
+def _fake_select(mocker, index):
+    """Patch questionary.select to pick the `index`th choice, honouring the real
+    `questionary.Choice` value semantics (`value=None` falls back to the title)."""
+    captured: dict[str, list] = {}
+
+    class _Question:
+        def ask(self):
+            return captured["choices"][index].value
+
+    def fake(message, choices):
+        captured["choices"] = choices
+        return _Question()
+
+    mocker.patch("questionary.select", side_effect=fake)
+    return captured
+
+
+def test_pick_review_action_returns_the_selected_action(mocker):
+    _fake_select(mocker, 0)
+    assert pr_flow._pick_review_action(7, "feat/x") == "adopt"
+    _fake_select(mocker, 1)
+    assert pr_flow._pick_review_action(7, "feat/x") == "stacked"
+
+
+def test_pick_review_action_maps_the_cancel_entry_to_none(mocker):
+    """`questionary.Choice` treats `value=None` as *unset* and falls back to the
+    title, so a cancel entry needs an explicit sentinel — otherwise cancelling
+    answers the string "cancel" and gets published as an action."""
+    _fake_select(mocker, -1)
+    assert pr_flow._pick_review_action(7, "feat/x") is None
+
+
+def test_review_target_is_none_without_a_pr_label(tmp_path, mocker):
+    record = _record(number=None)
+    assert _resolve(tmp_path, record, mocker.MagicMock(), yes=False, stacked=False) is None
+
+
+@pytest.mark.parametrize("labels", [{"author": True}, {"adopted": True}])
+def test_review_target_is_none_once_the_decision_was_recorded(tmp_path, mocker, labels):
+    record = _record(**labels)
+    assert _resolve(tmp_path, record, mocker.MagicMock(), yes=True, stacked=False) is None
+
+
+def test_stacked_needs_a_review_container(tmp_path, mocker):
+    record = _record(number=None)
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, record, mocker.MagicMock(), yes=False, stacked=True)
+    assert excinfo.value.exit_code == 2
+
+
+@pytest.mark.parametrize("labels", [{"author": True}, {"adopted": True}])
+def test_stacked_refused_once_the_container_publishes_to_a_pr_head(tmp_path, mocker, labels):
+    """The head of an existing PR is fixed; a stacked PR would need a different
+    one, so the two are mutually exclusive on the same container."""
+    record = _record(**labels)
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, record, mocker.MagicMock(), yes=False, stacked=True)
+    assert excinfo.value.exit_code == 2
+
+
+def test_stacked_flag_returns_the_parent_as_the_base(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    state = mocker.MagicMock()
+
+    target = _resolve(tmp_path, _record(), state, yes=False, stacked=True)
+
+    assert target == pr_flow.ReviewTarget(
+        stacked=True,
+        parent_number=7,
+        parent_head="feat/x",
+        parent_head_ref="refs/jailbee/pr/7/head",
+    )
+    # Nothing is recorded yet: the stacked PR does not exist until it is created.
+    state.record.assert_not_called()
+
+
+def test_yes_still_adopts_the_parent_head(tmp_path, mocker):
+    """`--yes` predates --stacked and means "adopt", so it must not silently
+    start opening a second PR instead of updating the reviewed one."""
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    state = mocker.MagicMock()
+
+    target = _resolve(tmp_path, _record(), state, yes=True, stacked=False)
+
+    assert target is not None and not target.stacked
+    assert target.parent_head == "feat/x"
+    state.record.assert_called_once()
+    assert state.record.call_args.kwargs["adopted"] is True
+    assert state.record.call_args.kwargs["author"] is False
+
+
+def test_no_tty_without_a_flag_exits_and_names_stacked(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    err = mocker.patch("jailbee.pr_flow.error")
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, _record(), mocker.MagicMock(), yes=False, stacked=False)
+
+    assert excinfo.value.exit_code == 1
+    assert "--stacked" in err.call_args.args[0]
+
+
+def test_menu_choice_stacked_opens_a_new_pr(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value="stacked")
+    state = mocker.MagicMock()
+
+    target = _resolve(tmp_path, _record(), state, yes=False, stacked=False)
+
+    assert target is not None and target.stacked
+    state.record.assert_not_called()
+
+
+def test_menu_choice_adopt_records_the_decision(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
+    state = mocker.MagicMock()
+
+    target = _resolve(tmp_path, _record(), state, yes=False, stacked=False)
+
+    assert target is not None and not target.stacked
+    state.record.assert_called_once()
+
+
+def test_menu_cancel_aborts(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.pr_flow._pick_review_action", return_value=None)
+
+    with pytest.raises(typer.Abort):
+        _resolve(tmp_path, _record(), mocker.MagicMock(), yes=False, stacked=False)
+
+
+def test_fork_parent_cannot_be_stacked_on(tmp_path, mocker):
+    """A fork PR's head is not a branch in this origin, so it cannot be the
+    base of a PR opened here — the stack has to live in the fork."""
+    mocker.patch(
+        "jailbee.pr.resolve_pr",
+        return_value=_pr_info(number=7, head="feat/x", cross=True, owner="someone-else"),
+    )
+    err = mocker.patch("jailbee.pr_flow.error")
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, _record(), mocker.MagicMock(), yes=False, stacked=True)
+
+    assert excinfo.value.exit_code == 1
+    assert "someone-else" in err.call_args.args[0]
+
+
+def test_fork_parent_still_refuses_adoption(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.pr.resolve_pr",
+        return_value=_pr_info(number=7, head="feat/x", cross=True, owner="someone-else"),
+    )
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, _record(), mocker.MagicMock(), yes=True, stacked=False)
+
+    assert excinfo.value.exit_code == 1
+
+
+def test_unresolvable_parent_pr_exits_1(tmp_path, mocker):
+    from jailbee.pr import PrError
+
+    mocker.patch("jailbee.pr.resolve_pr", side_effect=PrError("gh exploded"))
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _resolve(tmp_path, _record(), mocker.MagicMock(), yes=True, stacked=False)
+
+    assert excinfo.value.exit_code == 1
