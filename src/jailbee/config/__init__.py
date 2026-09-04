@@ -13,11 +13,7 @@ valid and produces a fully-defaulted Config.
 
 from __future__ import annotations
 
-import ipaddress
-import os
 import re
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -61,6 +57,105 @@ from jailbee.config.common import (
 )
 from jailbee.config.errors import ConfigError as ConfigError
 from jailbee.config.errors import ConfigNotFoundError as ConfigNotFoundError
+from jailbee.config.models_columns import (
+    _COLUMN_DEFAULT as _COLUMN_DEFAULT,
+)
+from jailbee.config.models_columns import (
+    DASHBOARD_DEFAULT_HIDE as DASHBOARD_DEFAULT_HIDE,
+)
+from jailbee.config.models_columns import (
+    ColumnConfig as ColumnConfig,
+)
+from jailbee.config.models_columns import (
+    _columns_already_sanitized as _columns_already_sanitized,
+)
+from jailbee.config.models_columns import (
+    _known_ls_field_names as _known_ls_field_names,
+)
+from jailbee.config.models_columns import (
+    sanitize_column_blocks as sanitize_column_blocks,
+)
+from jailbee.config.models_columns import (
+    validate_column_blocks as validate_column_blocks,
+)
+from jailbee.config.models_host import (
+    _CACHE_NAME_RE as _CACHE_NAME_RE,
+)
+from jailbee.config.models_host import (
+    _PREFIX_RE as _PREFIX_RE,
+)
+from jailbee.config.models_host import (
+    POOL_PRESETS as POOL_PRESETS,
+)
+from jailbee.config.models_host import (
+    ContainerConfig as ContainerConfig,
+)
+from jailbee.config.models_host import (
+    ContainerUser as ContainerUser,
+)
+from jailbee.config.models_host import (
+    HostDevice as HostDevice,
+)
+from jailbee.config.models_host import (
+    HostMount as HostMount,
+)
+from jailbee.config.models_host import (
+    HostPort as HostPort,
+)
+from jailbee.config.models_host import (
+    OptionalMount as OptionalMount,
+)
+from jailbee.config.models_host import (
+    PoolPreset as PoolPreset,
+)
+from jailbee.config.models_host import (
+    PoolSpec as PoolSpec,
+)
+from jailbee.config.models_host import (
+    SharedCache as SharedCache,
+)
+from jailbee.config.models_host import (
+    _default_shared_caches as _default_shared_caches,
+)
+from jailbee.config.models_host import (
+    _jetbrains_shared_caches as _jetbrains_shared_caches,
+)
+from jailbee.config.models_net import (
+    _CREDENTIAL_GROUP_RE as _CREDENTIAL_GROUP_RE,
+)
+from jailbee.config.models_net import (
+    GITHUB_API_HOSTS as GITHUB_API_HOSTS,
+)
+from jailbee.config.models_net import (
+    JETBRAINS_AI_HOSTS as JETBRAINS_AI_HOSTS,
+)
+from jailbee.config.models_net import (
+    JETBRAINS_LICENSE_HOSTS as JETBRAINS_LICENSE_HOSTS,
+)
+from jailbee.config.models_net import (
+    LOOSE_TTL_PRESETS as LOOSE_TTL_PRESETS,
+)
+from jailbee.config.models_net import (
+    NET_DESCRIPTIONS as NET_DESCRIPTIONS,
+)
+from jailbee.config.models_net import (
+    OFFLINE_REMOVED_MSG as OFFLINE_REMOVED_MSG,
+)
+from jailbee.config.models_net import (
+    ClaudeCredentials as ClaudeCredentials,
+)
+from jailbee.config.models_net import (
+    LooseAutoRevert as LooseAutoRevert,
+)
+from jailbee.config.models_net import (
+    _reject_offline as _reject_offline,
+)
+from jailbee.config.models_net import (
+    format_loose_after as format_loose_after,
+)
+from jailbee.config.models_net import (
+    parse_loose_ttl as parse_loose_ttl,
+)
 from jailbee.config.retired import (
     _check_agents_spelling as _check_agents_spelling,
 )
@@ -79,15 +174,6 @@ from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
     from jailbee.global_config import GlobalConfig
-
-_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-_CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-# A credential-group name becomes one directory name under
-# `<xdg_data_home>/jailbee/claude-credentials/`. Restricting it to a single
-# lowercase path segment is what stops `../` from escaping that root — the
-# directory holds a live Claude credential.
-_CREDENTIAL_GROUP_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 # An agent name becomes a tmux window name and a `jailbee doctor` label —
 # kept to the safest common subset of what both accept. It does *not* reach
@@ -179,872 +265,6 @@ def _validate_pooled_caches(cfg: Config) -> None:
                 f"would point every container at the pool's own `slots/` and "
                 f"`by-container/`. {remedy}"
             )
-
-
-class ContainerUser(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    uid: int = -1
-    gid: int = -1
-
-    def model_post_init(self, __context: object) -> None:
-        if self.uid == -1:
-            object.__setattr__(self, "uid", os.getuid())
-        if self.gid == -1:
-            object.__setattr__(self, "gid", os.getgid())
-
-
-# Env-var name grammar accepted by `container.env`. Same as POSIX env names:
-# leading [A-Za-z_], rest [A-Za-z0-9_]. Rejected at config-load time so a
-# typo doesn't surface as a confusing `incus profile edit` failure.
-_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-class ContainerConfig(BaseModel):
-    """Container-wide settings applied via the Incus base profile.
-
-    `env` is a map of literal string env vars injected into every process
-    Incus starts in the container — including `jailbee shell`, `jailbee tmux`,
-    tmux servers, and autostart steps. Values are not expanded; the YAML
-    string is passed through verbatim. Keys jailbee itself sets in the base
-    profile (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR, SSH_AUTH_SOCK)
-    are still overridable here — user override wins.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    env: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("env")
-    @classmethod
-    def _validate_env_names(cls, v: dict[str, str]) -> dict[str, str]:
-        for name in v:
-            if not _ENV_NAME_RE.match(name):
-                raise ValueError(
-                    f"invalid env var name: {name!r}. Must match "
-                    r"[A-Za-z_][A-Za-z0-9_]*"
-                )
-        return v
-
-
-class HostMount(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    host: PathExpanded
-    container: str
-    readonly: bool = False
-
-
-_OCTAL_MODE_RE = re.compile(r"^0[0-7]{3,4}$")
-
-# Unix group-name grammar (useradd's NAME_REGEX, simplified). Enforced on
-# `host_devices.group` because the value is interpolated into an in-container
-# `usermod -aG <group> dev` shell command — letting shell metacharacters
-# through would be a command-injection vector.
-_GROUP_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*\$?$")
-
-
-class HostDevice(BaseModel):
-    """A host character/block device passed into the container.
-
-    Mirrors the render-node ``unix-char`` mechanism in
-    ``profiles.base_profile_yaml`` but driven by config. Opt-in, default
-    empty. Each entry widens the host-kernel attack surface reachable from
-    inside the (unprivileged) container — see docs/config.md.
-
-    ``group`` controls which container group the ``dev`` user is added to so
-    it can actually open the device. When unset, jailbee auto-derives it from the
-    host source node's owning group (e.g. ``/dev/kvm`` → ``kvm``). This is the
-    reliable access mechanism: a device like ``/dev/kvm`` carries a udev
-    ``static_node`` rule, so the container's systemd-udevd resets the node to
-    its distro default (``root:kvm 0660``) on every boot regardless of the
-    profile ``mode`` — group membership grants access where ``mode`` cannot.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    path: str
-    source: str | None = None
-    type: Literal["unix-char", "unix-block"] = "unix-char"
-    mode: str | None = "0666"
-    gid: int | None = None
-    uid: int | None = None
-    group: str | None = None
-
-    @property
-    def effective_source(self) -> str:
-        """Host device path; defaults to the in-container ``path``."""
-        return self.source or self.path
-
-    @field_validator("path", "source")
-    @classmethod
-    def _validate_absolute(cls, v: str | None) -> str | None:
-        if v is not None and not v.startswith("/"):
-            raise ValueError(f"host_devices path/source must be absolute, got: {v!r}")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def _validate_mode(cls, v: str | None) -> str | None:
-        if v is not None and not _OCTAL_MODE_RE.match(v):
-            raise ValueError(f"host_devices mode must be an octal string like '0666', got: {v!r}")
-        return v
-
-    @field_validator("group")
-    @classmethod
-    def _validate_group(cls, v: str | None) -> str | None:
-        if v is not None and not _GROUP_NAME_RE.match(v):
-            raise ValueError(f"host_devices group must be a valid unix group name, got: {v!r}")
-        return v
-
-
-# Handle grammar for a `host_ports` entry. The value becomes an Incus device
-# name (`port-cfg-<name>`) and the `jailbee port rm` key, so it is kept to
-# characters that read cleanly in both.
-_PORT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-_PORT_NAME_MAX_LEN = 40
-
-
-class HostPort(BaseModel):
-    """A host service made reachable inside every container of the repo.
-
-    Rendered as an Incus ``proxy`` device with ``bind=instance``: the
-    container listens on ``container_address:port`` and Incus's forkproxy
-    connects to ``host_address:host_port`` on the host. The classic case is
-    an adb server — with the forward in place, plain ``adb devices`` works
-    inside the container and no ``ADB_SERVER_SOCKET`` is needed.
-
-    Only this direction is configurable. A host-side listener is a
-    machine-wide resource, so declaring one here would make every container
-    of the repo fight over the same host port, breaking the property that
-    many branch containers coexist. See ``jailbee port to-host``.
-
-    Note this is a hole through ``net strict`` by construction: the host end
-    of the connection is opened by a host process outside the container's
-    network namespace, so the egress ACL never sees it. See docs/security.md.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    port: int
-    host_port: int | None = None
-    proto: Literal["tcp", "udp"] = "tcp"
-    host_address: str = "127.0.0.1"
-    container_address: str = "127.0.0.1"
-
-    @property
-    def effective_host_port(self) -> int:
-        """Host-side port; defaults to the container-side ``port``."""
-        return self.port if self.host_port is None else self.host_port
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_direction_keys(cls, data: object) -> object:
-        """Explain the to-host omission instead of saying "Unknown field".
-
-        Runs before `extra="forbid"` so the reason lands in the message.
-        """
-        if isinstance(data, dict):
-            for key in ("direction", "to_host", "bind"):
-                if key in data:
-                    raise ValueError(
-                        f"host_ports entries cannot set `{key}`: only the "
-                        "to-container direction (a host service reachable "
-                        "inside the container) is configurable. A host port "
-                        "is machine-wide, so a repo config declaring one "
-                        "would make every container of this repo fight over "
-                        "it. Use `jailbee port to-host <port>` on the one "
-                        "container that needs it."
-                    )
-        return data
-
-    @field_validator("name")
-    @classmethod
-    def _validate_name(cls, v: str) -> str:
-        if not _PORT_NAME_RE.match(v) or len(v) > _PORT_NAME_MAX_LEN:
-            raise ValueError(
-                "host_ports name must match [a-z0-9][a-z0-9-]* and be at "
-                f"most {_PORT_NAME_MAX_LEN} chars, got: {v!r}"
-            )
-        return v
-
-    @field_validator("port", "host_port")
-    @classmethod
-    def _validate_port(cls, v: int | None) -> int | None:
-        # Ours to enforce: Incus accepts an out-of-range port at device-add
-        # time and only fails when the device starts.
-        if v is not None and not 1 <= v <= 65535:
-            raise ValueError(f"host_ports port must be 1..65535, got: {v}")
-        return v
-
-    @field_validator("host_address", "container_address")
-    @classmethod
-    def _validate_address(cls, v: str) -> str:
-        # A hostname would have to be resolved at device-add time, silently
-        # pinning one IP into the device. Incus wants an address anyway.
-        try:
-            ipaddress.ip_address(v)
-        except ValueError as e:
-            raise ValueError(
-                f"host_ports address must be an IP literal, not a hostname: {v!r}"
-            ) from e
-        return v
-
-
-class OptionalMount(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    host: PathExpanded
-    container: str
-    readonly: bool = True
-    description: str = ""
-
-
-class PoolSpec(BaseModel):
-    """Pool a shared cache: one private copy per container.
-
-    A pooled cache is not mounted by the binds profile. Each container
-    gets its own slot directory from `<shared_dir>/<host_subpath>/slots/`,
-    attached as a per-container disk device named `<cache name>-slot`.
-    This is how two containers avoid sharing one tool's lock files.
-
-    - `seed`: copy the warmest existing slot into a fresh one, so a new
-      container starts warm. False means every slot starts empty.
-    - `link_paths`: subtrees hardlinked from the seed source instead of
-      copied. ONLY for files written once and deleted whole, never
-      modified in place — a hardlinked lock file or in-place-rewritten
-      `.bin` restores exactly the cross-container sharing this exists to
-      remove.
-    - `wipe_paths`: removed when a slot is released, and excluded from
-      seeding. Regenerable bulk.
-    - `stale_globs`: unlinked on release, and excluded from seeding.
-      Lock files left behind by an unclean exit.
-    - `warmth_file`: slot-relative path whose mtime ranks slots by real
-      activity. None ranks by the slot directory's own mtime.
-    - `allocate`: `on-start` attaches the slot on create and on every
-      boot; `on-demand` waits for an explicit call (Chrome, which most
-      containers never launch).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    seed: bool = True
-    link_paths: list[str] = []
-    wipe_paths: list[str] = []
-    stale_globs: list[str] = []
-    warmth_file: str | None = None
-    allocate: Literal["on-start", "on-demand"] = "on-start"
-
-
-class PoolPreset(BaseModel):
-    """A builtin `PoolSpec` plus whether it applies without being asked.
-
-    `pool_only` marks a cache whose un-pooled form has no meaning: its
-    `host_subpath` is the pool root itself, not a cache directory, so
-    rendering it as a plain shared mount would point every container at
-    `slots/`, `by-container/` and `.lock` — and the profile writing its
-    own content there is exactly what `ensure_pool_dirs` then refuses.
-    `pooled_caches: {<name>: false}` is rejected at load time for such a
-    preset (see `_validate_pooled_caches`).
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    default_on: bool
-    spec: PoolSpec
-    pool_only: bool = False
-
-
-class SharedCache(BaseModel):
-    """A bind-mount from <shared_dir>/<host_subpath> into the container.
-
-    `container_path` may start with ``~``, expanded to ``/home/<user>``.
-    `pool` turns the entry into a per-container pool instead of a shared
-    mount.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    host_subpath: str
-    container_path: str
-    pool: PoolSpec | None = None
-
-
-# Regenerable Chrome cache subtrees, relative to a pool slot: excluded from
-# seeding a fresh slot and wiped when a slot is released. Lives here (not in
-# pool.py) because it's part of the "chrome-profile" POOL_PRESETS entry
-# below, alongside the other builtin presets' path lists.
-_CHROME_WIPE_PATHS = (
-    "Default/Cache",
-    "Default/Code Cache",
-    "Default/GPUCache",
-    "Default/Service Worker/CacheStorage",
-    "Default/DawnGraphiteCache",
-    "Default/DawnWebGPUCache",
-    "ShaderCache",
-    "GrShaderCache",
-    "GraphiteDawnCache",
-    # Top-level regenerable data sets — large, redownloaded on demand,
-    # not user state. Without these the freed slot stays at ~80 MB.
-    "Safe Browsing",
-    "optimization_guide_model_store",
-    "BrowserMetrics",
-)
-
-POOL_PRESETS: dict[str, PoolPreset] = {
-    "gradle": PoolPreset(
-        default_on=True,
-        spec=PoolSpec(
-            link_paths=["caches/modules-2/files-2.1", "wrapper/dists"],
-            wipe_paths=["daemon"],
-            stale_globs=["**/*.lock", "**/*.lck"],
-        ),
-    ),
-    "m2": PoolPreset(
-        default_on=True,
-        spec=PoolSpec(
-            link_paths=["repository"],
-            # `_remote.repositories` is rewritten in place by
-            # maven-resolver's DefaultTrackingFileManager (RandomAccessFile
-            # "rw" → setLength(0) → rewrite), so it must never be
-            # hardlinked between slots.
-            stale_globs=[
-                "**/*.lock",
-                "**/*.part*",
-                "**/*.lastUpdated",
-                "**/_remote.repositories",
-            ],
-        ),
-    ),
-    "npm": PoolPreset(
-        default_on=False,
-        spec=PoolSpec(link_paths=["_cacache"], wipe_paths=["_logs"], stale_globs=["**/*.lock"]),
-    ),
-    "pnpm-store": PoolPreset(
-        default_on=False,
-        spec=PoolSpec(link_paths=["v3/files"], stale_globs=["**/*.lock"]),
-    ),
-    "chrome-profile": PoolPreset(
-        default_on=True,
-        # `host_subpath` is "chrome-pool" — the pool root, not a cache dir.
-        pool_only=True,
-        spec=PoolSpec(
-            link_paths=[],  # SQLite + Preferences are rewritten in place
-            wipe_paths=list(_CHROME_WIPE_PATHS),
-            stale_globs=["Singleton*", "BrowserMetrics-*.pma"],
-            warmth_file="Default/Login Data",
-            allocate="on-demand",
-        ),
-    ),
-}
-
-
-def _default_shared_caches() -> list[SharedCache]:
-    """Default cache mounts — stack-neutral: just the ssh cache.
-
-    The language caches (pnpm/gradle/npm/m2) are now opt-in: add them
-    explicitly via ``shared_caches:`` in YAML, or enable the matching
-    `golden.stacks.java` / `.node` toggle, which auto-adds gradle+m2
-    (java) or npm+pnpm-store (node) via `Config.effective_shared_caches`.
-    Override the whole list by setting ``shared_caches:`` to a different
-    list (or ``[]`` to disable entirely). Agent and JetBrains shared caches
-    are not included here — they are added by
-    `Config.effective_shared_caches`: one set per enabled entry in
-    `agents:` (via the generic `agents.enabled_agent_specs` loop, which is
-    where Claude's now come from), plus the JetBrains ones when
-    `jetbrains.enabled`.
-    """
-    return [
-        SharedCache(name="ssh", host_subpath="ssh", container_path="~/.ssh"),
-    ]
-
-
-def _jetbrains_shared_caches(container_prefix: str, *, share_idea: bool) -> list[SharedCache]:
-    """JetBrains shared-cache mounts auto-added when `jetbrains.enabled`.
-
-    Three entries: `<shared_dir>/jetbrains-config` → `~/.config/JetBrains`
-    (IDE preferences, plugins, recents); `<shared_dir>/jetbrains-data`
-    → `~/.local/share/JetBrains` (caches, indexes); and, when
-    `share_idea` is true, `<shared_dir>/jetbrains-idea` →
-    `~/<container_prefix>/.idea` (project state — run configs, code
-    styles, inspection profiles).
-
-    Kept here rather than in `_default_shared_caches()` so the list-level
-    `shared_caches:` YAML key isn't polluted with mounts the user doesn't
-    need when `jetbrains.enabled=false`.
-    """
-    result = [
-        SharedCache(
-            name="jetbrains-config",
-            host_subpath="jetbrains-config",
-            container_path="~/.config/JetBrains",
-        ),
-        SharedCache(
-            name="jetbrains-data",
-            host_subpath="jetbrains-data",
-            container_path="~/.local/share/JetBrains",
-        ),
-    ]
-    if share_idea:
-        result.append(
-            SharedCache(
-                name="jetbrains-idea",
-                host_subpath="jetbrains-idea",
-                container_path=f"~/{container_prefix}/.idea",
-            )
-        )
-    return result
-
-
-# Descriptions baked into the generated Incus net-profiles (visible via
-# `incus profile show <prefix>-net-{strict,loose}`). The modes themselves
-# are fixed — only `egress_allow` (strict-mode allowlist) is
-# user-configurable.
-NET_DESCRIPTIONS: dict[str, str] = {
-    "strict": "Minimal egress for normal dev",
-    "loose": "Wider egress for debugging",
-}
-
-# The `offline` network mode (no NIC attached) was removed: `strict` is
-# already a default-deny egress allowlist, so `offline` only duplicated it
-# with extra UI surface. Config files carrying the old value get this
-# message rather than a bare enum error.
-OFFLINE_REMOVED_MSG = (
-    "network mode 'offline' was removed — use 'strict' (default-deny egress allowlist)"
-)
-
-
-def _reject_offline(v: object) -> object:
-    """`mode="before"` validator body shared by the two network fields."""
-    if v == "offline":
-        raise ValueError(OFFLINE_REMOVED_MSG)
-    return v
-
-
-# Hosts JetBrains IDEs need to reach for license activation, plugin
-# marketplace, installer/CDN, and framework dependency config. Added
-# automatically by `Config.effective_egress_allow()` whenever
-# `jetbrains.enabled` is true so users don't have to know JetBrains'
-# service topology.
-#
-# Sourced from JetBrains' published allowlist guidance
-# (https://intellij-support.jetbrains.com/hc/en-us/articles/206544429):
-# - account / cloudconfig: JBA license activation and validation
-# - plugins: plugin marketplace
-# - www, download, download-cf, download-cdn: docs + installers + CDNs
-# - frameworks: Java framework dependency config + AI prompt rules
-# - data.services: legacy services endpoint (retained for older IDE builds)
-# - resources: OAuth provider icons rendered in the JBA sign-in dialog;
-#   without it the login UI cannot finish loading and license activation
-#   silently stalls in "trial available" state.
-# - api.jetbrains.cloud: license trace-status endpoint. Note the `.cloud`
-#   TLD — a wildcard on `*.jetbrains.com` would NOT match this host.
-# - oauth.account: JBA OAuth sign-in endpoint. Different subdomain AND
-#   different IP space (AWS ELB in eu-west-1) than account.jetbrains.com,
-#   so the account allowlist entry doesn't cover it. Without this the
-#   sign-in flow cannot complete the OAuth handshake.
-# - downloads.marketplace: plugin payload CDN (CloudFront), separate IP
-#   space from plugins.jetbrains.com. Required for installing or updating
-#   plugins from the marketplace in strict mode.
-JETBRAINS_LICENSE_HOSTS: tuple[str, ...] = (
-    "account.jetbrains.com:443",
-    "oauth.account.jetbrains.com:443",
-    "cloudconfig.jetbrains.com:443",
-    "plugins.jetbrains.com:443",
-    "downloads.marketplace.jetbrains.com:443",
-    "www.jetbrains.com:443",
-    "resources.jetbrains.com:443",
-    "download.jetbrains.com:443",
-    "download-cf.jetbrains.com:443",
-    "download-cdn.jetbrains.com:443",
-    "frameworks.jetbrains.com:443",
-    "data.services.jetbrains.com:443",
-    "api.jetbrains.cloud:443",
-)
-
-# Hosts JetBrains AI Assistant uses. Added by `effective_egress_allow()`
-# only when `jetbrains.enabled` AND `jetbrains.ai_enabled` are true,
-# because AI Assistant is opt-in and most users won't need these.
-JETBRAINS_AI_HOSTS: tuple[str, ...] = (
-    "api.app.prod.grazie.aws.intellij.net:443",
-    "api.jetbrains.ai:443",
-)
-
-# Hosts gh CLI reaches: api.github.com for REST/GraphQL. Added
-# automatically by `Config.effective_egress_allow()` when `github.enabled`
-# so users don't have to know the GitHub API topology. Intentionally
-# minimal — github.com:443 / codeload.github.com:443 /
-# uploads.github.com:443 / objects.githubusercontent.com:443 stay off
-# until a use case forces them in.
-GITHUB_API_HOSTS: tuple[str, ...] = ("api.github.com:443",)
-
-
-_DURATION_RE = re.compile(r"^(\d+)\s*(s|m|h)$")
-
-
-def _parse_duration(value: str) -> timedelta:
-    """Parse ``30s`` / ``5m`` / ``2h`` into a ``timedelta``.
-
-    Unitless integers go through ``LooseAutoRevert.after`` directly (typed
-    as ``int``) and are interpreted as minutes — this helper handles only
-    suffixed strings.
-    """
-    m = _DURATION_RE.match(value.strip())
-    if not m:
-        raise ValueError(f"invalid duration {value!r}; expected `<int>s|m|h` (e.g. `5m`)")
-    n = int(m.group(1))
-    unit = m.group(2)
-    if unit == "s":
-        return timedelta(seconds=n)
-    if unit == "m":
-        return timedelta(minutes=n)
-    return timedelta(hours=n)
-
-
-class LooseAutoRevert(BaseModel):
-    """Policy for auto-reverting `jailbee net loose` after a TTL.
-
-    Lives in both ``~/.config/jailbee/global.yaml`` and per-repo
-    ``.jailbee/config.yaml``. Per-repo overrides global field by field — see
-    ``Config.effective_loose_auto_revert``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    after: str | int = "5m"
-
-    def duration(self) -> timedelta:
-        """Parse ``after`` into a ``timedelta``. Raises ``ValueError`` on
-        bad input (negative, zero, unparseable, or >24h).
-        """
-        raw = self.after
-        if isinstance(raw, int):
-            if raw <= 0:
-                raise ValueError(f"loose_auto_revert.after must be > 0, got {raw}")
-            td = timedelta(minutes=raw)
-        else:
-            td = _parse_duration(raw)
-        if td <= timedelta(0):
-            raise ValueError(f"loose_auto_revert.after must be > 0, got {raw!r}")
-        if td > timedelta(hours=24):
-            raise ValueError(f"loose_auto_revert.after must be <= 24h, got {raw!r}")
-        return td
-
-
-# Durations offered when jailbee asks how long to stay in loose — the CLI
-# prompt's preset list and the Qt dashboard's dialog items. Not a policy:
-# the effective default still comes from `LooseAutoRevert.after`, and any
-# value `LooseAutoRevert.duration()` accepts can be typed instead.
-LOOSE_TTL_PRESETS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "2h", "4h", "8h")
-
-
-def _validated_group(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if not _CREDENTIAL_GROUP_RE.match(value):
-        raise ValueError(f"invalid credential group name {value!r}: must match [a-z0-9][a-z0-9-]*")
-    return value
-
-
-class ClaudeCredentials(BaseModel):
-    """Which repos on this host share one Claude credential directory.
-
-    Host-level only (`_HOST_LEVEL_KEYS`), read from
-    `~/.config/jailbee/global.yaml`. A group name is a property of *this*
-    machine's working set: committed to a repo's config it would apply to
-    every teammate and name a group that exists on one machine only.
-
-    `group` is the default for every repo on the host; `repos` overrides it per
-    `container_prefix`, and an explicit `null` there opts one repo out. Absent
-    block, or no resolved group, means the repo keeps its own credential inside
-    its config home — today's behaviour.
-
-    Only the *credential* is shared. Each repo keeps its own `~/.claude`, so
-    project history, MCP config and sessions never cross repos. Claude Code
-    resolves `.credentials.json` and `.oauth_refresh.lock` from
-    `CLAUDE_SECURESTORAGE_CONFIG_DIR`, independently of `CLAUDE_CONFIG_DIR`,
-    which is what makes the split possible at all.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    group: str | None = None
-    repos: dict[str, str | None] = {}
-
-    @field_validator("group")
-    @classmethod
-    def _check_group(cls, value: str | None) -> str | None:
-        return _validated_group(value)
-
-    @field_validator("repos")
-    @classmethod
-    def _check_repos(cls, value: dict[str, str | None]) -> dict[str, str | None]:
-        for group in value.values():
-            _validated_group(group)
-        return value
-
-    def dir_for(self, container_prefix: str) -> Path | None:
-        """The credential directory for one repo, or None when it shares none.
-
-        A `repos` entry wins over `group` *including when it is `null`* —
-        opting one repo out is the only way to keep it on its own credential
-        while the rest of the host shares one.
-        """
-        group = self.repos[container_prefix] if container_prefix in self.repos else self.group
-        if not group:
-            return None
-        return xdg_data_home() / "jailbee" / "claude-credentials" / group
-
-
-def parse_loose_ttl(raw: str) -> timedelta | None:
-    """Parse a user-supplied loose TTL. ``never`` → None (no auto-revert).
-
-    The single definition of the duration syntax accepted by `jailbee net loose
-    --for`, the CLI's interactive prompt and the Qt dashboard's dialog — all
-    three share it so a value one accepts can never be rejected by another.
-    Delegates to `LooseAutoRevert.duration()` so the units and the 24h cap stay
-    in one place; raises `ValueError` with its message.
-    """
-    value = raw.strip()
-    if value.lower() == "never":
-        return None
-    return LooseAutoRevert(after=value).duration()
-
-
-def format_loose_after(after: str | int) -> str:
-    """Render a `LooseAutoRevert.after` value as prompt-ready text.
-
-    The field is `str | int`; a bare int means minutes.
-    """
-    return f"{after}m" if isinstance(after, int) else after
-
-
-# Columns the dashboard drops from the `ls` field set by default: REPO is
-# redundant under per-repo grouping, the wide GIT STATUS combo and the
-# JSON-only full_name add noise, and TTL is folded into the NETWORK cell.
-# Lives here rather than in `dashboard.py` because it is a config default
-# and `config.py` cannot import `dashboard` (that module imports this one).
-DASHBOARD_DEFAULT_HIDE: tuple[str, ...] = (
-    "repo",
-    "full_name",
-    "git_status",
-    "created",
-    "ttl",
-)
-
-
-class ColumnConfig(BaseModel):
-    """Which columns a table shows.
-
-    ``fields`` is an explicit ordered list and wins outright when set: naming
-    a column is a request for that exact column, so it also renders even if
-    it would otherwise be hidden by a dynamic ``show_if`` (e.g. ``pr`` with
-    nothing open) — see ``table_format.apply_column_config``, the one place
-    that rule is implemented, shared by ``jailbee ls`` and the dashboard alike.
-    ``hide`` is subtractive and applies only to the built-in default set,
-    where ``show_if`` still applies unchanged. A ``--fields`` flag on the
-    command line beats both — this is the remembered preference, not a lock.
-
-    Applies to table output only. ``--format json`` keeps its own
-    ``default_json`` field set regardless of ``fields``/``hide`` here: this
-    is a personal display preference, and a script depending on the default
-    JSON shape must not have it silently narrowed by someone's ``global.yaml``.
-    An explicit ``--fields`` flag still wins in every format.
-
-    Column choice is a personal preference, so the normal home is
-    ``global.yaml``; the same block in a repo's ``.jailbee/config.yaml``
-    overrides it for everyone working in that repo, which is deliberate
-    and rare.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    fields: list[str] | None = None
-    hide: list[str] = []
-
-
-# Repo-layer default for both `Config.ls` and `Config.dashboard`. Unlike the
-# global layer — where `GlobalConfig.dashboard`'s default already carries
-# `DASHBOARD_DEFAULT_HIDE` (see `global_config._DASHBOARD_DEFAULT`) — a
-# repo's own block defaults to a plain, unset `ColumnConfig`; the
-# dashboard-hide default is applied later, when `dashboard.seed_view_state`
-# reads the global block into a front-end's `view_prefs` row. So both repo
-# fields share one default here. Used by `load_config`'s sanitize
-# short-circuit.
-_COLUMN_DEFAULT = ColumnConfig()
-
-
-def _known_ls_field_names() -> set[str]:
-    """Real `jailbee ls` / dashboard column names, including the LOCAL ones.
-
-    Shared by ``validate_column_blocks`` and ``sanitize_column_blocks``, its
-    recovery-flavoured counterpart. The canonical names come from
-    ``lifecycle.ls_field_specs``, which ``config.py`` cannot import at
-    module level (``lifecycle`` imports ``config`` — a cycle), hence the
-    function-local import.
-    """
-    from jailbee.lifecycle import ls_field_specs
-
-    return {f.name for f in ls_field_specs(now=datetime.now(UTC), all_repos=True)}
-
-
-def validate_column_blocks(blocks: Sequence[tuple[str, ColumnConfig]]) -> list[str]:
-    """Return human-readable problems in `ls:` / `dashboard:` column blocks.
-
-    Used wherever a column typo should be *reported as an error*:
-    ``Config.validate_runtime`` for a repo's ``.jailbee/config.yaml``, and
-    ``jailbee config validate``'s own check of ``~/.config/jailbee/global.yaml`` (see
-    ``global_config.global_config_issues``). Both are advisory-reporting
-    paths — neither is on the hot path that actually renders a table, which
-    is why raising is fine here but not in ``global_config.load_global_config``
-    (see ``sanitize_column_blocks``, its recovery-flavoured counterpart used
-    there: a personal display preference must never break unrelated work).
-
-    Rejects three things: an unknown column name, ``fields: []`` (a table
-    with no columns at all — ``fields: null`` is how you ask for the
-    built-in default set), and a repeated name in ``fields`` (which would
-    render that column twice).
-    """
-    known = _known_ls_field_names()
-    allowed = ", ".join(sorted(known))
-    issues: list[str] = []
-    for block_name, block in blocks:
-        if block.fields is not None and not block.fields:
-            issues.append(
-                f"{block_name}: fields is empty, which would render a table with "
-                f"no columns; use `fields: null` for the built-in default set or "
-                f"name at least one column"
-            )
-        seen: set[str] = set()
-        for name in block.fields or []:
-            if name in seen:
-                issues.append(
-                    f"{block_name}: duplicate field {name!r} in fields; "
-                    f"each column may be named once"
-                )
-            seen.add(name)
-        for name in list(block.fields or []) + list(block.hide):
-            if name not in known:
-                issues.append(f"{block_name}: unknown field {name!r}; allowed: {allowed}")
-    return issues
-
-
-def sanitize_column_blocks(
-    blocks: Sequence[tuple[str, ColumnConfig]],
-) -> tuple[dict[str, ColumnConfig], list[str]]:
-    """Recover from problems in `ls:` / `dashboard:` blocks instead of rejecting them.
-
-    Companion to ``validate_column_blocks``: same three problems, same
-    "which names are real" data, opposite remedy. Used both by
-    ``global_config.load_global_config`` (for ``global.yaml``) and by
-    ``load_config`` (for a repo's ``.jailbee/config.yaml``) so that a typo'd
-    column name — a purely cosmetic, personal display preference — never
-    breaks an unrelated command in either file (``jailbee config validate`` is
-    where a typo in either is still reported as an error, via
-    ``validate_column_blocks``).
-
-    * An unknown name is dropped (from ``fields`` or ``hide``).
-    * A duplicate name in ``fields`` is dropped, keeping the first
-      occurrence.
-    * ``fields: []`` — explicit, or reduced to it by dropping every name as
-      unknown/duplicate — falls back to ``fields: None`` (the built-in
-      default set). There is no such thing as a table with zero columns, so
-      unlike an unknown name (drop it, the rest of the list still means
-      something) there is nothing sensible to recover *to* except the
-      default; an explicit empty list is presumed to be a mistake rather
-      than a real request for no columns.
-
-    Returns the corrected blocks by name, plus one human-readable warning
-    per fix made (empty when the input was already valid) for the caller to
-    surface however it surfaces warnings — this function, like the rest of
-    `config.py`, never prints.
-
-    Each corrected block is produced with ``block.model_copy(update=...)``,
-    touching only the sub-field(s) that actually needed a fix, rather than
-    reconstructing a fresh ``ColumnConfig``. This matters for the repo layer:
-    ``Config._effective_columns`` merges over the global block field-by-field
-    keyed on ``ColumnConfig.model_fields_set`` (see its docstring), so a
-    reconstruction that always passes both ``fields`` and ``hide`` would mark
-    a field the repo never mentioned as "explicitly set" and make it
-    unconditionally override the global value — corrupting the merge for
-    every repo, not just the ones with a typo. A no-op ``model_copy()`` (or
-    one that only updates the field(s) actually being fixed) leaves
-    ``model_fields_set`` exactly as the caller set it.
-    """
-    known = _known_ls_field_names()
-    allowed = ", ".join(sorted(known))
-    warnings: list[str] = []
-    fixed: dict[str, ColumnConfig] = {}
-
-    for block_name, block in blocks:
-        updates: dict[str, object] = {}
-
-        hide: list[str] = []
-        for name in block.hide:
-            if name in known:
-                hide.append(name)
-            else:
-                warnings.append(
-                    f"{block_name}.hide: unknown field {name!r} ignored; allowed: {allowed}"
-                )
-        if hide != block.hide:
-            updates["hide"] = hide
-
-        if block.fields is None:
-            pass  # nothing to fix: unset or explicit `null` both mean "no override"
-
-        elif not block.fields:
-            warnings.append(
-                f"{block_name}.fields: empty, which would render a table with "
-                f"no columns; using the built-in default set"
-            )
-            updates["fields"] = None
-
-        else:
-            seen: set[str] = set()
-            cleaned: list[str] = []
-            for name in block.fields:
-                if name not in known:
-                    warnings.append(
-                        f"{block_name}.fields: unknown field {name!r} ignored; allowed: {allowed}"
-                    )
-                    continue
-                if name in seen:
-                    warnings.append(f"{block_name}.fields: duplicate field {name!r} ignored")
-                    continue
-                seen.add(name)
-                cleaned.append(name)
-
-            if not cleaned:
-                warnings.append(
-                    f"{block_name}.fields: no valid column names remained; "
-                    f"using the built-in default set"
-                )
-                updates["fields"] = None
-            elif cleaned != block.fields:
-                updates["fields"] = cleaned
-
-        fixed[block_name] = block.model_copy(update=updates) if updates else block
-
-    return fixed, warnings
-
-
-def _columns_already_sanitized(pairs: Sequence[tuple[ColumnConfig, ColumnConfig]]) -> bool:
-    """True when every ``(block, that block's default)`` pair is equal by value.
-
-    Lets a loader skip ``sanitize_column_blocks`` (and the `lifecycle` import
-    and ``ls_field_specs()`` rebuild it needs) when there is provably nothing
-    to sanitize — shared by ``load_global_config`` (global.yaml layer) and
-    ``load_config`` (repo layer), since both run on the dashboard's
-    refresh-cadence hot path and both have "no block set at all" as the
-    overwhelmingly common case.
-
-    Comparing by *value*, not ``model_fields_set``, is deliberate and safe:
-    a default ``ColumnConfig`` is ``fields=None`` plus an already-valid
-    ``hide`` list, so a block equal to it cannot contain an unknown name, a
-    non-null empty ``fields``, or a duplicate — the three things
-    ``sanitize_column_blocks`` recovers from. That holds even when the block
-    was *explicitly* set to a value that happens to equal the default (e.g.
-    an explicit ``hide: []`` matching a default of ``hide: []``):
-    ``sanitize_column_blocks`` only ever inspects a block's ``fields``/``hide``
-    values, never its ``model_fields_set``, so a value-equal block sanitizes
-    to itself unconditionally regardless of how it got set. This is exactly
-    the property the repo-vs-global merge (``Config._effective_columns``)
-    depends on being preserved — see the real-load-path tests named
-    `..._beats_a_nonempty_global` in ``test_config.py``.
-    """
-    return all(block == default for block, default in pairs)
 
 
 class ConfirmConfig(BaseModel):
