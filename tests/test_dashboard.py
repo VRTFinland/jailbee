@@ -2488,6 +2488,42 @@ def test_dashboard_command_passes_none_when_the_cwd_repo_config_is_broken(mocker
     assert run.call_args.kwargs["cwd_root"] is None
 
 
+def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
+    """An unreadable config file must not traceback the dashboard at launch.
+
+    The probe reads the file now, where `find_repo_config()` only stat'd it, so
+    a permission error, a dangling symlink or an I/O error reaches the probe as
+    a bare `OSError` — `load_config` wraps YAML and Pydantic failures as
+    `ConfigError`, but never `read_text()`'s own errors. A launch-time
+    traceback is the one failure a user cannot work around, so the probe treats
+    it exactly like an unloadable config: this is not the cwd repo.
+    """
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=PermissionError(13, "Permission denied"),
+    )
+    result = CliRunner().invoke(app, ["dashboard"])
+    assert result.exit_code == 0
+    assert run.call_args.kwargs["cwd_root"] is None
+
+
+def test_dashboard_command_lets_a_programming_error_out_of_the_probe(mocker):
+    """The widened `except` is `(ConfigError, OSError)`, not `Exception`.
+
+    Config problems and I/O problems both mean "this is not the cwd repo"; a
+    bug in the loader means something else entirely and must still surface
+    rather than silently rendering a dashboard with the cwd repo missing.
+    """
+    mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.config.load_repo_config", side_effect=RuntimeError("bug"))
+    result = CliRunner().invoke(app, ["dashboard"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+
+
 def test_tui_command_is_an_alias_for_the_dashboard(mocker):
     """`jailbee tui` mirrors `jailbee gui`: the TUI frontend, same options."""
     from jailbee.config import ConfigNotFoundError

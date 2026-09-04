@@ -1910,10 +1910,18 @@ def _run_dashboard(
     # `Path.cwd()` only counts as a repo if its config actually loads — with
     # `scratch.enabled: false` a config-less directory is still nothing to show,
     # and neither is a directory whose config file exists but does not parse.
+    #
+    # `OSError` as well as `ConfigError`, and not one without the other: the
+    # loader wraps YAML and Pydantic failures as `ConfigError` but lets
+    # `read_text()`'s own errors through raw, so an unreadable config file (bad
+    # permissions, a dangling symlink, an I/O error) arrives here as a bare
+    # `OSError`. The stat this replaced degraded gracefully; a traceback at
+    # `jb dashboard` launch is the one failure a user cannot work around. Kept
+    # to these two on purpose — a programming error must still surface.
     try:
         load_repo_config(Path.cwd())
         cwd_root: Path | None = Path.cwd()
-    except ConfigError:
+    except (ConfigError, OSError):
         cwd_root = None
 
     if gui:
