@@ -53,11 +53,40 @@ class Stacks(BaseModel):
 
     # bool comes first in each union so YAML `true`/`false` bind to bool,
     # not to a coerced int/str.
-    java: bool | str = False  # "openjdk-N" | "corretto-N" | True(→openjdk default) | False
-    node: bool | int = False  # N | True(→default major) | False
-    python: bool = False
-    docker: bool = False
-    ecr: bool = False
+    java: bool | str = Field(
+        default=False,
+        description=(
+            "Install a JDK in the golden image. `true` installs the default JDK "
+            "(OpenJDK); a string such as `openjdk-21` or `corretto-17` pins the "
+            "distribution and major version; `false` installs none."
+        ),
+    )
+    node: bool | int = Field(
+        default=False,
+        description=(
+            "Install Node.js in the golden image. `true` installs the default major "
+            "version (24); an int such as `20` pins a specific major version; `false` "
+            "installs none."
+        ),
+    )
+    python: bool = Field(
+        default=False,
+        description="Install Python venv/pip tooling in the golden image.",
+    )
+    docker: bool = Field(
+        default=False,
+        description=(
+            "Install Docker Engine in the golden image and add the container user to "
+            "the `docker` group."
+        ),
+    )
+    ecr: bool = Field(
+        default=False,
+        description=(
+            "Install the Amazon ECR credential helper in the golden image, for "
+            "authenticating `docker pull` against ECR."
+        ),
+    )
 
     @field_validator("java")
     @classmethod
@@ -160,22 +189,92 @@ class Stacks(BaseModel):
 
 class Golden(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    alias: str = ""
-    ubuntu_version: str = "26.04"
-    java: str = "amazon-corretto-17"
-    node: int = 24
-    # DEPRECATED — ignored. The container's Python is always the base
-    # image's system python3 (its version is a function of ubuntu_version,
-    # since the archive ships only one python3.X per release). Kept in the
-    # model so a stale `python:` key is a soft, non-blocking deprecation
-    # warning (via validate_runtime) rather than a hard extra-field error.
-    python: str = ""
-    provision_script: Path | None = None
-    provision_env: dict[str, str] = {}
-    extra_apt_packages: list[str] = Field(default_factory=list)
-    disable_snippets: list[str] = Field(default_factory=list)
-    enable_snippets: list[str] = Field(default_factory=list)
-    stacks: Stacks = Field(default_factory=Stacks)
+    alias: str = Field(
+        default="",
+        description=(
+            "Image alias `jailbee base build` publishes to and containers boot from. "
+            "Empty (default) resolves to `<container_prefix>-base`."
+        ),
+    )
+    ubuntu_version: str = Field(
+        default="26.04",
+        description="Ubuntu release tag for the base image, pulled from the `images:` remote.",
+    )
+    java: str = Field(
+        default="amazon-corretto-17",
+        description=(
+            "Java package identifier for the `openjdk`/`corretto` snippet. "
+            "`amazon-corretto-N` maps to apt package `java-N-amazon-corretto-jdk`; "
+            "anything else is passed through as an apt package name. Only takes effect "
+            "when that snippet is staged via `stacks.java` or `enable_snippets`."
+        ),
+    )
+    node: int = Field(
+        default=24,
+        description=(
+            "Node.js major version for the `nodejs` snippet (used by NodeSource). Only "
+            "takes effect when that snippet is staged via `stacks.node` or "
+            "`enable_snippets`."
+        ),
+    )
+    # Kept in the model (rather than dropped as an extra-field error) so a
+    # stale `python:` key is a soft, non-blocking deprecation warning (via
+    # validate_runtime) instead of a hard config-load failure.
+    python: str = Field(
+        default="",
+        description=(
+            "Deprecated and ignored: the container's Python is always the base image's "
+            "system `python3`, fixed by `ubuntu_version`. Setting this only raises a "
+            "soft warning. Add a different Python via `extra_apt_packages` instead."
+        ),
+    )
+    provision_script: Path | None = Field(
+        default=None,
+        description=(
+            "Path to an alternative provisioning script, replacing the bundled "
+            "`install.sh`. Relative paths resolve against the repo root."
+        ),
+    )
+    provision_env: dict[str, str] = Field(
+        default={},
+        description=(
+            "Extra environment variables passed to the provisioning script. Keys "
+            "reserved for `install.sh`'s own use (e.g. `CONTAINER_UID`, `JAVA_PACKAGE`) "
+            "are rejected at load time."
+        ),
+    )
+    extra_apt_packages: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra apt package names installed by the bundled extra-apt snippet. Each "
+            "must start with a lowercase letter or digit and contain only lowercase "
+            "letters, digits, `+`, `-`, and `.`."
+        ),
+    )
+    disable_snippets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Snippet names dropped from the effective provisioning set, whether "
+            "bundled by default or added via `stacks`/`enable_snippets`. Accepts the "
+            "logical name, the numbered name, or the full filename."
+        ),
+    )
+    enable_snippets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Opt-in `install.d.available/` snippet names staged into the effective "
+            "set, unioned with whatever `stacks` implies. Unknown names are ignored "
+            "with a warning."
+        ),
+    )
+    stacks: Stacks = Field(
+        default_factory=Stacks,
+        description=(
+            "High-level `java`/`node`/`python`/`docker`/`ecr` toggles — the recommended "
+            "way to enable a runtime, expanding to the matching snippet(s), shared "
+            "caches, and build-env values."
+        ),
+    )
 
     @field_validator("extra_apt_packages")
     @classmethod

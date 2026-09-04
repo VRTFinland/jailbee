@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # Columns the dashboard drops from the `ls` field set by default: REPO is
 # redundant under per-repo grouping, the wide GIT STATUS combo and the
@@ -24,14 +24,11 @@ DASHBOARD_DEFAULT_HIDE: tuple[str, ...] = (
 class ColumnConfig(BaseModel):
     """Which columns a table shows.
 
-    ``fields`` is an explicit ordered list and wins outright when set: naming
-    a column is a request for that exact column, so it also renders even if
-    it would otherwise be hidden by a dynamic ``show_if`` (e.g. ``pr`` with
-    nothing open) — see ``table_format.apply_column_config``, the one place
-    that rule is implemented, shared by ``jailbee ls`` and the dashboard alike.
-    ``hide`` is subtractive and applies only to the built-in default set,
-    where ``show_if`` still applies unchanged. A ``--fields`` flag on the
-    command line beats both — this is the remembered preference, not a lock.
+    The one rule for how ``fields``/``hide`` interact with a dynamic
+    ``show_if`` (e.g. ``pr`` with nothing open) is implemented once, in
+    ``table_format.apply_column_config``, shared by ``jailbee ls`` and the
+    dashboard alike. A ``--fields`` flag on the command line beats both
+    fields below — this is the remembered preference, not a lock.
 
     Applies to table output only. ``--format json`` keeps its own
     ``default_json`` field set regardless of ``fields``/``hide`` here: this
@@ -46,8 +43,21 @@ class ColumnConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    fields: list[str] | None = None
-    hide: list[str] = []
+    fields: list[str] | None = Field(
+        default=None,
+        description=(
+            "Explicit ordered list of columns to show. Wins outright over `hide` and "
+            "any dynamic `show_if` rule when set. `null` (default) uses the built-in "
+            "default set."
+        ),
+    )
+    hide: list[str] = Field(
+        default=[],
+        description=(
+            "Column names to drop from the built-in default set. Ignored when `fields` "
+            "is set; a dynamic `show_if` rule still applies to a hidden column."
+        ),
+    )
 
 
 # Repo-layer default for both `Config.ls` and `Config.dashboard`. Unlike the
