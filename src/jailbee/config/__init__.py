@@ -19,12 +19,10 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Literal
 
-import yaml
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -34,9 +32,50 @@ from pydantic import (
     model_validator,
 )
 
+from jailbee.config.common import (
+    _HOST_LEVEL_KEYS as _HOST_LEVEL_KEYS,
+)
+from jailbee.config.common import (
+    CONTAINER_USERNAME as CONTAINER_USERNAME,
+)
+from jailbee.config.common import (
+    PathExpanded as PathExpanded,
+)
+from jailbee.config.common import (
+    _copy as _copy,
+)
+from jailbee.config.common import (
+    _expand as _expand,
+)
+from jailbee.config.common import (
+    _parse_yaml_text as _parse_yaml_text,
+)
+from jailbee.config.common import (
+    _read_yaml_or_empty as _read_yaml_or_empty,
+)
+from jailbee.config.common import (
+    _split_host_keys as _split_host_keys,
+)
+from jailbee.config.common import (
+    deep_merge as deep_merge,
+)
+from jailbee.config.errors import ConfigError as ConfigError
+from jailbee.config.errors import ConfigNotFoundError as ConfigNotFoundError
+from jailbee.config.retired import (
+    _check_agents_spelling as _check_agents_spelling,
+)
+from jailbee.config.retired import (
+    _check_pull_migration as _check_pull_migration,
+)
+from jailbee.config.retired import (
+    _check_retired_keys as _check_retired_keys,
+)
+from jailbee.config.retired import (
+    _label_spellings as _label_spellings,
+)
 from jailbee.constants import SHARED_SUBDIRS
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
-from jailbee.paths import expand_path, xdg_data_home
+from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
     from jailbee.global_config import GlobalConfig
@@ -56,12 +95,6 @@ _CREDENTIAL_GROUP_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # `device_name()`. The two only coincide because every shipped preset happens
 # to name its subpath after the agent.
 _AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
-
-# Container's unix username is hardcoded — must match the user baked into the
-# golden image by provision/install.sh. It used to be configurable; made fixed
-# because nothing enforced consistency between this value and the golden-image
-# user, and the symptom was a confusing Permission-denied on `jailbee new`.
-CONTAINER_USERNAME = "dev"
 
 # Provisioning env vars set automatically by `jailbee base build`. Users may not
 # override these via `golden.provision_env` — built-in install.sh relies on
@@ -90,62 +123,6 @@ _JAVA_STACK_RE = re.compile(r"^(openjdk|corretto)-\d+$")
 # Default Node.js major version when node=True in stacks. Mirrors Golden.node default of 24.
 _DEFAULT_NODE_MAJOR = 24
 
-# Keys in ~/.config/jailbee/global.yaml that belong to GlobalConfig (host-level)
-# and must NOT be merged into the Config layer. `docker_registry_mirror`
-# exists in both schemas with different shapes (host-level: {port, enabled,
-# image, data_dir}; Config-level: {extra_registries}) — we resolve the
-# ambiguity by treating it as host-level at the global file, and only
-# accepting the Config-level shape at the repo file.
-#
-# `ls` and `dashboard` are here for a different reason: they exist in both
-# schemas with the *same* shape and are merged field-by-field by
-# `Config._effective_columns` (repo block over global block), exactly like
-# `loose_auto_revert`. Letting them through to `deep_merge` as well would
-# apply the list rule to `fields`/`hide` — which *appends* a non-empty
-# overlay — so a global `fields: [name, state]` plus a repo
-# `fields: [name, ip]` produced `[name, state, name, ip]` and rendered NAME
-# twice. Splitting them out keeps `Config._effective_columns` the single
-# merge mechanism for this shape. `dashboard` stays in this set even though
-# the `dashboard:` block itself is deprecated (see
-# `Config.validate_runtime`/`global_config.global_config_issues`): the key
-# is still validated on both layers, and a repo-level block would hit the
-# same list-append bug if it were ever let through to `deep_merge`.
-#
-# Note `loose_auto_revert` is *not* in this set even though it has exactly
-# the same "merged field-by-field, not through deep_merge" shape — see
-# `Config.effective_loose_auto_revert`. That routing is deliberate and
-# belongs to an earlier spec; don't "fix" the apparent 3-vs-4-fields
-# asymmetry by adding it here. It works today only because every
-# `LooseAutoRevert` field is a scalar (`enabled: bool`, `after: str | int`),
-# so `deep_merge`'s append-a-list behaviour never triggers. The day a list
-# field is added to `LooseAutoRevert`, it reintroduces the exact append bug
-# `ls`/`dashboard` were split out to avoid, and would need the same
-# treatment (its own merge method, kept out of `deep_merge`).
-#
-# `agents` deliberately stays OUT of this set. It is a mapping keyed by agent
-# name, so `deep_merge` recurses per agent instead of hitting the list rule —
-# a repo layer adjusting one field of a globally-defined agent merges cleanly.
-# Its one list-valued field, `egress_allow`, *wants* the append behaviour: a
-# repo adding a single host to a global agent is the intended use. Don't
-# "fix" the apparent asymmetry with `ls`/`dashboard` by adding it here.
-#
-# `claude_credentials` is host-level because it must never reach the Config
-# layer: a group name in a committed `.jailbee/config.yaml` would apply to
-# every teammate. It is resolved to `Config.claude_credentials_dir` on the
-# load path (Task 2) instead of being merged.
-_HOST_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"docker_registry_mirror", "ls", "dashboard", "claude_credentials"}
-)
-
-
-def _split_host_keys(
-    raw: dict[str, object],
-) -> tuple[dict[str, object], dict[str, object]]:
-    """Return (host_level, config_level) sub-dicts of a global.yaml raw load."""
-    host = {k: v for k, v in raw.items() if k in _HOST_LEVEL_KEYS}
-    config = {k: v for k, v in raw.items() if k not in _HOST_LEVEL_KEYS}
-    return host, config
-
 
 def _claude_credentials_from_host_raw(
     host_raw: dict[str, object],
@@ -169,228 +146,6 @@ def _claude_credentials_from_host_raw(
         return ClaudeCredentials.model_validate(block)
     except ValidationError as e:
         raise ConfigError(f"Invalid `claude_credentials` in {origin}:\n{e}") from e
-
-
-def _read_yaml_or_empty(path: Path) -> dict[str, object]:
-    """Read and parse a YAML file. Missing file -> {}. Invalid YAML -> ConfigError."""
-    if not path.exists():
-        return {}
-    return _parse_yaml_text(path.read_text(), str(path))
-
-
-def _parse_yaml_text(text: str, origin: str) -> dict[str, object]:
-    """Parse YAML text into a mapping, mirroring `_read_yaml_or_empty`.
-
-    `origin` is a human-readable label for error messages (a path, or a
-    "<ref>:<path>" locator for a config read out of git).
-    """
-    try:
-        raw = yaml.safe_load(text) or {}
-    except yaml.YAMLError as e:
-        raise ConfigError(f"Invalid YAML in {origin}: {e}") from e
-    if not isinstance(raw, dict):
-        raise ConfigError(f"Top level of {origin} must be a mapping; got {type(raw).__name__}.")
-    return raw
-
-
-def deep_merge(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
-    """Deep-merge two raw config dicts.
-
-    Rules:
-      * scalars: overlay wins (None clears)
-      * lists:   overlay appended; `[]` overlay = reset to empty list
-      * dicts:   recursive deep_merge per key
-      * type mismatch (different shape): overlay wins
-
-    Inputs are not mutated.
-    """
-    result: dict[str, object] = {k: _copy(v) for k, v in base.items()}
-    for key, overlay_value in overlay.items():
-        if key not in result:
-            result[key] = _copy(overlay_value)
-            continue
-        base_value = result[key]
-        if isinstance(base_value, dict) and isinstance(overlay_value, dict):
-            result[key] = deep_merge(base_value, overlay_value)
-        elif isinstance(base_value, list) and isinstance(overlay_value, list):
-            # Empty overlay list = explicit reset; non-empty = append.
-            result[key] = [] if not overlay_value else base_value + list(overlay_value)
-        else:
-            # Scalar override, type mismatch, or None-clear: overlay wins.
-            result[key] = _copy(overlay_value)
-    return result
-
-
-def _copy(value: object) -> object:
-    """Shallow recursive copy for dict/list, identity for scalars."""
-    if isinstance(value, dict):
-        return {k: _copy(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_copy(v) for v in value]
-    return value
-
-
-class ConfigError(Exception):
-    """Raised when configuration cannot be loaded or is invalid."""
-
-
-class ConfigNotFoundError(ConfigError):
-    """Raised when .jailbee/config.yaml is missing in the current directory."""
-
-
-_RETIRED_KEYS_TOP_LEVEL: dict[str, str] = {
-    "ide": "jetbrains.ide",
-    "chrome_url": "chrome.url",
-    "seed_ssh_from_host": "ssh.seed_from_host",
-    "jetbrains_userprefs_from_host": "jetbrains.userprefs_from_host",
-}
-
-_RETIRED_KEYS_AUTOSTART: dict[str, str] = {
-    "open_ide": "jetbrains.ide + jetbrains.autostart",
-    "open_chrome": "chrome.autostart",
-    "chrome_dark_mode": "chrome.dark_mode",
-}
-
-# Renamed with the project itself. Accepted as a validation alias with a
-# deprecation warning through 1.0.x; retired in 1.1.0.
-_RETIRED_KEYS_CLAUDE: dict[str, str] = {
-    "install_gie_skills": "claude.install_jailbee_skills",
-}
-
-# Removed-without-replacement keys. Surface the same ConfigError as the
-# moved-key maps above, but with a human-readable reason instead of a
-# new location.
-_CLAUDE_SEED_REMOVED_MSG = (
-    "claude.seed_from_host has been removed — jailbee no longer seeds "
-    "~/.claude from the host. The container starts with an empty "
-    "<shared_dir>/claude and Claude Code runs its onboarding flow on "
-    "first launch. Remove this key from your config."
-)
-_REMOVED_KEYS_TOP_LEVEL: dict[str, str] = {
-    "seed_claude_from_host": _CLAUDE_SEED_REMOVED_MSG,
-}
-_REMOVED_KEYS_CLAUDE: dict[str, str] = {
-    "seed_from_host": _CLAUDE_SEED_REMOVED_MSG,
-}
-
-
-def _check_retired_keys(raw: dict[str, object]) -> None:
-    """Raise ConfigError if YAML contains keys retired in the host-tooling
-    config restructure. Names the new location in the error message.
-    """
-    for old, new in _RETIRED_KEYS_TOP_LEVEL.items():
-        if old in raw:
-            raise ConfigError(
-                f"Unknown field `{old}` in config: moved to `{new}`. "
-                f"See docs/config.md for the new schema."
-            )
-    for old, reason in _REMOVED_KEYS_TOP_LEVEL.items():
-        if old in raw:
-            raise ConfigError(reason)
-    autostart = raw.get("autostart", {})
-    if isinstance(autostart, dict):
-        for old, new in _RETIRED_KEYS_AUTOSTART.items():
-            if old in autostart:
-                raise ConfigError(
-                    f"Unknown field `autostart.{old}` in config: moved to "
-                    f"`{new}`. See docs/config.md for the new schema."
-                )
-    # Checked under both spellings: the legacy top-level `claude:` block and
-    # its `agents.claude` successor. A user who has already migrated to
-    # `agents.claude` still deserves the same retired-key error, not a
-    # confusing "unknown field" from Pydantic's `extra="forbid"`.
-    claude_blocks: list[tuple[str, object]] = [("claude", raw.get("claude", {}))]
-    agents = raw.get("agents", {})
-    if isinstance(agents, dict):
-        claude_blocks.append(("agents.claude", agents.get("claude", {})))
-    for label, claude in claude_blocks:
-        if not isinstance(claude, dict):
-            continue
-        for old, reason in _REMOVED_KEYS_CLAUDE.items():
-            if old in claude:
-                raise ConfigError(reason)
-        for old, new in _RETIRED_KEYS_CLAUDE.items():
-            if old in claude:
-                raise ConfigError(
-                    f"Unknown field `{label}.{old}` in config: renamed to "
-                    f"`{new}`. See docs/config.md for the new schema."
-                )
-
-
-def _check_pull_migration(
-    global_raw: dict[str, object],
-    repo_raw: dict[str, object],
-    global_path: Path,
-    repo_path: Path,
-) -> None:
-    """Raise ConfigError if either layer still uses the legacy `merge:` key.
-
-    The block was renamed when `jailbee git merge` became `jailbee git pull`.
-    Reports every file that carries the legacy key in a single message.
-    """
-    legacy_paths: list[Path] = []
-    if "merge" in global_raw:
-        legacy_paths.append(global_path)
-    if "merge" in repo_raw:
-        legacy_paths.append(repo_path)
-    if not legacy_paths:
-        return
-    paths_listed = "\n  ".join(str(p) for p in legacy_paths)
-    raise ConfigError(
-        f"Config key 'merge:' was renamed to 'pull:' "
-        f"(the 'jailbee git merge' command was renamed to 'jailbee git pull'). "
-        f"Update:\n  {paths_listed}"
-    )
-
-
-def _check_agents_spelling(
-    global_raw: dict[str, object],
-    repo_raw: dict[str, object],
-    global_path: Path,
-    repo_path: Path,
-) -> None:
-    """Raise ConfigError if the legacy `claude:` and `agents.claude` spellings
-    are both in play across the two layers.
-
-    `resolve_agents_raw` catches the same conflict on the merged dict, but by
-    then the layers are indistinguishable and the surrounding message in
-    `_build_config_from_dict` can only name the repo config. The likely shape
-    of this conflict for an existing user is a `claude:` block left in
-    `global.yaml` (what the old template wrote) meeting an `agents.claude` in
-    a repo config — so the file the user must edit is precisely the one that
-    message would *not* name. Report every file that carries either spelling,
-    the way `_check_pull_migration` does for the renamed `merge:` key.
-    """
-
-    def _has_agents_claude(raw: dict[str, object]) -> bool:
-        agents = raw.get("agents")
-        return isinstance(agents, dict) and "claude" in agents
-
-    legacy = [p for raw, p in ((global_raw, global_path), (repo_raw, repo_path)) if "claude" in raw]
-    modern = [
-        p
-        for raw, p in ((global_raw, global_path), (repo_raw, repo_path))
-        if _has_agents_claude(raw)
-    ]
-    if not legacy or not modern:
-        return
-    listed = "\n  ".join(f"{p} ({label})" for p, label in _label_spellings(legacy, modern))
-    raise ConfigError(
-        "Config defines both the legacy `claude:` block and `agents.claude` — "
-        "keep one. `agents.claude` is the preferred spelling; the `claude:` "
-        f"block is a supported legacy alias. Files involved:\n  {listed}"
-    )
-
-
-def _label_spellings(legacy: list[Path], modern: list[Path]) -> list[tuple[Path, str]]:
-    """`(path, "claude:" / "agents.claude" / both)` for each file involved,
-    in `legacy`-then-`modern` file order without repeating a path."""
-    labels: dict[Path, list[str]] = {}
-    for path in legacy:
-        labels.setdefault(path, []).append("claude:")
-    for path in modern:
-        labels.setdefault(path, []).append("agents.claude")
-    return [(path, " and ".join(spellings)) for path, spellings in labels.items()]
 
 
 def _validate_pooled_caches(cfg: Config) -> None:
@@ -424,13 +179,6 @@ def _validate_pooled_caches(cfg: Config) -> None:
                 f"would point every container at the pool's own `slots/` and "
                 f"`by-container/`. {remedy}"
             )
-
-
-def _expand(value: str | Path) -> Path:
-    return expand_path(value)
-
-
-PathExpanded = Annotated[Path, BeforeValidator(_expand)]
 
 
 class ContainerUser(BaseModel):
