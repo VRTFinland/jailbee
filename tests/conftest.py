@@ -300,7 +300,7 @@ def _neutralize_kitty_autodetect(request, mocker):
     if request.node.name == "test_kitty_terminfo_candidates_includes_known_paths":
         return
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[Path("/nonexistent/kitty-terminfo-sentinel")],
     )
 
