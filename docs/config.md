@@ -831,9 +831,12 @@ overrides can also turn a block on for repos that need it. The point is
 to keep the container minimal until the user explicitly says "yes, wire
 this host integration in."
 
-`jailbee config init --global` writes a template that flips all four to
-`enabled: true` — the generated file is a working starting point for a
-typical developer setup, not a literal echo of the built-in defaults.
+`jailbee config init --global` writes a file that flips all four to
+`enabled: true` — a working starting point for a typical developer setup,
+not a literal echo of the built-in defaults. The file itself is generated,
+not hand-written: its comments are each field's own schema description
+(`config_writer.render_documented`), so they cannot drift from this
+document or the code the way a hand-maintained template could.
 
 ### `gpg`
 
