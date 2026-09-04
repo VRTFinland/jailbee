@@ -6,7 +6,8 @@ description would appear in the editor with an empty help pane; a field
 whose annotation the editor cannot classify would silently not appear at
 all. This test turns both into a CI failure.
 
-UNDOCUMENTED is a shrinking allowlist. Do not add to it.
+Every config field must carry a `description=`, unconditionally. There is
+no allowlist: a new field without one fails this test.
 """
 
 from __future__ import annotations
@@ -27,9 +28,6 @@ EXCLUDED: frozenset[tuple[str, str]] = frozenset(
         ("Config", "claude_credentials_dir"),
     }
 )
-
-# Shrunk to empty across Tasks 7-10; the mechanism itself is deleted in Task 11.
-UNDOCUMENTED: frozenset[tuple[str, str]] = frozenset()
 
 
 def walk_models(*roots: type[BaseModel]) -> list[type[BaseModel]]:
@@ -98,17 +96,4 @@ def test_every_field_has_a_description():
         for model, field, info in field_paths()
         if not (info.description or "").strip()
     )
-    still_allowed = sorted(UNDOCUMENTED)
-    assert missing == [] or set(missing) <= set(still_allowed), (
-        "fields with no description= and not on the allowlist: "
-        f"{sorted(set(missing) - set(still_allowed))}"
-    )
-
-
-def test_allowlist_has_no_stale_entries():
-    """An allowlisted field that now has a description must leave the list."""
-    documented = {
-        (model, field) for model, field, info in field_paths() if (info.description or "").strip()
-    }
-    stale = sorted(UNDOCUMENTED & documented)
-    assert stale == [], f"remove from UNDOCUMENTED, these are documented now: {stale}"
+    assert missing == [], f"config fields with no description=: {missing}"
