@@ -284,7 +284,18 @@ def config_show(
         return
 
     if layer == "repo":
-        path = _resolve_config_path(config)
+        from jailbee.config import SCRATCH_ORIGIN_SUFFIX, scratch_repo_layer
+
+        path = _resolve_config_path_or_none(config)
+        if path is None:
+            gpath = default_global_config_path()
+            info(f"# Repo config: none — synthesized from {gpath}{SCRATCH_ORIGIN_SUFFIX}")
+            gcfg = _load_global()
+            typer.echo(
+                yaml.safe_dump(scratch_repo_layer(Path.cwd(), gcfg.scratch), sort_keys=False),
+                nl=False,
+            )
+            return
         info(f"# Repo config: {path}")
         if not path.exists():
             return
@@ -292,9 +303,16 @@ def config_show(
         return
 
     # effective (default) — current behaviour
-    path = _resolve_config_path(config)
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
     cfg = _load_or_exit(config)
-    info(f"# Effective config (merged from global + {path})")
+    if cfg.is_synthetic():
+        info(
+            f"# Effective config (merged from global + "
+            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX})"
+        )
+    else:
+        info(f"# Effective config (merged from global + {_resolve_config_path(config)})")
     data = cfg.model_dump(mode="json")
 
     from sqlmodel import Session
@@ -322,17 +340,25 @@ def config_show(
 @config_app.command("validate")
 def config_validate(config: ConfigOption = None) -> None:
     """Validate the configuration file (schema + runtime paths)."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX, load_repo_config_unsanitized
     from jailbee.global_config import global_config_issues
 
-    path = _resolve_config_path(config)
+    path = _resolve_config_path_or_none(config)
     try:
-        # `load_config_unsanitized`, not `load_config`: ordinary loading now
-        # recovers from a typo in the repo's own `ls:`/`dashboard:` blocks
-        # (see `config.load_config`), but the one command whose job is
-        # validating config should still catch it, with the allowed names
-        # listed — `validate_runtime()` below only sees that if it gets the
-        # raw, unrecovered blocks.
-        cfg = load_config_unsanitized(path)
+        if path is None:
+            # No repo config file: validate what the commands actually load —
+            # the layer synthesized from `global.yaml`'s `scratch.config`.
+            cfg = load_repo_config_unsanitized(Path.cwd())
+            label = f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+        else:
+            # `load_config_unsanitized`, not `load_config`: ordinary loading now
+            # recovers from a typo in the repo's own `ls:`/`dashboard:` blocks
+            # (see `config.load_config`), but the one command whose job is
+            # validating config should still catch it, with the allowed names
+            # listed — `validate_runtime()` below only sees that if it gets the
+            # raw, unrecovered blocks.
+            cfg = load_config_unsanitized(path)
+            label = str(path)
     except ConfigError as e:
         # `error_plain`: a validator message can carry square brackets — the
         # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
@@ -340,7 +366,7 @@ def config_validate(config: ConfigOption = None) -> None:
         # rule the message exists to state.
         error_plain(str(e))
         raise typer.Exit(1) from e
-    success(f"Schema OK: {path}")
+    success(f"Schema OK: {label}")
 
     issues = cfg.validate_runtime()
 

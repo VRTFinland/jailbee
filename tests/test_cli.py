@@ -8648,3 +8648,87 @@ def test_ls_still_errors_when_scratch_is_disabled(tmp_path, monkeypatch, mocker)
     # this, the assertions above pass whether or not `_load_or_exit` was
     # ever changed to call the new loader.
     assert "scratch.enabled" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `config show` / `config validate` in a scratch (config-less) directory
+# ---------------------------------------------------------------------------
+
+
+def test_config_validate_in_a_scratch_directory(tmp_path, monkeypatch, mocker):
+    """`config validate` must report the synthesized source, not traceback on
+    the uncaught `ConfigNotFoundError` `_resolve_config_path` used to raise
+    for a directory with no `.jailbee/config.yaml`."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    gpath = tmp_path / ".config" / "jailbee" / "global.yaml"
+
+    result = CliRunner().invoke(app, ["config", "validate"])
+    # Rich wraps long lines (mid-word, no hyphen) at the runner's terminal
+    # width, so compare against the output with newlines collapsed rather
+    # than the raw string.
+    collapsed = result.output.replace("\n", "")
+
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    # Named for the source label, not merely "it didn't crash": a stray
+    # `path = _resolve_config_path(config)` left in place would traceback
+    # before this line is ever printed, and a label that silently fell back
+    # to some other string would pass an exit-code-only assertion.
+    assert f"Schema OK: {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+
+
+def test_config_validate_reports_a_scratch_config_typo(tmp_path, monkeypatch, mocker):
+    """A schema error in `global.yaml`'s `scratch.config` block must surface
+    as a normal validation failure, labeled so the user knows it came from
+    the synthesized layer rather than a (nonexistent) repo config file."""
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        global_yaml="scratch:\n  config:\n    defaults:\n      cpu: banana\n",
+    )
+
+    result = CliRunner().invoke(app, ["config", "validate"])
+
+    assert result.exit_code == 1
+    assert "scratch.config" in result.output
+
+
+def test_config_show_layer_repo_prints_the_synthesized_layer(tmp_path, monkeypatch, mocker):
+    """`--layer repo` in a scratch directory prints the in-memory synthesized
+    layer (what `scratch_repo_layer` builds), not a nonexistent file path."""
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 0, result.output
+    assert "container_prefix: tutkimus" in result.output
+    assert "jailbee-scratch-base" in result.output
+
+
+def test_config_show_default_layer_in_a_scratch_directory(tmp_path, monkeypatch, mocker):
+    """The default (`effective`) layer must also survive a scratch directory.
+
+    Ruling 6: the brief's own replacement snippet for this branch left the
+    unconditional `path = _resolve_config_path(config)` call in place, which
+    still tracebacks with an uncaught `ConfigNotFoundError` here — exactly
+    the directory this feature exists for. Only testing `--layer repo` (as
+    the brief does) would leave this regression unverified.
+    """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    gpath = tmp_path / ".config" / "jailbee" / "global.yaml"
+
+    result = CliRunner().invoke(app, ["config", "show"])
+    # Rich wraps long lines (mid-word, no hyphen) at the runner's terminal
+    # width, so compare against the output with newlines collapsed rather
+    # than the raw string.
+    collapsed = result.output.replace("\n", "")
+
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert f"merged from global + {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+    assert "container_prefix: tutkimus" in result.output
