@@ -78,10 +78,18 @@ def register_repo(session: Session, cfg: Config) -> None:
                 container_prefix=prefix,
                 repo_root=repo_root,
                 registered_at=datetime.now(UTC),
+                synthetic_config=cfg.is_synthetic(),
             )
         )
-    elif existing.repo_root != repo_root:
-        existing.repo_root = repo_root
+    else:
+        if existing.repo_root != repo_root:
+            existing.repo_root = repo_root
+        # Both directions are real transitions: a scratch directory gains a
+        # `.jailbee/config.yaml`, or a configured repo's config is deleted.
+        # The flag is what `refresh_all` consults before pruning a row whose
+        # config file it cannot find.
+        if existing.synthetic_config != cfg.is_synthetic():
+            existing.synthetic_config = cfg.is_synthetic()
     session.commit()
 
 
