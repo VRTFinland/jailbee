@@ -3531,6 +3531,37 @@ def test_load_path_legacy_claude_alone_still_loads(tmp_path, monkeypatch, mocker
     assert cfg.agents["codex"].enabled is True
 
 
+def test_scratch_block_does_not_leak_into_a_configured_repo(tmp_path, monkeypatch, mocker) -> None:
+    """`scratch:` is host-level: it must reach `GlobalConfig`, never the
+    `deep_merge` layer. Merged into a repo config it would be an unknown
+    top-level key, and `Config` is extra="forbid" — so every command in
+    every configured repo on the host would start failing validation.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    cfg_path, global_path = _write_layered(
+        tmp_path,
+        monkeypatch,
+        global_yaml="scratch:\n  config:\n    defaults:\n      memory: 4GiB\n",
+    )
+
+    cfg_with_scratch = load_config(cfg_path)
+
+    # Loaded at all (the leak would raise), and the scratch layer did not apply.
+    assert cfg_with_scratch.defaults.memory == "16GiB"
+
+    # Byte-identity regression guard: re-load the exact same repo config
+    # against an otherwise-identical `global.yaml` with the `scratch:` block
+    # removed entirely. The repo path (and therefore `repo_root`/
+    # `container_prefix`) stays constant, so this isolates the one variable
+    # under test — `scratch:`'s presence must produce a bit-for-bit identical
+    # `Config`, which is the guarantee every other configured repo on the
+    # host relies on.
+    global_path.write_text("")
+    cfg_without_scratch = load_config(cfg_path)
+
+    assert cfg_with_scratch.model_dump(mode="json") == cfg_without_scratch.model_dump(mode="json")
+
+
 # A typo, an empty `fields: []`, or a duplicated name in `global.yaml`'s
 # column blocks no longer raises out of `load_global_config` — a personal
 # display preference must not break an unrelated command. Coverage for that

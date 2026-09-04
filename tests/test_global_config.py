@@ -303,3 +303,30 @@ def test_claude_credentials_is_a_host_level_key():
     host, config_level = _split_host_keys({"claude_credentials": {"group": "work"}, "gpg": {}})
     assert "claude_credentials" in host
     assert "claude_credentials" not in config_level
+
+
+def test_scratch_block_reaches_global_config(tmp_path) -> None:
+    p = tmp_path / "global.yaml"
+    p.write_text("scratch:\n  enabled: false\n  config:\n    defaults:\n      memory: 4GiB\n")
+
+    gcfg, warnings = load_global_config(p)
+
+    assert gcfg.scratch.enabled is False
+    assert gcfg.scratch.config == {"defaults": {"memory": "4GiB"}}
+    assert warnings == []
+
+
+def test_scratch_defaults_to_enabled_with_no_overrides(tmp_path) -> None:
+    gcfg, _ = load_global_config(tmp_path / "no-such-file.yaml")
+
+    assert gcfg.scratch.enabled is True
+    assert gcfg.scratch.config == {}
+
+
+def test_scratch_rejects_unknown_keys(tmp_path) -> None:
+    """`extra="forbid"`: a typo in the block name must be reported, not ignored."""
+    p = tmp_path / "global.yaml"
+    p.write_text("scratch:\n  enabld: true\n")
+
+    with pytest.raises(ConfigError):
+        load_global_config(p)
