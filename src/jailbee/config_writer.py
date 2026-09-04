@@ -1,14 +1,19 @@
-"""Round-trip editing of jailbee's YAML config files.
+"""YAML write policies for jailbee's config files.
 
-`global.yaml` is a user-authored file that is almost entirely comments,
-so editing it by re-serialising a PyYAML parse would destroy the very
-thing that makes it usable. ruamel's round-trip loader carries comments,
-key order and quoting on the parsed structure, so a patch touches only
-what changed.
+Two renderers, one library:
 
-This module knows nothing about jailbee's schema: it takes paths and
-values. Schema-aware rendering (`render_documented`) belongs to the
-config editor and lands in this same module later.
+* `patch_yaml` / `patch_file` touch only the keys that changed and leave
+  everything else — comments, key order, formatting — byte-identical.
+  Used for the repo's `.jailbee/config.yaml`, which is committed and read
+  as PR diffs.
+* `render_documented` rewrites a file from scratch with each key's
+  `description=` above it as a comment. Used for `global.yaml`, which
+  jailbee owns, and for `jailbee config init`. Safe to regenerate because
+  the models are `extra="forbid"`, so an unknown key cannot exist in the
+  file to be lost.
+
+Both are pure string transformations so they can be tested without a
+terminal or a real config file.
 """
 
 from __future__ import annotations
@@ -21,12 +26,15 @@ from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 from jailbee.claude_pool import _fsync_dir
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 
 class _Delete:
@@ -144,3 +152,98 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
             tmp.unlink()
         raise
     return True
+
+
+DOCUMENTED_HEADER = (
+    "# Written by `jb config edit`. Comments in this file are generated from\n"
+    "# jailbee's own schema and are replaced on every save — put notes you\n"
+    "# want to keep elsewhere. Every key is optional; delete one to fall back\n"
+    "# to the built-in default.\n"
+)
+
+
+def render_documented(
+    values: dict[str, object],
+    model: type[BaseModel],
+    *,
+    header: str = DOCUMENTED_HEADER,
+) -> str:
+    """Render `values` as YAML with each key's schema description above it.
+
+    `values` must be the **raw YAML mapping** — plain scalars, lists and
+    dicts, as `_read_yaml_or_empty` returns them. Never pass
+    `model_dump()` output: see `_reject_secrets`.
+
+    Only the keys present in `values` are written — an unset key stays
+    absent so it keeps following jailbee's own default rather than
+    freezing at today's value.
+
+    Comments recurse into fields whose annotation *is* a model
+    (`gpg`, `ssh`, `golden`, ...). Fields annotated as a collection of
+    models (`agents: dict[str, AgentConfig]`, `host_mounts:
+    list[HostMount]`) are written as plain data with only the outer key
+    commented; per-entry documentation there would repeat the same text
+    once per entry for no gain.
+    """
+    _reject_secrets(values)
+    data = _documented_map(values, model, depth=0)
+    stream = io.StringIO()
+    _yaml().dump(data, stream)
+    return header + stream.getvalue()
+
+
+def _reject_secrets(value: object) -> None:
+    """Raise if a SecretStr is anywhere in the tree.
+
+    `github.api_tokens` is `dict[str, SecretStr]`. A caller passing
+    `model_dump()` output would hand us SecretStr objects, and
+    `model_dump(mode="json")` would hand us the literal `**********`.
+    Rendering either would overwrite the user's real tokens with a
+    placeholder on the next save — silent credential loss. This function
+    is the guard; callers pass raw YAML values.
+    """
+    from pydantic import SecretStr
+
+    if isinstance(value, SecretStr):
+        raise TypeError(
+            "render_documented received a SecretStr. Pass the raw YAML mapping, "
+            "not model_dump() output — rendering a masked value would destroy "
+            "the stored secret."
+        )
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_secrets(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_secrets(item)
+
+
+def _documented_map(
+    values: dict[str, object],
+    model: type[BaseModel],
+    *,
+    depth: int,
+) -> CommentedMap:
+    out = CommentedMap()
+    for key, value in values.items():
+        info = model.model_fields.get(key)
+        sub = _sub_model(info.annotation) if info is not None else None
+        if sub is not None and isinstance(value, dict):
+            out[key] = _documented_map(value, sub, depth=depth + 1)
+        else:
+            out[key] = value
+        description = (info.description or "").strip() if info is not None else ""
+        if description:
+            # `indent` aligns the comment with its key's column; without it
+            # ruamel emits a nested key's comment at column 0.
+            out.yaml_set_comment_before_after_key(key, before=description, indent=2 * depth)
+    return out
+
+
+def _sub_model(annotation: object) -> type[BaseModel] | None:
+    """The BaseModel a field's annotation resolves to, if it is one."""
+    from pydantic import BaseModel as _BaseModel
+
+    if isinstance(annotation, type) and issubclass(annotation, _BaseModel):
+        return annotation
+    return None
