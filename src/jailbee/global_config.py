@@ -106,7 +106,11 @@ class GlobalConfig(BaseModel):
         description=(
             "Host-wide default for auto-reverting `jailbee net loose` back to the "
             "previous network mode after a TTL. A repo's own `loose_auto_revert` "
-            "block in `.jailbee/config.yaml` overrides this field-by-field."
+            "block in `.jailbee/config.yaml` overrides this field-by-field — but not "
+            "by reading this field: `loose_auto_revert` isn't host-level "
+            "(`common.py`'s `_HOST_LEVEL_KEYS`), so a loaded `global.yaml` never "
+            "populates this instance; the effective value comes from "
+            "`Config.effective_loose_auto_revert()` instead."
         ),
     )
     ls: ColumnConfig = Field(
