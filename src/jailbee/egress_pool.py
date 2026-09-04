@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, select
 
-from jailbee.config import load_config
+from jailbee.config import load_repo_config
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 from jailbee.egress import resolve_with_status
 from jailbee.loose_revert import check_and_revert_loose
@@ -577,8 +577,11 @@ def refresh_all(
 ) -> dict[str, RefreshResult]:
     """Iterate every registered repo and refresh its pool.
 
-    Self-prunes registrations where neither ``.jailbee/config.yaml`` nor the
-    deprecated ``.gie/config.yaml`` exists any more.
+    Self-prunes registrations whose repo root directory is gone, and
+    registrations whose config file is gone — unless the registration is
+    ``synthetic_config``, in which case "no config file" is the normal state
+    (the config comes from ``global.yaml``'s ``scratch:`` block) and the row
+    is kept.
     Skips (without pruning) cycles where the repo's ``container_prefix``
     no longer matches the registered value — user must run ``jailbee apply``
     to migrate.
@@ -588,9 +591,24 @@ def refresh_all(
 
     for repo in repos:
         repo_root = Path(repo.repo_root)
-        config_yaml = repo_config_path(repo_root)
 
-        if config_yaml is None:
+        # A directory that no longer exists can never be refreshed again,
+        # whatever kind of registration it is.
+        if not repo_root.is_dir():
+            log.info(
+                "refresh_all: unregistering %s — repo root gone at %s",
+                repo.container_prefix,
+                repo_root,
+            )
+            session.delete(repo)
+            session.commit()
+            continue
+
+        # "No config file" means two different things now. For a registration
+        # that had one, it means the config was deleted — prune, as before.
+        # For a synthetic registration it is the normal state: the config comes
+        # from `global.yaml`'s `scratch:` block.
+        if repo_config_path(repo_root) is None and not repo.synthetic_config:
             log.info(
                 "refresh_all: unregistering %s — config not found at %s",
                 repo.container_prefix,
@@ -601,8 +619,11 @@ def refresh_all(
             continue
 
         try:
-            cfg = load_config(config_yaml)
+            cfg = load_repo_config(repo_root)
         except Exception as e:
+            # Includes `ConfigNotFoundError` for a synthetic row while
+            # `scratch.enabled` is false — skipped, not pruned, so re-enabling
+            # the feature brings the repo straight back.
             log.warning(
                 "refresh_all: skipping %s — config load failed: %s",
                 repo.container_prefix,
