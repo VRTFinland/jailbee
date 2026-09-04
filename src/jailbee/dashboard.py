@@ -36,7 +36,7 @@ from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
     ColumnConfig,
     format_loose_after,
-    load_config,
+    load_repo_config,
 )
 from jailbee.dashboard_settings import (
     SettingsState,
@@ -59,6 +59,7 @@ from jailbee.lifecycle import (
     list_containers,
     ls_field_specs,
 )
+from jailbee.paths import repo_config_path
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -74,11 +75,25 @@ log = logging.getLogger(__name__)
 
 FieldSpecCI = table_format.FieldSpec[ContainerInfo]
 
+NOTHING_TO_SHOW = (
+    "No repos registered, and no jailbee config could be loaded for the current directory."
+)
+"""Launch-time guard message shared by the TUI, the Qt window and `cli`.
+
+Deliberately does not name a cause: the current directory resolves to nothing
+whether it has no `.jailbee/config.yaml` and `scratch.enabled` is false, or it
+is `$HOME`/the filesystem root (which scratch refuses), or its name slugifies
+to nothing, or its config file exists but does not parse.
+"""
+
 
 @dataclass
 class RepoGroup:
-    """One repo's containers. ``config_path`` is None for orphan groups
-    (jailbee-managed containers whose repo config could not be loaded).
+    """One repo's containers. ``repo_root`` is None for orphan groups
+    (jailbee-managed containers whose repo config could not be loaded) and is
+    what distinguishes them. ``config_path`` is None for those *and* for a repo
+    that has no ``.jailbee/config.yaml`` of its own, whose config is
+    synthesized — so it gates the action menus but does not identify an orphan.
     ``ide_enabled``/``chrome_enabled`` mirror the repo's own
     ``jetbrains.enabled``/``chrome.enabled`` config and gate the
     corresponding action-menu entries; orphan groups keep both False.
@@ -102,28 +117,31 @@ class RepoGroup:
     push_source_default: str = "base"
 
 
-def registered_repo_configs() -> list[Path]:
-    """Existing ``.jailbee/config.yaml`` paths for all RegisteredRepo rows."""
+def registered_repo_roots() -> list[Path]:
+    """Repo roots for all ``RegisteredRepo`` rows whose directory still exists.
+
+    This used to return config-file paths, which silently dropped a repo that
+    has no config file — the scratch case, which is a real repo with real
+    containers. A row whose directory is gone is skipped; the dashboard never
+    prunes the registry (``refresh_all`` does).
+    """
     from sqlmodel import Session, select
 
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
-    from jailbee.paths import repo_config_path
 
     out: list[Path] = []
     with Session(get_engine()) as session:
         for repo in session.exec(select(RegisteredRepo)).all():
-            # A stale registry row whose config file is gone is silently
-            # skipped (the dashboard never prunes the registry).
-            found = repo_config_path(Path(repo.repo_root))
-            if found is not None:
-                out.append(found)
+            root = Path(repo.repo_root)
+            if root.is_dir():
+                out.append(root)
     return out
 
 
-def collect_config_paths(cwd_config: Path | None) -> list[Path]:
-    """Registered repo configs plus the cwd config, deduped, cwd first."""
-    candidates = ([cwd_config] if cwd_config is not None else []) + registered_repo_configs()
+def collect_repo_roots(cwd_root: Path | None) -> list[Path]:
+    """Registered repo roots plus the cwd's, deduped, cwd first."""
+    candidates = ([cwd_root] if cwd_root is not None else []) + registered_repo_roots()
     seen: set[Path] = set()
     ordered: list[Path] = []
     for p in candidates:
@@ -220,26 +238,30 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
 
 def gather_rows(
     incus: Incus,
-    config_paths: list[Path],
+    repo_roots: list[Path],
     *,
-    cwd_config: Path | None,
+    cwd_root: Path | None,
     with_git: bool,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
 
-    Each path's own config drives accurate git-status/base/background-jobs.
-    An unloadable config is skipped (read-only — the registry is never
-    pruned here). A final ``all_repos=True`` scan surfaces jailbee-managed
-    containers whose repo we could not load, as view-only orphan groups.
+    Each root's own config drives accurate git-status/base/background-jobs.
+    Repos are identified by their root, not by their config file, so a repo
+    with no ``.jailbee/config.yaml`` — whose config ``load_repo_config``
+    synthesizes — groups its own containers instead of falling through to the
+    orphan bucket. An unloadable config is skipped (read-only — the registry
+    is never pruned here). A final ``all_repos=True`` scan surfaces
+    jailbee-managed containers whose repo we could not load, as view-only
+    orphan groups.
     """
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
     gcfg = _global_config_or_defaults()
-    for path in config_paths:
+    for root in repo_roots:
         try:
-            cfg = load_config(path)
-        except Exception:  # many failure modes: OSError, YAML parse, Pydantic validation
+            cfg = load_repo_config(root)
+        except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
             continue
         if base_cfg is None:
             base_cfg = cfg
@@ -256,7 +278,7 @@ def gather_rows(
                 RepoGroup(
                     cfg.container_prefix,
                     str(cfg.repo_root),
-                    path,
+                    repo_config_path(root),
                     containers,
                     ide_enabled=cfg.jetbrains.enabled,
                     chrome_enabled=cfg.chrome.enabled,
@@ -285,21 +307,23 @@ def gather_rows(
             groups.append(RepoGroup(prefix, None, None, orphans[prefix]))
 
     def _sort_key(g: RepoGroup) -> tuple[bool, bool, str]:
-        is_cwd = cwd_config is not None and g.config_path == cwd_config
-        return (not is_cwd, g.config_path is None, g.prefix)
+        # Orphan groups are the ones with no repo root — `config_path` is no
+        # longer the discriminator, since a scratch repo has a root but no file.
+        is_cwd = cwd_root is not None and g.repo_root == str(cwd_root)
+        return (not is_cwd, g.repo_root is None, g.prefix)
 
     groups.sort(key=_sort_key)
     return groups
 
 
-def gather_live(incus: Incus, cwd_config: Path | None, *, with_git: bool) -> list[RepoGroup]:
-    """One snapshot for a *live* dashboard: config paths re-resolved per gather.
+def gather_live(incus: Incus, cwd_root: Path | None, *, with_git: bool) -> list[RepoGroup]:
+    """One snapshot for a *live* dashboard: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
     underneath them: `jailbee new` registers a repo the first time it is used
     (`cli.py`), and `egress_pool.refresh_all` unregisters — then a later
     command re-registers — a repo whose config file momentarily disappeared.
-    A path list captured at launch therefore goes stale, and a repo missing
+    A root list captured at launch therefore goes stale, and a repo missing
     from it is not merely absent: `gather_rows`'s ``all_repos`` scan still
     finds its containers and files them under a view-only orphan group, where
     ``actions_for_container`` yields no actions and the right-click menu never
@@ -311,7 +335,7 @@ def gather_live(incus: Incus, cwd_config: Path | None, *, with_git: bool) -> lis
     it precedes.
     """
     return gather_rows(
-        incus, collect_config_paths(cwd_config), cwd_config=cwd_config, with_git=with_git
+        incus, collect_repo_roots(cwd_root), cwd_root=cwd_root, with_git=with_git
     )
 
 
@@ -1440,7 +1464,7 @@ def _refresh_due(
 
 def run(
     incus: Incus,
-    cwd_config: Path | None,
+    cwd_root: Path | None,
     *,
     interval: float,
     git_interval: float,
@@ -1460,8 +1484,8 @@ def run(
         return 1
 
     # Launch-time guard only; `gather_live` re-resolves the list per gather.
-    if not collect_config_paths(cwd_config):
-        error("No repos registered and no .jailbee/config.yaml in the current directory.")
+    if not collect_repo_roots(cwd_root):
+        error(NOTHING_TO_SHOW)
         return 1
 
     from jailbee.db import get_engine
@@ -1510,7 +1534,7 @@ def run(
                 if forced:
                     force.clear()
                 try:
-                    groups = gather_live(incus, cwd_config, with_git=do_git)
+                    groups = gather_live(incus, cwd_root, with_git=do_git)
                 except Exception as exc:  # surface any gather failure to the main thread
                     worker_error.append(exc)
                     stop.set()

@@ -17,20 +17,28 @@ from jailbee.qtui.window import MainWindow
 
 
 def test_preflight_returns_none_when_no_configs(mocker):
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[])
     assert qapp.preflight(None) is None
 
 
 def test_preflight_returns_paths_when_present(mocker):
     paths = [Path("/repo/.gie/config.yaml")]
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=paths)
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=paths)
     assert qapp.preflight(Path("/repo/.gie/config.yaml")) == paths
 
 
 def test_run_returns_1_when_no_configs(mocker):
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[])
     rc = qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
     assert rc == 1
+
+
+def test_the_launch_guard_message_is_the_tuis_own(mocker):
+    """The TUI, the Qt window and `cli`'s pre-detach check all print the same
+    sentence — one constant rather than three copies that drift apart."""
+    import jailbee.dashboard as dash
+
+    assert qapp.NOTHING_TO_SHOW is dash.NOTHING_TO_SHOW
 
 
 def test_on_groups_updates_tree_and_status_bar(mocker):
@@ -100,7 +108,7 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     ``AppController`` slot that calls the worker method directly instead.
     """
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
@@ -169,7 +177,7 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        cwd_config=Path("/repo/.gie/config.yaml"),
+        cwd_root=Path("/repo"),
         interval=0.5,
         git_interval=10.0,
         git_enabled=True,
@@ -221,7 +229,7 @@ def test_wire_delivers_interval_and_force_to_a_real_worker_thread(qtbot, mocker)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        cwd_config=Path("/repo/.gie/config.yaml"),
+        cwd_root=Path("/repo"),
         interval=0.5,
         git_interval=10.0,
         git_enabled=True,
@@ -450,7 +458,7 @@ def test_on_card_style_changed_persists(mocker):
 
 def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
@@ -480,7 +488,7 @@ def test_run_restores_enabled_columns_and_folded_repos(mocker):
     """`run()` must seed the window's Columns menu and the card view's fold
     state from the Qt front-end's own `view_prefs` row — not from the TUI's."""
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
@@ -1052,7 +1060,7 @@ def test_non_destroy_verbs_do_not_assess(mocker, tmp_path):
 
 def test_run_uses_persisted_interval_when_cli_none(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")

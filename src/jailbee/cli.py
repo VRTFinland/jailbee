@@ -1903,13 +1903,18 @@ def _run_dashboard(
     *, interval: float | None, git_interval: float, no_git: bool, gui: bool, foreground: bool
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend."""
-    from jailbee.config import ConfigNotFoundError
+    from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
 
+    # A launch-time probe, not a load: the dashboards re-resolve per gather.
+    # `Path.cwd()` only counts as a repo if its config actually loads — with
+    # `scratch.enabled: false` a config-less directory is still nothing to show,
+    # and neither is a directory whose config file exists but does not parse.
     try:
-        cwd_config: Path | None = find_repo_config()
-    except ConfigNotFoundError:
-        cwd_config = None
+        load_repo_config(Path.cwd())
+        cwd_root: Path | None = Path.cwd()
+    except ConfigError:
+        cwd_root = None
 
     if gui:
         try:
@@ -1928,14 +1933,16 @@ def _run_dashboard(
         if foreground:
             return qtui_app.run(
                 Incus(),
-                cwd_config=cwd_config,
+                cwd_root=cwd_root,
                 interval=interval,
                 git_interval=git_interval,
                 no_git=no_git,
             )
 
-        if qtui_app.preflight(cwd_config) is None:
-            error("No repos registered and no .jailbee/config.yaml in the current directory.")
+        if qtui_app.preflight(cwd_root) is None:
+            from jailbee.dashboard import NOTHING_TO_SHOW
+
+            error(NOTHING_TO_SHOW)
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
@@ -1967,7 +1974,7 @@ def _run_dashboard(
 
     return dashboard.run(
         Incus(),
-        cwd_config=cwd_config,
+        cwd_root=cwd_root,
         interval=interval if interval is not None else 3.0,
         git_interval=git_interval,
         no_git=no_git,

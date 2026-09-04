@@ -32,7 +32,7 @@ class RefreshWorker(QObject):
     def __init__(
         self,
         incus: Incus,
-        cwd_config: Path | None,
+        cwd_root: Path | None,
         *,
         interval: float,
         git_interval: float,
@@ -40,7 +40,7 @@ class RefreshWorker(QObject):
     ) -> None:
         super().__init__()
         self._incus = incus
-        self._cwd_config = cwd_config
+        self._cwd_root = cwd_root
         self._interval = interval
         self._git_interval = git_interval
         self._git_enabled = git_enabled
@@ -52,10 +52,10 @@ class RefreshWorker(QObject):
     def gather_once(self, do_git: bool) -> list[RepoGroup]:
         """Gather one snapshot (blocking). Wraps ``gather_live``, so each
         gather sees the repos registered *now* — see its docstring for why a
-        launch-time path list leaves new repos menu-less."""
+        launch-time root list leaves new repos menu-less."""
         return gather_live(
             self._incus,
-            self._cwd_config,
+            self._cwd_root,
             with_git=do_git and self._git_enabled,
         )
 

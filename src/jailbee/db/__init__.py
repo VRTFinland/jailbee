@@ -44,7 +44,7 @@ def get_engine() -> Engine:
     """Return a SQLite engine for `state.sqlite`, bootstrapping it once.
 
     Cached per database path, for the lifetime of the process. Callers treat
-    this as cheap — `dashboard.registered_repo_configs` calls it on every
+    this as cheap — `dashboard.registered_repo_roots` calls it on every
     refresh tick — and without the cache each of those calls opened a new
     connection pool *and* re-ran `_ensure_schema`, `create_all` included.
 

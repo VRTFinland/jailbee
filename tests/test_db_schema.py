@@ -252,7 +252,7 @@ def test_get_engine_is_cached_so_the_schema_check_runs_once_per_process(
 ) -> None:
     """A long-running process must not re-bootstrap the schema forever.
 
-    `dashboard.registered_repo_configs` calls `get_engine` on every refresh
+    `dashboard.registered_repo_roots` calls `get_engine` on every refresh
     tick, so an unbounded re-check meant a dashboard left open across an
     upgrade kept applying its own (older) idea of the schema to a database a
     newer jailbee had already migrated — the loop that emptied the repo

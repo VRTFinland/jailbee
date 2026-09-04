@@ -15,44 +15,56 @@ from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
 
-def test_collect_config_paths_puts_cwd_first_and_dedupes(mocker):
-    a = Path("/repos/a/.jailbee/config.yaml")
-    b = Path("/repos/b/.jailbee/config.yaml")
-    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[a, b])
-    # cwd config equals an already-registered one -> no duplicate, cwd wins order
-    result = dashboard.collect_config_paths(b)
+def test_nothing_to_show_message_blames_no_single_cause():
+    """The launch guard fires whenever the cwd resolves to no repo, and that
+    has several causes: no config file with `scratch.enabled` false, but also
+    `$HOME` or the filesystem root (both refused), a directory name that
+    slugifies to nothing, and a config file that exists but will not parse.
+    Naming one of them would misdiagnose the other four.
+    """
+    assert "scratch" not in dashboard.NOTHING_TO_SHOW
+
+
+def test_collect_repo_roots_puts_cwd_first_and_dedupes(mocker):
+    a = Path("/repos/a")
+    b = Path("/repos/b")
+    mocker.patch.object(dashboard, "registered_repo_roots", return_value=[a, b])
+    # cwd root equals an already-registered one -> no duplicate, cwd wins order
+    result = dashboard.collect_repo_roots(b)
     assert result == [b, a]
 
 
-def test_collect_config_paths_no_cwd(mocker):
-    a = Path("/repos/a/.jailbee/config.yaml")
-    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[a])
-    assert dashboard.collect_config_paths(None) == [a]
+def test_collect_repo_roots_no_cwd(mocker):
+    a = Path("/repos/a")
+    mocker.patch.object(dashboard, "registered_repo_roots", return_value=[a])
+    assert dashboard.collect_repo_roots(None) == [a]
 
 
-def test_collect_config_paths_empty(mocker):
-    mocker.patch.object(dashboard, "registered_repo_configs", return_value=[])
-    assert dashboard.collect_config_paths(None) == []
+def test_collect_repo_roots_empty(mocker):
+    mocker.patch.object(dashboard, "registered_repo_roots", return_value=[])
+    assert dashboard.collect_repo_roots(None) == []
 
 
-def test_registered_repo_configs_skips_missing_and_keeps_present(db_session, tmp_path, mocker):
+def test_registered_repo_roots_skips_a_missing_directory(db_session, tmp_path, mocker):
+    """The registry is keyed on the repo root, and a root with no config file
+    is still a real repo (the scratch case) — only a vanished directory is
+    skipped."""
     from jailbee.db.models import RegisteredRepo
 
-    # One repo with a real config.yaml on disk, one stale (no file).
-    present = tmp_path / "present"
-    (present / ".jailbee").mkdir(parents=True)
-    (present / ".jailbee" / "config.yaml").write_text("source_repo:\n  path: .\n")
+    # `live` deliberately has NO .jailbee/config.yaml: it must still be listed.
+    live = tmp_path / "live"
+    live.mkdir()
 
     db_session.add(
         RegisteredRepo(
-            container_prefix="present",
-            repo_root=str(present),
+            container_prefix="live",
+            repo_root=str(live),
             registered_at=datetime.now(UTC),
         )
     )
     db_session.add(
         RegisteredRepo(
-            container_prefix="stale",
+            container_prefix="gone",
             repo_root=str(tmp_path / "nonexistent"),
             registered_at=datetime.now(UTC),
         )
@@ -63,8 +75,7 @@ def test_registered_repo_configs_skips_missing_and_keeps_present(db_session, tmp
         "jailbee.db.get_engine",
         return_value=db_session.get_bind(),
     )
-    result = dashboard.registered_repo_configs()
-    assert result == [present / ".jailbee" / "config.yaml"]
+    assert dashboard.registered_repo_roots() == [live]
 
 
 def _ci(
@@ -91,6 +102,20 @@ def _ci(
         job_pid=job_pid,
         git_status=git_status,
     )
+
+
+def _repo_dir(tmp_path: Path, name: str) -> Path:
+    """A repo root with a real config file on disk, returning the root.
+
+    ``gather_rows`` reads ``repo_config_path(root)`` off the filesystem to fill
+    ``RepoGroup.config_path``, so a test asserting on that path needs the file
+    to exist. Its contents never matter — ``load_repo_config`` is mocked in
+    these tests.
+    """
+    root = tmp_path / name
+    (root / ".jailbee").mkdir(parents=True)
+    (root / ".jailbee" / "config.yaml").write_text("{}\n")
+    return root
 
 
 def _ctx(**kw: object) -> dashboard.MenuContext:
@@ -121,46 +146,80 @@ def _dirty(**kw: str) -> GitStatus:
 
 
 def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_cfg):
-    cwd_cfg = make_cfg(tmp_path / "alpha")  # container_prefix == "alpha"
-    other_cfg = make_cfg(tmp_path / "beta")  # container_prefix == "beta"
-    cwd_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    other_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
+    # cwd is "beta" on purpose: pinning has to beat the alphabetical order,
+    # so a broken cwd match would sort "alpha" first and fail this test.
+    cwd_root = _repo_dir(tmp_path, "beta")  # container_prefix == "beta"
+    other_root = _repo_dir(tmp_path, "alpha")  # container_prefix == "alpha"
+    cwd_cfg = make_cfg(cwd_root)
+    other_cfg = make_cfg(other_root)
 
-    def fake_load(p):
-        return cwd_cfg if p == cwd_path else other_cfg
+    def fake_load(root):
+        return cwd_cfg if root == cwd_root else other_cfg
 
     def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
             return []  # no orphans
         if cfg is cwd_cfg:
-            return [_ci("alpha-one", "alpha")]
-        return [_ci("beta-one", "beta")]
+            return [_ci("beta-one", "beta")]
+        return [_ci("alpha-one", "alpha")]
 
-    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
     groups = dashboard.gather_rows(
-        mocker.MagicMock(), [other_path, cwd_path], cwd_config=cwd_path, with_git=False
+        mocker.MagicMock(), [other_root, cwd_root], cwd_root=cwd_root, with_git=False
     )
-    # cwd group ("alpha") pinned first despite being passed second
-    assert [g.prefix for g in groups] == ["alpha", "beta"]
-    assert groups[0].config_path == cwd_path
-    assert [c.name for c in groups[0].containers] == ["alpha-one"]
+    # cwd group ("beta") pinned first despite sorting last alphabetically
+    assert [g.prefix for g in groups] == ["beta", "alpha"]
+    assert groups[0].config_path == cwd_root / ".jailbee" / "config.yaml"
+    assert [c.name for c in groups[0].containers] == ["beta-one"]
+
+
+def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, mocker):
+    """A scratch repo is a repo: it must group its own containers rather than
+    fall through to the view-only orphan bucket.
+
+    Uses the real `load_repo_config`, so this exercises the synthesis path end
+    to end; only git probing and the container listing are mocked.
+    """
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    repo = tmp_path / "tutkimus"
+    (repo / ".git").mkdir(parents=True)
+
+    mocker.patch.object(
+        dashboard,
+        "list_containers",
+        side_effect=lambda cfg, incus, **kw: []
+        if kw.get("all_repos")
+        else [_ci("tutkimus-x", "tutkimus")],
+    )
+
+    groups = dashboard.gather_rows(mocker.MagicMock(), [repo], cwd_root=repo, with_git=False)
+
+    assert [g.prefix for g in groups] == ["tutkimus"]
+    assert groups[0].repo_root == str(repo)
+    # No file on disk -> no config path. Task 10b is what re-enables its menu.
+    assert groups[0].config_path is None
 
 
 def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_cfg):
     """The Qt duration dialog pre-selects this, so it must be the repo's own
     configured `loose_auto_revert.after`, not the first preset."""
     cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"after": "45m"})
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     assert groups[0].loose_ttl_default == "45m"
 
@@ -168,15 +227,15 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
 def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mocker, make_cfg):
     """None tells the GUI not to ask: a disabled policy schedules no TTL."""
     cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"enabled": False})
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     assert groups[0].loose_ttl_default is None
 
@@ -188,15 +247,15 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
         tmp_path / "alpha",
         push={"default_action": "rebase", "default_source": "current"},
     )
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     assert groups[0].push_action_default == "rebase"
     assert groups[0].push_source_default == "current"
@@ -205,15 +264,15 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
 def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mocker, make_cfg):
     """PushConfig's own defaults: 'ask' is why the GUI has a dialog at all."""
     cfg = make_cfg(tmp_path / "alpha")
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     assert groups[0].push_action_default == "ask"
     assert groups[0].push_source_default == "base"
@@ -221,23 +280,23 @@ def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mo
 
 def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha", loose_auto_revert={"after": 20})
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     assert groups[0].loose_ttl_default == "20m"
 
 
 def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
@@ -246,7 +305,7 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
 
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.loose_ttl_default is None
@@ -254,8 +313,8 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
 
 def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
@@ -263,7 +322,7 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.config_path is None
     assert orphan.repo_root is None
@@ -274,13 +333,16 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
 
 
 def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
-    beta = make_cfg(tmp_path / "beta")
-    alpha = make_cfg(tmp_path / "alpha")
-    beta_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
-    alpha_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
+    # `beta` has a config file, `alpha` does not (the scratch case). Only the
+    # container-less `zeta` is an orphan, so a discriminator that keyed on the
+    # missing config file would sink `alpha` into the orphan tier as well.
+    beta_root = _repo_dir(tmp_path, "beta")
+    alpha_root = tmp_path / "alpha"
+    beta = make_cfg(beta_root)
+    alpha = make_cfg(alpha_root)
 
-    def fake_load(p):
-        return alpha if p == alpha_path else beta
+    def fake_load(root):
+        return alpha if root == alpha_root else beta
 
     def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
@@ -288,25 +350,28 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
             return [_ci("alpha-1", "alpha"), _ci("beta-1", "beta"), _ci("zeta-x", "zeta")]
         return [_ci(f"{cfg.container_prefix}-1", cfg.container_prefix)]
 
-    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
     groups = dashboard.gather_rows(
-        mocker.MagicMock(), [beta_path, alpha_path], cwd_config=None, with_git=False
+        mocker.MagicMock(), [beta_root, alpha_root], cwd_root=None, with_git=False
     )
     # named repos alpha-sorted first, orphan group ('zeta') last
     assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]
-    assert groups[-1].config_path is None  # orphan group trails
+    # A missing repo root — not a missing config file — is what makes a group
+    # an orphan now, and it is what sorts it last.
+    assert groups[-1].repo_root is None
+    assert groups[-1].config_path is None
 
 
 def test_gather_rows_hides_repo_with_no_containers(tmp_path, mocker, make_cfg):
-    empty_cfg = make_cfg(tmp_path / "alpha")  # container_prefix == "alpha"
-    populated_cfg = make_cfg(tmp_path / "beta")  # container_prefix == "beta"
-    empty_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    populated_path = tmp_path / "beta" / ".jailbee" / "config.yaml"
+    empty_root = tmp_path / "alpha"
+    populated_root = tmp_path / "beta"
+    empty_cfg = make_cfg(empty_root)  # container_prefix == "alpha"
+    populated_cfg = make_cfg(populated_root)  # container_prefix == "beta"
 
-    def fake_load(p):
-        return empty_cfg if p == empty_path else populated_cfg
+    def fake_load(root):
+        return empty_cfg if root == empty_root else populated_cfg
 
     def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
@@ -315,41 +380,41 @@ def test_gather_rows_hides_repo_with_no_containers(tmp_path, mocker, make_cfg):
             return []
         return [_ci("beta-one", "beta")]
 
-    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
     groups = dashboard.gather_rows(
-        mocker.MagicMock(), [empty_path, populated_path], cwd_config=None, with_git=False
+        mocker.MagicMock(), [empty_root, populated_root], cwd_root=None, with_git=False
     )
     # The empty repo produces no group at all; the populated one still appears.
     assert [g.prefix for g in groups] == ["beta"]
 
 
-def test_gather_rows_empty_config_paths_returns_empty(mocker):
-    # No configs -> no base_cfg -> no orphan scan -> empty result, no calls.
+def test_gather_rows_empty_repo_roots_returns_empty(mocker):
+    # No repos -> no base_cfg -> no orphan scan -> empty result, no calls.
     lc = mocker.patch.object(dashboard, "list_containers")
-    result = dashboard.gather_rows(mocker.MagicMock(), [], cwd_config=None, with_git=False)
+    result = dashboard.gather_rows(mocker.MagicMock(), [], cwd_root=None, with_git=False)
     assert result == []
     lc.assert_not_called()
 
 
 def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make_cfg):
-    good = make_cfg(tmp_path / "alpha")
-    good_path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    bad_path = tmp_path / "broken" / ".jailbee" / "config.yaml"
+    good_root = tmp_path / "alpha"
+    bad_root = tmp_path / "broken"
+    good = make_cfg(good_root)
 
-    def fake_load(p):
-        if p == bad_path:
+    def fake_load(root):
+        if root == bad_root:
             raise OSError("gone")
         return good
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
-    mocker.patch.object(dashboard, "load_config", side_effect=fake_load)
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
     groups = dashboard.gather_rows(
-        mocker.MagicMock(), [good_path, bad_path], cwd_config=good_path, with_git=False
+        mocker.MagicMock(), [good_root, bad_root], cwd_root=good_root, with_git=False
     )
     assert [g.prefix for g in groups] == ["alpha"]
 
@@ -376,7 +441,7 @@ def test_view_only_note_is_none_for_an_unknown_container():
     assert dashboard.view_only_note([], "ghost") is None
 
 
-def test_gather_live_reresolves_config_paths_on_every_gather(mocker):
+def test_gather_live_reresolves_repo_roots_on_every_gather(mocker):
     """A repo registered while a dashboard is running must be picked up by the
     next gather.
 
@@ -387,10 +452,10 @@ def test_gather_live_reresolves_config_paths_on_every_gather(mocker):
     under a view-only orphan group, so `actions_for_container` returns [] and
     the right-click menu silently never opens.
     """
-    a = Path("/repos/a/.jailbee/config.yaml")
-    b = Path("/repos/b/.jailbee/config.yaml")
+    a = Path("/repos/a")
+    b = Path("/repos/b")
     registered = [a]
-    mocker.patch.object(dashboard, "registered_repo_configs", side_effect=lambda: list(registered))
+    mocker.patch.object(dashboard, "registered_repo_roots", side_effect=lambda: list(registered))
     gr = mocker.patch.object(dashboard, "gather_rows", return_value=[])
     incus = mocker.MagicMock()
 
@@ -400,7 +465,7 @@ def test_gather_live_reresolves_config_paths_on_every_gather(mocker):
     registered.append(b)  # a `jailbee new` in repo b just registered it
     dashboard.gather_live(incus, None, with_git=True)
     assert gr.call_args.args[1] == [a, b]
-    assert gr.call_args.kwargs == {"cwd_config": None, "with_git": True}
+    assert gr.call_args.kwargs == {"cwd_root": None, "with_git": True}
 
 
 def test_carry_forward_git_status_fills_in_from_previous_snapshot():
@@ -1098,14 +1163,14 @@ def test_actions_for_container_matches_menu_actions():
 
 def test_gather_rows_sets_ide_and_chrome_flags_from_config(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha", jetbrains={"enabled": True}, chrome={"enabled": False})
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     group = next(g for g in groups if g.prefix == "alpha")
     assert group.ide_enabled is True
     assert group.chrome_enabled is False
@@ -1113,8 +1178,8 @@ def test_gather_rows_sets_ide_and_chrome_flags_from_config(tmp_path, mocker, mak
 
 def test_gather_rows_orphan_groups_default_ide_chrome_disabled(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
-    path = tmp_path / "alpha" / ".jailbee" / "config.yaml"
-    mocker.patch.object(dashboard, "load_config", return_value=cfg)
+    root = tmp_path / "alpha"
+    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
     def fake_list(c, incus, *, all_repos, with_git_status, with_background):
         if all_repos:
@@ -1122,7 +1187,7 @@ def test_gather_rows_orphan_groups_default_ide_chrome_disabled(tmp_path, mocker,
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [path], cwd_config=path, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.ide_enabled is False
     assert orphan.chrome_enabled is False
@@ -1463,7 +1528,7 @@ def test_seed_view_state_ignores_a_repo_level_block(mocker):
     The global and (mocked) repo layers are given *different* `dashboard:`
     blocks on purpose: if `seed_view_state` ever started consulting the
     repo layer, the result would flip to the repo's columns and
-    `load_config` would stop being uncalled. The previous version of this
+    `load_repo_config` would stop being uncalled. The previous version of this
     test had no repo config to differ against, so it passed identically
     against an implementation that *did* consult one — it only pinned
     "default global config -> default columns", never the "repo is
@@ -1479,12 +1544,12 @@ def test_seed_view_state_ignores_a_repo_level_block(mocker):
     gcfg = GlobalConfig(dashboard=dashboard.ColumnConfig(fields=["name", "state"]))
     mocker.patch.object(dashboard, "load_global_config", return_value=(gcfg, []))
     repo_cfg = mocker.Mock(dashboard=dashboard.ColumnConfig(fields=["ip", "mem"]))
-    load_config = mocker.patch.object(dashboard, "load_config", return_value=repo_cfg)
+    load_repo_config = mocker.patch.object(dashboard, "load_repo_config", return_value=repo_cfg)
 
     state = dashboard.seed_view_state(engine, FRONTEND_TUI)
 
     assert state.columns == ("name", "state")  # the global block's answer, not the repo's
-    load_config.assert_not_called()  # the repo layer is never even read
+    load_repo_config.assert_not_called()  # the repo layer is never even read
 
 
 def test_seed_view_state_seeds_the_two_frontends_independently(mocker):
@@ -2382,32 +2447,54 @@ def test_render_shows_memory_used_and_limit(tmp_path):
 
 
 def test_dashboard_command_delegates_to_run(mocker):
+    from jailbee.config import ConfigNotFoundError
+
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.cli.find_repo_config",
-        side_effect=__import__(
-            "jailbee.config", fromlist=["ConfigNotFoundError"]
-        ).ConfigNotFoundError("none"),
-    )
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     result = CliRunner().invoke(app, ["dashboard", "-i", "5", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
     assert kwargs["interval"] == 5.0
     assert kwargs["no_git"] is True
-    assert kwargs["cwd_config"] is None
+    assert kwargs["cwd_root"] is None
+
+
+def test_dashboard_command_passes_the_cwd_root_when_its_config_loads(mocker):
+    """The probe answers "is the cwd a repo we can show", and the cwd's own
+    *root* is what both dashboards now key on."""
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.config.load_repo_config", return_value=mocker.Mock())
+    result = CliRunner().invoke(app, ["dashboard"])
+    assert result.exit_code == 0
+    assert run.call_args.kwargs["cwd_root"] == Path.cwd()
+
+
+def test_dashboard_command_passes_none_when_the_cwd_repo_config_is_broken(mocker):
+    """The launch probe is a real load now, not a `find_repo_config` stat.
+
+    A repo whose config file exists but does not parse therefore stops being
+    "the cwd repo": before, the path was found and `gather_rows` was left to
+    skip it, which pinned a broken repo to the top of an empty dashboard.
+    """
+    from jailbee.config import ConfigError
+
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("bad yaml"))
+    result = CliRunner().invoke(app, ["dashboard"])
+    assert result.exit_code == 0
+    assert run.call_args.kwargs["cwd_root"] is None
 
 
 def test_tui_command_is_an_alias_for_the_dashboard(mocker):
     """`jailbee tui` mirrors `jailbee gui`: the TUI frontend, same options."""
+    from jailbee.config import ConfigNotFoundError
+
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
-    mocker.patch(
-        "jailbee.cli.find_repo_config",
-        side_effect=__import__(
-            "jailbee.config", fromlist=["ConfigNotFoundError"]
-        ).ConfigNotFoundError("none"),
-    )
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
@@ -2783,7 +2870,7 @@ def _drive_run(mocker, key_sequence: list[bytes]) -> int:
     it (a real race the tests must not depend on winning).
     """
     mocker.patch.object(
-        dashboard, "collect_config_paths", return_value=[Path("/x/.jailbee/config.yaml")]
+        dashboard, "collect_repo_roots", return_value=[Path("/x")]
     )
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())

@@ -19,7 +19,8 @@ from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from jailbee.dashboard import (
-    collect_config_paths,
+    NOTHING_TO_SHOW,
+    collect_repo_roots,
     new_container_argv,
     new_container_base_default,
     new_container_reject_note_for_prefix,
@@ -56,16 +57,16 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def preflight(cwd_config: Path | None) -> list[Path] | None:
-    """Resolve the config paths the dashboard would show, or None if there are none.
+def preflight(cwd_root: Path | None) -> list[Path] | None:
+    """Resolve the repo roots the dashboard would show, or None if there are none.
 
     A launch-time guard only ("nothing to show, don't open a window") — the
     returned list is deliberately not handed to the worker, which re-resolves
     it per gather via ``dashboard.gather_live`` so a repo registered while the
     window is open stops rendering as a menu-less orphan.
     """
-    config_paths = collect_config_paths(cwd_config)
-    return config_paths or None
+    repo_roots = collect_repo_roots(cwd_root)
+    return repo_roots or None
 
 
 def _group_for(groups: list[RepoGroup], container_name: str) -> RepoGroup | None:
@@ -512,15 +513,15 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
 
 def run(
     incus: Incus,
-    cwd_config: Path | None,
+    cwd_root: Path | None,
     *,
     interval: float | None,
     git_interval: float,
     no_git: bool,
 ) -> int:
     """Launch the Qt dashboard. Returns the process exit code."""
-    if preflight(cwd_config) is None:
-        error("No repos registered and no .jailbee/config.yaml in the current directory.")
+    if preflight(cwd_root) is None:
+        error(NOTHING_TO_SHOW)
         return 1
 
     from jailbee.db import get_engine
@@ -555,7 +556,7 @@ def run(
     thread = QThread()
     worker = RefreshWorker(
         incus,
-        cwd_config,
+        cwd_root,
         interval=resolved,
         git_interval=git_interval,
         git_enabled=git_enabled,
