@@ -176,7 +176,9 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config:
+def _build_config_from_dict(
+    raw: dict[str, object], config_path: Path, *, origin: str | None = None
+) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
     Used by load_config to build the final Config from a (possibly merged)
@@ -184,16 +186,21 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
     shared_dir, golden.alias) are set after Pydantic validation. Cross-field
     invariants (prefix regex, reserved env keys, shared_caches uniqueness,
     autostart step-name uniqueness) are checked here as well.
+
+    `origin` labels the source in error messages when it is not the file at
+    `config_path` — a config layer synthesized from `global.yaml`'s
+    `scratch.config` has no file of its own.
     """
+    label = origin or str(config_path)
     try:
         raw = resolve_agents_raw(raw)
     except ConfigError as e:
-        raise ConfigError(f"Config validation failed in {config_path}:\n{e}") from e
+        raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)
     except ValidationError as e:
-        raise ConfigError(f"Config validation failed in {config_path}:\n{e}") from e
+        raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
 
     repo_root = _derive_repo_root(config_path)
     object.__setattr__(cfg, "repo_root", repo_root)
@@ -207,7 +214,7 @@ def _build_config_from_dict(raw: dict[str, object], config_path: Path) -> Config
     if not _PREFIX_RE.match(cfg.container_prefix):
         raise ConfigError(
             f"Invalid container_prefix '{cfg.container_prefix}': must match "
-            f"[a-z0-9][a-z0-9-]*. Set `container_prefix:` in {config_path} explicitly."
+            f"[a-z0-9][a-z0-9-]*. Set `container_prefix:` in {label} explicitly."
         )
 
     if cfg.shared_dir is None:
@@ -286,6 +293,18 @@ def load_config_from_text(text: str, path: Path) -> Config:
     block would diverge, because `deep_merge` appends lists and `global.yaml`
     may define its own `autostart` steps.
     """
+    return _load_config_from_repo_raw(_parse_yaml_text(text, str(path)), path, origin=str(path))
+
+
+def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origin: str) -> Config:
+    """Build a validated `Config` from an already-parsed repo layer.
+
+    The shared body of `load_config_from_text` (repo layer from YAML text) and
+    a future synthesized layer built in memory from `global.yaml`'s
+    `scratch.config`. `path` derives `repo_root` and need not exist; `origin`
+    is the human-readable source used in error messages, which for a
+    synthesized layer is the global config file rather than `path`.
+    """
     # Local import avoids a circular dependency at module load: global_config
     # already imports from this module's ConfigError, and importing
     # default_global_config_path at module top would form a cycle.
@@ -294,7 +313,6 @@ def load_config_from_text(text: str, path: Path) -> Config:
     global_raw = _read_yaml_or_empty(default_global_config_path())
     _check_retired_keys(global_raw)
     host_raw, global_for_merge = _split_host_keys(global_raw)
-    repo_raw = _parse_yaml_text(text, str(path))
     _check_retired_keys(repo_raw)
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
@@ -322,7 +340,7 @@ def load_config_from_text(text: str, path: Path) -> Config:
             )
 
     merged = deep_merge(global_for_merge, repo_raw)
-    cfg = _build_config_from_dict(merged, path)
+    cfg = _build_config_from_dict(merged, path, origin=origin)
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))

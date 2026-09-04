@@ -3759,6 +3759,48 @@ def test_load_config_from_text_rejects_github_block(tmp_path, mocker):
         load_config_from_text("github:\n  enabled: true\n", tmp_path / ".jailbee" / "config.yaml")
 
 
+def test_repo_raw_loader_labels_errors_with_origin(tmp_path, monkeypatch, mocker) -> None:
+    """The synthesized layer is not a file, so its validation errors must name
+    where it really came from."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    from jailbee.config import ConfigError
+    from jailbee.config.loader import _load_config_from_repo_raw
+
+    with pytest.raises(ConfigError) as exc:
+        _load_config_from_repo_raw(
+            {"defaults": {"cpu": "banana"}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="~/.config/jailbee/global.yaml (scratch.config)",
+        )
+
+    assert "scratch.config" in str(exc.value)
+
+
+def test_load_config_from_text_reports_repo_error_when_both_layers_are_invalid(tmp_path, mocker):
+    """Extracting `_load_config_from_repo_raw` hoists `_parse_yaml_text` on the
+    repo text into the caller, ahead of reading `global.yaml`. With both files
+    malformed, the repo-text error now surfaces first instead of the
+    global-file error — an accepted, deliberate flip in precedence (it reports
+    the file the user just edited), pinned here so it cannot drift silently.
+    """
+    from jailbee.config import ConfigError, load_config_from_text
+
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("autostart: [unclosed")
+    mocker.patch(
+        "jailbee.global_config.default_global_config_path",
+        return_value=global_path,
+    )
+    cfg_path = tmp_path / "myrepo" / ".jailbee" / "config.yaml"
+
+    with pytest.raises(ConfigError) as exc:
+        load_config_from_text("chrome: [also-unclosed", cfg_path)
+
+    assert str(cfg_path) in str(exc.value)
+    assert str(global_path) not in str(exc.value)
+
+
 def test_host_ports_defaults(tmp_path):
     cfg_path = _make_config(
         tmp_path,
