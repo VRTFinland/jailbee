@@ -4245,9 +4245,7 @@ def test_synthesized_layer_is_beaten_by_scratch_config(tmp_path, monkeypatch, mo
     assert cfg.golden.alias == "my-own-scratch"
 
 
-def test_global_config_layer_still_applies_to_a_synthesized_config(
-    tmp_path, monkeypatch, mocker
-):
+def test_global_config_layer_still_applies_to_a_synthesized_config(tmp_path, monkeypatch, mocker):
     """`global.yaml`'s config layer applies to every repo today; a scratch
     container that ignored it would be less useful than an empty config file."""
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
@@ -4312,9 +4310,7 @@ def test_unusable_directory_name_is_reported(tmp_path, monkeypatch, mocker):
 
 def test_scratch_config_validation_error_names_the_source(tmp_path, monkeypatch, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
-    _write_global(
-        tmp_path, monkeypatch, "scratch:\n  config:\n    defaults:\n      cpu: banana\n"
-    )
+    _write_global(tmp_path, monkeypatch, "scratch:\n  config:\n    defaults:\n      cpu: banana\n")
     repo = _write_bare_repo(tmp_path)
     from jailbee.config import ConfigError, load_repo_config
 
