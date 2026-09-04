@@ -19,8 +19,20 @@ _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 class ContainerUser(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    uid: int = -1
-    gid: int = -1
+    uid: int = Field(
+        default=-1,
+        description=(
+            "Container UID. Defaults to the host uid so bind-mounted host files "
+            "stay readable inside the container."
+        ),
+    )
+    gid: int = Field(
+        default=-1,
+        description=(
+            "Container GID. Defaults to the host gid so bind-mounted host files "
+            "stay readable inside the container."
+        ),
+    )
 
     def model_post_init(self, __context: object) -> None:
         if self.uid == -1:
@@ -36,18 +48,18 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ContainerConfig(BaseModel):
-    """Container-wide settings applied via the Incus base profile.
-
-    `env` is a map of literal string env vars injected into every process
-    Incus starts in the container — including `jailbee shell`, `jailbee tmux`,
-    tmux servers, and autostart steps. Values are not expanded; the YAML
-    string is passed through verbatim. Keys jailbee itself sets in the base
-    profile (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR, SSH_AUTH_SOCK)
-    are still overridable here — user override wins.
-    """
+    """Container-wide settings applied via the Incus base profile."""
 
     model_config = ConfigDict(extra="forbid")
-    env: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Literal string env vars injected into every process Incus starts in the "
+            "container — shells, tmux, and autostart steps. Values are passed through "
+            "verbatim, not shell-expanded. Keys must match `[A-Za-z_][A-Za-z0-9_]*`, and "
+            "an entry here overrides jailbee's own GUI/SSH defaults for the same key."
+        ),
+    )
 
     @field_validator("env")
     @classmethod
@@ -63,9 +75,18 @@ class ContainerConfig(BaseModel):
 
 class HostMount(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    host: PathExpanded
-    container: str
-    readonly: bool = False
+    host: PathExpanded = Field(
+        description=(
+            "Host path to bind-mount. `~` and environment variables are expanded at load time."
+        ),
+    )
+    container: str = Field(
+        description="In-container mount target.",
+    )
+    readonly: bool = Field(
+        default=False,
+        description="Read-write unless set to `true`. Set `true` for anything sensitive.",
+    )
 
 
 _OCTAL_MODE_RE = re.compile(r"^0[0-7]{3,4}$")
@@ -95,13 +116,41 @@ class HostDevice(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    path: str
-    source: str | None = None
-    type: Literal["unix-char", "unix-block"] = "unix-char"
-    mode: str | None = "0666"
-    gid: int | None = None
-    uid: int | None = None
-    group: str | None = None
+    path: str = Field(
+        description="Device path inside the container. Must be absolute.",
+    )
+    source: str | None = Field(
+        default=None,
+        description="Host device path. Must be absolute. Defaults to the in-container `path`.",
+    )
+    type: Literal["unix-char", "unix-block"] = Field(
+        default="unix-char",
+        description="Incus device type to render this as.",
+    )
+    mode: str | None = Field(
+        default="0666",
+        description=(
+            "Node mode on the Incus profile device, as an octal string. Devices with a "
+            "udev `static_node` rule (e.g. `/dev/kvm`) reset to their distro default on "
+            "every boot regardless of this setting — see `group`."
+        ),
+    )
+    gid: int | None = Field(
+        default=None,
+        description="Node group owner on the Incus profile device. Unset leaves it unmanaged.",
+    )
+    uid: int | None = Field(
+        default=None,
+        description="Node user owner on the Incus profile device. Unset leaves it unmanaged.",
+    )
+    group: str | None = Field(
+        default=None,
+        description=(
+            "Container group the `dev` user is added to so it can open the device. "
+            "Unset auto-derives it from the host source node's owning group (e.g. "
+            "`/dev/kvm` → `kvm`), which is the mechanism that actually grants access."
+        ),
+    )
 
     @property
     def effective_source(self) -> str:
@@ -157,12 +206,39 @@ class HostPort(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str
-    port: int
-    host_port: int | None = None
-    proto: Literal["tcp", "udp"] = "tcp"
-    host_address: str = "127.0.0.1"
-    container_address: str = "127.0.0.1"
+    name: str = Field(
+        description=(
+            "Handle for this forward, unique within `host_ports`. Must match "
+            "`[a-z0-9][a-z0-9-]*`, max 40 chars. Becomes the Incus device name "
+            "`port-cfg-<name>` and the `jailbee port rm` key."
+        ),
+    )
+    port: int = Field(
+        description="Container-side port (1-65535) — what listens inside the container.",
+    )
+    host_port: int | None = Field(
+        default=None,
+        description=(
+            "Host-side port the container connects to. Defaults to `port`; set this "
+            "when the container-side and host-side ports differ."
+        ),
+    )
+    proto: Literal["tcp", "udp"] = Field(
+        default="tcp",
+        description="Protocol for the forward.",
+    )
+    host_address: str = Field(
+        default="127.0.0.1",
+        description=(
+            "Host address the container connects to. Must be an IP literal — a "
+            "hostname is rejected, since resolving one at device-add time would "
+            "silently pin a single IP into the device."
+        ),
+    )
+    container_address: str = Field(
+        default="127.0.0.1",
+        description="Container address the proxy listens on. Must also be an IP literal.",
+    )
 
     @property
     def effective_host_port(self) -> int:
@@ -225,10 +301,22 @@ class HostPort(BaseModel):
 
 class OptionalMount(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    host: PathExpanded
-    container: str
-    readonly: bool = True
-    description: str = ""
+    host: PathExpanded = Field(
+        description=(
+            "Host path to bind-mount. `~` and environment variables are expanded at load time."
+        ),
+    )
+    container: str = Field(
+        description="In-container mount target.",
+    )
+    readonly: bool = Field(
+        default=True,
+        description="Read-only by default; set `false` to mount read-write.",
+    )
+    description: str = Field(
+        default="",
+        description="Shown in the `jailbee new --mount` picker.",
+    )
 
 
 class PoolSpec(BaseModel):
@@ -238,32 +326,54 @@ class PoolSpec(BaseModel):
     gets its own slot directory from `<shared_dir>/<host_subpath>/slots/`,
     attached as a per-container disk device named `<cache name>-slot`.
     This is how two containers avoid sharing one tool's lock files.
-
-    - `seed`: copy the warmest existing slot into a fresh one, so a new
-      container starts warm. False means every slot starts empty.
-    - `link_paths`: subtrees hardlinked from the seed source instead of
-      copied. ONLY for files written once and deleted whole, never
-      modified in place — a hardlinked lock file or in-place-rewritten
-      `.bin` restores exactly the cross-container sharing this exists to
-      remove.
-    - `wipe_paths`: removed when a slot is released, and excluded from
-      seeding. Regenerable bulk.
-    - `stale_globs`: unlinked on release, and excluded from seeding.
-      Lock files left behind by an unclean exit.
-    - `warmth_file`: slot-relative path whose mtime ranks slots by real
-      activity. None ranks by the slot directory's own mtime.
-    - `allocate`: `on-start` attaches the slot on create and on every
-      boot; `on-demand` waits for an explicit call (Chrome, which most
-      containers never launch).
     """
 
     model_config = ConfigDict(extra="forbid")
-    seed: bool = True
-    link_paths: list[str] = []
-    wipe_paths: list[str] = []
-    stale_globs: list[str] = []
-    warmth_file: str | None = None
-    allocate: Literal["on-start", "on-demand"] = "on-start"
+    seed: bool = Field(
+        default=True,
+        description=(
+            "Copy the warmest existing slot into a fresh one so a new container "
+            "starts warm. `false` means every slot starts empty."
+        ),
+    )
+    link_paths: list[str] = Field(
+        default=[],
+        description=(
+            "Slot-relative subtrees hardlinked from the seed source instead of "
+            "copied. Only for files written once and later deleted whole, never "
+            "modified in place — hardlinking a lock file or an in-place-rewritten "
+            "file would restore the cross-container sharing pooling exists to remove."
+        ),
+    )
+    wipe_paths: list[str] = Field(
+        default=[],
+        description=(
+            "Slot-relative regenerable subtrees removed when a slot is released, and "
+            "excluded from seeding."
+        ),
+    )
+    stale_globs: list[str] = Field(
+        default=[],
+        description=(
+            "Slot-relative glob patterns unlinked on release and excluded from "
+            "seeding — lock files an unclean exit left behind."
+        ),
+    )
+    warmth_file: str | None = Field(
+        default=None,
+        description=(
+            "Slot-relative path whose mtime ranks slots by real activity when "
+            "choosing a seed. Unset ranks by the slot directory's own mtime."
+        ),
+    )
+    allocate: Literal["on-start", "on-demand"] = Field(
+        default="on-start",
+        description=(
+            "`on-start` attaches the slot on container create and every boot; "
+            "`on-demand` waits for an explicit call (used by Chrome, which most "
+            "containers never launch)."
+        ),
+    )
 
 
 class PoolPreset(BaseModel):
@@ -279,9 +389,20 @@ class PoolPreset(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    default_on: bool
-    spec: PoolSpec
-    pool_only: bool = False
+    default_on: bool = Field(
+        description=("Whether this cache is pooled when its name is absent from `pooled_caches`."),
+    )
+    spec: PoolSpec = Field(
+        description="The pooling behavior applied when this cache is pooled.",
+    )
+    pool_only: bool = Field(
+        default=False,
+        description=(
+            "Marks a cache whose un-pooled form has no meaning: its `host_subpath` is "
+            "the pool root itself, not a cache directory, so `pooled_caches: "
+            "{name: false}` is rejected at load time for it."
+        ),
+    )
 
 
 class SharedCache(BaseModel):
@@ -293,10 +414,22 @@ class SharedCache(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str
-    host_subpath: str
-    container_path: str
-    pool: PoolSpec | None = None
+    name: str = Field(
+        description="Cache identifier, used as the `pooled_caches` key and slot device name.",
+    )
+    host_subpath: str = Field(
+        description="Path under `<shared_dir>` that backs this cache on the host.",
+    )
+    container_path: str = Field(
+        description="In-container mount target. May start with `~`, expanded to `/home/<user>`.",
+    )
+    pool: PoolSpec | None = Field(
+        default=None,
+        description=(
+            "Turns this entry into a per-container pool slot instead of a live shared "
+            "mount, overriding `pooled_caches` and any builtin preset for this name."
+        ),
+    )
 
 
 # Regenerable Chrome cache subtrees, relative to a pool slot: excluded from

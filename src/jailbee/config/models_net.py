@@ -8,7 +8,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jailbee.paths import xdg_data_home
 
@@ -126,8 +126,18 @@ class LooseAutoRevert(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    after: str | int = "5m"
+    enabled: bool = Field(
+        default=True,
+        description="Whether `jailbee net loose` auto-reverts at all.",
+    )
+    after: str | int = Field(
+        default="5m",
+        description=(
+            "How long to stay in loose mode before auto-reverting. Accepts `30s`, "
+            "`5m`, `2h`, or a bare int meaning minutes; capped at 24h. Each "
+            "`jailbee net loose` call can override this for that one switch."
+        ),
+    )
 
     def duration(self) -> timedelta:
         """Parse ``after`` into a ``timedelta``. Raises ``ValueError`` on
@@ -190,8 +200,21 @@ class ClaudeCredentials(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    group: str | None = None
-    repos: dict[str, str | None] = {}
+    group: str | None = Field(
+        default=None,
+        description=(
+            "Default credential group for every repo on this host. Absent means no "
+            "sharing — each repo keeps its own credential."
+        ),
+    )
+    repos: dict[str, str | None] = Field(
+        default={},
+        description=(
+            "Per-repo override keyed by `container_prefix`. Wins over `group`, "
+            "including when the value is `null` — the only way to keep one repo on "
+            "its own credential while the rest of the host shares one."
+        ),
+    )
 
     @field_validator("group")
     @classmethod
