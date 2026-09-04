@@ -25,7 +25,7 @@ from jailbee.config.models_columns import (
     sanitize_column_blocks,
 )
 from jailbee.config.models_golden import _RESERVED_PROVISION_ENV_KEYS
-from jailbee.config.models_host import POOL_PRESETS, _CACHE_NAME_RE, _PREFIX_RE
+from jailbee.config.models_host import _CACHE_NAME_RE, _PREFIX_RE, POOL_PRESETS
 from jailbee.config.models_net import ClaudeCredentials
 from jailbee.config.retired import (
     _check_agents_spelling,

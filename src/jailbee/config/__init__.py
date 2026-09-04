@@ -13,7 +13,7 @@ valid and produces a fully-defaulted Config.
 
 from __future__ import annotations
 
-from jailbee.config.common import CONTAINER_USERNAME, _HOST_LEVEL_KEYS, _split_host_keys, deep_merge
+from jailbee.config.common import _HOST_LEVEL_KEYS, CONTAINER_USERNAME, _split_host_keys, deep_merge
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
     _build_config_from_dict,
@@ -81,12 +81,29 @@ from jailbee.config.models_tools import (
 from jailbee.config.retired import _check_retired_keys
 from jailbee.config.root import Config
 
+# Private (leading-underscore) names are listed in __all__ alongside the
+# public ones, not just imported above, because mypy --strict's
+# --no-implicit-reexport treats a module's __all__, once present, as the
+# complete explicit-reexport list — the `as Name` self-alias trick this
+# package used before __all__ existed no longer has any effect. Each private
+# name below is imported directly from `jailbee.config` (not its owning
+# submodule) by tests or by `global_config.py`; see EXPECTED_SURFACE in
+# tests/test_config_package_surface.py.
 __all__ = [
+    "CONTAINER_USERNAME",
+    "DASHBOARD_DEFAULT_HIDE",
+    "GITHUB_API_HOSTS",
+    "JETBRAINS_AI_HOSTS",
+    "JETBRAINS_LICENSE_HOSTS",
+    "LOOSE_TTL_PRESETS",
+    "NET_DESCRIPTIONS",
+    "OFFLINE_REMOVED_MSG",
+    "POOL_PRESETS",
+    "_HOST_LEVEL_KEYS",
     "AgentConfig",
     "Autostart",
     "AutostartStep",
     "BootConfig",
-    "CONTAINER_USERNAME",
     "ChromeConfig",
     "ClaudeAgentConfig",
     "ClaudeCredentials",
@@ -95,9 +112,7 @@ __all__ = [
     "ConfigError",
     "ConfigNotFoundError",
     "ConfirmConfig",
-    "DASHBOARD_DEFAULT_HIDE",
     "DockerRegistryMirrorRepoConfig",
-    "GITHUB_API_HOSTS",
     "GithubConfig",
     "Golden",
     "GpgConfig",
@@ -105,16 +120,10 @@ __all__ = [
     "HostMount",
     "HostPort",
     "IdeName",
-    "JETBRAINS_AI_HOSTS",
-    "JETBRAINS_LICENSE_HOSTS",
     "JetbrainsConfig",
-    "LOOSE_TTL_PRESETS",
     "LooseAutoRevert",
-    "NET_DESCRIPTIONS",
     "NewConfig",
-    "OFFLINE_REMOVED_MSG",
     "OptionalMount",
-    "POOL_PRESETS",
     "PoolSpec",
     "PullConfig",
     "PushConfig",
@@ -123,15 +132,6 @@ __all__ = [
     "Stacks",
     "TerminalConfig",
     "TerminalKittyConfig",
-    # Private names below are still listed here (not just imported) because
-    # mypy --strict's --no-implicit-reexport treats a module's __all__, once
-    # present, as the complete explicit-reexport list — the `as Name`
-    # self-alias trick this package used before __all__ existed no longer
-    # has any effect. Each of these is imported directly from
-    # `jailbee.config` (not its owning submodule) by tests or by
-    # `global_config.py`; see EXPECTED_SURFACE in
-    # tests/test_config_package_surface.py.
-    "_HOST_LEVEL_KEYS",
     "_build_config_from_dict",
     "_check_retired_keys",
     "_columns_already_sanitized",
