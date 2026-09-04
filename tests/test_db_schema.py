@@ -838,3 +838,64 @@ def test_migrate_to_v8_is_idempotent() -> None:
         sql = "SELECT name FROM sqlite_master WHERE type='table'"
         names = {row[0] for row in conn.exec_driver_sql(sql)}
     assert "egress_override" in names
+
+
+def test_v9_db_migrates_to_v10_adding_synthetic_config() -> None:
+    """An existing v9 DB (registered_repo without synthetic_config) is
+    migrated in place straight to the current version: v10 adds the column,
+    a pre-existing row is back-filled to false — every repo registered
+    before v10 had a config file — and unrelated data (the row itself)
+    survives. Re-running the bootstrap is a no-op."""
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import RegisteredRepo, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 9, 4, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=9))
+        s.commit()
+    # Simulate the v9 registered_repo shape: drop synthetic_config, then
+    # insert a row the way a v9-era app would have written it (no
+    # synthetic_config column at all).
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE registered_repo DROP COLUMN synthetic_config")
+        conn.exec_driver_sql(
+            "INSERT INTO registered_repo "
+            "(container_prefix, repo_root, registered_at, last_refresh_at) "
+            "VALUES ('myrepo', '/tmp/myrepo', :n, NULL)",
+            {"n": now.isoformat()},
+        )
+
+    _ensure_schema(engine)
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(registered_repo)")}
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        repo = s.get(RegisteredRepo, "myrepo")
+    assert "synthetic_config" in cols
+    assert repo is not None
+    assert repo.synthetic_config is False  # back-filled default
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+    # Idempotency: re-running the bootstrap must not error or change state.
+    _ensure_schema(engine)
+    with Session(engine) as s:
+        meta2 = s.get(SchemaMeta, 1)
+    assert meta2 is not None and meta2.version == CURRENT_SCHEMA_VERSION
+
+
+def test_migrate_to_v10_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v10
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    # Restore the pre-v10 physical shape so the guard is actually exercised,
+    # the same way test_migrate_to_v4_is_idempotent restores collapsed_repos.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE registered_repo DROP COLUMN synthetic_config")
+        _migrate_to_v10(conn)
+        _migrate_to_v10(conn)  # must not raise on an already-migrated table
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(registered_repo)")}
+    assert "synthetic_config" in cols
