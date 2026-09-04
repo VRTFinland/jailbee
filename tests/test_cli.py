@@ -8918,3 +8918,99 @@ def test_new_skips_the_image_check_for_a_configured_repo(tmp_path, mocker):
     assert result.exit_code == 0, result.output
     assert build.call_count == 0
     assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the missing profile set
+# ---------------------------------------------------------------------------
+
+
+def test_new_applies_profiles_for_a_scratch_repo(tmp_path, monkeypatch, mocker):
+    """A scratch directory has run neither `jb init` nor `jb apply`, and
+    `new_container` would fail assigning profiles that do not exist.
+
+    `_scratch_new_cmd_env` already patches `jailbee.apply.run_apply` (with
+    `incus.profile_exists` defaulting to True), but doesn't hand back that
+    mock. Re-patching the same target here shadows it with a fresh mock that
+    `cli.py`'s lazy `from jailbee.apply import run_apply` resolves to at call
+    time, so asserting on *this* mock is asserting on what `new_cmd` actually
+    calls.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = False
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 1
+    assert run_apply.call_args.kwargs["assume_yes"] is True
+    assert run_apply.call_args.kwargs["no_restart"] is True
+    assert new_container.call_count == 1
+
+
+def test_new_skips_apply_when_the_profiles_exist(tmp_path, monkeypatch, mocker):
+    """The mirror image of the above: once a scratch repo's profiles exist
+    (e.g. a previous `jb new` already created them), the pre-flight must not
+    fire again on every subsequent `jb new`."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = True
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 0
+
+
+def test_new_does_not_apply_for_a_configured_repo(tmp_path, mocker):
+    """A configured repo (a real `.jailbee/config.yaml`) has always run `jb
+    init`/`jb apply` before its first `jb new`, so the implicit-apply
+    pre-flight must be scoped to `cfg.is_synthetic()` and never fire here —
+    even if `profile_exists` were somehow False."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+    import jailbee.incus as incus_mod
+
+    incus_mod.Incus.return_value.profile_exists.return_value = False
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 0
+    assert new_container.call_count == 1
+
+
+def test_new_checks_all_four_profile_names(tmp_path, monkeypatch, mocker):
+    """The pre-flight must check the whole profile set (`base`, `binds`,
+    `net_strict`, `net_loose`), not just the first one it happens to look
+    at. `profile_exists` reports every profile present except `net-loose`
+    (the last name `profile_names` produces) — an implementation that only
+    consulted `base` (or stopped early) would see nothing missing and skip
+    the apply, so this fails unless all four are actually checked.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.side_effect = lambda name: not name.endswith("-net-loose")
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 1
+    assert new_container.call_count == 1

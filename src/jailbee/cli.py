@@ -1298,6 +1298,28 @@ def new_cmd(
         build_golden_image(cfg, incus)
         _record_upgrade_action(cfg, "base_build")
 
+    # A scratch directory has run neither `jb init` nor `jb apply`, so its
+    # profile set does not exist yet and `new_container`'s `profile_assign`
+    # would fail. `run_apply` and not `init_command`: the latter refuses when
+    # profiles already exist, and a second definition of what a profile set
+    # contains is exactly what must not exist. Unattended and unprompted —
+    # unlike the image build this is seconds and needs no network.
+    if cfg.is_synthetic():
+        from jailbee.apply import run_apply
+        from jailbee.profiles import profile_names
+
+        names = profile_names(cfg)
+        wanted = (names.base, names.binds, names.net_strict, names.net_loose)
+        if any(not incus.profile_exists(p) for p in wanted):
+            info(f"→ First container in {cfg.repo_root}: creating its profiles...")
+            # no_restart: this repo has no containers yet, so there is nothing
+            # a restart could apply to. `run_apply` re-registers the repo and
+            # refreshes the egress pool itself (apply.py:165-173); the
+            # `register_repo`/`refresh_pool` call further below runs again
+            # regardless — both are idempotent, and skipping it here would
+            # change behaviour for configured repos, which this block must not.
+            run_apply(cfg, incus, gcfg, assume_yes=True, no_restart=True)
+
     # Register this repo with the refresh timer and resolve the pool
     # *before* creating the container so that the new container's
     # first /etc/hosts pin (done inside new_container) sees fresh IPs.
