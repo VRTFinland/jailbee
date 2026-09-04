@@ -22,6 +22,7 @@ import io
 import os
 import stat
 import tempfile
+import textwrap
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -155,10 +156,10 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
 
 
 DOCUMENTED_HEADER = (
-    "# Written by `jb config edit`. Comments in this file are generated from\n"
-    "# jailbee's own schema and are replaced on every save — put notes you\n"
-    "# want to keep elsewhere. Every key is optional; delete one to fall back\n"
-    "# to the built-in default.\n"
+    "# Written by `jailbee config init --global`. Comments in this file are\n"
+    "# generated from jailbee's own schema and are replaced if you regenerate\n"
+    "# it — put notes you want to keep elsewhere. Every key is optional;\n"
+    "# delete one to fall back to the built-in default.\n"
 )
 
 
@@ -172,7 +173,13 @@ def render_documented(
 
     `values` must be the **raw YAML mapping** — plain scalars, lists and
     dicts, as `_read_yaml_or_empty` returns them. Never pass
-    `model_dump()` output: see `_reject_secrets`.
+    `model_dump()` output, in either mode: python-mode hands back live
+    `SecretStr` objects, which `_reject_secrets` catches; json-mode hands
+    back the masked string `"**********"` instead, which is indistinguishable
+    from any other string and passes the guard uncaught. Either flavour
+    reaching disk would overwrite a real secret with a placeholder on the
+    next save — the guard only covers the first case, so the raw-mapping
+    contract is load-bearing, not a suggestion.
 
     Only the keys present in `values` are written — an unset key stays
     absent so it keeps following jailbee's own default rather than
@@ -193,14 +200,22 @@ def render_documented(
 
 
 def _reject_secrets(value: object) -> None:
-    """Raise if a SecretStr is anywhere in the tree.
+    """Raise if a raw `SecretStr` object is anywhere in the tree.
 
     `github.api_tokens` is `dict[str, SecretStr]`. A caller passing
-    `model_dump()` output would hand us SecretStr objects, and
-    `model_dump(mode="json")` would hand us the literal `**********`.
-    Rendering either would overwrite the user's real tokens with a
-    placeholder on the next save — silent credential loss. This function
-    is the guard; callers pass raw YAML values.
+    `model_dump()` output (python mode) would hand us live SecretStr
+    objects, and rendering one would overwrite the user's real token with
+    a placeholder on the next save — silent credential loss. This function
+    catches that case.
+
+    It does NOT catch `model_dump(mode="json")` output: pydantic renders a
+    SecretStr there as the plain string `"**********"`, which is
+    indistinguishable from any other string and passes this isinstance
+    check uncaught. There is no reliable way to detect that case here — a
+    legitimate config value could coincidentally *be* the string
+    `"**********"` — so it isn't attempted. Callers must pass the raw YAML
+    mapping, never either flavour of `model_dump()` output; see
+    `render_documented`'s docstring.
     """
     from pydantic import SecretStr
 
@@ -216,6 +231,30 @@ def _reject_secrets(value: object) -> None:
     elif isinstance(value, list):
         for item in value:
             _reject_secrets(item)
+
+
+_COMMENT_WIDTH = 100
+"""Target column width for generated comment lines, matching `_yaml().width`.
+
+A field's raw `description=` is one long sentence with no line breaks, so
+without wrapping it becomes a single comment line as wide as the prose —
+some run past 300 columns. `_yaml().width` only governs YAML scalar
+folding, not comment text, so wrapping is done by hand before handing the
+text to ruamel.
+"""
+
+
+def _wrap_description(description: str, *, indent: int) -> str:
+    """Wrap `description` to `_COMMENT_WIDTH`, accounting for `indent` and
+    the `# ` prefix ruamel adds to each line.
+
+    Returns a `\\n`-joined string: `yaml_set_comment_before_after_key`
+    splits its `before` argument on `\\n` and prefixes each resulting line
+    with `#` on its own, so a multi-line `before` becomes one `#` comment
+    line per line here, not a folded block.
+    """
+    width = max(20, _COMMENT_WIDTH - indent - len("# "))
+    return "\n".join(textwrap.wrap(description, width=width))
 
 
 def _documented_map(
@@ -236,7 +275,10 @@ def _documented_map(
         if description:
             # `indent` aligns the comment with its key's column; without it
             # ruamel emits a nested key's comment at column 0.
-            out.yaml_set_comment_before_after_key(key, before=description, indent=2 * depth)
+            indent = 2 * depth
+            out.yaml_set_comment_before_after_key(
+                key, before=_wrap_description(description, indent=indent), indent=indent
+            )
     return out
 
 

@@ -148,15 +148,20 @@ def test_render_documented_is_stable():
 
 
 def test_render_documented_refuses_a_secretstr_value():
-    """A SecretStr must never reach the renderer.
+    """A raw SecretStr reaching the renderer must fail loudly.
 
     `global.yaml` carries `github.api_tokens: dict[str, SecretStr]`. A
-    caller that passed `model_dump()` output instead of the raw YAML
-    mapping would hand this function SecretStr objects, and
-    `model_dump(mode="json")` would hand it the literal string
-    `**********`. Either way a regenerating save would overwrite the
-    user's real tokens with a masked placeholder — silent, irreversible
-    credential loss. Fail loudly instead.
+    caller that passed `model_dump()` output (python mode) instead of the
+    raw YAML mapping would hand this function live SecretStr objects, and
+    rendering one would overwrite the user's real tokens with a masked
+    placeholder on the next save — silent, irreversible credential loss.
+
+    This guard only catches that python-mode case: `model_dump(mode=
+    "json")` output would hand this function the plain string
+    `"**********"` instead, which is indistinguishable from any other
+    string and is NOT caught here. See `_reject_secrets`'s docstring —
+    callers must pass the raw YAML mapping, not either flavour of
+    `model_dump()` output.
     """
     import pytest
     from pydantic import SecretStr
@@ -178,3 +183,36 @@ def test_render_documented_indents_nested_comments():
 
     text = render_documented({"inner": {"enabled": True}}, Outer, header="")
     assert "  # Turn the widget on." in text
+
+
+def test_render_documented_wraps_a_long_description():
+    """A long `description=` must not become one unwrapped comment line.
+
+    Real schema descriptions run past 300 characters; `_yaml().width` only
+    folds YAML scalars, not comment text, so `_documented_map` has to wrap
+    comment lines itself.
+    """
+
+    class WithLongDescription(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        enabled: bool = Field(
+            default=False,
+            description=(
+                "This description is deliberately long enough that, rendered as a single "
+                "unwrapped comment line with no wrapping applied at all, it would run well "
+                "past a hundred columns and make the generated file unpleasant to read in "
+                "a normal terminal or editor window."
+            ),
+        )
+
+    text = render_documented({"enabled": True}, WithLongDescription, header="")
+    for line in text.splitlines():
+        assert len(line) <= 100, f"unwrapped comment line ({len(line)} cols): {line!r}"
+    # The wrapped text must still carry every word of the description, just
+    # split across multiple `#` lines instead of a single long one.
+    comment_words = " ".join(
+        stripped.lstrip("#").strip()
+        for stripped in (line.strip() for line in text.splitlines())
+        if stripped.startswith("#")
+    )
+    assert comment_words == WithLongDescription.model_fields["enabled"].description

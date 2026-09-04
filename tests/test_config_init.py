@@ -565,20 +565,34 @@ def test_generated_global_substitutes_the_host_uid_and_gid():
     assert data["container_user"]["gid"] == os.getgid()
 
 
+def _flattened_comment_text(text: str) -> str:
+    """Join every `#` comment line in `text` into one whitespace-normalized
+    string, undoing `config_writer`'s wrapping of long descriptions across
+    several `#` lines so a description can still be found as a contiguous
+    substring regardless of where the wrapper broke it."""
+    words: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            words.extend(stripped.lstrip("#").split())
+    return " ".join(words)
+
+
 def test_generated_global_documents_every_key_it_writes():
     """Each written key carries its schema description as a comment."""
     from jailbee.config import Config
 
     text = render_global_template()
+    flattened = _flattened_comment_text(text)
     for key in yaml.safe_load(text):
         info = Config.model_fields.get(key)
         if info is not None and info.description:
-            first_line = info.description.strip().splitlines()[0]
-            assert first_line in text, f"{key} written without its description"
+            first_line = " ".join(info.description.strip().splitlines()[0].split())
+            assert first_line in flattened, f"{key} written without its description"
 
 
-def test_generated_global_names_the_editor_in_its_header():
-    assert "jb config edit" in render_global_template()
+def test_generated_global_names_the_generating_command_in_its_header():
+    assert "jailbee config init --global" in render_global_template()
 
 
 # `test_global_template_egress_comment_generalises_beyond_claude` pinned
@@ -604,5 +618,5 @@ def test_generated_global_documents_the_host_level_claude_credentials_block():
 
     info = GlobalConfig.model_fields["claude_credentials"]
     assert info.description
-    first_line = info.description.strip().splitlines()[0]
-    assert first_line in text
+    first_line = " ".join(info.description.strip().splitlines()[0].split())
+    assert first_line in _flattened_comment_text(text)
