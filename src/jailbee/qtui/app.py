@@ -321,9 +321,7 @@ class AppController(QObject):
                     # guard degrades to "no risk shown", same as an unprobed
                     # container — but the failure should still be discoverable
                     # rather than vanishing silently.
-                    log.debug(
-                        "destroy guard: could not assess %s", target.repo_root, exc_info=True
-                    )
+                    log.debug("destroy guard: could not assess %s", target.repo_root, exc_info=True)
                     summary = None
                 if summary is not None:
                     detail = f"\n\n⚠  {summary.line}\nDestroying loses this."

@@ -699,9 +699,7 @@ def test_menu_actions_orphan_disabled():
 
 
 def test_menu_actions_orphan_disabled_regardless_of_flags():
-    assert (
-        dashboard.menu_actions(_ctx(has_repo=False, ide_enabled=True, chrome_enabled=True)) == []
-    )
+    assert dashboard.menu_actions(_ctx(has_repo=False, ide_enabled=True, chrome_enabled=True)) == []
 
 
 def test_menu_actions_unknown_state_only_destroy():
@@ -892,9 +890,7 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
 
 def test_menu_actions_orphan_ignores_every_workflow_field():
     assert (
-        dashboard.menu_actions(
-            _ctx(has_repo=False, has_job=True, pr_number=7, git_status=_dirty())
-        )
+        dashboard.menu_actions(_ctx(has_repo=False, has_job=True, pr_number=7, git_status=_dirty()))
         == []
     )
 
@@ -1067,9 +1063,7 @@ def test_dispatch_action_omits_the_config_flag_for_a_scratch_repo(mocker, tmp_pa
 
     dashboard._dispatch_action(dashboard.RepoTarget(tmp_path, None), "net loose", "alpha-x")
 
-    run.assert_called_once_with(
-        ["jailbee", "net", "loose", "alpha-x"], check=False, cwd=tmp_path
-    )
+    run.assert_called_once_with(["jailbee", "net", "loose", "alpha-x"], check=False, cwd=tmp_path)
 
 
 def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_path):

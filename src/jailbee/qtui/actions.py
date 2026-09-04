@@ -133,9 +133,7 @@ def build_action(
         argv.append("--force")
     if extra_flags:
         argv += extra_flags
-    return ActionCommand(
-        argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd()
-    )
+    return ActionCommand(argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd())
 
 
 def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list[str]:
