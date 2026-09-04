@@ -21,6 +21,7 @@ from jailbee.global_config import (
 from jailbee.paths import find_repo_config
 from jailbee.tui import (
     confirm_destroy_risk,
+    default_confirm,
     error,
     error_plain,
     info,
@@ -1272,6 +1273,30 @@ def new_cmd(
             assume_yes=yes,
             claude_group=resolved_claude_group,
         )
+
+    # The shared scratch base image is built once per host, not per directory.
+    # Checked before anything is created, and before the implicit `apply`
+    # below, so declining costs nothing. `--from-base` names an image
+    # explicitly and skips this entirely.
+    if cfg.is_synthetic() and from_base is None and not incus.image_exists(cfg.golden.alias):
+        from jailbee.golden import build_golden_image
+
+        if not _is_tty():
+            error(
+                f"The shared scratch base image '{cfg.golden.alias}' does not "
+                f"exist yet.\nBuild it once with:  jb base build"
+            )
+            raise typer.Exit(1)
+        info(
+            f"No scratch base image yet. Building '{cfg.golden.alias}' takes "
+            f"several minutes and downloads packages; it is a one-time "
+            f"operation shared by every scratch directory on this host."
+        )
+        if not default_confirm("Build it now?"):
+            error("Aborted. Build it later with:  jb base build")
+            raise typer.Exit(1)
+        build_golden_image(cfg, incus)
+        _record_upgrade_action(cfg, "base_build")
 
     # Register this repo with the refresh timer and resolve the pool
     # *before* creating the container so that the new container's

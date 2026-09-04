@@ -8814,3 +8814,107 @@ def test_new_mount_in_a_non_git_scratch_dir_proceeds(tmp_path, monkeypatch, mock
 
     assert result.exit_code == 0, result.output
     assert new_container.call_count == 1
+
+
+def test_new_in_a_git_scratch_dir_without_mount_proceeds(tmp_path, monkeypatch, mocker):
+    """Task 11's non-git guard exempts a scratch directory that IS a git
+    repo, but nothing yet drove that exemption end-to-end through `new_cmd`
+    (it was only proved by construction). A git scratch directory with no
+    `--mount` must not trip the guard and must reach `new_container`."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the shared scratch base image
+# ---------------------------------------------------------------------------
+
+
+def test_new_builds_the_scratch_base_image_after_confirming(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert build.call_count == 1
+    assert new_container.call_count == 1
+
+
+def test_new_aborts_when_the_image_build_is_declined(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    assert build.call_count == 0
+    assert new_container.call_count == 0
+
+
+def test_new_without_a_tty_names_the_build_command(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    assert "jb base build" in result.output
+    assert build.call_count == 0
+    assert new_container.call_count == 0
+
+
+def test_new_skips_the_image_check_for_a_configured_repo(tmp_path, mocker):
+    """The check must not fire for repos that manage their own base image.
+
+    `image_exists` is forced to False here (rather than left at
+    `_setup_new_cmd_env`'s unconfigured Mock default, which is truthy) so
+    that this test would actually fail if the `cfg.is_synthetic()` gate were
+    missing — otherwise a missing gate would still pass, because the
+    unconfigured mock's `image_exists()` already returns something truthy.
+    """
+    from typer.testing import CliRunner
+
+    import jailbee.incus as incus_mod
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+    incus_mod.Incus.return_value.image_exists.return_value = False
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert build.call_count == 0
+    assert new_container.call_count == 1
