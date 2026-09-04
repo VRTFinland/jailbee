@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from jailbee.dashboard import (
+    RepoTarget,
     all_column_names,
     default_columns,
     dynamic_column_names,
@@ -341,12 +342,14 @@ class MainWindow(QMainWindow):
         return None
 
     def _sole_configured_prefix(self) -> str | None:
-        """The one configured group's prefix, if there's exactly one.
+        """The one actionable group's prefix, if there's exactly one.
 
         The single-repo fallback used by ``_selected_prefix`` when nothing is
-        selected in the active view.
+        selected in the active view. "Actionable" is having a repo root, not
+        having a config file: a repo whose config is synthesized is one a
+        container can be created in (see :meth:`RepoTarget.of`).
         """
-        configured = [g for g in self._groups if g.config_path is not None]
+        configured = [g for g in self._groups if RepoTarget.of(g) is not None]
         return configured[0].prefix if len(configured) == 1 else None
 
     def set_groups(

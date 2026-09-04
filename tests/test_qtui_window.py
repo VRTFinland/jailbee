@@ -75,7 +75,7 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
         for label, _ in menu_actions(
             MenuContext(
                 state="Running",
-                has_config=True,
+                has_repo=True,
                 ide_enabled=True,
                 chrome_enabled=False,
                 current_network="strict",
@@ -481,6 +481,26 @@ def test_selected_prefix_falls_back_to_the_sole_configured_group(qtbot):
     win.set_groups(_groups(), now=datetime.now().astimezone())
     win.tree.setCurrentItem(None)
     assert win._selected_prefix() == "p"
+
+
+def test_selected_prefix_falls_back_to_a_sole_scratch_group(qtbot):
+    """A repo with no config file is still addressable — it is a real root the
+    child can run in — so the single-repo fallback must resolve to it."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    win.set_groups([RepoGroup("s", "/scratch", None, [])], now=datetime.now().astimezone())
+    win.tree.setCurrentItem(None)
+    assert win._selected_prefix() == "s"
+
+
+def test_selected_prefix_ignores_a_sole_orphan_group(qtbot):
+    """An orphan has no repo root at all, so there is nothing to create
+    against and the fallback must stay silent."""
+    win = MainWindow(git_enabled=True, interval=3.0, layout="table")
+    qtbot.addWidget(win)
+    win.set_groups([RepoGroup("gamma", None, None, [])], now=datetime.now().astimezone())
+    win.tree.setCurrentItem(None)
+    assert win._selected_prefix() is None
 
 
 def test_selected_prefix_cards_mode_resolves_the_selected_card(qtbot):

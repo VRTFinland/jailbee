@@ -25,6 +25,15 @@ def test_nothing_to_show_message_blames_no_single_cause():
     assert "scratch" not in dashboard.NOTHING_TO_SHOW
 
 
+def test_nothing_to_show_message_still_offers_a_way_out():
+    """Naming no cause must not also mean naming no remedy: the old wording
+    carried the next step by implication, and dropping it left the user with a
+    dead end. The remedy stays cause-neutral — both branches out of it work
+    whichever of the causes fired."""
+    assert "jailbee config init" in dashboard.NOTHING_TO_SHOW
+    assert "registered repo" in dashboard.NOTHING_TO_SHOW
+
+
 def test_collect_repo_roots_puts_cwd_first_and_dedupes(mocker):
     a = Path("/repos/a")
     b = Path("/repos/b")
@@ -126,7 +135,7 @@ def _ctx(**kw: object) -> dashboard.MenuContext:
     """
     fields: dict[str, object] = {
         "state": "Running",
-        "has_config": True,
+        "has_repo": True,
         "current_network": "strict",
     }
     fields.update(kw)
@@ -426,6 +435,24 @@ def test_view_only_note_explains_a_config_less_group():
     assert "gamma" in note and "view-only" in note
 
 
+def test_view_only_note_is_none_for_a_scratch_group():
+    """A repo with no config file is actionable — its config was synthesized,
+    not missing — so there is nothing to explain and nothing to disable."""
+    groups = [dashboard.RepoGroup("gamma", "/gamma", None, [_ci("gamma-x", "gamma")])]
+
+    assert dashboard.view_only_note(groups, "gamma-x") is None
+
+
+def test_actions_for_container_offers_actions_to_a_scratch_group():
+    """The action menu is gated on the repo being addressable, not on a config
+    file existing: a scratch repo gets the same menu as a configured one."""
+    groups = [dashboard.RepoGroup("gamma", "/gamma", None, [_ci("gamma-x", "gamma")])]
+
+    verbs = [verb for _, verb in dashboard.actions_for_container(groups, "gamma-x")]
+
+    assert "tmux" in verbs and "destroy" in verbs
+
+
 def test_view_only_note_is_none_when_the_container_has_actions():
     groups = [
         dashboard.RepoGroup(
@@ -668,12 +695,12 @@ def test_menu_actions_stopped():
 
 
 def test_menu_actions_orphan_disabled():
-    assert dashboard.menu_actions(_ctx(has_config=False)) == []
+    assert dashboard.menu_actions(_ctx(has_repo=False)) == []
 
 
 def test_menu_actions_orphan_disabled_regardless_of_flags():
     assert (
-        dashboard.menu_actions(_ctx(has_config=False, ide_enabled=True, chrome_enabled=True)) == []
+        dashboard.menu_actions(_ctx(has_repo=False, ide_enabled=True, chrome_enabled=True)) == []
     )
 
 
@@ -705,7 +732,7 @@ def test_menu_actions_stopped_has_no_network_entries():
 
 
 def test_menu_actions_orphan_disabled_even_with_network():
-    assert dashboard.menu_actions(_ctx(has_config=False, current_network="strict")) == []
+    assert dashboard.menu_actions(_ctx(has_repo=False, current_network="strict")) == []
 
 
 def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
@@ -744,7 +771,7 @@ def test_menu_actions_omits_open_pr_when_no_pr():
 
 
 def test_menu_actions_orphan_stays_empty_even_with_pr():
-    assert dashboard.menu_actions(_ctx(has_config=False, pr_number=123)) == []
+    assert dashboard.menu_actions(_ctx(has_repo=False, pr_number=123)) == []
 
 
 def test_menu_actions_running_offers_the_workflow_verbs():
@@ -866,7 +893,7 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
 def test_menu_actions_orphan_ignores_every_workflow_field():
     assert (
         dashboard.menu_actions(
-            _ctx(has_config=False, has_job=True, pr_number=7, git_status=_dirty())
+            _ctx(has_repo=False, has_job=True, pr_number=7, git_status=_dirty())
         )
         == []
     )
@@ -930,15 +957,63 @@ def test_menu_verb_returns_the_highlighted_verb():
     assert dashboard.menu_verb(dashboard.MenuState("alpha-x", [], index=0)) is None
 
 
+# --- RepoTarget: how a spawned `jailbee` child is pointed at one repo --------
+
+
+def _dispatch_target(tmp_path, name="config.yaml"):
+    """A configured repo rooted at ``tmp_path``, as the dispatch paths see it."""
+    return dashboard.RepoTarget(tmp_path, tmp_path / name)
+
+
+def test_repo_target_uses_config_flag_when_there_is_a_file(tmp_path):
+    t = dashboard.RepoTarget(repo_root=tmp_path, config_path=tmp_path / ".jailbee" / "config.yaml")
+
+    assert t.flags() == ["--config", str(tmp_path / ".jailbee" / "config.yaml")]
+    assert t.cwd() == tmp_path
+
+
+def test_repo_target_falls_back_to_cwd_for_a_scratch_repo(tmp_path):
+    """There is no path to point `--config` at; the child resolves its config
+    from the directory it runs in."""
+    t = dashboard.RepoTarget(repo_root=tmp_path, config_path=None)
+
+    assert t.flags() == []
+    assert t.cwd() == tmp_path
+
+
+def test_repo_target_of_reads_the_groups_root_and_config(tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), tmp_path / "c.yaml", [])
+
+    assert dashboard.RepoTarget.of(group) == _dispatch_target(tmp_path, "c.yaml")
+
+
+def test_repo_target_of_accepts_a_scratch_group(tmp_path):
+    """A repo with no config file is still a real repo with a real root, so it
+    is addressable — that is the whole point of the cwd fallback."""
+    target = dashboard.RepoTarget.of(dashboard.RepoGroup("alpha", str(tmp_path), None, []))
+
+    assert target is not None
+    assert target.flags() == []
+    assert target.cwd() == tmp_path
+
+
+def test_repo_target_of_is_none_for_an_orphan_group():
+    """An orphan group has no repo root, so there is nothing to address at
+    all: neither a `--config` path nor a directory to run the child in."""
+    assert dashboard.RepoTarget.of(dashboard.RepoGroup("gamma", None, None, [])) is None
+
+
 def test_dispatch_action_runs_jailbee_with_the_repos_config(mocker, tmp_path):
     config_path = tmp_path / "config.yaml"
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 0
 
-    rc = dashboard._dispatch_action(config_path, "net loose", "alpha-x")
+    rc = dashboard._dispatch_action(_dispatch_target(tmp_path), "net loose", "alpha-x")
 
     run.assert_called_once_with(
-        ["jailbee", "net", "loose", "alpha-x", "--config", str(config_path)], check=False
+        ["jailbee", "net", "loose", "alpha-x", "--config", str(config_path)],
+        check=False,
+        cwd=tmp_path,
     )
     assert rc == 0
 
@@ -957,10 +1032,11 @@ def test_dispatch_action_forces_the_attach_verbs(mocker, tmp_path):
 
     for verb in ("tmux", "shell", "ide", "chrome"):
         run.reset_mock()
-        dashboard._dispatch_action(config_path, verb, "alpha-x")
+        dashboard._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
         run.assert_called_once_with(
             ["jailbee", verb, "alpha-x", "--config", str(config_path), "--force"],
             check=False,
+            cwd=tmp_path,
         )
 
 
@@ -970,7 +1046,7 @@ def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 0
 
-    dashboard._dispatch_action(tmp_path / "config.yaml", "restart", "alpha-x")
+    dashboard._dispatch_action(_dispatch_target(tmp_path), "restart", "alpha-x")
 
     assert "--force" not in run.call_args[0][0]
 
@@ -979,7 +1055,36 @@ def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 2
 
-    assert dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x") == 2
+    assert dashboard._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x") == 2
+
+
+def test_dispatch_action_omits_the_config_flag_for_a_scratch_repo(mocker, tmp_path):
+    """A scratch repo has no path to point `--config` at. It is addressed by
+    running the child in the repo root instead, so the cwd is the only thing
+    that says which repo this is — it must actually be set."""
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    dashboard._dispatch_action(dashboard.RepoTarget(tmp_path, None), "net loose", "alpha-x")
+
+    run.assert_called_once_with(
+        ["jailbee", "net", "loose", "alpha-x"], check=False, cwd=tmp_path
+    )
+
+
+def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_path):
+    """The pager path spawns the command itself, so it needs the cwd too —
+    otherwise `jailbee git diff` in a scratch repo resolves the dashboard's own
+    directory instead of the row's."""
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.return_value.wait.return_value = 0
+
+    dashboard._dispatch_action(dashboard.RepoTarget(tmp_path, None), "git diff", "alpha-x")
+
+    producer = popen.call_args_list[0]
+    assert producer.args[0] == ["jailbee", "git", "diff", "alpha-x", "--color"]
+    assert producer.kwargs["cwd"] == tmp_path
 
 
 def test_dispatch_style_classifies_every_menu_verb():
@@ -1054,11 +1159,11 @@ def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
     popen.return_value.wait.return_value = 0
     run = mocker.patch.object(dashboard.subprocess, "run")
 
-    rc = dashboard._dispatch_action(config_path, "git diff", "alpha-x")
+    rc = dashboard._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
     assert rc == 0
-    producer_argv, viewer_argv = (c.args[0] for c in popen.call_args_list)
-    assert producer_argv == [
+    producer, viewer = popen.call_args_list
+    assert producer.args[0] == [
         "jailbee",
         "git",
         "diff",
@@ -1067,7 +1172,11 @@ def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
         str(config_path),
         "--color",
     ]
-    assert viewer_argv == ["less", "-R"]
+    assert producer.kwargs["cwd"] == tmp_path
+    assert viewer.args[0] == ["less", "-R"]
+    # The pager is a plain viewer on a pipe: it has no repo of its own, so it
+    # must not be pinned to one.
+    assert "cwd" not in viewer.kwargs
     run.assert_not_called()  # the paged path replaces the plain run entirely
 
 
@@ -1076,7 +1185,7 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
     run.return_value.returncode = 0
     wait = mocker.patch.object(dashboard, "_wait_for_return")
 
-    dashboard._dispatch_action(tmp_path / "config.yaml", "git push", "alpha-x")
+    dashboard._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x")
 
     wait.assert_called_once_with()
 
@@ -1088,7 +1197,7 @@ def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_pa
     run.return_value.returncode = 0
     wait = mocker.patch.object(dashboard, "_wait_for_return")
 
-    dashboard._dispatch_action(tmp_path / "config.yaml", "tmux", "alpha-x")
+    dashboard._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x")
 
     wait.assert_not_called()
 
@@ -1099,7 +1208,7 @@ def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tm
     run.return_value.returncode = 3
     wait = mocker.patch.object(dashboard, "_wait_for_return")
 
-    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+    rc = dashboard._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
     assert rc == 3
     wait.assert_called_once_with()
@@ -1117,7 +1226,7 @@ def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp
     run.return_value.returncode = 0
     wait = mocker.patch.object(dashboard, "_wait_for_return")
 
-    rc = dashboard._dispatch_action(tmp_path / "config.yaml", "git diff", "alpha-x")
+    rc = dashboard._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
     assert rc == 0
     # Nothing will ever read the pipe, so the first process must not be left
@@ -2003,6 +2112,23 @@ def test_new_container_target_is_none_for_an_orphan_group(tmp_path):
     assert dashboard.new_container_target(groups, dashboard.Row("repo", "gamma")) is None
 
 
+def test_new_container_target_accepts_a_scratch_group():
+    """A repo with no config file has a root to create in — `jailbee new` run
+    there synthesizes the same config the dashboard displayed."""
+    groups = [dashboard.RepoGroup("delta", "/repos/delta", None, [_ci("delta-x", "delta")])]
+
+    assert dashboard.new_container_target(groups, dashboard.Row("repo", "delta")) is groups[0]
+    assert (
+        dashboard.new_container_target(groups, dashboard.Row("container", "delta-x")) is groups[0]
+    )
+
+
+def test_new_container_reject_note_for_prefix_is_none_for_a_scratch_group():
+    groups = [dashboard.RepoGroup("delta", "/repos/delta", None, [_ci("delta-x", "delta")])]
+
+    assert dashboard.new_container_reject_note_for_prefix(groups, "delta") is None
+
+
 def test_new_container_reject_note_is_none_when_creation_is_possible(tmp_path):
     groups = _create_groups(tmp_path)
     assert dashboard.new_container_reject_note(groups, dashboard.Row("repo", "alpha")) is None
@@ -2084,7 +2210,8 @@ def test_new_container_argv_passes_the_base_positionally(tmp_path):
     """`--from-base` is the golden-image alias, not a git base. The base
     branch is `jailbee new`'s second positional or it is nothing."""
     config_path = tmp_path / ".jailbee" / "config.yaml"
-    assert dashboard.new_container_argv(config_path, "dashboard-fixes", "config-improvements") == [
+    target = dashboard.RepoTarget(tmp_path, config_path)
+    assert dashboard.new_container_argv(target, "dashboard-fixes", "config-improvements") == [
         "jailbee",
         "new",
         "dashboard-fixes",
@@ -2094,9 +2221,16 @@ def test_new_container_argv_passes_the_base_positionally(tmp_path):
     ]
 
 
+def test_new_container_argv_omits_config_for_a_scratch_repo(tmp_path):
+    """No file to point `--config` at — the caller runs it in the repo root."""
+    argv = dashboard.new_container_argv(dashboard.RepoTarget(tmp_path, None), "feat/x", "main")
+
+    assert argv == ["jailbee", "new", "feat/x", "main"]
+
+
 def test_new_container_argv_carries_no_yes_flag(tmp_path):
     """--yes would accept a network-widening branch autostart config unseen."""
-    argv = dashboard.new_container_argv(tmp_path / "c.yaml", "b", "base")
+    argv = dashboard.new_container_argv(_dispatch_target(tmp_path, "c.yaml"), "b", "base")
     assert "--yes" not in argv and "-y" not in argv
 
 

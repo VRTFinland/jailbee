@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from jailbee.dashboard import (
     NOTHING_TO_SHOW,
+    RepoTarget,
     collect_repo_roots,
     new_container_argv,
     new_container_base_default,
@@ -289,14 +290,15 @@ class AppController(QObject):
         one from `_warn_before_destroy` is bypassed here by construction.
         "No" (decline) is the default button.
         """
-        from jailbee.config import load_config
+        from jailbee.config import load_repo_config
         from jailbee.destroy_guard import (
             assess,
             status_is_unknown,
             unknown_status_warning,
         )
 
-        if container is None or group.config_path is None:
+        target = RepoTarget.of(group)
+        if container is None or target is None:
             return False
 
         detail = ""
@@ -309,14 +311,18 @@ class AppController(QObject):
                 detail = f"\n\n{unknown_status_warning([container.display_name])}."
             elif container.git_status is not None:
                 try:
-                    summary = assess(load_config(group.config_path), container)
+                    # From the repo root, not a config path: a repo with no
+                    # config file still has a config — the synthesized one the
+                    # dashboard is already displaying — and the guard has to
+                    # see the same one.
+                    summary = assess(load_repo_config(target.repo_root), container)
                 except Exception:
                     # An unreadable repo config must not block the GUI — the
                     # guard degrades to "no risk shown", same as an unprobed
                     # container — but the failure should still be discoverable
                     # rather than vanishing silently.
                     log.debug(
-                        "destroy guard: could not assess %s", group.config_path, exc_info=True
+                        "destroy guard: could not assess %s", target.repo_root, exc_info=True
                     )
                     summary = None
                 if summary is not None:
@@ -390,17 +396,20 @@ class AppController(QObject):
     @Slot(str, str)
     def on_action(self, verb: str, name: str) -> None:
         group = _group_for(self._latest, name)
-        if group is None or group.config_path is None:
+        if group is None:
             return
+        target = RepoTarget.of(group)
+        if target is None:
+            return  # an orphan group: no repo root to address a child at
         container = next((c for c in group.containers if c.name == name), None)
         extra = self._collect_answers(verb, name, group, container)
         if extra is None:
             return  # a dialog was cancelled
-        action = build_action(verb, name, group.config_path, extra_flags=extra)
+        action = build_action(verb, name, target, extra_flags=extra)
         if action.confirm and not self._confirm(verb, name, group, container):
             return
         if action.launch == "output":
-            self._open_output(action.argv, f"jailbee {verb} {name}")
+            self._open_output(action.argv, f"jailbee {verb} {name}", action.cwd)
             return
         terminal = detect_terminal(env=_env(), which=shutil.which)
         try:
@@ -409,7 +418,7 @@ class AppController(QObject):
             QMessageBox.warning(self._window, "No terminal", str(exc))
             return
         try:
-            subprocess.Popen(argv, start_new_session=True)
+            subprocess.Popen(argv, start_new_session=True, cwd=action.cwd)
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
@@ -436,10 +445,12 @@ class AppController(QObject):
             QMessageBox.warning(self._window, "No repo selected", note)
             return
         group = next((g for g in self._latest if g.prefix == prefix), None)
-        # `note` being None guarantees a matching group with a loaded config;
+        # `note` being None guarantees a matching group with a repo root;
         # mypy --strict doesn't narrow that through the helper call, so this
         # spells it out again where the type checker can see it.
-        assert group is not None and group.config_path is not None
+        assert group is not None
+        target = RepoTarget.of(group)
+        assert target is not None  # ditto — the note rejects a rootless group
         dialog = NewContainerDialog(
             group.prefix,
             base_default=new_container_base_default(group.repo_root),
@@ -449,9 +460,10 @@ class AppController(QObject):
             return
         answers = dialog.answers()
         action = ActionCommand(
-            argv=new_container_argv(group.config_path, answers.branch, answers.base),
+            argv=new_container_argv(target, answers.branch, answers.base),
             launch="terminal",
             confirm=False,
+            cwd=target.cwd(),
         )
         try:
             argv = resolve_launch(action, detect_terminal(env=_env(), which=shutil.which))
@@ -459,19 +471,22 @@ class AppController(QObject):
             QMessageBox.warning(self._window, "No terminal", str(exc))
             return
         try:
-            subprocess.Popen(argv, start_new_session=True)
+            subprocess.Popen(argv, start_new_session=True, cwd=action.cwd)
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
         self._worker.force()
 
-    def _open_output(self, argv: list[str], title: str) -> None:
+    def _open_output(self, argv: list[str], title: str, cwd: Path) -> None:
         """Show a command's output in its own window.
 
         Non-modal and parented to the main window: the dashboard keeps
         refreshing behind it, and several commands can be watched at once.
+
+        ``cwd`` reaches the dialog's ``QProcess``, not just the detached
+        launches: a repo with no config file is addressed by it alone.
         """
-        dialog = CommandOutputDialog(argv, title, parent=self._window)
+        dialog = CommandOutputDialog(argv, title, cwd, parent=self._window)
         # Never connect a worker method straight to a signal — the refresh
         # worker has no Qt event loop of its own. Route through this slot, the
         # same way on_action does.
