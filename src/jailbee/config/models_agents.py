@@ -21,24 +21,85 @@ _AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
 
 
 class AutostartStep(BaseModel):
-    """A single shell step to run inside a container during autostart.
-
-    `network` swaps the container's network profile for the duration of the
-    step (and restores it afterwards). `mounts` lists `optional_mounts` keys
-    to attach for the step's duration. `background: True` detaches via
-    `setsid` and does not wait for completion.
+    """A single shell step to run inside a container during autostart,
+    listed under `autostart.on_create` or `autostart.on_start`. Steps run
+    in list order — the config editor offers reordering for exactly that
+    reason.
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str
-    run: str
-    network: Literal["strict", "loose"] | None = None
-    mounts: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-    working_dir: str = ""
-    background: bool = False
-    timeout: int | None = None
-    continue_on_error: bool = False
+    name: str = Field(
+        default=...,
+        description=(
+            "Identifier for this step, unique within its trigger (`on_create` or "
+            "`on_start`). Steps run in the order they appear in that list; the editor "
+            "offers reordering because of it."
+        ),
+    )
+    run: str = Field(
+        default=...,
+        description=(
+            "Shell command run as the dev user, `cd`'d into `working_dir` first. Steps run "
+            "in the order they appear in the list; the editor offers reordering because of "
+            "it."
+        ),
+    )
+    network: Literal["strict", "loose"] | None = Field(
+        default=None,
+        description=(
+            "Swaps the container's network profile to this mode for the step's duration, "
+            "restoring it afterward; null keeps the current profile. Steps run in list "
+            "order, so an earlier step's swap can affect a later one — reorder with care."
+        ),
+    )
+    mounts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "`optional_mounts` keys to attach for this step's duration, validated against "
+            "`optional_mounts`. Steps run in list order, so a mount attached by an earlier "
+            "step is available to later ones."
+        ),
+    )
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-step environment, merged on top of `autostart.env` (this step's values win "
+            "on key collisions). Steps run in the order they appear in the list; the editor "
+            "offers reordering because of it."
+        ),
+    )
+    working_dir: str = Field(
+        default="",
+        description=(
+            "Path relative to `repo_dir`; empty (default) means `repo_dir` itself. Steps "
+            "run in the order they appear in the list; the editor offers reordering because "
+            "of it."
+        ),
+    )
+    background: bool = Field(
+        default=False,
+        description=(
+            "When true, detaches via `setsid` and does not wait for completion, so later "
+            "steps in the list start without waiting on it. Steps otherwise run in list "
+            "order; the editor offers reordering because of it."
+        ),
+    )
+    timeout: int | None = Field(
+        default=None,
+        description=(
+            "Per-step timeout in seconds, overriding `autostart.step_timeout`; null "
+            "(default) uses that default. Steps run in the order they appear in the list; "
+            "the editor offers reordering because of it."
+        ),
+    )
+    continue_on_error: bool = Field(
+        default=False,
+        description=(
+            "When true, a non-zero exit from this step warns instead of aborting the "
+            "remaining steps in the list. Steps run in order, so later steps only run if "
+            "this one didn't abort them (or this is true)."
+        ),
+    )
 
     @field_validator("network", mode="before")
     @classmethod
@@ -47,18 +108,18 @@ class AutostartStep(BaseModel):
 
 
 class DockerRegistryMirrorRepoConfig(BaseModel):
-    """Per-repo overrides for the host-global rpardini mirror.
-
-    Currently only ``extra_registries``: a list of upstream registry hostnames
-    that this repo pulls images from but which aren't covered by rpardini's
-    built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io).
-    The strings are hostnames (optionally with ``:port``) — no scheme, no
-    path. Empty by default; ``jailbee new`` / ``jailbee apply`` push the merged list
-    into the mirror's REGISTRIES env on each run.
-    """
+    """Per-repo overrides for the host-global rpardini mirror."""
 
     model_config = ConfigDict(extra="forbid")
-    extra_registries: list[str] = Field(default_factory=list)
+    extra_registries: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Upstream registry hostnames this repo pulls images from that aren't covered by "
+            "rpardini's built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, "
+            "ghcr.io). Bare hostname[:port] only — no scheme, no path. `jailbee new` / "
+            "`jailbee apply` push the merged list into the mirror's REGISTRIES env."
+        ),
+    )
 
     @field_validator("extra_registries")
     @classmethod
@@ -93,10 +154,32 @@ class AgentSharedMount(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    subpath: str
-    path: str
-    type: Literal["dir", "file"] = "dir"
-    seed: str | None = None
+    subpath: str = Field(
+        default=...,
+        description=(
+            "Path segment under `<shared_dir>/` that this mount's host-side source lives "
+            "at; also feeds `device_name()` for the underlying Incus device name."
+        ),
+    )
+    path: str = Field(
+        default=...,
+        description="Container-side target path (absolute or `~`-relative) that `subpath` "
+        "is bind-mounted to.",
+    )
+    type: Literal["dir", "file"] = Field(
+        default="dir",
+        description=(
+            "`dir` (default) bind-mounts a directory; `file` bind-mounts a single file. "
+            "`seed` is only valid when this is `file`."
+        ),
+    )
+    seed: str | None = Field(
+        default=None,
+        description=(
+            "Content written once to `path` if it doesn't already exist, for `type: file` "
+            "mounts only. Must be left unset for `type: dir` — enforced by a validator."
+        ),
+    )
 
     @model_validator(mode="after")
     def _seed_is_file_only(self) -> AgentSharedMount:
@@ -115,17 +198,70 @@ class AgentConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    autostart: bool = False
-    command: str = ""
-    install: str | None = None
-    install_check: str | None = None
-    update: str | None = None
-    auto_update: bool = True
-    install_network: Literal["strict", "loose"] = "strict"
-    shared: list[AgentSharedMount] = Field(default_factory=list)
-    egress_allow: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for this agent: gates its shared mount, the strict-mode egress "
+            "add, install/update at `jailbee new` time, and the `jailbee doctor` shared-dir "
+            "check. Off by default."
+        ),
+    )
+    autostart: bool = Field(
+        default=False,
+        description="Launch `command` in a background autostart tmux window. Requires "
+        "`enabled` to be true.",
+    )
+    command: str = Field(
+        default="",
+        description=(
+            "Command line the autostart window execs; also the default source for "
+            "`install_check`'s probe. Required (non-empty) when `enabled` is true."
+        ),
+    )
+    install: str | None = Field(
+        default=None,
+        description="Shell command run at `jailbee new` time when `install_check` fails, "
+        "i.e. the binary isn't present yet.",
+    )
+    install_check: str | None = Field(
+        default=None,
+        description=(
+            "Probe deciding install vs. update. Defaults to `command -v <first token of "
+            "command>` — see `effective_install_check`."
+        ),
+    )
+    update: str | None = Field(
+        default=None,
+        description="Shell command run at `jailbee new` time when `install_check` succeeds "
+        "and `auto_update` is true.",
+    )
+    auto_update: bool = Field(
+        default=True,
+        description=(
+            "When false, leaves an existing install untouched; a missing install is still "
+            "installed regardless. Defaults to true."
+        ),
+    )
+    install_network: Literal["strict", "loose"] = Field(
+        default="strict",
+        description="Network mode for the install/update step only, independent of the "
+        "container's own default network mode.",
+    )
+    shared: list[AgentSharedMount] = Field(
+        default_factory=list,
+        description="Bind mounts this agent needs to keep its auth/config across "
+        "containers — see `AgentSharedMount`.",
+    )
+    egress_allow: list[str] = Field(
+        default_factory=list,
+        description="Strict-mode egress allowlist entries added while this agent is "
+        "enabled. Same grammar as the top-level `egress_allow`.",
+    )
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description="Environment variables passed to both the install/update step and the "
+        "autostart launch step.",
+    )
 
     def effective_install_check(self) -> str:
         """The command that decides install-vs-update.
@@ -143,77 +279,85 @@ class AgentConfig(BaseModel):
 class ClaudeAgentConfig(AgentConfig):
     """`agents.claude` — the generic fields plus Claude-only integrations.
 
-    `enabled`, `autostart`, `command` and `auto_update` are inherited: their
-    semantics are identical to any other agent's. `enabled` gates the shared
-    `<shared_dir>/claude` cache mount (see `Config.effective_shared_caches`),
-    the `CLAUDE_API_HOSTS` strict-mode egress auto-add, the
-    `<shared_dir>/claude` subdir creation on `jailbee init`, and the
-    claude-subdir presence check in `jailbee doctor`. When enabled, jailbee
-    creates an empty `<shared_dir>/claude` directory as a bind-mount source
-    and seeds `<shared_dir>/claude/.claude.json` with `{}` — the golden image
-    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude Code reads its
-    global config from inside that directory mount, and Claude Code inside
-    the first container runs its onboarding flow from a clean state. No host
-    `~/.claude` / `~/.claude.json` is read.
-
-    - `plugins_enabled`: when true (default), `effective_egress_allow`
-      also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
-      Code's plugin marketplace, skills and SessionStart hooks load in
-      strict-mode containers. Set to false to keep the API reachable
-      while blocking marketplace traffic. Has no effect when `enabled`
-      is false.
-    - `install_jailbee_skills`: when true (default, requires `enabled`), `jailbee new`
-      and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`,
-      `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
-      in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
-      edits. Host-side file copy only — no network. Has no effect when `enabled`
-      is false. The pre-1.0 key name (`install_gie_skills`) is not accepted at
-      all — `_check_retired_keys`/`_RETIRED_KEYS_CLAUDE` raises a `ConfigError`
-      naming this key as the replacement, under both the legacy `claude:` and
-      the `agents.claude` spelling.
-    - `ai_pr_description`: when true (default, requires `enabled`),
-      `jailbee pr` asks the in-container Claude CLI to generate the
-      PR title and body from the branch's commits and diff, falling back to
-      a placeholder if generation fails. Has no effect when `enabled` is
-      false.
-    - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
-      the in-container Claude to propose a convention-following PR head branch
-      name when opening a new PR; has no effect when `enabled` is false.
-    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
-      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
-      jailbee's own prompt as a delimited section that explicitly outranks the
-      generic guidance, so a project can dictate the title and body shape
-      without having to restate the JSON response contract `_parse_pr_text`
-      depends on. Capped at 20 000 characters so a pathological value fails at
-      config load rather than inside the container. Has no effect when
-      `enabled` or `ai_pr_description` is false.
-    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
-      generating the PR text. Defaults to `sonnet`: writing a PR description is
-      a bounded summarisation job, and pinning it means the generation does not
-      compete for the same budget as the coding work that just happened in the
-      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
-      ID; `null` omits the flag entirely so the container's own default model
-      applies. `haiku` is a valid choice but has a smaller context window than
-      the alternatives, so a large cumulative diff may not fit. Has no effect
-      when `enabled` or `ai_pr_description` is false.
-    - `ai_pr_timeout`: seconds `jailbee pr` gives the in-container Claude to
-      produce the PR text before giving up and falling back to a placeholder.
-      Defaults to 600. Generation is an agentic run, not one model call — it
-      reads the log, the cumulative diff, the PR template and the branch's spec
-      across a dozen-plus turns, so cost scales with the repository, not just
-      with the diff. Measured in jailbee's own repo on a 21-file diff: 129s.
-      Raise it for a large tree, or when `claude.pr_prompt` asks for work that
-      takes longer. Has no effect when `enabled` or `ai_pr_description` is
-      false.
+    `enabled` (inherited) does more here than the generic `AgentConfig.enabled`
+    switch: it also gates the shared `<shared_dir>/claude` cache mount (see
+    `Config.effective_shared_caches`), the `CLAUDE_API_HOSTS` strict-mode
+    egress auto-add, the `<shared_dir>/claude` subdir creation on `jailbee
+    init`, and the claude-subdir presence check in `jailbee doctor`. When
+    enabled, jailbee creates an empty `<shared_dir>/claude` directory as a
+    bind-mount source and seeds `<shared_dir>/claude/.claude.json` with `{}`
+    — the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude
+    Code reads its global config from inside that directory mount, and Claude
+    Code inside the first container runs its onboarding flow from a clean
+    state. No host `~/.claude` / `~/.claude.json` is read. `autostart`,
+    `command` and `auto_update` are otherwise identical in meaning to any
+    other agent's.
     """
 
-    plugins_enabled: bool = True
-    install_jailbee_skills: bool = True
-    ai_pr_description: bool = True
-    ai_pr_branch: bool = True
-    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
-    ai_pr_model: str | None = "sonnet"
-    ai_pr_timeout: int = Field(default=600, gt=0)
+    plugins_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true (default), also auto-extends the strict-mode egress allowlist with "
+            "`CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so Claude Code's plugin marketplace, "
+            "skills and SessionStart hooks load. Set to false to keep the API reachable "
+            "while blocking marketplace traffic. Has no effect when `enabled` is false."
+        ),
+    )
+    install_jailbee_skills: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
+            "Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into the shared "
+            "`<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. "
+            "Host-side file copy only, no network. Has no effect when `enabled` is false."
+        ),
+    )
+    ai_pr_description: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee pr` asks the in-container Claude to generate "
+            "the PR title and body from the branch's commits and diff, falling back to a "
+            "placeholder on failure. Has no effect when `enabled` is false."
+        ),
+    )
+    ai_pr_branch: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee pr` asks the in-container Claude to propose a "
+            "convention-following PR head branch name when opening a new PR. Has no effect "
+            "when `enabled` or `ai_pr_description` is false."
+        ),
+    )
+    pr_prompt: str | None = Field(
+        default=None,
+        max_length=_MAX_PR_PROMPT_LEN,
+        description=(
+            "Project-specific PR-writing instructions, typically a YAML block scalar in a "
+            "repo's `.jailbee/config.yaml`. Embedded in jailbee's own prompt as a section "
+            "that outranks the generic guidance, without overriding the JSON response "
+            "contract. Capped at 20 000 characters. Has no effect when `enabled` or "
+            "`ai_pr_description` is false."
+        ),
+    )
+    ai_pr_model: str | None = Field(
+        default="sonnet",
+        description=(
+            "Model passed to `claude --model` when generating PR text. Defaults to "
+            "`sonnet` so description generation doesn't compete with the coding work's own "
+            "budget. Accepts an alias or a full model ID; null inherits the container's "
+            "default model. Has no effect when `enabled` or `ai_pr_description` is false."
+        ),
+    )
+    ai_pr_timeout: int = Field(
+        default=600,
+        gt=0,
+        description=(
+            "Seconds `jailbee pr` gives the in-container Claude to produce PR text before "
+            "falling back to a placeholder. Defaults to 600 — generation is an agentic run "
+            "whose cost scales with the repo, not just the diff. Raise it for a large tree. "
+            "Has no effect when `enabled` or `ai_pr_description` is false."
+        ),
+    )
 
     @field_validator("ai_pr_model")
     @classmethod
@@ -241,28 +385,58 @@ class ClaudeAgentConfig(AgentConfig):
 class GithubConfig(BaseModel):
     """GitHub CLI (gh) integration inside containers.
 
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When false, jailbee skips:
-        * the api.github.com:443 strict-mode egress auto-add,
-        * the /etc/profile.d/jailbee-github.sh autostart write,
-        * the github doctor checks.
-      gh binary itself is always installed in the golden image
-      (parallels claude.enabled vs the ensure-claude.sh runtime step).
-    - `api_tokens`: map from `container_prefix` to a fine-grained PAT.
-      One entry per GitHub resource owner (org or personal account).
-      Value is a SecretStr so accidental repr / config-dump masks it.
-      Permitted only at the global config layer (~/.config/jailbee/global.yaml);
-      see load_config's placement constraint.
+    `api_tokens` may only be set in `~/.config/jailbee/global.yaml` —
+    `load_config` rejects this block in a repo's `.jailbee/config.yaml`
+    outright, since committing a repo file with a token would leak it.
     """
 
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    api_tokens: dict[str, SecretStr] = Field(default_factory=dict)
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch. Off by default; opt in via ~/.config/jailbee/global.yaml. When "
+            "false, jailbee skips the api.github.com strict-mode egress add, the GH_TOKEN "
+            "autostart injection, and the github doctor checks. The gh binary itself is "
+            "always installed in the golden image regardless."
+        ),
+    )
+    api_tokens: dict[str, SecretStr] = Field(
+        default_factory=dict,
+        description=(
+            "Map from `container_prefix` to a fine-grained GitHub PAT, one entry per GitHub "
+            "resource owner (org or personal account). Each value is a secret — masked in "
+            "`repr(cfg)` / config dumps — and having any entry here requires "
+            "`~/.config/jailbee/global.yaml` to be mode 0600; `load_config_from_text` "
+            "hard-fails otherwise."
+        ),
+    )
 
 
 class Autostart(BaseModel):
+    """The top-level autostart block: which shell steps run inside a
+    container, and when.
+    """
+
     model_config = ConfigDict(extra="forbid")
-    on_create: list[AutostartStep] = Field(default_factory=list)
-    on_start: list[AutostartStep] = Field(default_factory=list)
-    step_timeout: int = 600
-    env: dict[str, str] = Field(default_factory=dict)
+    on_create: list[AutostartStep] = Field(
+        default_factory=list,
+        description="Steps run once after `jailbee new` provisions the container.",
+    )
+    on_start: list[AutostartStep] = Field(
+        default_factory=list,
+        description=(
+            "Steps run on every stopped-to-running transition: both `jailbee new` (after "
+            "`on_create`) and `jailbee start`. Put one-shot setup in `on_create` and "
+            "recurring launches in `on_start` — don't duplicate between the two."
+        ),
+    )
+    step_timeout: int = Field(
+        default=600,
+        description="Default per-step timeout in seconds, overridable per step via "
+        "`AutostartStep.timeout`.",
+    )
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description="Global environment merged into every step; a step's own `env` wins "
+        "on key collisions.",
+    )
