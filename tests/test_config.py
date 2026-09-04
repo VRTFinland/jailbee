@@ -4069,3 +4069,49 @@ def test_chrome_pool_entry_matches_the_legacy_layout(tmp_path):
     assert chrome.pool is not None
     assert chrome.pool.allocate == "on-demand"
     assert chrome.pool.warmth_file == "Default/Login Data"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("myrepo", "myrepo"),
+        ("Tutkimus_A", "tutkimus-a"),
+        ("my project", "my-project"),
+        ("2024-data", "2024-data"),
+        ("a__b", "a-b"),
+        ("-foo-", "foo"),
+        ("...", ""),
+        ("???", ""),
+    ],
+)
+def test_slugify_prefix(name, expected) -> None:
+    from jailbee.config import slugify_prefix
+
+    assert slugify_prefix(name) == expected
+
+
+def test_slugify_prefix_result_matches_prefix_re() -> None:
+    """Every non-empty slugify_prefix result must match _PREFIX_RE."""
+    from jailbee.config import slugify_prefix
+    from jailbee.config.models_host import _PREFIX_RE
+
+    test_names = [
+        "myrepo",
+        "Tutkimus_A",
+        "my project",
+        "2024-data",
+        "a__b",
+        "-foo-",
+        "simple-name",
+        "CamelCase",
+        "with spaces",
+        "with.dots",
+        "with-dashes",
+    ]
+
+    for name in test_names:
+        result = slugify_prefix(name)
+        if result:  # Only check non-empty results
+            assert _PREFIX_RE.match(result), (
+                f"slugify_prefix({name!r}) = {result!r} does not match _PREFIX_RE"
+            )

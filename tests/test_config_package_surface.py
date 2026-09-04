@@ -71,6 +71,7 @@ EXPECTED_SURFACE = frozenset(
         "resolve_agents_raw",
         "resolve_kitty_terminfo_path",
         "sanitize_column_blocks",
+        "slugify_prefix",
         "validate_column_blocks",
     }
 )

@@ -55,6 +55,7 @@ from jailbee.config.models_host import (
     PoolSpec,
     SharedCache,
     _default_shared_caches,
+    slugify_prefix,
 )
 from jailbee.config.models_net import (
     GITHUB_API_HOSTS,
@@ -148,5 +149,6 @@ __all__ = [
     "resolve_agents_raw",
     "resolve_kitty_terminfo_path",
     "sanitize_column_blocks",
+    "slugify_prefix",
     "validate_column_blocks",
 ]
