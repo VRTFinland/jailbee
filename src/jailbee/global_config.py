@@ -48,17 +48,38 @@ def _default_registry_data_dir() -> Path:
 
 class DockerRegistryMirror(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    port: int = 3128
-    data_dir: PathExpanded = None  # type: ignore[assignment]
-    image: str = "rpardini/docker-registry-proxy:0.6.5"
+    port: int = Field(
+        default=3128,
+        description="Port the rpardini registry-proxy listens on inside the mirror container.",
+    )
+    data_dir: PathExpanded = Field(
+        default=None,  # type: ignore[assignment]
+        description=(
+            "Host directory bind-mounted into the mirror container for its cache and "
+            "CA storage. Defaults to `<xdg_data_home>/jailbee/registry`, computed "
+            "after init since it depends on `Path.home()`."
+        ),
+    )
+    image: str = Field(
+        default="rpardini/docker-registry-proxy:0.6.5",
+        description=(
+            "OCI image tag the mirror container runs. Pinned to a specific tag rather "
+            "than `latest`, since an upgrade should be deliberate."
+        ),
+    )
     # bool-first ordering follows the `Stacks.java: bool | str` idiom for
     # three-valued keys in this codebase; pydantic binds YAML `true`/`false`
     # to bool either way here, since `Literal["auto"]` cannot accept a bool.
-    # `auto` (the default) defers to the repo — see `docker_daemon.mirror_wanted`
-    # for the signals. An explicit `true` forces the mirror on for every repo
-    # on the host, which is what releases up to and including 1.1.0 did
-    # unconditionally.
-    enabled: bool | Literal["auto"] = "auto"
+    enabled: bool | Literal["auto"] = Field(
+        default="auto",
+        description=(
+            "Whether the mirror is wired into containers' egress and `/etc/hosts`. "
+            "`auto` (default) turns it on only for repos that show a signal they need "
+            "Docker — see `docker_daemon.mirror_wanted` for the exact signals. `true` "
+            "forces it on for every repo on the host; `false` turns off all "
+            "mirror-related work regardless of what any repo asks for."
+        ),
+    )
 
     def model_post_init(self, __context: object) -> None:
         # Default is computed (uses Path.home()), so we set it post-init.
@@ -72,16 +93,47 @@ class GlobalConfig(BaseModel):
     # per GlobalConfig instance, picking up current $XDG_DATA_HOME each time.
     docker_registry_mirror: DockerRegistryMirror = Field(
         default_factory=DockerRegistryMirror,
+        description=(
+            "Host-global overrides for the rpardini Docker-registry-proxy mirror "
+            "shared by every repo on this host — whether it's wired in, which "
+            "port/image it runs, and where its cache lives. Host-level only: a repo's "
+            "`.jailbee/config.yaml` can only add `extra_registries`, not touch this "
+            "block."
+        ),
     )
     loose_auto_revert: LooseAutoRevert = Field(
         default_factory=LooseAutoRevert,
+        description=(
+            "Host-wide default for auto-reverting `jailbee net loose` back to the "
+            "previous network mode after a TTL. A repo's own `loose_auto_revert` "
+            "block in `.jailbee/config.yaml` overrides this field-by-field."
+        ),
     )
-    ls: ColumnConfig = Field(default_factory=ColumnConfig)
+    ls: ColumnConfig = Field(
+        default_factory=ColumnConfig,
+        description=(
+            "Host-wide default set of columns `jailbee ls` shows. A repo's own `ls` "
+            "block in `.jailbee/config.yaml` overrides this field-by-field — naming "
+            "`fields` there replaces this list outright rather than appending to it."
+        ),
+    )
     dashboard: ColumnConfig = Field(
         default_factory=lambda: ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE)),
+        description=(
+            "Deprecated and ignored: imported once into each dashboard's own "
+            "remembered column settings the first time it's opened after upgrading, "
+            "then left alone. Use the dashboard's own settings instead — press F2 in "
+            "`jailbee dashboard`, or View ▸ Columns in the GUI."
+        ),
     )
     claude_credentials: ClaudeCredentials = Field(
         default_factory=ClaudeCredentials,
+        description=(
+            "Lets several repos on this host share one Claude Code login instead of "
+            "each needing its own `/login`. Host-level only — setting this or the "
+            "computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is "
+            "rejected at load time."
+        ),
     )
 
 

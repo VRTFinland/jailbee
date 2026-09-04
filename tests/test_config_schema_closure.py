@@ -28,49 +28,8 @@ EXCLUDED: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-# Shrinks to empty across Tasks 7-10 and is deleted in Task 11.
-UNDOCUMENTED: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("Config", "agents"),
-        ("Config", "autostart"),
-        ("Config", "boot"),
-        ("Config", "chrome"),
-        ("Config", "confirm"),
-        ("Config", "container"),
-        ("Config", "container_user"),
-        ("Config", "dashboard"),
-        ("Config", "defaults"),
-        ("Config", "destroy"),
-        ("Config", "docker_registry_mirror"),
-        ("Config", "egress_allow"),
-        ("Config", "github"),
-        ("Config", "golden"),
-        ("Config", "gpg"),
-        ("Config", "host_devices"),
-        ("Config", "host_mounts"),
-        ("Config", "host_ports"),
-        ("Config", "jetbrains"),
-        ("Config", "loose_auto_revert"),
-        ("Config", "ls"),
-        ("Config", "new"),
-        ("Config", "optional_mounts"),
-        ("Config", "pull"),
-        ("Config", "push"),
-        ("Config", "shared_caches"),
-        ("Config", "shared_dir"),
-        ("Config", "ssh"),
-        ("Config", "terminal"),
-        ("DockerRegistryMirror", "data_dir"),
-        ("DockerRegistryMirror", "enabled"),
-        ("DockerRegistryMirror", "image"),
-        ("DockerRegistryMirror", "port"),
-        ("GlobalConfig", "claude_credentials"),
-        ("GlobalConfig", "dashboard"),
-        ("GlobalConfig", "docker_registry_mirror"),
-        ("GlobalConfig", "loose_auto_revert"),
-        ("GlobalConfig", "ls"),
-    }
-)
+# Shrunk to empty across Tasks 7-10; the mechanism itself is deleted in Task 11.
+UNDOCUMENTED: frozenset[tuple[str, str]] = frozenset()
 
 
 def walk_models(*roots: type[BaseModel]) -> list[type[BaseModel]]:

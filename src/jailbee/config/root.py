@@ -76,19 +76,74 @@ if TYPE_CHECKING:
 
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    container_user: ContainerUser = ContainerUser()
-    container: ContainerConfig = ContainerConfig()
-    shared_dir: PathExpanded | None = None
+    container_user: ContainerUser = Field(
+        default=ContainerUser(),
+        description=(
+            "UID/GID the container's `dev` user runs as, defaulting to the current host "
+            "user's own uid/gid. Applies to every repo unless a repo overrides it."
+        ),
+    )
+    container: ContainerConfig = Field(
+        default=ContainerConfig(),
+        description=(
+            "Container-wide settings applied via the Incus base profile — currently just "
+            "`env`, ambient environment variables injected into every process Incus starts "
+            "in the container. Applies to every repo unless a repo overrides it; profile "
+            "changes take effect after `jailbee apply`."
+        ),
+    )
+    shared_dir: PathExpanded | None = Field(
+        default=None,
+        description=(
+            "Host directory root for this repo's shared state — caches, JetBrains "
+            "config/data, Chrome pool slots, Claude state — each bind-mounted "
+            "individually at its own in-container path. Defaults to "
+            "`~/.local/share/jailbee/shared/<container_prefix>`, which already keeps "
+            "repos apart; pointing two repos at the same path fails loudly at the "
+            "second `jailbee init`."
+        ),
+    )
     # Computed on the load path from the host-level `claude_credentials`
     # block, like repo_root / default_branch / container_prefix. Never a YAML
     # key on either layer: `load_config_from_text` refuses both this name and
     # `claude_credentials` in a repo config. None = this repo keeps its own
     # credential inside its config home.
     claude_credentials_dir: Path | None = None
-    host_mounts: list[HostMount] = []
-    host_devices: list[HostDevice] = []
-    host_ports: list[HostPort] = []
-    optional_mounts: dict[str, OptionalMount] = {}
+    host_mounts: list[HostMount] = Field(
+        default=[],
+        description=(
+            "Bind mounts added to every container of the repo. Applies to every repo "
+            "unless a repo overrides it: a repo's entries append to any set in "
+            "`~/.config/jailbee/global.yaml`, and `[]` resets to none."
+        ),
+    )
+    host_devices: list[HostDevice] = Field(
+        default=[],
+        description=(
+            "Host character/block devices passed into every container as Incus "
+            "`unix-char`/`unix-block` devices. Opt-in, empty by default. Layered like "
+            "`host_mounts`: a repo's entries append to the global ones, `[]` resets. A "
+            "device whose host source is absent is skipped rather than failing."
+        ),
+    )
+    host_ports: list[HostPort] = Field(
+        default=[],
+        description=(
+            "Host services made reachable inside every container of the repo — an "
+            "adb server on the host is the typical case. Layered like `host_mounts`: a "
+            "repo's entries append to the global ones, `[]` resets. Each entry attaches "
+            "as an Incus proxy device on `jailbee new` and is reconciled on `jailbee apply`."
+        ),
+    )
+    optional_mounts: dict[str, OptionalMount] = Field(
+        default={},
+        description=(
+            "Named mounts attached to one container at a time, on request — with "
+            "`jailbee new --mount NAME` or an autostart step's `mounts` list — rather "
+            "than on every container automatically. Applies to every repo unless a "
+            "repo overrides it; a dict, so global.yaml and the repo config merge per key."
+        ),
+    )
     share_local: bool = Field(
         default=True,
         description=(
@@ -102,6 +157,13 @@ class Config(BaseModel):
     )
     shared_caches: list[SharedCache] = Field(
         default_factory=_default_shared_caches,
+        description=(
+            "The state layer every container of the repo has in common — each entry "
+            "bind-mounted read-write into all of them, so a tool's cache stays warm "
+            "across branch containers instead of being refilled per container. "
+            "Defaults to just `ssh`; the language caches are opt-in via `golden.stacks`. "
+            "Applies to every repo unless a repo overrides it; set `[]` to disable."
+        ),
     )
     pooled_caches: dict[str, bool] = Field(
         default_factory=dict,
@@ -113,30 +175,198 @@ class Config(BaseModel):
             "per key instead of appending."
         ),
     )
-    egress_allow: list[str] = []
-    defaults: Defaults = Defaults()
-    golden: Golden = Golden()
-    gpg: GpgConfig = GpgConfig()
-    ssh: SshConfig = SshConfig()
-    jetbrains: JetbrainsConfig = JetbrainsConfig()
-    chrome: ChromeConfig = ChromeConfig()
-    agents: dict[str, AgentConfig] = Field(default_factory=dict)
-    github: GithubConfig = GithubConfig()
-    terminal: TerminalConfig = TerminalConfig()
-    autostart: Autostart = Autostart()
-    docker_registry_mirror: DockerRegistryMirrorRepoConfig = DockerRegistryMirrorRepoConfig()
-    loose_auto_revert: LooseAutoRevert = LooseAutoRevert()
-    # Both default to empty so that, unset, `effective_*_columns` returns the
-    # global value untouched. The repo's block overrides the global one
-    # field-by-field, like loose_auto_revert.
-    ls: ColumnConfig = ColumnConfig()
-    dashboard: ColumnConfig = ColumnConfig()
-    confirm: ConfirmConfig = ConfirmConfig()
-    pull: PullConfig = PullConfig()
-    push: PushConfig = PushConfig()
-    new: NewConfig = NewConfig()
-    destroy: DestroyConfig = DestroyConfig()
-    boot: BootConfig = BootConfig()
+    egress_allow: list[str] = Field(
+        default=[],
+        description=(
+            "Allowed egress destinations for strict-mode containers — `loose` mode "
+            "ignores this list. Each entry is a hostname, IPv4 address, or CIDR, "
+            "optionally suffixed `:port` to restrict it to TCP on that port; a "
+            "port-less entry allows any protocol and port. Applies to every repo "
+            "unless a repo overrides it: a repo's entries append to any set in "
+            "`~/.config/jailbee/global.yaml`."
+        ),
+    )
+    defaults: Defaults = Field(
+        default=Defaults(),
+        description=(
+            "Per-container defaults — memory limit, CPU limit, initial network mode, "
+            "and Incus storage pool — used by `jailbee new`. Applies to every repo "
+            "unless a repo overrides it."
+        ),
+    )
+    golden: Golden = Field(
+        default=Golden(),
+        description=(
+            "Golden-image build parameters: base Ubuntu version, Java/Node versions, "
+            "which provisioning snippets are staged, and the high-level `stacks` "
+            "toggles. Consumed by `jailbee base build`. Applies to every repo unless "
+            "a repo overrides it."
+        ),
+    )
+    gpg: GpgConfig = Field(
+        default=GpgConfig(),
+        description=(
+            "GPG integration: RO-mounts the host's `~/.gnupg` and gpg-agent socket, "
+            "and points `SSH_AUTH_SOCK` at it, so a YubiKey or GPG-backed SSH key "
+            "works inside the container. Off by default. Applies to every repo "
+            "unless a repo overrides it."
+        ),
+    )
+    ssh: SshConfig = Field(
+        default=SshConfig(),
+        description=(
+            "SSH integration: bind-mounts a persistent `~/.ssh` from `<shared_dir>/ssh` "
+            "into the container, optionally seeded from the host's own `~/.ssh` on "
+            "first `jailbee init`. Off by default. Applies to every repo unless a repo "
+            "overrides it."
+        ),
+    )
+    jetbrains: JetbrainsConfig = Field(
+        default=JetbrainsConfig(),
+        description=(
+            "JetBrains IDE integration: which IDE `jailbee ide` launches, shared "
+            "project state, and the license/plugin-marketplace egress hosts auto-added "
+            "while enabled. Off by default. Applies to every repo unless a repo "
+            "overrides it."
+        ),
+    )
+    chrome: ChromeConfig = Field(
+        default=ChromeConfig(),
+        description=(
+            "Chrome integration: RO-mounts the host's Chrome install and controls what "
+            "URL `jailbee chrome` opens. Off by default. Applies to every repo unless a "
+            "repo overrides it."
+        ),
+    )
+    agents: dict[str, AgentConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Terminal coding agents wired into the container lifecycle, keyed by agent "
+            "name — Claude Code plus five untested templates (`codex`, `gemini`, "
+            "`aider`, `opencode`, `grok`), or one you define yourself. A repo's entry "
+            "deep-merges over a matching shipped preset rather than requiring every "
+            "field spelled out. Applies to every repo unless a repo overrides it."
+        ),
+    )
+    github: GithubConfig = Field(
+        default=GithubConfig(),
+        description=(
+            "GitHub CLI (`gh`) integration: injects a per-repo PAT and opens the "
+            "GitHub API host in strict-mode egress while enabled. Off by default. "
+            "`api_tokens` may only be set in `~/.config/jailbee/global.yaml` — a repo's "
+            "`.jailbee/config.yaml` is rejected outright, since committing a repo file "
+            "with a token would leak it."
+        ),
+    )
+    terminal: TerminalConfig = Field(
+        default=TerminalConfig(),
+        description=(
+            "Terminal-emulator integrations — currently just Kitty's terminfo "
+            "bind-mount, so `jailbee shell`/`jailbee tmux` from a Kitty terminal don't "
+            "degrade to a plain xterm. Applies to every repo unless a repo overrides it."
+        ),
+    )
+    autostart: Autostart = Field(
+        default=Autostart(),
+        description=(
+            "Shell steps that run inside the container once on creation (`on_create`) "
+            "and on every start (`on_start`), plus their shared timeout and "
+            "environment. In clone mode, `jailbee new` reads this block from the "
+            "target branch's own committed config at the commit it is about to clone, "
+            "not from the checkout that invoked it."
+        ),
+    )
+    docker_registry_mirror: DockerRegistryMirrorRepoConfig = Field(
+        default=DockerRegistryMirrorRepoConfig(),
+        description=(
+            "Per-repo additions to the host-global Docker registry mirror — extra "
+            "upstream registry hostnames (e.g. AWS ECR) this repo pulls from that "
+            "aren't covered by the mirror's built-in cache list. The mirror itself "
+            "(whether it runs, its port, image, and cache directory) is configured "
+            "only in `~/.config/jailbee/global.yaml`."
+        ),
+    )
+    loose_auto_revert: LooseAutoRevert = Field(
+        default=LooseAutoRevert(),
+        description=(
+            "Policy for auto-reverting a container from `loose` back to its previous "
+            "network mode after a TTL. Applies to every repo unless a repo overrides "
+            "it field-by-field — e.g. a repo can change just `after` and inherit "
+            "`enabled` from `~/.config/jailbee/global.yaml`."
+        ),
+    )
+    ls: ColumnConfig = Field(
+        default=ColumnConfig(),
+        description=(
+            "Repo-level override of which columns `jailbee ls` shows, merged "
+            "field-by-field over the same block in `~/.config/jailbee/global.yaml`: "
+            "setting only `hide` here still inherits the global `fields`, and vice "
+            "versa. Column choice is normally a personal preference set globally — "
+            "setting this per repo is deliberate and rare."
+        ),
+    )
+    dashboard: ColumnConfig = Field(
+        default=ColumnConfig(),
+        description=(
+            "Deprecated and ignored: the TUI and Qt dashboards remember their own "
+            "columns now (press F2 in `jailbee dashboard`, or View ▸ Columns in the "
+            "GUI). Unlike the global-layer block, a repo-level `dashboard:` is not even "
+            "imported into those settings — it is reported and dropped. Delete it."
+        ),
+    )
+    confirm: ConfirmConfig = Field(
+        default=ConfirmConfig(),
+        description=(
+            "Whether `jailbee git push`/`pull`/`checkout` ask for confirmation before "
+            "acting on a container they silently picked themselves. Applies to every "
+            "repo unless a repo overrides it; `--confirm`/`--no-confirm` override it "
+            "per invocation."
+        ),
+    )
+    pull: PullConfig = Field(
+        default=PullConfig(),
+        description=(
+            "Post-merge cleanup prompts for `jailbee git pull`: whether to destroy the "
+            "container and delete the local host branch after a successful merge. "
+            "Applies to every repo unless a repo overrides it; `--cleanup`/"
+            "`--no-cleanup` force both keys per invocation."
+        ),
+    )
+    push: PushConfig = Field(
+        default=PushConfig(),
+        description=(
+            "Default behavior for `jailbee git push` when called with partial "
+            "arguments — which action to run after pushing, and which branch/copy to "
+            "push. Applies to every repo unless a repo overrides it; CLI flags always "
+            "win over these defaults."
+        ),
+    )
+    new: NewConfig = Field(
+        default=NewConfig(),
+        description=(
+            "Policy for what state `jailbee new` starts a container from when its "
+            "branch doesn't already exist in the source repo, plus the "
+            "background/submodule defaults for every `jailbee new` call. Applies to "
+            "every repo unless a repo overrides it."
+        ),
+    )
+    destroy: DestroyConfig = Field(
+        default=DestroyConfig(),
+        description=(
+            "Whether `jailbee destroy` runs detached in the background by default. "
+            "Applies to every repo unless a repo overrides it; overridable per "
+            "invocation with `--background`/`--no-background`."
+        ),
+    )
+    boot: BootConfig = Field(
+        default=BootConfig(),
+        description=(
+            "Whether `jailbee start`/`jailbee restart` run detached in the background "
+            "by default — one setting covers both, since what makes either slow is the "
+            "autostart run that follows the boot. Applies to every repo unless a repo "
+            "overrides it."
+        ),
+    )
     container_prefix: str = ""
     after_new: Literal["shell", "tmux", "none"] = Field(
         default="none",
