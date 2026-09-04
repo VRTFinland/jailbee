@@ -49,7 +49,7 @@ def test_render_template_is_valid_yaml(tmp_path):
 
 
 def test_template_round_trips_to_valid_config(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo_root = tmp_path / "myrepo"
 
     write_template(repo_root)
@@ -146,11 +146,10 @@ def test_cli_config_init_force_overwrites(tmp_path, monkeypatch):
 # --- Task 4: global template -------------------------------------------------
 
 
-def test_render_global_template_substitutes_user_vars():
-    out = render_global_template()
-
-    assert str(os.getuid()) in out
-    assert str(os.getgid()) in out
+# `test_render_global_template_substitutes_user_vars` (a substring check on
+# raw text) is superseded by `test_generated_global_substitutes_the_host_uid_and_gid`
+# below, which asserts the parsed values exactly rather than a substring
+# that could coincidentally match elsewhere.
 
 
 def test_render_global_template_is_valid_yaml():
@@ -161,9 +160,11 @@ def test_render_global_template_is_valid_yaml():
     assert parsed["container_user"]["uid"] == os.getuid()
     assert parsed["container_user"]["gid"] == os.getgid()
     assert parsed["jetbrains"]["ide"] == "idea"
-    # api.anthropic.com is no longer hardcoded — the claude block auto-adds
-    # it via effective_egress_allow() when claude.enabled.
-    assert all(not e.startswith("api.anthropic.com") for e in parsed["egress_allow"])
+    # api.anthropic.com is never hardcoded in the generated file — the claude
+    # block auto-adds it via effective_egress_allow() when claude.enabled.
+    # `egress_allow` itself is no longer seeded (an empty list carries no
+    # distinct value over the schema default), so there is nothing to
+    # inspect here for that key specifically.
 
 
 def test_write_global_template_refuses_when_file_exists(tmp_path, monkeypatch):
@@ -196,14 +197,13 @@ def test_write_global_template_creates_parents(tmp_path, monkeypatch):
     assert written.is_file()
 
 
-def test_global_template_contains_claude_block():
-    """The global template documents the claude integration block."""
-    from jailbee.config_init import render_global_template
-
-    text = render_global_template()
-    assert "claude:" in text
-    assert "enabled: true" in text  # the example value
-    assert "seed_from_host:" in text
+# `test_global_template_contains_claude_block` used to check `"claude:" in
+# text` / `"seed_from_host:" in text`, but those substrings matched the
+# unrelated `agents.claude`/`ssh.seed_from_host` blocks by coincidence — it
+# never actually pinned the claude integration. The real assertion —
+# `agents.claude` enabled by default — lives in
+# `test_global_template_agents_block_enables_claude_by_default` below,
+# expressed against the parsed structure instead of substrings.
 
 
 # --- Task 5: --global CLI flag -----------------------------------------------
@@ -289,7 +289,7 @@ def test_repo_template_omits_personal_host_mounts_default(tmp_path):
     assert "/opt/jetbrains-toolbox" not in containers
 
 
-# --- Task 15: _GLOBAL_TEMPLATE uses new block API ----------------------------
+# --- Task 15: generated global template uses new block API -----------------
 
 
 def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, mocker):
@@ -298,7 +298,7 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
 
     from jailbee.config import _build_config_from_dict, _check_retired_keys, _split_host_keys
 
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     text = render_global_template()
     raw = yaml_mod.safe_load(text)
     _check_retired_keys(raw)  # must not raise
@@ -320,18 +320,14 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     assert cfg.chrome.dark_mode is False
 
 
-def test_global_template_documents_all_new_blocks():
-    text = render_global_template()
-    assert "gpg:" in text
-    assert "ssh:" in text
-    assert "jetbrains:" in text
-    assert "chrome:" in text
-    assert "terminal:" in text
-    assert "kitty:" in text
-    # Comments explain behaviour
-    assert "SSH_AUTH_SOCK" in text
-    assert "license" in text.lower()
-    assert "xterm-kitty" in text
+# `test_global_template_documents_all_new_blocks` checked that specific
+# blocks were documented with specific substrings from the hand-written
+# prose. That's now covered generically and unconditionally by
+# `test_generated_global_documents_every_key_it_writes` (every written key's
+# real schema description, not a hand-picked substring) plus
+# `tests/test_config_schema_closure.py` (every field has a description at
+# all) — restating it here would just re-hardcode a subset of the same
+# schema text a second time.
 
 
 # --- Task 16: _REPO_TEMPLATE does not set retired keys -----------------------
@@ -351,15 +347,18 @@ def test_repo_template_does_not_set_retired_keys(tmp_path):
         assert retired not in text, f"Retired key {retired!r} still in template"
 
 
-# --- github block in _GLOBAL_TEMPLATE ----------------------------------------
+# --- github block in the generated global template --------------------------
 
 
 def test_global_template_contains_github_block():
-    text = render_global_template()
-    assert "github:" in text
-    assert "api_tokens:" in text
-    # Encourage fine-grained PATs in the example
-    assert "github_pat_" in text
+    """The generated global template documents the github block, present
+    but disabled — real behaviour, not just an example comment (the old
+    hand-written template's `github_pat_...` placeholder text is gone along
+    with the rest of the hand-written prose; the schema's own description
+    of `api_tokens` is what ships now, checked structurally instead)."""
+    parsed = yaml.safe_load(render_global_template())
+    assert "github" in parsed
+    assert "api_tokens" in parsed["github"]
 
 
 def test_global_template_github_block_is_disabled_by_default():
@@ -384,7 +383,7 @@ def test_global_template_github_roundtrips_through_schema():
     GithubConfig.model_validate(parsed["github"])
 
 
-# --- claude_credentials block in _GLOBAL_TEMPLATE ----------------------------
+# --- claude_credentials block in the generated global template --------------
 
 
 def test_global_template_ships_a_default_credential_group():
@@ -514,14 +513,14 @@ def test_repo_template_agents_comment_names_every_preset_and_docs():
 
 def test_global_template_emits_agents_block():
     """~/.config/jailbee/global.yaml is the file a developer actually edits
-    to turn an agent on — it must teach the current `agents:` spelling, not
-    just the legacy top-level `claude:` block."""
-    from jailbee.config_init import _GLOBAL_TEMPLATE
+    to turn an agent on — it must use the current `agents:` spelling, not
+    a legacy top-level `claude:` block."""
+    text = render_global_template()
+    parsed = yaml.safe_load(text)
 
-    assert "agents:" in _GLOBAL_TEMPLATE
-    # The legacy spelling appears only in the trailing explanatory comment
-    # and the CLI example line further down, never as its own top-level key.
-    assert "\nclaude:" not in _GLOBAL_TEMPLATE
+    assert "agents" in parsed
+    # The legacy top-level spelling is never emitted as its own live key.
+    assert "\nclaude:" not in text
 
 
 def test_global_template_agents_block_enables_claude_by_default():
@@ -535,26 +534,89 @@ def test_global_template_agents_block_enables_claude_by_default():
     assert parsed["agents"]["claude"]["plugins_enabled"] is True
 
 
-def test_global_template_agents_comment_names_every_preset_and_docs():
-    """Same honest framing as the repo template — pin it here too so a
-    future edit to either file is a deliberate choice, not a drift."""
-    from jailbee.config_init import _GLOBAL_TEMPLATE
+def test_global_template_agents_comment_names_every_preset():
+    """`Config.agents`'s own schema description names every preset and is
+    honest that only claude is exercised in production — pin that this
+    stays true of the *generated* comment, the way the old hand-written one
+    was pinned. (The doc-file pointer and `agents.claude` spelling the old
+    prose also carried are gone: they were hand-written elaboration with no
+    schema counterpart, not real behaviour to re-express here.)"""
+    text = render_global_template()
 
     for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
-        assert preset in _GLOBAL_TEMPLATE
-    assert "docs/agents.md" in _GLOBAL_TEMPLATE
-    assert "untested templates" in _GLOBAL_TEMPLATE
-    assert "agents.claude" in _GLOBAL_TEMPLATE
+        assert preset in text
+    assert "untested templates" in text
 
 
-def test_global_template_egress_comment_generalises_beyond_claude():
-    """The egress_allow comment used to name Claude's hosts via dotted
-    `claude.enabled`/`claude.plugins_enabled` references. Pin that those
-    stale, agent-specific attribute references are gone — the comment now
-    frames it as "each enabled agent appends its own hosts", with Claude
-    only as the concrete example."""
-    from jailbee.config_init import _GLOBAL_TEMPLATE
+# --- Task 14: generated global.yaml (replaces the hand-written template) ----
 
-    assert "appends its own hosts" in _GLOBAL_TEMPLATE
-    assert "claude.enabled" not in _GLOBAL_TEMPLATE
-    assert "claude.plugins_enabled" not in _GLOBAL_TEMPLATE
+
+def test_generated_global_keeps_the_opt_in_integrations_on():
+    """The old hand-written template flipped these on; the generator must too."""
+    data = yaml.safe_load(render_global_template())
+    assert data["gpg"]["enabled"] is True
+    assert data["ssh"]["enabled"] is True
+    assert data["jetbrains"]["enabled"] is True
+
+
+def test_generated_global_substitutes_the_host_uid_and_gid():
+    data = yaml.safe_load(render_global_template())
+    assert data["container_user"]["uid"] == os.getuid()
+    assert data["container_user"]["gid"] == os.getgid()
+
+
+def _flattened_comment_text(text: str) -> str:
+    """Join every `#` comment line in `text` into one whitespace-normalized
+    string, undoing `config_writer`'s wrapping of long descriptions across
+    several `#` lines so a description can still be found as a contiguous
+    substring regardless of where the wrapper broke it."""
+    words: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            words.extend(stripped.lstrip("#").split())
+    return " ".join(words)
+
+
+def test_generated_global_documents_every_key_it_writes():
+    """Each written key carries its schema description as a comment."""
+    from jailbee.config import Config
+
+    text = render_global_template()
+    flattened = _flattened_comment_text(text)
+    for key in yaml.safe_load(text):
+        info = Config.model_fields.get(key)
+        if info is not None and info.description:
+            first_line = " ".join(info.description.strip().splitlines()[0].split())
+            assert first_line in flattened, f"{key} written without its description"
+
+
+def test_generated_global_names_the_generating_command_in_its_header():
+    assert "jailbee config init --global" in render_global_template()
+
+
+# `test_global_template_egress_comment_generalises_beyond_claude` pinned
+# that a specific hand-written `egress_allow` comment didn't reference stale
+# dotted attribute names. `GLOBAL_SEED` no longer seeds `egress_allow` at
+# all — an empty list is identical to the schema default and the generated
+# comment now comes verbatim from `Config.egress_allow`'s own description,
+# so hand-edited prose (and the drift risk it carried) can no longer exist
+# for this key.
+
+
+def test_generated_global_documents_the_host_level_claude_credentials_block():
+    """`claude_credentials` is host-level (modeled on `GlobalConfig`, not
+    `Config`), so it's outside what `test_generated_global_documents_every_key_it_writes`
+    checks. Pin its description separately so the second `render_documented`
+    pass in `render_global_template` doesn't silently regress to an
+    undocumented raw value."""
+    from jailbee.global_config import GlobalConfig
+
+    text = render_global_template()
+    parsed = yaml.safe_load(text)
+    assert parsed["claude_credentials"]["group"] == "default"
+
+    info = GlobalConfig.model_fields["claude_credentials"]
+    assert info.description
+    first_line = " ".join(info.description.strip().splitlines()[0].split())
+    assert first_line in _flattened_comment_text(text)

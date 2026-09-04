@@ -1,4 +1,8 @@
-"""Round-trip YAML editing for jailbee's config files."""
+"""Tests for the two YAML write policies.
+
+Both renderers are `str -> str` (or `dict -> str`), so none of this needs
+a terminal, a container or a real config file.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +10,9 @@ import stat
 from pathlib import Path
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
-from jailbee.config_writer import DELETE, YamlChange, patch_file, patch_yaml
+from jailbee.config_writer import DELETE, YamlChange, patch_file, patch_yaml, render_documented
 
 ORIGINAL = """\
 # Top-of-file banner that must survive.
@@ -100,3 +105,114 @@ def test_patch_file_leaves_no_temp_file_behind(tmp_path: Path):
     target.write_text(ORIGINAL)
     patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
     assert sorted(p.name for p in tmp_path.iterdir()) == ["global.yaml"]
+
+
+class Sample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, description="Turn the widget on.")
+    name: str = Field(default="", description="What the widget is called.")
+
+
+def test_render_documented_emits_the_description_as_a_comment():
+    text = render_documented({"enabled": True}, Sample, header="# generated\n")
+    assert "# Turn the widget on." in text
+    assert "enabled: true" in text
+
+
+def test_render_documented_only_writes_the_given_keys():
+    text = render_documented({"enabled": True}, Sample, header="# generated\n")
+    assert "name:" not in text
+
+
+def test_render_documented_starts_with_the_header():
+    text = render_documented({"enabled": True}, Sample, header="# generated\n")
+    assert text.startswith("# generated\n")
+
+
+def test_render_documented_round_trips_to_the_same_values():
+    values = {"enabled": True, "name": "widget"}
+    text = render_documented(values, Sample, header="# generated\n")
+    assert yaml.safe_load(text) == values
+
+
+def test_render_documented_is_stable():
+    """Rendering the same values twice gives byte-identical output.
+
+    The generated file is rewritten on every save; unstable output would
+    show up as spurious diffs in the user's dotfiles repo.
+    """
+    values = {"enabled": True, "name": "widget"}
+    first = render_documented(values, Sample, header="# generated\n")
+    second = render_documented(values, Sample, header="# generated\n")
+    assert first == second
+
+
+def test_render_documented_refuses_a_secretstr_value():
+    """A raw SecretStr reaching the renderer must fail loudly.
+
+    `global.yaml` carries `github.api_tokens: dict[str, SecretStr]`. A
+    caller that passed `model_dump()` output (python mode) instead of the
+    raw YAML mapping would hand this function live SecretStr objects, and
+    rendering one would overwrite the user's real tokens with a masked
+    placeholder on the next save — silent, irreversible credential loss.
+
+    This guard only catches that python-mode case: `model_dump(mode=
+    "json")` output would hand this function the plain string
+    `"**********"` instead, which is indistinguishable from any other
+    string and is NOT caught here. See `_reject_secrets`'s docstring —
+    callers must pass the raw YAML mapping, not either flavour of
+    `model_dump()` output.
+    """
+    import pytest
+    from pydantic import SecretStr
+
+    class WithSecret(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        token: SecretStr | None = Field(default=None, description="A token.")
+
+    with pytest.raises(TypeError, match="SecretStr"):
+        render_documented({"token": SecretStr("hunter2")}, WithSecret)
+
+
+def test_render_documented_indents_nested_comments():
+    """A nested key's comment must be indented to its key's column."""
+
+    class Outer(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        inner: Sample = Field(default=Sample(), description="The inner block.")
+
+    text = render_documented({"inner": {"enabled": True}}, Outer, header="")
+    assert "  # Turn the widget on." in text
+
+
+def test_render_documented_wraps_a_long_description():
+    """A long `description=` must not become one unwrapped comment line.
+
+    Real schema descriptions run past 300 characters; `_yaml().width` only
+    folds YAML scalars, not comment text, so `_documented_map` has to wrap
+    comment lines itself.
+    """
+
+    class WithLongDescription(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        enabled: bool = Field(
+            default=False,
+            description=(
+                "This description is deliberately long enough that, rendered as a single "
+                "unwrapped comment line with no wrapping applied at all, it would run well "
+                "past a hundred columns and make the generated file unpleasant to read in "
+                "a normal terminal or editor window."
+            ),
+        )
+
+    text = render_documented({"enabled": True}, WithLongDescription, header="")
+    for line in text.splitlines():
+        assert len(line) <= 100, f"unwrapped comment line ({len(line)} cols): {line!r}"
+    # The wrapped text must still carry every word of the description, just
+    # split across multiple `#` lines instead of a single long one.
+    comment_words = " ".join(
+        stripped.lstrip("#").strip()
+        for stripped in (line.strip() for line in text.splitlines())
+        if stripped.startswith("#")
+    )
+    assert comment_words == WithLongDescription.model_fields["enabled"].description

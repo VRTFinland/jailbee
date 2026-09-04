@@ -68,7 +68,7 @@ def test_malformed_claude_block_error_names_the_config_path(tmp_path, mocker):
     `claude:`/`agents:` block loses the file name that names the mistake."""
     from jailbee.config import load_config
 
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -86,7 +86,7 @@ def test_malformed_claude_block_error_names_the_config_path(tmp_path, mocker):
 def test_malformed_agents_block_error_names_the_config_path(tmp_path, mocker):
     from jailbee.config import load_config
 
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()

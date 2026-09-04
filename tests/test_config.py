@@ -35,7 +35,7 @@ def _make_config(tmp_path, content: str = "{}\n") -> Path:
 
 
 def test_load_empty_config_uses_all_defaults(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -48,7 +48,7 @@ def test_load_empty_config_uses_all_defaults(tmp_path, mocker):
 
 def test_after_new_defaults_to_none(tmp_path, mocker):
     """`after_new` defaults to 'none' so existing setups behave unchanged."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -58,7 +58,7 @@ def test_after_new_defaults_to_none(tmp_path, mocker):
 
 @pytest.mark.parametrize("value", ["shell", "tmux", "none"])
 def test_after_new_accepts_valid_modes(tmp_path, mocker, value):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, f"after_new: {value}\n")
 
     cfg = load_config(cfg_path)
@@ -67,7 +67,7 @@ def test_after_new_accepts_valid_modes(tmp_path, mocker, value):
 
 
 def test_after_new_rejects_unknown_mode(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "after_new: bash\n")
 
     with pytest.raises(ConfigError):
@@ -77,7 +77,7 @@ def test_after_new_rejects_unknown_mode(tmp_path, mocker):
 def test_ssh_seed_from_host_defaults_to_true(tmp_path, mocker):
     """The SSH seed flag defaults to True so existing setups get the
     new behavior without YAML changes."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -87,7 +87,7 @@ def test_ssh_seed_from_host_defaults_to_true(tmp_path, mocker):
 
 def test_ssh_seed_from_host_can_be_disabled(tmp_path, mocker):
     """Setting `ssh.seed_from_host: false` in YAML disables seeding."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "ssh:\n  seed_from_host: false\n")
 
     cfg = load_config(cfg_path)
@@ -114,7 +114,7 @@ def test_default_shared_caches_is_ssh_only():
 
 
 def test_load_config_sets_repo_root_from_path(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -123,8 +123,8 @@ def test_load_config_sets_repo_root_from_path(tmp_path, mocker):
 
 
 def test_load_config_sets_default_branch_from_git(tmp_path, mocker):
-    mocked = mocker.patch("jailbee.config.detect_default_branch", return_value="dev")
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
+    mocked = mocker.patch("jailbee.config.loader.detect_default_branch", return_value="dev")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -136,8 +136,8 @@ def test_load_config_sets_default_branch_from_git(tmp_path, mocker):
 def test_load_config_sets_upstream_remote_from_git(tmp_path, mocker):
     """The upstream remote is detected, not configured — same class of value as
     `default_branch`, which is why neither is a YAML key."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value="public")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="public")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -147,8 +147,8 @@ def test_load_config_sets_upstream_remote_from_git(tmp_path, mocker):
 
 def test_load_config_resolves_default_branch_against_the_detected_remote(tmp_path, mocker):
     """`refs/remotes/<remote>/HEAD`, not `refs/remotes/origin/HEAD`."""
-    detect_branch = mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value="public")
+    detect_branch = mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="public")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     load_config(cfg_path)
@@ -158,8 +158,8 @@ def test_load_config_resolves_default_branch_against_the_detected_remote(tmp_pat
 
 def test_load_config_upstream_remote_falls_back_to_origin_when_unresolvable(tmp_path, mocker):
     """An ambiguous repo is left exactly where it was before the fix, not broken further."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value=None)
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value=None)
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -168,7 +168,7 @@ def test_load_config_upstream_remote_falls_back_to_origin_when_unresolvable(tmp_
 
 
 def test_load_config_sets_container_prefix_from_repo_name(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -178,7 +178,7 @@ def test_load_config_sets_container_prefix_from_repo_name(tmp_path, mocker):
 
 def test_load_config_shared_dir_default_is_under_local_share_gie(tmp_path, mocker, monkeypatch):
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -193,7 +193,7 @@ def test_load_config_shared_dir_default_honors_xdg_data_home(
 ):
     """$XDG_DATA_HOME overrides the default shared_dir base."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -202,7 +202,7 @@ def test_load_config_shared_dir_default_honors_xdg_data_home(
 
 
 def test_load_config_shared_dir_explicit_override(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, yaml.safe_dump({"shared_dir": "/tmp/explicit"}))
 
     cfg = load_config(cfg_path)
@@ -219,7 +219,7 @@ def test_load_config_shared_dir_default_follows_container_prefix_override(
     `container_prefix:` must also get distinct `shared_dir` paths.
     """
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, yaml.safe_dump({"container_prefix": "custom-prefix"}))
 
     cfg = load_config(cfg_path)
@@ -231,7 +231,7 @@ def test_load_config_shared_dir_default_follows_container_prefix_override(
 
 
 def test_load_config_rejects_source_repo_block(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, yaml.safe_dump({"source_repo": {"path": "/tmp"}}))
 
     with pytest.raises(ConfigError):
@@ -239,7 +239,7 @@ def test_load_config_rejects_source_repo_block(tmp_path, mocker):
 
 
 def test_load_config_rejects_docker_registry_mirror_block(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, yaml.safe_dump({"docker_registry_mirror": {"port": 5000}}))
 
     with pytest.raises(ConfigError):
@@ -248,7 +248,7 @@ def test_load_config_rejects_docker_registry_mirror_block(tmp_path, mocker):
 
 def test_load_config_rejects_container_user_username(tmp_path, mocker):
     """`username` was removed — always hardcoded to 'dev' inside container."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(
         tmp_path,
         yaml.safe_dump({"container_user": {"username": "alice", "uid": 4242, "gid": 4242}}),
@@ -259,7 +259,7 @@ def test_load_config_rejects_container_user_username(tmp_path, mocker):
 
 
 def test_load_config_explicit_user_override(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(
         tmp_path,
         yaml.safe_dump(
@@ -277,7 +277,7 @@ def test_load_config_explicit_user_override(tmp_path, mocker):
 
 def test_load_config_explicit_path_outside_dot_gie(tmp_path, mocker):
     """`gie -c /random/path.yaml` accepts the path; repo_root = path.parent.parent."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     weird = tmp_path / "weird.yaml"
     weird.write_text("{}\n")
 
@@ -291,7 +291,7 @@ def test_load_config_explicit_path_outside_dot_gie(tmp_path, mocker):
 
 
 def test_load_full_config(mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg = load_config(FIXTURES / "full_config.yaml")
     assert cfg.container_user.uid == 53023
     assert len(cfg.host_mounts) == 2
@@ -455,42 +455,42 @@ def _write_repo(tmp_path, *, name="myrepo", config_yaml="{}"):
 
 
 def test_container_prefix_defaults_to_repo_root_name(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.container_prefix == "myrepo"
 
 
 def test_container_prefix_yaml_override(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="container_prefix: custom-name\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.container_prefix == "custom-name"
 
 
 def test_container_prefix_invalid_repo_name_requires_override(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="My_Repo")
     with pytest.raises(ConfigError, match="container_prefix"):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
 def test_container_prefix_invalid_yaml_override_rejected(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="container_prefix: Bad_Name\n")
     with pytest.raises(ConfigError, match="container_prefix"):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
 def test_golden_alias_default_uses_prefix(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.golden.alias == "myrepo-base"
 
 
 def test_golden_alias_explicit_preserved(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="golden:\n  alias: my-custom-image\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.golden.alias == "my-custom-image"
@@ -500,7 +500,7 @@ def test_golden_alias_explicit_preserved(tmp_path, mocker):
 
 
 def test_golden_provision_script_default_none(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.golden.provision_script is None
@@ -508,7 +508,7 @@ def test_golden_provision_script_default_none(tmp_path, mocker):
 
 
 def test_golden_provision_script_path_preserved(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -519,7 +519,7 @@ def test_golden_provision_script_path_preserved(tmp_path, mocker):
 
 
 def test_provision_env_extra_keys_pass_through(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -543,7 +543,7 @@ def test_provision_env_extra_keys_pass_through(tmp_path, mocker):
     ],
 )
 def test_provision_env_reserved_key_raises(tmp_path, mocker, reserved):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -557,14 +557,14 @@ def test_provision_env_reserved_key_raises(tmp_path, mocker, reserved):
 
 
 def test_golden_extra_apt_packages_default_empty(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.golden.extra_apt_packages == []
 
 
 def test_golden_extra_apt_packages_pass_through(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -587,7 +587,7 @@ def test_golden_extra_apt_packages_pass_through(tmp_path, mocker):
     ],
 )
 def test_golden_extra_apt_packages_invalid_name_raises(tmp_path, mocker, bad_pkg):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -606,7 +606,7 @@ def test_shared_caches_default_is_ssh_only(tmp_path, mocker):
     no longer carries claude or jetbrains entries — those live in
     `effective_shared_caches()` driven by `claude.enabled` and
     `jetbrains.enabled` respectively."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     names = [c.name for c in cfg.shared_caches]
@@ -614,14 +614,14 @@ def test_shared_caches_default_is_ssh_only(tmp_path, mocker):
 
 
 def test_shared_caches_empty_override(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="shared_caches: []\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.shared_caches == []
 
 
 def test_shared_caches_invalid_name_raises(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -637,7 +637,7 @@ def test_shared_caches_invalid_name_raises(tmp_path, mocker):
 
 
 def test_shared_caches_duplicate_name_raises(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -652,7 +652,7 @@ def test_shared_caches_duplicate_name_raises(tmp_path, mocker):
 
 
 def test_shared_caches_relative_container_path_raises(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -671,7 +671,7 @@ def test_shared_caches_relative_container_path_raises(tmp_path, mocker):
 
 
 def test_autostart_step_minimal_fields(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -690,7 +690,7 @@ def test_autostart_step_minimal_fields(tmp_path, mocker):
 
 
 def test_autostart_unknown_mount_caught_by_validate_runtime(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -704,7 +704,7 @@ def test_autostart_unknown_mount_caught_by_validate_runtime(tmp_path, mocker):
 
 
 def test_autostart_duplicate_step_names_within_trigger_raises(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -717,7 +717,7 @@ def test_autostart_duplicate_step_names_within_trigger_raises(tmp_path, mocker):
 
 
 def test_autostart_block_defaults(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.jetbrains.autostart is False
@@ -730,14 +730,14 @@ def test_autostart_block_defaults(tmp_path, mocker):
 
 
 def test_container_env_defaults_empty(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.container.env == {}
 
 
 def test_container_env_loaded_from_yaml(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -750,7 +750,7 @@ def test_container_env_loaded_from_yaml(tmp_path, mocker):
 
 
 def test_container_env_rejects_invalid_name(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -763,7 +763,7 @@ def test_container_env_rejects_invalid_name(tmp_path, mocker):
 def test_retired_open_chrome_string_rejected_with_migration_message(tmp_path, mocker):
     """Retired `autostart.open_chrome: "<url>"` must fail with a clear
     migration pointer to the new `chrome.url` field."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -836,7 +836,7 @@ def test_jetbrains_userprefs_from_host_defaults_to_false(tmp_path, mocker):
     """Default false because license-host egress is no longer gated on
     this flag; users who want to share host JBA tokens opt in
     explicitly via YAML."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -846,7 +846,7 @@ def test_jetbrains_userprefs_from_host_defaults_to_false(tmp_path, mocker):
 
 def test_jetbrains_userprefs_from_host_can_be_enabled(tmp_path, mocker):
     """Opt-in via YAML for users who do want host token sharing."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "jetbrains:\n  userprefs_from_host: true\n")
 
     cfg = load_config(cfg_path)
@@ -863,7 +863,7 @@ def test_validate_runtime_reports_missing_jetbrains_userprefs(tmp_path, mocker):
     (repo / ".git").mkdir()
     fake_home = tmp_path / "fake-home"
     fake_home.mkdir()
-    mocker.patch("jailbee.config.Path.home", return_value=fake_home)
+    mocker.patch("jailbee.config.root.Path.home", return_value=fake_home)
 
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
     object.__setattr__(cfg.jetbrains, "enabled", True)
@@ -881,7 +881,7 @@ def test_validate_runtime_silent_when_jetbrains_userprefs_disabled(tmp_path, moc
     (repo / ".git").mkdir()
     fake_home = tmp_path / "fake-home"
     fake_home.mkdir()
-    mocker.patch("jailbee.config.Path.home", return_value=fake_home)
+    mocker.patch("jailbee.config.root.Path.home", return_value=fake_home)
 
     cfg = _make_runtime_cfg(tmp_path, repo_path=repo)
     object.__setattr__(cfg.jetbrains, "userprefs_from_host", False)
@@ -989,7 +989,7 @@ def test_effective_egress_allow_dedupes_user_entries():
 
 
 def test_jetbrains_ide_defaults_to_idea(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.jetbrains.ide == "idea"
@@ -1025,7 +1025,7 @@ def test_jetbrains_ide_rejects_unknown_value():
 
 
 def test_jetbrains_autostart_default_false(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.jetbrains.autostart is False
@@ -1040,14 +1040,14 @@ def test_jetbrains_autostart_accepts_explicit_false():
 
 
 def test_docker_registry_mirror_defaults_to_empty_extra_registries(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
     cfg = load_config(cfg_path)
     assert cfg.docker_registry_mirror.extra_registries == []
 
 
 def test_docker_registry_mirror_extra_registries_loaded_from_yaml(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(
         tmp_path,
         "docker_registry_mirror:\n"
@@ -1115,7 +1115,7 @@ def test_docker_registry_mirror_unknown_key_rejected():
 
 def test_golden_disable_snippets_defaults_to_empty(tmp_path, mocker):
     """disable_snippets defaults to [] and accepts a list of names."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1138,7 +1138,7 @@ def test_golden_enable_snippets_defaults_empty_and_parses(tmp_path):
 
 def test_provision_env_rejects_gie_reserved_keys(tmp_path, mocker):
     """JAILBEE_USER_HOME and JAILBEE_PROVISION_DIR may not be shadowed."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1290,7 +1290,7 @@ def test_claude_config_extra_keys_rejected():
 
 def test_config_has_claude_block_disabled_by_default(tmp_path, mocker):
     """Config.claude defaults to a disabled ClaudeAgentConfig."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
     cfg = load_config(cfg_path)
     assert cfg.claude.enabled is False
@@ -1350,7 +1350,7 @@ def test_validate_runtime_silent_when_autostart_and_enabled(tmp_path):
 
 def test_claude_auto_update_defaults_true(tmp_path, mocker):
     """`claude.auto_update` defaults to True (auto-update existing installs)."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.auto_update is True
@@ -1358,7 +1358,7 @@ def test_claude_auto_update_defaults_true(tmp_path, mocker):
 
 def test_claude_auto_update_can_be_disabled(tmp_path, mocker):
     """`claude.auto_update: false` parses and overrides the default."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1370,7 +1370,7 @@ def test_claude_auto_update_can_be_disabled(tmp_path, mocker):
 
 def test_claude_install_jailbee_skills_defaults_true_via_load_config(tmp_path, mocker):
     """`claude.install_jailbee_skills` round-trips through YAML loading."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.install_jailbee_skills is True
@@ -1378,7 +1378,7 @@ def test_claude_install_jailbee_skills_defaults_true_via_load_config(tmp_path, m
 
 def test_claude_install_jailbee_skills_override_false_via_yaml(tmp_path, mocker):
     """`claude.install_jailbee_skills: false` parses and overrides the default."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1390,7 +1390,7 @@ def test_claude_install_jailbee_skills_override_false_via_yaml(tmp_path, mocker)
 
 def test_claude_pr_prompt_defaults_to_none(tmp_path, mocker):
     """No `claude.pr_prompt` means jailbee's own prompt is used unchanged."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.pr_prompt is None
@@ -1398,7 +1398,7 @@ def test_claude_pr_prompt_defaults_to_none(tmp_path, mocker):
 
 def test_claude_pr_prompt_reads_a_multiline_block_from_repo_yaml(tmp_path, mocker):
     """A repo encodes its PR standard as a YAML block scalar."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1427,7 +1427,7 @@ def test_claude_pr_prompt_rejects_an_oversized_value():
 
 def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
     """PR text is a bounded summarisation job — it does not need the Opus default."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.ai_pr_model == "sonnet"
@@ -1435,7 +1435,7 @@ def test_claude_ai_pr_model_defaults_to_sonnet(tmp_path, mocker):
 
 def test_claude_ai_pr_model_accepts_a_pinned_model_id(tmp_path, mocker):
     """The value passes through to `claude --model`, so full IDs must survive."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1446,7 +1446,7 @@ def test_claude_ai_pr_model_accepts_a_pinned_model_id(tmp_path, mocker):
 
 
 def test_claude_ai_pr_model_null_inherits_the_container_default(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1482,14 +1482,14 @@ def test_claude_ai_pr_timeout_defaults_to_600(tmp_path, mocker):
     The old hard-coded 180s left no room for a larger tree, and there was no
     config key to raise it.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     assert cfg.claude.ai_pr_timeout == 600
 
 
 def test_claude_ai_pr_timeout_is_raisable_from_repo_yaml(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1521,7 +1521,7 @@ def test_config_rejects_the_retired_install_gie_skills_key(tmp_path, mocker):
     which names neither the new key nor the fix. `_check_retired_keys` has to
     run first for the user to be told what to rename it to.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1544,7 +1544,7 @@ def test_config_rejects_the_retired_install_gie_skills_key_via_agents_claude(tmp
     new spelling loses the friendly rename message and falls through to
     pydantic's "Extra inputs are not permitted" instead.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1574,7 +1574,7 @@ def test_claude_install_jailbee_skills_override_by_keyword():
 
 def test_claude_rejects_unknown_key(tmp_path, mocker):
     """ClaudeAgentConfig keeps extra='forbid' — unknown keys still raise."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
         name="myrepo",
@@ -1621,7 +1621,7 @@ def test_no_retired_keys_returns_none():
 
 
 def test_config_has_new_blocks_with_defaults(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1644,7 +1644,7 @@ def test_config_has_new_blocks_with_defaults(tmp_path, mocker):
 
 
 def test_config_rejects_retired_top_level_keys(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1658,7 +1658,7 @@ def test_config_rejects_removed_seed_claude_from_host(tmp_path, mocker):
     """Old top-level key `seed_claude_from_host` is now a removed feature,
     not just a renamed one. Error must explain that the host-seed behaviour
     is gone — not redirect to a key that itself errors."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1671,7 +1671,7 @@ def test_config_rejects_removed_seed_claude_from_host(tmp_path, mocker):
 def test_config_rejects_removed_claude_seed_from_host_nested(tmp_path, mocker):
     """Same removal message when the user puts the key in the nested
     `claude:` block rather than at the top level."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1689,7 +1689,7 @@ def test_config_rejects_removed_claude_seed_from_host_via_agents_claude(tmp_path
     second one specifically, so the removal message isn't silently lost for
     users who have already migrated off the legacy `claude:` block.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1700,7 +1700,7 @@ def test_config_rejects_removed_claude_seed_from_host_via_agents_claude(tmp_path
 
 
 def test_config_rejects_retired_autostart_keys(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "r"
     (repo / ".jailbee").mkdir(parents=True)
     (repo / ".git").mkdir()
@@ -1831,7 +1831,7 @@ def test_resolve_kitty_terminfo_autodetect_finds_first_existing(tmp_path, mocker
     cand2.write_bytes(b"\x1a\x01")
 
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[cand1, cand2, cand3],
     )
 
@@ -1843,7 +1843,7 @@ def test_resolve_kitty_terminfo_autodetect_none_match(tmp_path, mocker):
 
     cand = tmp_path / "absent/xterm-kitty"
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[cand],
     )
 
@@ -1873,7 +1873,7 @@ def _kitty_mount(mounts):
 
 
 def test_kitty_auto_mount_present_when_enabled_true_and_path_exists(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     f = tmp_path / "xterm-kitty"
     f.write_bytes(b"\x1a\x01")
     cfg_path = _make_config(
@@ -1888,7 +1888,7 @@ def test_kitty_auto_mount_present_when_enabled_true_and_path_exists(tmp_path, mo
 
 
 def test_kitty_auto_mount_absent_when_enabled_false(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     f = tmp_path / "xterm-kitty"
     f.write_bytes(b"\x1a\x01")
     cfg_path = _make_config(
@@ -1901,9 +1901,9 @@ def test_kitty_auto_mount_absent_when_enabled_false(tmp_path, mocker):
 
 def test_kitty_auto_mount_absent_when_auto_and_no_path(tmp_path, mocker):
     """enabled: auto with no resolvable path is a silent no-op."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "nowhere"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
@@ -1912,12 +1912,12 @@ def test_kitty_auto_mount_absent_when_auto_and_no_path(tmp_path, mocker):
 
 
 def test_kitty_auto_mount_present_when_auto_and_autodetect_succeeds(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     f = tmp_path / "candidate" / "xterm-kitty"
     f.parent.mkdir()
     f.write_bytes(b"\x1a\x01")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[f],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
@@ -1930,7 +1930,7 @@ def test_kitty_auto_mount_present_when_auto_and_autodetect_succeeds(tmp_path, mo
 def test_kitty_auto_mount_suppressed_by_user_supplied_mount(tmp_path, mocker):
     """A user-supplied host_mounts entry whose container path equals the
     kitty target wins over the auto-mount, mirroring chrome/jetbrains."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     auto = tmp_path / "auto-xterm-kitty"
     auto.write_bytes(b"\x1a\x01")
     user = tmp_path / "user-xterm-kitty"
@@ -1956,9 +1956,9 @@ def test_kitty_auto_mount_suppressed_by_user_supplied_mount(tmp_path, mocker):
 
 
 def test_kitty_validate_errors_when_enabled_true_and_no_path(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "absent"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: true\n")
@@ -1970,7 +1970,7 @@ def test_kitty_validate_errors_when_enabled_true_and_no_path(tmp_path, mocker):
 def test_kitty_validate_errors_when_explicit_path_missing(tmp_path, mocker):
     """A user-supplied path that doesn't exist is always an error, even
     with enabled: auto — the user asked for a specific file."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     missing = tmp_path / "missing-xterm-kitty"
     cfg_path = _make_config(
         tmp_path,
@@ -1984,9 +1984,9 @@ def test_kitty_validate_errors_when_explicit_path_missing(tmp_path, mocker):
 def test_kitty_validate_silent_when_auto_and_no_path(tmp_path, mocker):
     """enabled: auto with no path is a silent no-op — not a validation
     error. The integration just doesn't activate."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "absent"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
@@ -1996,7 +1996,7 @@ def test_kitty_validate_silent_when_auto_and_no_path(tmp_path, mocker):
 
 
 def test_kitty_validate_silent_when_disabled_and_path_missing(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     missing = tmp_path / "missing-xterm-kitty"
     cfg_path = _make_config(
         tmp_path,
@@ -2563,7 +2563,7 @@ def test_push_default_source_default_is_base():
 
 def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mocker):
     """claude.enabled auto-adds claude AND claude-install."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="claude:\n  enabled: true\n")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     by_name = {c.name: c for c in cfg.effective_shared_caches()}
@@ -2575,7 +2575,7 @@ def test_effective_shared_caches_adds_claude_install_when_enabled(tmp_path, mock
 
 def test_effective_shared_caches_no_claude_install_when_disabled(tmp_path, mocker):
     """claude.enabled=false (the default) → no claude-install mount."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
     cfg = load_config(repo / ".jailbee" / "config.yaml")
     names = {c.name for c in cfg.effective_shared_caches()}
@@ -2663,7 +2663,7 @@ def test_agent_shared_mount_rejects_seed_on_a_dir(tmp_path, mocker):
     """`seed` names a file to copy in when the shared file is absent, so it is
     meaningless on `type: dir` — and silently ignoring it would leave the user
     believing a directory gets seeded. Rejected at model-validation time."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     with pytest.raises(ValidationError, match="seed is only valid for type: file"):
         make_cfg(
@@ -2781,7 +2781,7 @@ def test_new_config_submodules_defaults_true() -> None:
 
 
 def test_destroy_background_defaults_to_false(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -2790,7 +2790,7 @@ def test_destroy_background_defaults_to_false(tmp_path, mocker):
 
 
 def test_destroy_background_can_be_enabled(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "destroy:\n  background: true\n")
 
     cfg = load_config(cfg_path)
@@ -2802,7 +2802,7 @@ def test_destroy_background_can_be_enabled(tmp_path, mocker):
 
 
 def test_boot_background_defaults_to_false(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")
 
     cfg = load_config(cfg_path)
@@ -2813,7 +2813,7 @@ def test_boot_background_defaults_to_false(tmp_path, mocker):
 def test_boot_background_can_be_enabled(tmp_path, mocker):
     """One key covers both boot commands: `jailbee start` and
     `jailbee restart` run the same slow autostart afterwards."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "boot:\n  background: true\n")
 
     cfg = load_config(cfg_path)
@@ -3337,7 +3337,7 @@ def test_load_path_global_column_block_goes_to_global_config_only(
     """A global `ls:` block must reach `GlobalConfig.ls` — it used to be
     discarded by `_split_host_keys` and silently merged into `Config.ls`
     instead, so `effective_ls_columns`' `gcfg` argument was dead."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3362,7 +3362,7 @@ def test_load_path_repo_block_overrides_global_without_appending(
     *appends* a non-empty overlay, so routing these blocks through it turned
     global `[name, state]` + repo `[name, ip]` into
     `[name, state, name, ip]` — NAME rendered twice."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3379,7 +3379,7 @@ def test_load_path_repo_block_overrides_global_without_appending(
 
 def test_load_path_repo_hide_only_inherits_the_global_fields(tmp_path, monkeypatch, mocker) -> None:
     """The documented per-field override, asserted through the real loaders."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3402,7 +3402,7 @@ def test_load_path_repo_explicit_empty_hide_beats_a_nonempty_global_ls(
     over a non-empty global `hide` once both files have gone through
     `load_config`/`load_global_config` and their sanitizers, not just
     through a hand-built `Config`/`GlobalConfig` pair."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3421,7 +3421,7 @@ def test_load_path_repo_null_fields_resets_a_global_fields_list(
     """`fields: null` in the repo is how you undo a global list (an explicit
     `fields: []` recovers to the built-in default set rather than "no
     columns at all" — see `test_global_config.py`)."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3437,7 +3437,7 @@ def test_load_path_repo_null_fields_resets_a_global_fields_list(
 def test_load_path_global_dashboard_block_reaches_global_config(
     tmp_path, monkeypatch, mocker
 ) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     _, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3462,7 +3462,7 @@ def test_load_path_agents_layer_merges_per_agent_instead_of_replacing(
     `enabled: true`. Neither is covered anywhere else — every other
     `agents:` test builds one dict.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, _ = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3496,7 +3496,7 @@ def test_load_path_legacy_global_claude_plus_repo_agents_claude_is_an_error(
     holds the key to delete) rather than only at the repo config the
     surrounding `Config validation failed in ...` wrapper would name.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3517,7 +3517,7 @@ def test_load_path_legacy_claude_alone_still_loads(tmp_path, monkeypatch, mocker
     """The guard above must not fire on the legacy spelling by itself —
     a `claude:` block in `global.yaml` with no `agents.claude` anywhere is
     still a supported config."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, _ = _write_layered(
         tmp_path,
         monkeypatch,
@@ -3557,7 +3557,7 @@ def test_load_global_config_accepts_valid_column_blocks(tmp_path) -> None:
 
 
 def test_load_config_resets_an_explicit_empty_repo_fields_to_defaults(tmp_path, mocker) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, config_yaml="ls:\n  fields: []\n")
 
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -3567,7 +3567,7 @@ def test_load_config_resets_an_explicit_empty_repo_fields_to_defaults(tmp_path, 
 
 
 def test_load_config_drops_unknown_and_duplicate_repo_field_names(tmp_path, mocker) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, config_yaml="ls:\n  fields: [name, nosuchfield, name]\n")
 
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -3579,7 +3579,7 @@ def test_load_config_drops_unknown_and_duplicate_repo_field_names(tmp_path, mock
 
 
 def test_load_config_drops_an_unknown_repo_hide_name(tmp_path, mocker) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, config_yaml="dashboard:\n  hide: [ip, nosuchfield]\n")
 
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -3589,7 +3589,7 @@ def test_load_config_drops_an_unknown_repo_hide_name(tmp_path, mocker) -> None:
 
 
 def test_load_config_leaves_a_valid_repo_column_block_untouched(tmp_path, mocker) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, config_yaml="ls:\n  fields: [name, state]\n")
 
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -3599,7 +3599,7 @@ def test_load_config_leaves_a_valid_repo_column_block_untouched(tmp_path, mocker
 
 
 def test_load_config_column_warnings_empty_by_default(tmp_path, mocker) -> None:
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, config_yaml="{}\n")
 
     cfg = load_config(repo / ".jailbee" / "config.yaml")
@@ -3622,7 +3622,7 @@ def test_load_config_repo_ls_hide_only_still_inherits_global_fields_after_saniti
     unit tests. `ls` is the live path this guards; the equivalent for the
     deprecated `dashboard:` block was deleted along with
     `effective_dashboard_columns`."""
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path, global_path = _write_layered(
         tmp_path,
         monkeypatch,

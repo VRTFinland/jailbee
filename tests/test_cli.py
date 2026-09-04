@@ -2975,7 +2975,7 @@ def test_cli_config_show_layer_effective_is_default(tmp_path, monkeypatch, mocke
     (tmp_path / ".config" / "jailbee" / "global.yaml").write_text(
         "egress_allow: [api.anthropic.com:443]\n"
     )
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     result = runner.invoke(app, ["config", "show"])
 
@@ -2994,7 +2994,7 @@ def test_cli_config_show_effective_reflects_claude_auto_egress(tmp_path, monkeyp
         "container_prefix: myrepo\nclaude:\n  enabled: true\negress_allow: []\n"
     )
     (tmp_path / ".git").mkdir()
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     result = runner.invoke(app, ["config", "show"])
 
@@ -3014,7 +3014,7 @@ def test_cli_config_show_effective_reflects_claude_auto_shared_caches(
         "container_prefix: myrepo\nclaude:\n  enabled: true\n"
     )
     (tmp_path / ".git").mkdir()
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     result = runner.invoke(app, ["config", "show"])
 
@@ -3052,7 +3052,7 @@ def test_cli_config_show_includes_resolved_agents(tmp_path, monkeypatch, mocker)
         "container_prefix: myrepo\nagents:\n  codex:\n    enabled: true\n"
     )
     (tmp_path / ".git").mkdir()
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     result = runner.invoke(app, ["config", "show"])
 
@@ -3077,7 +3077,7 @@ def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude
         "container_prefix: myrepo\nagents:\n  claude:\n    enabled: true\n"
     )
     (tmp_path / ".git").mkdir()
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
 
     result = runner.invoke(app, ["config", "show"])
 

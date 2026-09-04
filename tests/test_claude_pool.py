@@ -385,8 +385,8 @@ def _no_git(mocker) -> None:
     git repo, so the calls are slow and their results meaningless. Mocked the
     same way `tests/test_config_layered.py:26` does it.
     """
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
 
 
 def _write_repo(root: Path, *, shared: Path) -> None:

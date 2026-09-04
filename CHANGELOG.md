@@ -53,6 +53,21 @@
 
 ### Changed
 
+- **`~/.config/jailbee/global.yaml` is now generated from the schema
+  instead of templated.** The ~230-line hand-maintained template
+  (`config_init._GLOBAL_TEMPLATE`) was a third independent copy of facts
+  already stated in `docs/config.md` and the `Config`/`GlobalConfig`
+  models, and could drift from either. `jailbee config init --global` now
+  renders the file from two `config_writer.render_documented()` passes —
+  one against `Config` for the per-repo-overlay blocks, one against
+  `GlobalConfig` for the host-level `claude_credentials` block — so every
+  comment is the field's own schema description and cannot go stale. The
+  generated file ships with exactly the same integrations enabled as
+  before: `gpg`, `ssh`, `jetbrains`, `chrome`, and `agents.claude` all
+  default to on, `github` is present but disabled, `claude_credentials`
+  defaults to the shared `"default"` group, and the host uid/gid and the
+  `~/.gitconfig` bind-mount are still substituted/seeded exactly as they
+  were.
 - **The dashboard title row no longer jumps.** The `⟳` marker that toggled
   on and off with every gather re-centred the whole title, and the refresh
   timing lived in the subtitle. The title is now left-aligned and ends in a

@@ -1,14 +1,19 @@
-"""Round-trip editing of jailbee's YAML config files.
+"""YAML write policies for jailbee's config files.
 
-`global.yaml` is a user-authored file that is almost entirely comments,
-so editing it by re-serialising a PyYAML parse would destroy the very
-thing that makes it usable. ruamel's round-trip loader carries comments,
-key order and quoting on the parsed structure, so a patch touches only
-what changed.
+Two renderers, one library:
 
-This module knows nothing about jailbee's schema: it takes paths and
-values. Schema-aware rendering (`render_documented`) belongs to the
-config editor and lands in this same module later.
+* `patch_yaml` / `patch_file` touch only the keys that changed and leave
+  everything else — comments, key order, formatting — byte-identical.
+  Used for the repo's `.jailbee/config.yaml`, which is committed and read
+  as PR diffs.
+* `render_documented` rewrites a file from scratch with each key's
+  `description=` above it as a comment. Used for `global.yaml`, which
+  jailbee owns, and for `jailbee config init`. Safe to regenerate because
+  the models are `extra="forbid"`, so an unknown key cannot exist in the
+  file to be lost.
+
+Both are pure string transformations so they can be tested without a
+terminal or a real config file.
 """
 
 from __future__ import annotations
@@ -17,16 +22,20 @@ import io
 import os
 import stat
 import tempfile
+import textwrap
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 from jailbee.claude_pool import _fsync_dir
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 
 class _Delete:
@@ -144,3 +153,139 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
             tmp.unlink()
         raise
     return True
+
+
+DOCUMENTED_HEADER = (
+    "# Written by `jailbee config init --global`. Comments in this file are\n"
+    "# generated from jailbee's own schema and are replaced if you regenerate\n"
+    "# it — put notes you want to keep elsewhere. Every key is optional;\n"
+    "# delete one to fall back to the built-in default.\n"
+)
+
+
+def render_documented(
+    values: dict[str, object],
+    model: type[BaseModel],
+    *,
+    header: str = DOCUMENTED_HEADER,
+) -> str:
+    """Render `values` as YAML with each key's schema description above it.
+
+    `values` must be the **raw YAML mapping** — plain scalars, lists and
+    dicts, as `_read_yaml_or_empty` returns them. Never pass
+    `model_dump()` output, in either mode: python-mode hands back live
+    `SecretStr` objects, which `_reject_secrets` catches; json-mode hands
+    back the masked string `"**********"` instead, which is indistinguishable
+    from any other string and passes the guard uncaught. Either flavour
+    reaching disk would overwrite a real secret with a placeholder on the
+    next save — the guard only covers the first case, so the raw-mapping
+    contract is load-bearing, not a suggestion.
+
+    Only the keys present in `values` are written — an unset key stays
+    absent so it keeps following jailbee's own default rather than
+    freezing at today's value.
+
+    Comments recurse into fields whose annotation *is* a model
+    (`gpg`, `ssh`, `golden`, ...). Fields annotated as a collection of
+    models (`agents: dict[str, AgentConfig]`, `host_mounts:
+    list[HostMount]`) are written as plain data with only the outer key
+    commented; per-entry documentation there would repeat the same text
+    once per entry for no gain.
+    """
+    _reject_secrets(values)
+    data = _documented_map(values, model, depth=0)
+    stream = io.StringIO()
+    _yaml().dump(data, stream)
+    return header + stream.getvalue()
+
+
+def _reject_secrets(value: object) -> None:
+    """Raise if a raw `SecretStr` object is anywhere in the tree.
+
+    `github.api_tokens` is `dict[str, SecretStr]`. A caller passing
+    `model_dump()` output (python mode) would hand us live SecretStr
+    objects, and rendering one would overwrite the user's real token with
+    a placeholder on the next save — silent credential loss. This function
+    catches that case.
+
+    It does NOT catch `model_dump(mode="json")` output: pydantic renders a
+    SecretStr there as the plain string `"**********"`, which is
+    indistinguishable from any other string and passes this isinstance
+    check uncaught. There is no reliable way to detect that case here — a
+    legitimate config value could coincidentally *be* the string
+    `"**********"` — so it isn't attempted. Callers must pass the raw YAML
+    mapping, never either flavour of `model_dump()` output; see
+    `render_documented`'s docstring.
+    """
+    from pydantic import SecretStr
+
+    if isinstance(value, SecretStr):
+        raise TypeError(
+            "render_documented received a SecretStr. Pass the raw YAML mapping, "
+            "not model_dump() output — rendering a masked value would destroy "
+            "the stored secret."
+        )
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_secrets(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_secrets(item)
+
+
+_COMMENT_WIDTH = 100
+"""Target column width for generated comment lines, matching `_yaml().width`.
+
+A field's raw `description=` is one long sentence with no line breaks, so
+without wrapping it becomes a single comment line as wide as the prose —
+some run past 300 columns. `_yaml().width` only governs YAML scalar
+folding, not comment text, so wrapping is done by hand before handing the
+text to ruamel.
+"""
+
+
+def _wrap_description(description: str, *, indent: int) -> str:
+    """Wrap `description` to `_COMMENT_WIDTH`, accounting for `indent` and
+    the `# ` prefix ruamel adds to each line.
+
+    Returns a `\\n`-joined string: `yaml_set_comment_before_after_key`
+    splits its `before` argument on `\\n` and prefixes each resulting line
+    with `#` on its own, so a multi-line `before` becomes one `#` comment
+    line per line here, not a folded block.
+    """
+    width = max(20, _COMMENT_WIDTH - indent - len("# "))
+    return "\n".join(textwrap.wrap(description, width=width))
+
+
+def _documented_map(
+    values: dict[str, object],
+    model: type[BaseModel],
+    *,
+    depth: int,
+) -> CommentedMap:
+    out = CommentedMap()
+    for key, value in values.items():
+        info = model.model_fields.get(key)
+        sub = _sub_model(info.annotation) if info is not None else None
+        if sub is not None and isinstance(value, dict):
+            out[key] = _documented_map(value, sub, depth=depth + 1)
+        else:
+            out[key] = value
+        description = (info.description or "").strip() if info is not None else ""
+        if description:
+            # `indent` aligns the comment with its key's column; without it
+            # ruamel emits a nested key's comment at column 0.
+            indent = 2 * depth
+            out.yaml_set_comment_before_after_key(
+                key, before=_wrap_description(description, indent=indent), indent=indent
+            )
+    return out
+
+
+def _sub_model(annotation: object) -> type[BaseModel] | None:
+    """The BaseModel a field's annotation resolves to, if it is one."""
+    from pydantic import BaseModel as _BaseModel
+
+    if isinstance(annotation, type) and issubclass(annotation, _BaseModel):
+        return annotation
+    return None
