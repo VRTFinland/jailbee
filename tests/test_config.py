@@ -454,6 +454,24 @@ def _write_repo(tmp_path, *, name="myrepo", config_yaml="{}"):
     return repo
 
 
+def _write_bare_repo(tmp_path, *, name="tutkimus", git=True):
+    """A directory with no `.jailbee/` at all (a git repo unless git=False)."""
+    repo = tmp_path / name
+    repo.mkdir(parents=True)
+    if git:
+        (repo / ".git").mkdir()
+    return repo
+
+
+def _write_global(tmp_path, monkeypatch, global_yaml: str = ""):
+    """Point XDG_CONFIG_HOME at tmp_path and write global.yaml there."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True, exist_ok=True)
+    (xdg / "jailbee" / "global.yaml").write_text(global_yaml)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    return xdg / "jailbee" / "global.yaml"
+
+
 def test_container_prefix_defaults_to_repo_root_name(tmp_path, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
@@ -4157,3 +4175,188 @@ def test_slugify_prefix_result_matches_prefix_re() -> None:
             assert _PREFIX_RE.match(result), (
                 f"slugify_prefix({name!r}) = {result!r} does not match _PREFIX_RE"
             )
+
+
+# ---------- load_repo_config: the synthesized repo layer for a directory with
+# ---------- no .jailbee/config.yaml (`global.yaml`'s `scratch:` block)
+
+
+def test_load_repo_config_synthesizes_when_there_is_no_file(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="tutkimus")
+    from jailbee.config import SCRATCH_BASE_ALIAS, load_repo_config
+
+    cfg = load_repo_config(repo)
+
+    assert cfg.is_synthetic() is True
+    assert cfg.container_prefix == "tutkimus"
+    assert cfg.golden.alias == SCRATCH_BASE_ALIAS
+    assert cfg.repo_root == repo
+    # No stacks by default: the scratch image is the core install plus Claude.
+    assert cfg.golden.stacks.node is False
+    assert cfg.golden.stacks.java is False
+
+
+def test_load_repo_config_prefers_a_real_file(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="defaults:\n  cpu: 4\n")
+    from jailbee.config import load_repo_config
+
+    cfg = load_repo_config(repo)
+
+    assert cfg.is_synthetic() is False
+    assert cfg.defaults.cpu == 4
+    assert cfg.golden.alias == "myrepo-base"  # derived, not pinned
+
+
+def test_synthesized_prefix_is_slugified(tmp_path, monkeypatch, mocker):
+    """`_build_config_from_dict` would reject `Tutkimus_A` and tell the user to
+    set `container_prefix:` in a file that does not exist."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="Tutkimus_A")
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(repo).container_prefix == "tutkimus-a"
+
+
+def test_synthesized_layer_is_beaten_by_scratch_config(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(
+        tmp_path,
+        monkeypatch,
+        "defaults:\n  memory: 32GiB\n"
+        "scratch:\n"
+        "  config:\n"
+        "    defaults:\n"
+        "      memory: 4GiB\n"
+        "    golden:\n"
+        "      alias: my-own-scratch\n",
+    )
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import load_repo_config
+
+    cfg = load_repo_config(repo)
+
+    # Layer 3 over layer 2 over the built-in default.
+    assert cfg.defaults.memory == "4GiB"
+    assert cfg.golden.alias == "my-own-scratch"
+
+
+def test_global_config_layer_still_applies_to_a_synthesized_config(
+    tmp_path, monkeypatch, mocker
+):
+    """`global.yaml`'s config layer applies to every repo today; a scratch
+    container that ignored it would be less useful than an empty config file."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch, "defaults:\n  cpu: 2\n")
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(repo).defaults.cpu == 2
+
+
+def test_scratch_disabled_raises_config_not_found(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    gpath = _write_global(tmp_path, monkeypatch, "scratch:\n  enabled: false\n")
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import ConfigNotFoundError, load_repo_config
+
+    with pytest.raises(ConfigNotFoundError) as exc:
+        load_repo_config(repo)
+
+    assert str(gpath) in str(exc.value)
+    assert "jailbee config init" in str(exc.value)
+
+
+def test_home_directory_is_refused(tmp_path, monkeypatch, mocker, private_home):
+    """`private_home` is the house fixture for "this test needs its own HOME";
+    it overrides the session-wide `_isolate_home` for the test's duration."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(private_home)
+
+    assert "home directory" in str(exc.value)
+
+
+def test_filesystem_root_is_refused(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(Path("/"))
+
+    # Named explicitly, not left to the empty-slug message `/` would also
+    # produce: `_refuse_scratch_root` must be what rejects this, and it must
+    # run before the prefix is derived.
+    assert "filesystem root" in str(exc.value)
+
+
+def test_unusable_directory_name_is_reported(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="...")
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(repo)
+
+    assert "jailbee config init" in str(exc.value)
+
+
+def test_scratch_config_validation_error_names_the_source(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(
+        tmp_path, monkeypatch, "scratch:\n  config:\n    defaults:\n      cpu: banana\n"
+    )
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(repo)
+
+    assert "scratch.config" in str(exc.value)
+
+
+def test_synthesized_column_typo_is_recovered_and_reported(tmp_path, monkeypatch, mocker):
+    """A column-name typo in `scratch.config.ls` must degrade, not break every
+    command — the same treatment a repo config's own `ls:` block gets."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(
+        tmp_path,
+        monkeypatch,
+        "scratch:\n  config:\n    ls:\n      fields: [name, nosuchfield]\n",
+    )
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import load_repo_config, load_repo_config_unsanitized
+
+    cfg = load_repo_config(repo)
+    assert "nosuchfield" not in cfg.ls.fields
+    assert any("nosuchfield" in w for w in cfg.column_warnings())
+
+    raw = load_repo_config_unsanitized(repo)
+    assert "nosuchfield" in raw.ls.fields
+    assert raw.column_warnings() == []
+
+
+def test_is_synthetic_survives_model_copy(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path)
+    from jailbee.config import load_repo_config
+
+    cfg = load_repo_config(repo).model_copy(update={"after_new": "shell"})
+
+    assert cfg.is_synthetic() is True
+
+
+def test_is_synthetic_is_false_for_a_hand_built_config():
+    from jailbee.config import Config
+
+    assert Config().is_synthetic() is False

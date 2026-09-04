@@ -13,15 +13,25 @@ valid and produces a fully-defaulted Config.
 
 from __future__ import annotations
 
-from jailbee.config.common import _HOST_LEVEL_KEYS, CONTAINER_USERNAME, _split_host_keys, deep_merge
+from jailbee.config.common import (
+    _HOST_LEVEL_KEYS,
+    CONTAINER_USERNAME,
+    SCRATCH_ORIGIN_SUFFIX,
+    _split_host_keys,
+    deep_merge,
+)
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
+    SCRATCH_BASE_ALIAS,
     _build_config_from_dict,
     device_name,
     load_config,
     load_config_from_text,
     load_config_unsanitized,
+    load_repo_config,
+    load_repo_config_unsanitized,
     resolve_agents_raw,
+    scratch_repo_layer,
 )
 from jailbee.config.models_agents import (
     AgentConfig,
@@ -128,6 +138,8 @@ __all__ = [
     "PoolSpec",
     "PullConfig",
     "PushConfig",
+    "SCRATCH_BASE_ALIAS",
+    "SCRATCH_ORIGIN_SUFFIX",
     "SharedCache",
     "SshConfig",
     "Stacks",
@@ -145,10 +157,13 @@ __all__ = [
     "load_config",
     "load_config_from_text",
     "load_config_unsanitized",
+    "load_repo_config",
+    "load_repo_config_unsanitized",
     "parse_loose_ttl",
     "resolve_agents_raw",
     "resolve_kitty_terminfo_path",
     "sanitize_column_blocks",
+    "scratch_repo_layer",
     "slugify_prefix",
     "validate_column_blocks",
 ]

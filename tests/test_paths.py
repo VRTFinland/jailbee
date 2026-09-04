@@ -130,6 +130,26 @@ def test_repo_config_path_prefers_jailbee_and_returns_none_when_absent(tmp_path)
     assert repo_config_path(tmp_path) == tmp_path / ".jailbee" / "config.yaml"
 
 
+def test_repo_config_path_warned_warns_once_for_legacy_dir(tmp_path, mocker):
+    from jailbee.paths import _warn_legacy_config_dir, repo_config_path_warned
+
+    _warn_legacy_config_dir.cache_clear()
+    warn = mocker.patch("jailbee.tui.warn")
+    repo = tmp_path / "legacy"
+    (repo / ".gie").mkdir(parents=True)
+    (repo / ".gie" / "config.yaml").write_text("{}\n")
+
+    assert repo_config_path_warned(repo) == repo / ".gie" / "config.yaml"
+    assert repo_config_path_warned(repo) == repo / ".gie" / "config.yaml"
+    assert warn.call_count == 1
+
+
+def test_repo_config_path_warned_returns_none_when_absent(tmp_path):
+    from jailbee.paths import repo_config_path_warned
+
+    assert repo_config_path_warned(tmp_path) is None
+
+
 def test_repo_config_dir_name_defaults_to_jailbee(tmp_path):
     from jailbee.paths import repo_config_dir_name
 

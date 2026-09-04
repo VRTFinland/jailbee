@@ -75,6 +75,17 @@ _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
 )
 
 
+SCRATCH_ORIGIN_SUFFIX = " (scratch.config)"
+"""Appended to `global.yaml`'s path to name the synthesized repo layer's source.
+
+A synthesized repo layer has no file of its own: it comes from the `scratch:`
+block of the global config, so error messages and `jailbee config show` label
+it `<global.yaml> (scratch.config)`. One constant rather than the literal
+repeated at each site, so the label the user sees and the label they can grep
+for stay the same string.
+"""
+
+
 def _split_host_keys(
     raw: dict[str, object],
 ) -> tuple[dict[str, object], dict[str, object]]:

@@ -69,6 +69,19 @@ def repo_config_path(repo_root: Path) -> Path | None:
     return None
 
 
+def repo_config_path_warned(repo_root: Path) -> Path | None:
+    """`repo_config_path`, warning once when the pre-1.0 `.gie/` dir is in use.
+
+    Split out of `find_repo_config` so `config.load_repo_config` — which takes
+    a repo root rather than using the cwd — keeps that deprecation warning
+    instead of quietly skipping it.
+    """
+    candidate = repo_config_path(repo_root)
+    if candidate is not None and candidate.parent.name != REPO_CONFIG_DIRS[0]:
+        _warn_legacy_config_dir(candidate)
+    return candidate
+
+
 def repo_config_dir_name(repo_root: Path) -> str:
     """Return the config directory name `repo_root` uses.
 
@@ -92,11 +105,8 @@ def find_repo_config() -> Path:
     # Local import avoids circular import (config.py imports from paths).
     from jailbee.config import ConfigNotFoundError
 
-    cwd = Path.cwd()
-    candidate = repo_config_path(cwd)
+    candidate = repo_config_path_warned(Path.cwd())
     if candidate is not None:
-        if candidate.parent.name != REPO_CONFIG_DIRS[0]:
-            _warn_legacy_config_dir(candidate)
         return candidate
     raise ConfigNotFoundError(
         "No .jailbee/config.yaml found in current directory.\n"

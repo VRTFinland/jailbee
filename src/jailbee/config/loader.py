@@ -8,24 +8,31 @@ deep-merge. See `common.deep_merge()` and docs/config.md for details.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from jailbee.config.common import (
+    SCRATCH_ORIGIN_SUFFIX,
     _copy,
     _parse_yaml_text,
     _read_yaml_or_empty,
     _split_host_keys,
     deep_merge,
 )
-from jailbee.config.errors import ConfigError
+from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.models_columns import (
     _COLUMN_DEFAULT,
     _columns_already_sanitized,
     sanitize_column_blocks,
 )
 from jailbee.config.models_golden import _RESERVED_PROVISION_ENV_KEYS
-from jailbee.config.models_host import _CACHE_NAME_RE, _PREFIX_RE, POOL_PRESETS
+from jailbee.config.models_host import (
+    _CACHE_NAME_RE,
+    _PREFIX_RE,
+    POOL_PRESETS,
+    slugify_prefix,
+)
 from jailbee.config.models_net import ClaudeCredentials
 from jailbee.config.retired import (
     _check_agents_spelling,
@@ -34,7 +41,13 @@ from jailbee.config.retired import (
 )
 from jailbee.config.root import Config
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
-from jailbee.paths import xdg_data_home
+from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
+
+if TYPE_CHECKING:
+    # Runtime import would be a cycle: `global_config` imports from
+    # `jailbee.config` at module level. `from __future__ import annotations`
+    # keeps the `scratch_repo_layer` annotation a string, so this is enough.
+    from jailbee.global_config import ScratchConfig
 
 
 def _claude_credentials_from_host_raw(
@@ -367,6 +380,32 @@ def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origi
     return cfg
 
 
+def _sanitize_columns(cfg: Config) -> Config:
+    """Apply `sanitize_column_blocks` to `cfg.ls`/`cfg.dashboard` in place.
+
+    Shared by `load_config` and the synthesized path, so a column typo
+    degrades identically wherever the config came from. Fixes are recorded on
+    `_column_warnings` for `cli._load_or_exit` to surface; this module never
+    prints.
+    """
+    # Early return: both blocks already look exactly like their defaults
+    # (the common case — most repos never touch column config), so skip
+    # building `lifecycle.ls_field_specs`'s full field list just to confirm
+    # nothing needs fixing. `dashboard.gather_rows` calls this loader once
+    # per registered repo on every refresh tick, so the saved work is not
+    # one-time — the repo-layer twin of `global_config.load_global_config`'s
+    # short-circuit for the global layer.
+    if _columns_already_sanitized([(cfg.ls, _COLUMN_DEFAULT), (cfg.dashboard, _COLUMN_DEFAULT)]):
+        return cfg
+
+    fixed, warnings = sanitize_column_blocks([("ls", cfg.ls), ("dashboard", cfg.dashboard)])
+    if warnings:
+        object.__setattr__(cfg, "ls", fixed["ls"])
+        object.__setattr__(cfg, "dashboard", fixed["dashboard"])
+    cfg._column_warnings = warnings
+    return cfg
+
+
 def load_config(path: Path) -> Config:
     """Load the per-repo config, recovering from `ls:`/`dashboard:` typos.
 
@@ -386,21 +425,122 @@ def load_config(path: Path) -> Config:
     prints. `cli._load_or_exit()` is the one place that surfaces them, via
     `tui.warn`, mirroring `cli._load_global()` for the global layer.
     """
-    cfg = load_config_unsanitized(path)
+    return _sanitize_columns(load_config_unsanitized(path))
 
-    # Early return: both blocks already look exactly like their defaults
-    # (the common case — most repos never touch column config), so skip
-    # building `lifecycle.ls_field_specs`'s full field list just to confirm
-    # nothing needs fixing. `dashboard.gather_rows` calls this loader once
-    # per registered repo on every refresh tick, so the saved work is not
-    # one-time — the repo-layer twin of `global_config.load_global_config`'s
-    # short-circuit for the global layer.
-    if _columns_already_sanitized([(cfg.ls, _COLUMN_DEFAULT), (cfg.dashboard, _COLUMN_DEFAULT)]):
-        return cfg
 
-    fixed, warnings = sanitize_column_blocks([("ls", cfg.ls), ("dashboard", cfg.dashboard)])
-    if warnings:
-        object.__setattr__(cfg, "ls", fixed["ls"])
-        object.__setattr__(cfg, "dashboard", fixed["dashboard"])
-    cfg._column_warnings = warnings
+SCRATCH_BASE_ALIAS = "jailbee-scratch-base"
+"""Golden-image alias every synthesized config shares.
+
+Pinned rather than derived from `container_prefix`, so the image is built once
+for the host instead of once per directory. Because it is shared, its content
+comes only from `global.yaml` — a scratch directory contributes no config of
+its own — which is what makes one image sound rather than merely convenient.
+The `jailbee-` prefix keeps it from colliding with a real repo in a directory
+named `scratch`.
+"""
+
+
+def scratch_repo_layer(repo_root: Path, scratch: ScratchConfig) -> dict[str, object]:
+    """The repo layer a directory with no config file gets.
+
+    Two keys are set here rather than left to `_build_config_from_dict`:
+    `container_prefix`, whose derivation from `repo_root.name` would reject a
+    name like `Tutkimus_A` and advise setting the key in a file that does not
+    exist; and `golden.alias`, whose derived `<prefix>-base` would give every
+    scratch directory its own image. The user's `scratch.config` merges on top
+    with the usual `deep_merge` rules, so both remain overridable.
+
+    Public because `jailbee config show --layer repo` prints it: that layer is
+    the honest answer to "what is this directory's repo config".
+    """
+    prefix = slugify_prefix(repo_root.name)
+    if not prefix:
+        raise ConfigError(
+            f"Cannot derive a container prefix from the directory name "
+            f"{repo_root.name!r} ({repo_root}). Run `jailbee config init` here "
+            f"and set `container_prefix:` explicitly."
+        )
+    base: dict[str, object] = {
+        "container_prefix": prefix,
+        "golden": {"alias": SCRATCH_BASE_ALIAS},
+    }
+    return deep_merge(base, scratch.config)
+
+
+def _refuse_scratch_root(repo_root: Path) -> None:
+    """Refuse `$HOME` and the filesystem root.
+
+    Both are a mistaken `cd`, never a research directory, and the cost of
+    being wrong is a container bind-mounting the user's whole home. Every
+    other directory is allowed.
+    """
+    resolved = repo_root.resolve()
+    if resolved == Path(resolved.anchor):
+        raise ConfigError(
+            f"Refusing to create a jailbee environment for {resolved} — that is "
+            f"the filesystem root. `cd` into a project directory first."
+        )
+    try:
+        home = Path.home().resolve()
+    except RuntimeError:  # home directory not resolvable; nothing to compare against
+        return
+    if resolved == home:
+        raise ConfigError(
+            f"Refusing to create a jailbee environment for {resolved} — that is "
+            f"your home directory. `cd` into a project directory, or run "
+            f"`jailbee config init` there if you really mean it."
+        )
+
+
+def _synthesize_repo_config(repo_root: Path) -> Config:
+    """Build `repo_root`'s config from `global.yaml`'s `scratch:` block.
+
+    Local import: `global_config` imports from this module, so importing it at
+    module level would form a cycle (see `_load_config_from_repo_raw`).
+    """
+    from jailbee.global_config import default_global_config_path, load_global_config
+
+    gpath = default_global_config_path()
+    gcfg, _ = load_global_config(gpath)
+    if not gcfg.scratch.enabled:
+        raise ConfigNotFoundError(
+            f"No .jailbee/config.yaml in {repo_root}, and `scratch.enabled` is "
+            f"false in {gpath}.\nRun `jailbee config init` to create one."
+        )
+    _refuse_scratch_root(repo_root)
+    cfg = _load_config_from_repo_raw(
+        scratch_repo_layer(repo_root, gcfg.scratch),
+        repo_root / REPO_CONFIG_DIRS[0] / "config.yaml",
+        origin=f"{gpath}{SCRATCH_ORIGIN_SUFFIX}",
+    )
+    cfg._synthetic = True
     return cfg
+
+
+def load_repo_config_unsanitized(repo_root: Path) -> Config:
+    """`load_config_unsanitized` for a repo root, synthesizing when it has no file.
+
+    For `jailbee config validate`, which must still report an `ls:`/`dashboard:`
+    column typo as an error — the same reason the file-backed loader comes in
+    two flavours.
+    """
+    path = repo_config_path_warned(repo_root)
+    if path is None:
+        return _synthesize_repo_config(repo_root)
+    return load_config_unsanitized(path)
+
+
+def load_repo_config(repo_root: Path) -> Config:
+    """`repo_root`'s config, synthesized when it has no `.jailbee/config.yaml`.
+
+    The loader every command should use. A directory with a config file behaves
+    exactly as before (`load_config`); one without gets a config built from
+    `global.yaml`'s `scratch:` block — see `_synthesize_repo_config` and
+    `scratch_repo_layer`. `ConfigNotFoundError` is still raised when
+    `scratch.enabled` is false, so disabling the feature restores the previous
+    behaviour everywhere at once.
+    """
+    path = repo_config_path_warned(repo_root)
+    if path is None:
+        return _sanitize_columns(_synthesize_repo_config(repo_root))
+    return load_config(path)
