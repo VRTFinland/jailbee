@@ -13,7 +13,6 @@ valid and produces a fully-defaulted Config.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -22,10 +21,8 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
-    SecretStr,
     ValidationError,
     field_validator,
-    model_validator,
 )
 
 from jailbee.config.common import (
@@ -57,6 +54,54 @@ from jailbee.config.common import (
 )
 from jailbee.config.errors import ConfigError as ConfigError
 from jailbee.config.errors import ConfigNotFoundError as ConfigNotFoundError
+from jailbee.config.models_agents import (
+    _AGENT_NAME_RE as _AGENT_NAME_RE,
+)
+from jailbee.config.models_agents import (
+    _MAX_PR_PROMPT_LEN as _MAX_PR_PROMPT_LEN,
+)
+from jailbee.config.models_agents import (
+    AgentConfig as AgentConfig,
+)
+from jailbee.config.models_agents import (
+    AgentSharedMount as AgentSharedMount,
+)
+from jailbee.config.models_agents import (
+    Autostart as Autostart,
+)
+from jailbee.config.models_agents import (
+    AutostartStep as AutostartStep,
+)
+from jailbee.config.models_agents import (
+    ClaudeAgentConfig as ClaudeAgentConfig,
+)
+from jailbee.config.models_agents import (
+    DockerRegistryMirrorRepoConfig as DockerRegistryMirrorRepoConfig,
+)
+from jailbee.config.models_agents import (
+    GithubConfig as GithubConfig,
+)
+from jailbee.config.models_behaviour import (
+    BootConfig as BootConfig,
+)
+from jailbee.config.models_behaviour import (
+    ConfirmConfig as ConfirmConfig,
+)
+from jailbee.config.models_behaviour import (
+    Defaults as Defaults,
+)
+from jailbee.config.models_behaviour import (
+    DestroyConfig as DestroyConfig,
+)
+from jailbee.config.models_behaviour import (
+    NewConfig as NewConfig,
+)
+from jailbee.config.models_behaviour import (
+    PullConfig as PullConfig,
+)
+from jailbee.config.models_behaviour import (
+    PushConfig as PushConfig,
+)
 from jailbee.config.models_columns import (
     _COLUMN_DEFAULT as _COLUMN_DEFAULT,
 )
@@ -77,6 +122,27 @@ from jailbee.config.models_columns import (
 )
 from jailbee.config.models_columns import (
     validate_column_blocks as validate_column_blocks,
+)
+from jailbee.config.models_golden import (
+    _APT_PACKAGE_NAME_RE as _APT_PACKAGE_NAME_RE,
+)
+from jailbee.config.models_golden import (
+    _DEFAULT_NODE_MAJOR as _DEFAULT_NODE_MAJOR,
+)
+from jailbee.config.models_golden import (
+    _JAVA_STACK_RE as _JAVA_STACK_RE,
+)
+from jailbee.config.models_golden import (
+    _RESERVED_PROVISION_ENV_KEYS as _RESERVED_PROVISION_ENV_KEYS,
+)
+from jailbee.config.models_golden import (
+    Golden as Golden,
+)
+from jailbee.config.models_golden import (
+    IdeName as IdeName,
+)
+from jailbee.config.models_golden import (
+    Stacks as Stacks,
 )
 from jailbee.config.models_host import (
     _CACHE_NAME_RE as _CACHE_NAME_RE,
@@ -156,6 +222,33 @@ from jailbee.config.models_net import (
 from jailbee.config.models_net import (
     parse_loose_ttl as parse_loose_ttl,
 )
+from jailbee.config.models_tools import (
+    _DEFAULT_CHROME_HOST_PATH as _DEFAULT_CHROME_HOST_PATH,
+)
+from jailbee.config.models_tools import (
+    ChromeConfig as ChromeConfig,
+)
+from jailbee.config.models_tools import (
+    GpgConfig as GpgConfig,
+)
+from jailbee.config.models_tools import (
+    JetbrainsConfig as JetbrainsConfig,
+)
+from jailbee.config.models_tools import (
+    SshConfig as SshConfig,
+)
+from jailbee.config.models_tools import (
+    TerminalConfig as TerminalConfig,
+)
+from jailbee.config.models_tools import (
+    TerminalKittyConfig as TerminalKittyConfig,
+)
+from jailbee.config.models_tools import (
+    _kitty_terminfo_candidates as _kitty_terminfo_candidates,
+)
+from jailbee.config.models_tools import (
+    resolve_kitty_terminfo_path as resolve_kitty_terminfo_path,
+)
 from jailbee.config.retired import (
     _check_agents_spelling as _check_agents_spelling,
 )
@@ -174,40 +267,6 @@ from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
     from jailbee.global_config import GlobalConfig
-
-# An agent name becomes a tmux window name and a `jailbee doctor` label —
-# kept to the safest common subset of what both accept. It does *not* reach
-# any Incus device name: those derive from each `shared[].subpath` via
-# `device_name()`. The two only coincide because every shipped preset happens
-# to name its subpath after the agent.
-_AGENT_NAME_RE = re.compile(r"[a-z0-9-]+")
-
-# Provisioning env vars set automatically by `jailbee base build`. Users may not
-# override these via `golden.provision_env` — built-in install.sh relies on
-# them, and silently letting the user shadow them produces confusing failures.
-_RESERVED_PROVISION_ENV_KEYS = frozenset(
-    {
-        "CONTAINER_UID",
-        "CONTAINER_GID",
-        "JAVA_PACKAGE",
-        "NODE_MAJOR",
-        "EXTRA_APT_PACKAGES",
-        "JAILBEE_USER_HOME",
-        "JAILBEE_PROVISION_DIR",
-    }
-)
-
-# Debian package-name grammar (simplified): start with [a-z0-9], then
-# [a-z0-9+\-.]. We enforce this on `golden.extra_apt_packages` because the
-# values are passed unquoted to `apt-get install` inside install.sh — letting
-# whitespace or shell metacharacters through would amount to shell injection.
-_APT_PACKAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+\-.]*$")
-
-# Java stack vendor and version format: openjdk-N or corretto-N (N is a major version).
-_JAVA_STACK_RE = re.compile(r"^(openjdk|corretto)-\d+$")
-
-# Default Node.js major version when node=True in stacks. Mirrors Golden.node default of 24.
-_DEFAULT_NODE_MAJOR = 24
 
 
 def _claude_credentials_from_host_raw(
@@ -265,742 +324,6 @@ def _validate_pooled_caches(cfg: Config) -> None:
                 f"would point every container at the pool's own `slots/` and "
                 f"`by-container/`. {remedy}"
             )
-
-
-class ConfirmConfig(BaseModel):
-    """Policy for confirming a bridge operation whose target jailbee chose itself.
-
-    ``jailbee git push`` / ``pull`` / ``checkout`` settle on the single existing
-    container without showing a picker. Nothing then states which host branch
-    travels or which container branch it lands on — both can come from config
-    (``push.default_source``, ``push.push_from``) or from the container's
-    ``user.jailbee.base_branch`` label rather than from the command line.
-
-    With ``auto_target`` on (the default), those commands print a plan block and
-    ask before mutating anything. Overridable per invocation with
-    ``--confirm`` / ``--no-confirm``. Off a TTY, ``pull``/``checkout`` still
-    print the block and only skip the prompt; ``push`` requires an explicit
-    container name off a TTY in the first place, so it never reaches this
-    confirmation there.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    auto_target: bool = True
-
-
-class PullConfig(BaseModel):
-    """Policy for `jailbee git pull`'s post-merge cleanup prompts.
-
-    Each step independently controls whether the cleanup runs always,
-    never, or prompts the user interactively (default).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    destroy_container: Literal["prompt", "always", "never"] = "prompt"
-    delete_branch: Literal["prompt", "always", "never"] = "prompt"
-
-
-class PushConfig(BaseModel):
-    """Policy for `jailbee git push`'s interactive default-picker.
-
-    Both keys may be ``"ask"`` to open an interactive prompt instead
-    of using a baked-in default. Layered: ``~/.config/jailbee/global.yaml``
-    is the user-wide default; ``<repo>/.jailbee/config.yaml`` may override
-    per-repo via the standard deep-merge pipeline.
-
-    ``default_source`` values:
-
-    * ``"base"`` *(default)* — resolve to each container's recorded base
-      branch (``user.jailbee.base_branch`` Incus metadata label), so the host
-      pushes exactly what was branched from, per container.
-    * ``"default-branch"`` — always use the repo's default branch (e.g.
-      ``main``), regardless of which branch the container is on.
-    * ``"current"`` — use the host's currently checked-out branch.
-    * ``"ask"`` — open an interactive picker every time.
-
-    ``default_source`` picks *which branch*; ``push_from`` picks *which
-    copy of it*:
-
-    * ``"origin"`` *(default)* — push ``refs/remotes/origin/<source>``,
-      falling back to ``refs/heads/<source>`` when the branch has no
-      upstream counterpart. The host's local ``refs/heads/<base>`` only
-      advances on ``git pull``, so for any branch the user does not check
-      out (typically the base branch) the remote-tracking ref is the
-      fresher one. Mirrors ``new.clone_from='origin'``.
-    * ``"local"`` — push ``refs/heads/<source>`` first, as ``jailbee`` did
-      before, falling back to the remote-tracking ref.
-
-    ``autofetch`` runs ``git fetch origin <source>`` on the host before
-    resolving, so the remote-tracking ref is actually current — the
-    counterpart of ``new.autofetch``. It only applies in ``"origin"``
-    mode and is best-effort: a failure (offline, branch not on origin)
-    is reported and the push proceeds with the refs already present.
-    ``--pr`` and ``--current`` always resolve locally regardless of
-    these keys; see `jailbee git push --help`.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    default_action: Literal["merge", "rebase", "plain", "ask"] = "ask"
-    default_source: Literal["default-branch", "current", "base", "ask"] = "base"
-    push_from: Literal["local", "origin"] = "origin"
-    autofetch: bool = True
-
-
-class NewConfig(BaseModel):
-    """Policy for `jailbee new`'s starting-point selection.
-
-    Applies to the default-branch fallback path (no --base, branch does
-    not yet exist in the source repo). The `--base` path always uses
-    local refs and skips autofetch; `--pr` performs its own up-front
-    fetch via `gh` and is unaffected.
-
-    With ``clone_from='origin'``, the new container is checked out at
-    ``refs/remotes/origin/<default_branch>`` on the host. If
-    ``autofetch=True``, ``jailbee new`` runs ``git fetch origin <branch>``
-    on the host before resolving that ref, so the clone reflects the
-    upstream tip without the user having to fetch manually first.
-
-    ``submodules`` controls whether git submodules are initialised
-    (recursively) inside the new container.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    clone_from: Literal["local", "origin"] = "origin"
-    autofetch: bool = True
-    background: bool = False
-    """Run `jailbee new` detached in the background by default. Overridable
-    per-invocation with `--background` / `--no-background`."""
-    submodules: bool = True
-    """Initialize the superproject's git submodules in the container
-    (recursively, offline from the host bind mount). Set false to skip."""
-
-
-class DestroyConfig(BaseModel):
-    """Policy for `jailbee destroy`."""
-
-    model_config = ConfigDict(extra="forbid")
-    background: bool = False
-    """Run `jailbee destroy` detached in the background by default. Overridable
-    per-invocation with `--background` / `--no-background`."""
-
-
-class BootConfig(BaseModel):
-    """Policy for `jailbee start` and `jailbee restart`.
-
-    One key for both: what makes either slow is the autostart run that
-    follows the boot, and it is the same run.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    background: bool = False
-    """Run `jailbee start` / `jailbee restart` detached in the background by
-    default. Overridable per-invocation with `--background` /
-    `--no-background`."""
-
-
-class Defaults(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    memory: str = "16GiB"
-    cpu: int = 8
-    network: Literal["strict", "loose"] = "strict"
-    storage_pool: str = "default"
-
-    @field_validator("network", mode="before")
-    @classmethod
-    def _no_offline(cls, v: object) -> object:
-        return _reject_offline(v)
-
-
-class Stacks(BaseModel):
-    """High-level language/tool toggles for the golden image.
-
-    Each enabled stack expands to its provisioning snippet, shared caches,
-    and build-env values (see the derivation methods). This is sugar over
-    ``golden.enable_snippets`` + ``shared_caches``; those remain the
-    low-level escape hatch.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    # bool comes first in each union so YAML `true`/`false` bind to bool,
-    # not to a coerced int/str.
-    java: bool | str = False  # "openjdk-N" | "corretto-N" | True(→openjdk default) | False
-    node: bool | int = False  # N | True(→default major) | False
-    python: bool = False
-    docker: bool = False
-    ecr: bool = False
-
-    @field_validator("java")
-    @classmethod
-    def _validate_java(cls, v: bool | str) -> bool | str:
-        if isinstance(v, bool):
-            return v
-        if not _JAVA_STACK_RE.match(v):
-            raise ValueError(
-                f"invalid golden.stacks.java: {v!r}. Use 'openjdk-<N>', 'corretto-<N>', or true."
-            )
-        return v
-
-    @field_validator("node")
-    @classmethod
-    def _validate_node(cls, v: bool | int) -> bool | int:
-        if isinstance(v, bool):
-            return v
-        if v < 1:
-            raise ValueError(
-                f"invalid golden.stacks.node: {v!r}. Use a major version >= 1 or true."
-            )
-        return v
-
-    def _java_vendor_version(self) -> tuple[str, str] | None:
-        """(vendor, version) for a pinned ``java`` value, or None when java is
-        off or ``True`` (no explicit vendor/version)."""
-        if not isinstance(self.java, str):
-            return None
-        vendor, _, version = self.java.partition("-")
-        return vendor, version
-
-    def snippet_names(self) -> list[str]:
-        """Bundled available-library base names implied by the enabled stacks."""
-        names: list[str] = []
-        if self.java:
-            vv = self._java_vendor_version()
-            names.append("20-corretto" if vv and vv[0] == "corretto" else "20-openjdk")
-        if self.node:
-            names.append("30-nodejs")
-        if self.python:
-            names.append("40-python")
-        if self.docker:
-            names.append("50-docker")
-        if self.ecr:
-            names.append("80-ecr-helper")
-        if self.java and self.docker:
-            names.append("90-registry-mirror-ca")
-        return names
-
-    def java_package(self) -> str | None:
-        """apt package name for the java stack, or None when java is off."""
-        if not self.java:
-            return None
-        vv = self._java_vendor_version()
-        if vv is None:  # java is True → distro default JDK
-            return "default-jdk"
-        vendor, version = vv
-        if vendor == "openjdk":
-            return f"openjdk-{version}-jdk"
-        # corretto — the only other vendor _JAVA_STACK_RE admits
-        return f"java-{version}-amazon-corretto-jdk"
-
-    def node_major(self) -> int | None:
-        """node major version for the node stack, or None when node is off."""
-        if self.node is True:
-            return _DEFAULT_NODE_MAJOR
-        if self.node is False:
-            return None
-        return self.node
-
-    def shared_caches(self) -> list[SharedCache]:
-        """Language caches implied by the enabled stacks."""
-        caches: list[SharedCache] = []
-        if self.java:
-            caches.append(
-                SharedCache(
-                    name="gradle",
-                    host_subpath="caches/gradle",
-                    container_path="~/.gradle",
-                )
-            )
-            caches.append(SharedCache(name="m2", host_subpath="caches/m2", container_path="~/.m2"))
-        if self.node:
-            caches.append(
-                SharedCache(
-                    name="npm",
-                    host_subpath="caches/npm",
-                    container_path="~/.npm",
-                )
-            )
-            caches.append(
-                SharedCache(
-                    name="pnpm-store",
-                    host_subpath="caches/pnpm-store",
-                    container_path="~/.local/share/pnpm/store",
-                )
-            )
-        return caches
-
-
-class Golden(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    alias: str = ""
-    ubuntu_version: str = "26.04"
-    java: str = "amazon-corretto-17"
-    node: int = 24
-    # DEPRECATED — ignored. The container's Python is always the base
-    # image's system python3 (its version is a function of ubuntu_version,
-    # since the archive ships only one python3.X per release). Kept in the
-    # model so a stale `python:` key is a soft, non-blocking deprecation
-    # warning (via validate_runtime) rather than a hard extra-field error.
-    python: str = ""
-    provision_script: Path | None = None
-    provision_env: dict[str, str] = {}
-    extra_apt_packages: list[str] = Field(default_factory=list)
-    disable_snippets: list[str] = Field(default_factory=list)
-    enable_snippets: list[str] = Field(default_factory=list)
-    stacks: Stacks = Field(default_factory=Stacks)
-
-    @field_validator("extra_apt_packages")
-    @classmethod
-    def _validate_pkg_names(cls, v: list[str]) -> list[str]:
-        for pkg in v:
-            if not _APT_PACKAGE_NAME_RE.match(pkg):
-                raise ValueError(
-                    f"invalid apt package name: {pkg!r}. Must match "
-                    r"[a-z0-9][a-z0-9+\-.]*"
-                )
-        return v
-
-
-# Supported JetBrains Toolbox launcher names. The Toolbox lays each app out as
-# /opt/jetbrains-toolbox/apps/<id>/bin/<launcher>, where the launcher binary
-# uses the IDE's short name (e.g. `pycharm` for pycharm-professional, `idea`
-# for intellij-idea-ultimate, `studio` for android-studio). gui.open_ide() uses
-# this value directly as the `find -name` pattern.
-IdeName = Literal[
-    "idea",
-    "webstorm",
-    "pycharm",
-    "goland",
-    "clion",
-    "phpstorm",
-    "rider",
-    "rubymine",
-    "datagrip",
-    "rustrover",
-    "aqua",
-    "dataspell",
-    "studio",
-]
-
-
-class GpgConfig(BaseModel):
-    """GPG support inside containers.
-
-    When enabled, jailbee RO bind-mounts ~/.gnupg, sets SSH_AUTH_SOCK in
-    the base profile to the host gpg-agent's SSH socket, and runs the
-    doctor check for that socket.
-
-    Defaults to disabled — host gpg-agent setup is personal, so opt-in
-    at the global-config layer rather than ambient-on for every repo.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-
-
-class SshConfig(BaseModel):
-    """SSH config inside containers.
-
-    When enabled, jailbee bind-mounts <shared_dir>/ssh as the container
-    user's ~/.ssh and enforces 0700 on every `jailbee init`.
-    `seed_from_host` (default true) controls whether the first init
-    copies host ~/.ssh/{config,known_hosts,config.d/} into the
-    shared dir. Private keys, authorized_keys and sockets are
-    NEVER seeded — keys come from the host gpg-agent.
-
-    Defaults to disabled — explicit opt-in lives in
-    ~/.config/jailbee/global.yaml.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    seed_from_host: bool = True
-
-
-class JetbrainsConfig(BaseModel):
-    """JetBrains IDE integration.
-
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When true, the strict-mode egress
-      allowlist is auto-extended with JetBrains' license/plugin/CDN
-      hosts so account activation and plugin updates work out of the
-      box. When false, `jailbee ide` errors out, the autostart launch is
-      suppressed, and `userprefs_from_host` / `toolbox_host_path`
-      auto-mounts and all JetBrains egress entries are skipped
-      regardless of their individual values.
-    - `ide`: which JetBrains binary `jailbee ide` (no --app) and autostart
-      launch. The `IdeName` Literal lists supported launchers.
-    - `userprefs_from_host`: opt-in RW bind-mount of
-      ~/.java/.userPrefs/jetbrains/ (license tokens) into the
-      container. Defaults to false — most users don't need it once
-      license-host egress is on. Set to true to reuse host-side
-      JetBrains Account login state across containers.
-    - `share_idea`: opt-out shared-cache mount that persists project
-      JetBrains state (.idea/) across containers of the same source
-      repo. Defaults to true. Mounts <shared_dir>/jetbrains-idea over
-      ~/<container_prefix>/.idea inside each container. Set to false
-      if the source repo tracks .idea/* files in VCS that should not
-      be shadowed by the mount. Skipped automatically in --mount mode
-      so the host's .idea wins.
-    - `ai_enabled`: opt-in switch for JetBrains AI Assistant egress
-      hosts. Defaults to false. Has no effect when `enabled` is false.
-    - `autostart`: launch the IDE after autostart steps complete.
-    - `toolbox_host_path`: host path RO-mounted to /opt/jetbrains-toolbox
-      (the container-side path is hardcoded in gui.open_ide). Set to
-      None to disable the auto-mount.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    ide: IdeName = "idea"
-    userprefs_from_host: bool = False
-    share_idea: bool = True
-    ai_enabled: bool = False
-    autostart: bool = False
-    toolbox_host_path: PathExpanded | None = Field(
-        default_factory=lambda: Path.home() / ".local" / "share" / "JetBrains" / "Toolbox"
-    )
-
-
-# Default host path for the Chrome install. Matches the Debian/Ubuntu
-# google-chrome-stable package layout (binary at
-# /opt/google/chrome/google-chrome). gui.open_chrome hardcodes the
-# container-side path, so the container-side mount target is fixed even
-# when the user changes the source path (e.g. to point at chromium).
-_DEFAULT_CHROME_HOST_PATH = Path("/opt/google/chrome")
-
-
-class ChromeConfig(BaseModel):
-    """Chrome integration.
-
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When false, `jailbee chrome` errors out
-      and the autostart launch is suppressed regardless of `autostart`.
-    - `url`: URL Chrome opens on launch. None = launch with no URL.
-      `jailbee chrome <name> <URL>` overrides this per-call.
-    - `dark_mode`: pass --force-dark-mode + --enable-features=
-      WebContentsForceDark regardless of host GTK theme.
-    - `autostart`: launch Chrome after autostart steps complete.
-    - `host_path`: host path RO-mounted to /opt/google/chrome (the
-      container-side path is hardcoded in gui.open_chrome). Defaults
-      to /opt/google/chrome — set to a different path for non-standard
-      installs (e.g. chromium), or None to disable the auto-mount.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    url: str | None = None
-    dark_mode: bool = False
-    autostart: bool = False
-    host_path: PathExpanded | None = Field(default_factory=lambda: _DEFAULT_CHROME_HOST_PATH)
-
-
-class TerminalKittyConfig(BaseModel):
-    """Kitty terminal integration (host-side opt-in, container-side terminfo).
-
-    When a developer runs `jailbee shell` / `jailbee tmux` from a kitty terminal on
-    the host, `TERM=xterm-kitty` propagates into the container via `incus
-    exec`. The base image's terminfo database doesn't ship the `xterm-kitty`
-    entry, so curses-aware tools emit `WARNING: terminal is not fully
-    functional` and degrade. This block, when active, RO bind-mounts the
-    host's `xterm-kitty` terminfo file into every container so the entry
-    resolves naturally.
-
-    - `enabled`: ``"auto"`` (default) activates iff the host terminfo file
-      can be located. ``True`` activates and fails validation if no file is
-      found. ``False`` disables the integration unconditionally.
-    - `host_terminfo_path`: explicit host path. When ``None`` (default),
-      autodetect probes ``/usr/share/terminfo/x/xterm-kitty``,
-      ``~/.local/kitty.app/lib/kitty/terminfo/x/xterm-kitty``, and
-      ``~/.terminfo/x/xterm-kitty`` in that order.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: Literal["auto", True, False] = "auto"
-    host_terminfo_path: PathExpanded | None = None
-
-
-class TerminalConfig(BaseModel):
-    """Container of terminal-emulator integrations. Currently just kitty."""
-
-    model_config = ConfigDict(extra="forbid")
-    kitty: TerminalKittyConfig = TerminalKittyConfig()
-
-
-def _kitty_terminfo_candidates() -> list[Path]:
-    """Ordered list of host paths jailbee probes for the kitty terminfo entry.
-
-    1. Distro package (``kitty-terminfo`` on Debian/Ubuntu/Fedora).
-    2. Kitty's official ``installer.sh`` user-local layout.
-    3. User-installed via ``tic``.
-    """
-    home = Path.home()
-    return [
-        Path("/usr/share/terminfo/x/xterm-kitty"),
-        home / ".local/kitty.app/lib/kitty/terminfo/x/xterm-kitty",
-        home / ".terminfo/x/xterm-kitty",
-    ]
-
-
-def resolve_kitty_terminfo_path(*, explicit: Path | None) -> Path | None:
-    """Return an existing host terminfo file path, or None.
-
-    Explicit-path mode: returns the path iff it exists. Autodetect mode:
-    returns the first existing candidate from ``_kitty_terminfo_candidates``.
-    """
-    if explicit is not None:
-        return explicit if explicit.exists() else None
-    for cand in _kitty_terminfo_candidates():
-        if cand.exists():
-            return cand
-    return None
-
-
-class AutostartStep(BaseModel):
-    """A single shell step to run inside a container during autostart.
-
-    `network` swaps the container's network profile for the duration of the
-    step (and restores it afterwards). `mounts` lists `optional_mounts` keys
-    to attach for the step's duration. `background: True` detaches via
-    `setsid` and does not wait for completion.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    run: str
-    network: Literal["strict", "loose"] | None = None
-    mounts: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-    working_dir: str = ""
-    background: bool = False
-    timeout: int | None = None
-    continue_on_error: bool = False
-
-    @field_validator("network", mode="before")
-    @classmethod
-    def _no_offline(cls, v: object) -> object:
-        return _reject_offline(v)
-
-
-class DockerRegistryMirrorRepoConfig(BaseModel):
-    """Per-repo overrides for the host-global rpardini mirror.
-
-    Currently only ``extra_registries``: a list of upstream registry hostnames
-    that this repo pulls images from but which aren't covered by rpardini's
-    built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io).
-    The strings are hostnames (optionally with ``:port``) — no scheme, no
-    path. Empty by default; ``jailbee new`` / ``jailbee apply`` push the merged list
-    into the mirror's REGISTRIES env on each run.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    extra_registries: list[str] = Field(default_factory=list)
-
-    @field_validator("extra_registries")
-    @classmethod
-    def _validate_hostnames(cls, v: list[str]) -> list[str]:
-        for raw in v:
-            if not raw or raw != raw.strip():
-                raise ValueError(f"empty / whitespace-padded registry hostname: {raw!r}")
-            if any(c.isspace() for c in raw):
-                raise ValueError(f"registry hostname must not contain whitespace: {raw!r}")
-            if "/" in raw or "://" in raw:
-                raise ValueError(
-                    f"registry must be a bare hostname[:port], not a URL/path: {raw!r}"
-                )
-        return v
-
-
-# `claude.pr_prompt` ships to the container as an environment variable inside
-# jailbee's own prompt. The cap is a sanity bound, not a model context limit:
-# it turns a pasted-in-by-accident file into a config error instead of a
-# `claude` invocation that fails opaquely and silently falls back.
-_MAX_PR_PROMPT_LEN = 20_000
-
-
-class AgentSharedMount(BaseModel):
-    """One bind-mount an agent needs to keep its auth/config across containers.
-
-    Share the minimum surface that avoids re-authentication. Caches, chat
-    histories and logs are per-branch working state and must stay
-    per-container; a generically-named file (e.g. `~/.env`) must never be
-    shared, because the mount would collide with unrelated tools and leak
-    their secrets between containers.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    subpath: str
-    path: str
-    type: Literal["dir", "file"] = "dir"
-    seed: str | None = None
-
-    @model_validator(mode="after")
-    def _seed_is_file_only(self) -> AgentSharedMount:
-        if self.type == "dir" and self.seed is not None:
-            raise ValueError(f"seed is only valid for type: file (subpath {self.subpath!r})")
-        return self
-
-
-class AgentConfig(BaseModel):
-    """A terminal coding agent wired into the container lifecycle.
-
-    `install`/`update` are shell command lines run inside the container as the
-    dev user through the autostart step pipeline, so each gets a fresh
-    `bash -lc` login shell — which is why `~/.local/bin` and
-    `~/.npm-global/bin` are on PATH for them.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    autostart: bool = False
-    command: str = ""
-    install: str | None = None
-    install_check: str | None = None
-    update: str | None = None
-    auto_update: bool = True
-    install_network: Literal["strict", "loose"] = "strict"
-    shared: list[AgentSharedMount] = Field(default_factory=list)
-    egress_allow: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-
-    def effective_install_check(self) -> str:
-        """The command that decides install-vs-update.
-
-        Defaults to `command -v <first token of command>`: the binary's own
-        name, not the full command line, so flags in `command` don't leak into
-        the probe.
-        """
-        if self.install_check:
-            return self.install_check
-        binary = self.command.split()[0] if self.command.strip() else ""
-        return f"command -v {binary}"
-
-
-class ClaudeAgentConfig(AgentConfig):
-    """`agents.claude` — the generic fields plus Claude-only integrations.
-
-    `enabled`, `autostart`, `command` and `auto_update` are inherited: their
-    semantics are identical to any other agent's. `enabled` gates the shared
-    `<shared_dir>/claude` cache mount (see `Config.effective_shared_caches`),
-    the `CLAUDE_API_HOSTS` strict-mode egress auto-add, the
-    `<shared_dir>/claude` subdir creation on `jailbee init`, and the
-    claude-subdir presence check in `jailbee doctor`. When enabled, jailbee
-    creates an empty `<shared_dir>/claude` directory as a bind-mount source
-    and seeds `<shared_dir>/claude/.claude.json` with `{}` — the golden image
-    exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude Code reads its
-    global config from inside that directory mount, and Claude Code inside
-    the first container runs its onboarding flow from a clean state. No host
-    `~/.claude` / `~/.claude.json` is read.
-
-    - `plugins_enabled`: when true (default), `effective_egress_allow`
-      also appends `CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so that Claude
-      Code's plugin marketplace, skills and SessionStart hooks load in
-      strict-mode containers. Set to false to keep the API reachable
-      while blocking marketplace traffic. Has no effect when `enabled`
-      is false.
-    - `install_jailbee_skills`: when true (default, requires `enabled`), `jailbee new`
-      and `jailbee apply` copy jailbee's bundled Claude skills (`jailbee-usage`,
-      `jailbee-repo-setup`) into the shared `<shared_dir>/claude/skills/` so the
-      in-container Claude understands jailbee and can help with `.jailbee/config.yaml`
-      edits. Host-side file copy only — no network. Has no effect when `enabled`
-      is false. The pre-1.0 key name (`install_gie_skills`) is not accepted at
-      all — `_check_retired_keys`/`_RETIRED_KEYS_CLAUDE` raises a `ConfigError`
-      naming this key as the replacement, under both the legacy `claude:` and
-      the `agents.claude` spelling.
-    - `ai_pr_description`: when true (default, requires `enabled`),
-      `jailbee pr` asks the in-container Claude CLI to generate the
-      PR title and body from the branch's commits and diff, falling back to
-      a placeholder if generation fails. Has no effect when `enabled` is
-      false.
-    - `ai_pr_branch`: when true (default, requires `enabled`), `jailbee pr` asks
-      the in-container Claude to propose a convention-following PR head branch
-      name when opening a new PR; has no effect when `enabled` is false.
-    - `pr_prompt`: project-specific PR-writing instructions, typically set in a
-      repo's `.jailbee/config.yaml` as a YAML block scalar. They are embedded in
-      jailbee's own prompt as a delimited section that explicitly outranks the
-      generic guidance, so a project can dictate the title and body shape
-      without having to restate the JSON response contract `_parse_pr_text`
-      depends on. Capped at 20 000 characters so a pathological value fails at
-      config load rather than inside the container. Has no effect when
-      `enabled` or `ai_pr_description` is false.
-    - `ai_pr_model`: the model `jailbee pr` passes to `claude --model` when
-      generating the PR text. Defaults to `sonnet`: writing a PR description is
-      a bounded summarisation job, and pinning it means the generation does not
-      compete for the same budget as the coding work that just happened in the
-      container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model
-      ID; `null` omits the flag entirely so the container's own default model
-      applies. `haiku` is a valid choice but has a smaller context window than
-      the alternatives, so a large cumulative diff may not fit. Has no effect
-      when `enabled` or `ai_pr_description` is false.
-    - `ai_pr_timeout`: seconds `jailbee pr` gives the in-container Claude to
-      produce the PR text before giving up and falling back to a placeholder.
-      Defaults to 600. Generation is an agentic run, not one model call — it
-      reads the log, the cumulative diff, the PR template and the branch's spec
-      across a dozen-plus turns, so cost scales with the repository, not just
-      with the diff. Measured in jailbee's own repo on a 21-file diff: 129s.
-      Raise it for a large tree, or when `claude.pr_prompt` asks for work that
-      takes longer. Has no effect when `enabled` or `ai_pr_description` is
-      false.
-    """
-
-    plugins_enabled: bool = True
-    install_jailbee_skills: bool = True
-    ai_pr_description: bool = True
-    ai_pr_branch: bool = True
-    pr_prompt: str | None = Field(default=None, max_length=_MAX_PR_PROMPT_LEN)
-    ai_pr_model: str | None = "sonnet"
-    ai_pr_timeout: int = Field(default=600, gt=0)
-
-    @field_validator("ai_pr_model")
-    @classmethod
-    def _reject_non_model_value(cls, v: str | None) -> str | None:
-        """A model name is a single token — reject anything that isn't one.
-
-        The value reaches `claude --model` through an environment variable, so
-        embedded flags could never be executed as such. The check exists to
-        turn a typo or a misunderstanding into a config error, rather than a
-        non-zero `claude` exit that `generate_pr_text` reports only as a failed
-        generation. Use `null`, not an empty string, to inherit the container's
-        own default model.
-        """
-        if v is None:
-            return None
-        if not v.strip() or len(v.split()) != 1:
-            raise ValueError(
-                f"must be a single model name or alias (e.g. 'sonnet', "
-                f"'claude-haiku-4-5'), or null to inherit the container "
-                f"default; got {v!r}"
-            )
-        return v.strip()
-
-
-class GithubConfig(BaseModel):
-    """GitHub CLI (gh) integration inside containers.
-
-    - `enabled`: master switch. Defaults to false; opt-in via
-      ~/.config/jailbee/global.yaml. When false, jailbee skips:
-        * the api.github.com:443 strict-mode egress auto-add,
-        * the /etc/profile.d/jailbee-github.sh autostart write,
-        * the github doctor checks.
-      gh binary itself is always installed in the golden image
-      (parallels claude.enabled vs the ensure-claude.sh runtime step).
-    - `api_tokens`: map from `container_prefix` to a fine-grained PAT.
-      One entry per GitHub resource owner (org or personal account).
-      Value is a SecretStr so accidental repr / config-dump masks it.
-      Permitted only at the global config layer (~/.config/jailbee/global.yaml);
-      see load_config's placement constraint.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = False
-    api_tokens: dict[str, SecretStr] = Field(default_factory=dict)
-
-
-class Autostart(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    on_create: list[AutostartStep] = Field(default_factory=list)
-    on_start: list[AutostartStep] = Field(default_factory=list)
-    step_timeout: int = 600
-    env: dict[str, str] = Field(default_factory=dict)
 
 
 class Config(BaseModel):

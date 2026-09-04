@@ -1831,7 +1831,7 @@ def test_resolve_kitty_terminfo_autodetect_finds_first_existing(tmp_path, mocker
     cand2.write_bytes(b"\x1a\x01")
 
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[cand1, cand2, cand3],
     )
 
@@ -1843,7 +1843,7 @@ def test_resolve_kitty_terminfo_autodetect_none_match(tmp_path, mocker):
 
     cand = tmp_path / "absent/xterm-kitty"
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[cand],
     )
 
@@ -1903,7 +1903,7 @@ def test_kitty_auto_mount_absent_when_auto_and_no_path(tmp_path, mocker):
     """enabled: auto with no resolvable path is a silent no-op."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "nowhere"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
@@ -1917,7 +1917,7 @@ def test_kitty_auto_mount_present_when_auto_and_autodetect_succeeds(tmp_path, mo
     f.parent.mkdir()
     f.write_bytes(b"\x1a\x01")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[f],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
@@ -1958,7 +1958,7 @@ def test_kitty_auto_mount_suppressed_by_user_supplied_mount(tmp_path, mocker):
 def test_kitty_validate_errors_when_enabled_true_and_no_path(tmp_path, mocker):
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "absent"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: true\n")
@@ -1986,7 +1986,7 @@ def test_kitty_validate_silent_when_auto_and_no_path(tmp_path, mocker):
     error. The integration just doesn't activate."""
     mocker.patch("jailbee.config.detect_default_branch", return_value="main")
     mocker.patch(
-        "jailbee.config._kitty_terminfo_candidates",
+        "jailbee.config.models_tools._kitty_terminfo_candidates",
         return_value=[tmp_path / "absent"],
     )
     cfg_path = _make_config(tmp_path, "terminal:\n  kitty:\n    enabled: auto\n")
