@@ -194,9 +194,9 @@ def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, 
     mocker.patch.object(
         dashboard,
         "list_containers",
-        side_effect=lambda cfg, incus, **kw: []
-        if kw.get("all_repos")
-        else [_ci("tutkimus-x", "tutkimus")],
+        side_effect=lambda cfg, incus, **kw: (
+            [] if kw.get("all_repos") else [_ci("tutkimus-x", "tutkimus")]
+        ),
     )
 
     groups = dashboard.gather_rows(mocker.MagicMock(), [repo], cwd_root=repo, with_git=False)
@@ -2869,9 +2869,7 @@ def _drive_run(mocker, key_sequence: list[bytes]) -> int:
     refresher thread ever publishing a snapshot before the key loop reads
     it (a real race the tests must not depend on winning).
     """
-    mocker.patch.object(
-        dashboard, "collect_repo_roots", return_value=[Path("/x")]
-    )
+    mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
     mocker.patch.object(dashboard, "gather_live", return_value=[])

@@ -334,9 +334,7 @@ def gather_live(incus: Incus, cwd_root: Path | None, *, with_git: bool) -> list[
     database — cheap next to the `incus list` (and git probes) in the gather
     it precedes.
     """
-    return gather_rows(
-        incus, collect_repo_roots(cwd_root), cwd_root=cwd_root, with_git=with_git
-    )
+    return gather_rows(incus, collect_repo_roots(cwd_root), cwd_root=cwd_root, with_git=with_git)
 
 
 def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[RepoGroup]) -> None:
