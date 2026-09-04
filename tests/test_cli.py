@@ -8732,3 +8732,85 @@ def test_config_show_default_layer_in_a_scratch_directory(tmp_path, monkeypatch,
     assert "Traceback" not in result.output
     assert f"merged from global + {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
     assert "container_prefix: tutkimus" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flights in a scratch (config-less) directory
+# ---------------------------------------------------------------------------
+
+
+def _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, *, git: bool, image_exists: bool = True):
+    """`_setup_new_cmd_env` for a directory with no `.jailbee/config.yaml`.
+
+    Builds on `_scratch_cwd` for the directory/XDG/`detect_default_branch`
+    setup, then adds what `new_cmd` additionally needs: a mocked `Incus`,
+    the docker-mirror pre-flight, and `lifecycle.new_container`.
+
+    Returns `(new_container_mock, incus_mock)` — the `Incus` mock comes back
+    so a test (or a later task's pre-flight test) can change
+    `image_exists` / `profile_exists` without patching `jailbee.incus.Incus`
+    a second time and losing this one's return values.
+    """
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=git)
+
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.image_exists.return_value = image_exists
+    incus.profile_exists.return_value = True
+
+    mirror_data_dir = tmp_path / "registry"
+    (mirror_data_dir / "ca").mkdir(parents=True)
+    (mirror_data_dir / "ca" / "ca.crt").write_text("fake-ca")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=mirror_data_dir)
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        return_value=("10.234.216.1", 3128),
+    )
+    mocker.patch("jailbee.apply.run_apply")
+
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "tutkimus-work"
+    return new_container, incus
+
+
+def test_new_in_a_non_git_scratch_dir_requires_mount(tmp_path, monkeypatch, mocker):
+    """Clone mode has nothing to clone in a scratch directory with no
+    `.git/` — `jb new` must refuse early with actionable advice, rather than
+    let the clone fail deep inside container creation."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=False)
+
+    result = CliRunner().invoke(app, ["new", "work"])
+    # Rich wraps long lines at the runner's terminal width and may or may not
+    # leave a trailing space at the break, so normalize all whitespace
+    # (including newlines) to single spaces before matching a phrase that
+    # spans a wrap point.
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 2
+    assert "not a git repository" in collapsed
+    assert "--mount" in collapsed
+
+
+def test_new_mount_in_a_non_git_scratch_dir_proceeds(tmp_path, monkeypatch, mocker):
+    """--mount does not clone, so the same non-git scratch directory must be
+    accepted rather than rejected by the new guard."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=False)
+
+    result = CliRunner().invoke(app, ["new", "--mount", "work", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_count == 1

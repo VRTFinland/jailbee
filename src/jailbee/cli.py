@@ -931,6 +931,20 @@ def new_cmd(
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
 
     cfg = _load_or_exit(config)
+
+    # Clone mode fetches from the `/mnt/host-source` bind and would fail inside
+    # the container with git's own error. Narrowed to a synthesized config on
+    # purpose: a *configured* repo in a non-git directory is broken in ways
+    # this check would not fix, and widening it would change behaviour nobody
+    # asked about.
+    if cfg.is_synthetic() and not mount and not (cfg.repo_root / ".git").exists():
+        error(
+            f"{cfg.repo_root} is not a git repository — there is nothing to "
+            f"clone.\nUse `jb new --mount <name>` to bind-mount it into the "
+            f"container instead."
+        )
+        raise typer.Exit(2)
+
     _advise_upgrade(cfg)
     _advise_setup()
 
