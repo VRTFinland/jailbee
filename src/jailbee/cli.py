@@ -56,6 +56,25 @@ def _resolve_config_path(path: Path | None) -> Path:
     return find_repo_config()
 
 
+def _resolve_config_path_or_none(path: Path | None) -> Path | None:
+    """`_resolve_config_path`, but None instead of raising when there is none.
+
+    Isolates the one `ConfigNotFoundError` case `_load_or_exit` (and `config
+    show`/`config validate`) treat as "synthesize a config" rather than "exit
+    1": no explicit `--config` and no `.jailbee/config.yaml` in the current
+    directory. An explicit `--config PATH` that does not exist is not this
+    case — `_resolve_config_path` returns it unchanged, so the caller's own
+    `ConfigError` handling still reports a typo'd path as an error, not an
+    invitation to synthesize.
+    """
+    from jailbee.config import ConfigNotFoundError
+
+    try:
+        return _resolve_config_path(path)
+    except ConfigNotFoundError:
+        return None
+
+
 def _now() -> datetime:
     """Wallclock helper, factored for test mocking."""
     return datetime.now(UTC)
@@ -6844,10 +6863,24 @@ def _load_or_exit(config_path: Path | None) -> "Config":
     equivalent global-layer warning (see ``_load_global``). `jailbee config
     validate` is the one place such a typo is still an error (it calls
     `load_config_unsanitized` directly, bypassing this function).
+
+    With no `--config` and no config file in the current directory, the config
+    is synthesized from `global.yaml`'s `scratch:` block rather than being an
+    error — see `config.load_repo_config`. An explicit `--config PATH` that
+    does not exist stays an error: that is a typo, not an invitation to
+    synthesize. `scratch.enabled: false` restores the previous behaviour, via
+    the `ConfigNotFoundError` the loader still raises.
     """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX, load_repo_config
+
     try:
-        path = _resolve_config_path(config_path)
-        cfg = load_config(path)
+        path = _resolve_config_path_or_none(config_path)
+        if path is None:
+            cfg = load_repo_config(Path.cwd())
+            label = f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+        else:
+            cfg = load_config(path)
+            label = str(path)
     except ConfigError as e:
         # `error_plain`: a validator message can carry square brackets — the
         # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
@@ -6856,7 +6889,7 @@ def _load_or_exit(config_path: Path | None) -> "Config":
         error_plain(str(e))
         raise typer.Exit(1) from e
     for w in cfg.column_warnings():
-        warn(f"{path}: {w}")
+        warn(f"{label}: {w}")
     return cfg
 
 

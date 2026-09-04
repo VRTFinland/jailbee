@@ -674,19 +674,27 @@ def test_chrome_pool_ls_alias_keeps_its_help_text():
     assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
 
 
-def test_ls_without_dot_jailbee_config_exits_with_error(tmp_path, monkeypatch):
+def test_ls_without_dot_jailbee_config_synthesizes_by_default(tmp_path, monkeypatch, mocker):
+    """Superseded expectation: this used to assert `ls` exits 1 in a
+    config-less directory. Scratch-config synthesis (`scratch.enabled`
+    defaults to true in `global.yaml`) makes that exactly the case this
+    feature is meant to fix — see `test_ls_works_in_a_directory_with_no_config`
+    below for the discriminating version of that scenario. This test now
+    covers the distinct case that one: no `.git` directory at all. Scratch
+    synthesis has no git dependency (`detect_upstream_remote`/
+    `detect_default_branch` degrade to a fallback when there is no repo), so
+    `ls` must still succeed here."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
 
-    monkeypatch.chdir(tmp_path)
-    runner = CliRunner()
-    result = runner.invoke(app, ["ls"])
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=False)
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = []
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
-    assert ".jailbee/config.yaml" in combined
-    assert "jailbee config init" in combined
+    result = CliRunner().invoke(app, ["ls"])
+
+    assert result.exit_code == 0, result.output
 
 
 # ---- multi-repo CLI behavior ----
@@ -8550,3 +8558,93 @@ def test_init_cmd_warns_instead_of_aborting_when_the_mirror_is_down(tmp_path, mo
     assert result.exit_code == 0, result.stdout
     run_init.assert_called_once()
     assert run_init.call_args.kwargs["mirror_endpoint"] is None
+
+
+# ---------------------------------------------------------------------------
+# _load_or_exit: scratch (config-less) directories
+# ---------------------------------------------------------------------------
+
+
+def _scratch_cwd(
+    tmp_path,
+    monkeypatch,
+    mocker,
+    *,
+    git: bool = False,
+    global_yaml: str = "{}\n",
+):
+    """Shared setup for CLI tests exercising a directory with no
+    `.jailbee/config.yaml` — the "scratch" config path.
+
+    Points $XDG_CONFIG_HOME at a fresh `global.yaml` carrying `global_yaml`,
+    creates `tmp_path/tutkimus` (with a `.git/` when `git=True`, for commands
+    that need a repo to look like one), chdirs into it, and patches
+    `detect_default_branch` so config loading never shells out to git.
+    Returns the directory. Shared across every scratch-directory CLI test
+    (this task and the config show/validate and `jb new` pre-flight tests
+    that build on it).
+    """
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text(global_yaml)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    repo = tmp_path / "tutkimus"
+    if git:
+        (repo / ".git").mkdir(parents=True)
+    else:
+        repo.mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    return repo
+
+
+def test_ls_works_in_a_directory_with_no_config(tmp_path, monkeypatch, mocker):
+    """The whole point of hooking in at the loader: commands that never
+    mention scratch work in a scratch directory, and the container prefix
+    they operate on is derived from the directory name — not merely "no
+    error was raised"."""
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=True)
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "tutkimus-feat-x",
+            "status": "Running",
+            "profiles": ["default", "tutkimus-base", "tutkimus-binds", "tutkimus-net-strict"],
+            "state": None,
+            "config": {},
+        }
+    ]
+    incus_mock.return_value.config_get.return_value = None
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    # Only reachable if `cfg.container_prefix` was synthesized as "tutkimus"
+    # (slugified from the directory name) — a config load failure would have
+    # exited 1 before any container was ever filtered or printed.
+    assert "feat-x" in result.stdout
+
+
+def test_ls_still_errors_when_scratch_is_disabled(tmp_path, monkeypatch, mocker):
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        git=True,
+        global_yaml="scratch:\n  enabled: false\n",
+    )
+
+    result = CliRunner().invoke(app, ["ls"])
+
+    assert result.exit_code == 1
+    assert "jailbee config init" in result.output
+    # Distinguishes the new `ConfigNotFoundError` raised by
+    # `load_repo_config`/`_synthesize_repo_config` (which names
+    # `scratch.enabled` and the global config file) from the old
+    # `find_repo_config` message, which never mentions either — without
+    # this, the assertions above pass whether or not `_load_or_exit` was
+    # ever changed to call the new loader.
+    assert "scratch.enabled" in result.output
