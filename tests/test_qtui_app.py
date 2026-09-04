@@ -542,8 +542,8 @@ def _controller_with_group(
     # destroy tests mock `subprocess.Popen` (to assert the destroy launch didn't
     # happen), which intercepts these unrelated internal calls too. Stub both so
     # load_config stays a pure in-memory parse in tests.
-    mocker.patch("jailbee.config.detect_upstream_remote", return_value="origin")
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     # RepoGroup.repo_root is `str | None`, not a Path.
     controller._latest = [
         RepoGroup(

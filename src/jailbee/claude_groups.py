@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from jailbee.config import _CREDENTIAL_GROUP_RE
+from jailbee.config.models_net import _CREDENTIAL_GROUP_RE
 
 if TYPE_CHECKING:
     from jailbee.config import Config

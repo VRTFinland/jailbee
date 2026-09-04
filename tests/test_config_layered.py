@@ -23,7 +23,7 @@ def repo_and_global(tmp_path, mocker, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     global_path = home / ".config" / "jailbee" / "global.yaml"
     repo_path = repo_root / ".jailbee" / "config.yaml"
     return repo_root, repo_path, global_path

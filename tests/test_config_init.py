@@ -49,7 +49,7 @@ def test_render_template_is_valid_yaml(tmp_path):
 
 
 def test_template_round_trips_to_valid_config(tmp_path, mocker):
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo_root = tmp_path / "myrepo"
 
     write_template(repo_root)
@@ -298,7 +298,7 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
 
     from jailbee.config import _build_config_from_dict, _check_retired_keys, _split_host_keys
 
-    mocker.patch("jailbee.config.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     text = render_global_template()
     raw = yaml_mod.safe_load(text)
     _check_retired_keys(raw)  # must not raise
