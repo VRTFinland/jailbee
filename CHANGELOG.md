@@ -135,6 +135,12 @@
 
 ### Added
 
+- **`jailbee claude group ls`** lists the credential groups on this host and
+  what each one holds — the same rows and columns as `jailbee claude ls`,
+  narrowed to rows that *are* a group (a parked login belongs to none, and an
+  ungrouped holder is one repo's own). One builder behind both, so the two
+  tables cannot disagree. It is also the signpost the group's help was
+  missing once its status view went away.
 - **`jailbee claude group create <name>`** creates an empty credential group
   before anything is assigned to it. `set`, `use` and `claude use -g` all
   create the directory on demand, so this is for the case where the group
