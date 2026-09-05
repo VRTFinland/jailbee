@@ -156,8 +156,21 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
 
     Empty for the global layer (nothing above it to inherit from) and for
     every non-list kind (those override, so there is no context to show).
+
+    If the repo layer has an explicit empty list (`egress_allow: []`),
+    `deep_merge` treats it as a reset that discards the global entries
+    entirely, so this returns `()` — nothing is inherited when the list
+    is explicitly empty. This function reports on layers as they are
+    saved to disk, not on staged edits; if the user then adds entries,
+    the list becomes non-empty and inheritance reappears after a save.
+    Recomputing against staged edits belongs to the UI plan.
     """
     if layer != "repo" or spec.kind not in _APPENDING_KINDS:
+        return ()
+    # If the repo layer has an explicit empty list, it resets (discards)
+    # the global entries rather than appending to them.
+    repo_present, repo_value = lookup(layers.repo_raw, spec.path)
+    if repo_present and repo_value == []:
         return ()
     present, value = lookup(layers.global_raw, spec.path)
     if not present or not isinstance(value, list):

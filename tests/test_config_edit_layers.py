@@ -102,9 +102,13 @@ def test_the_opaque_scratch_overlay_is_disabled_in_both_layers():
     from jailbee.config_edit.schema import global_specs
 
     spec = next(s for s in global_specs() if s.path == ("scratch", "config"))
-    reason = layers.disabled_reason(spec, "global")
-    assert reason is not None
-    assert "by hand" in reason
+    # Test both layers as the name promises
+    reason_global = layers.disabled_reason(spec, "global")
+    assert reason_global is not None
+    assert "by hand" in reason_global
+    reason_repo = layers.disabled_reason(spec, "repo")
+    assert reason_repo is not None
+    assert "by hand" in reason_repo
 
 
 def test_repo_layer_shows_the_global_list_entries_it_will_append_to(tmp_path):
@@ -144,3 +148,19 @@ def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     origins = layers.resolve(repo_specs(), got)
     assert origins[("chrome", "url")] == layers.Origin("repo", None)
+
+
+def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
+    """An explicit empty list in the repo layer resets, discarding global entries.
+
+    `deep_merge` treats `egress_allow: []` in the repo config as a reset
+    that discards the global list entirely, not as an append that would add
+    to it. So `inherited_entries` returns `()` for a repo layer holding an
+    explicit empty list, even if the global layer has entries — nothing is
+    inherited when the list is explicitly reset.
+    """
+    _write(tmp_path / "global.yaml", "egress_allow:\n  - a.example\n  - b.example\n")
+    _write(tmp_path / "repo.yaml", "egress_allow: []\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == ()
