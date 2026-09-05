@@ -25,7 +25,7 @@ listing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from jailbee import claude_groups, claude_pool
 
@@ -134,9 +134,8 @@ def _existing_group_dirs() -> list[str]:
 
 def _account_at(
     holder: Path,
-    gcfg: GlobalConfig,
     homes: dict[str, Path],
-    rows: list[dict[str, Any]],
+    by_prefix: dict[str, set[str | None]],
     *,
     group: str | None,
     member_prefixes: list[str],
@@ -144,18 +143,17 @@ def _account_at(
 ) -> claude_pool.Identity | None:
     """Which account `holder`'s login belongs to, or None when nothing says.
 
-    Authoritativeness is the same rule everywhere (`claude_groups`): a repo's
-    `oauthAccount` describes this holder only when *every* group its
-    containers use is this one. An ungrouped holder is the same question with
-    "no group" as the answer, which is why it is asked through
-    `groups_by_prefix_from` rather than assumed.
+    Authoritativeness is `claude_groups.authoritative_in`'s rule and only its
+    rule, asked of the one `groups_by_prefix_from` mapping `build` computes
+    for the whole host — including for an ungrouped holder, where the answer
+    being sought is "no group".
     """
     members = [claude_pool.Member(p, homes[p]) for p in member_prefixes]
-    by_prefix = claude_groups.groups_by_prefix_from(gcfg, rows, member_prefixes)
-    authoritative = {p for p, groups in by_prefix.items() if groups == {group}}
-    account = claude_pool.account_of(
-        holder, members, prefer=prefer, authoritative=authoritative
-    )
+    # Not intersected with `member_prefixes`: `_member_account` already keeps
+    # only the members it was handed, and a second filter here would look like
+    # it guarded a case that one does not.
+    authoritative = claude_groups.authoritative_in(by_prefix, group)
+    account = claude_pool.account_of(holder, members, prefer=prefer, authoritative=authoritative)
     return None if account is None else account.identity
 
 
@@ -178,6 +176,7 @@ def build(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> Overview:
         # empty, and `containers_known` tells the caller to say so.
         raw, containers_known = [], False
     triples = claude_groups.container_groups(gcfg, raw, prefixes)
+    by_prefix = claude_groups.groups_by_prefix_from(gcfg, raw, prefixes)
 
     mine = claude_pool.holder_dir(cfg)
     parked = claude_pool.parked_slots()
@@ -194,9 +193,8 @@ def build(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> Overview:
         member_prefixes = [p for p in prefixes if _resolved_group(gcfg, p) == group]
         identity = _account_at(
             holder,
-            gcfg,
             homes,
-            raw,
+            by_prefix,
             group=group,
             member_prefixes=member_prefixes,
             prefer=cfg.container_prefix,
@@ -222,9 +220,8 @@ def build(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> Overview:
                 holder,
                 _account_at(
                     holder,
-                    gcfg,
                     homes,
-                    raw,
+                    by_prefix,
                     group=None,
                     member_prefixes=[prefix],
                     prefer=prefix,

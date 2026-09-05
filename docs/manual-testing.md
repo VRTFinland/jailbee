@@ -3006,12 +3006,16 @@ and the host's own audio must survive the container's boot.
 
 Needs two Claude accounts. Everything below runs on the host.
 
-1. `jailbee claude ls` — one row, `live`, naming the account in use.
-2. `jailbee claude park` — the row moves to `parked`, and
-   `ls <holder>/.credentials.json` is gone.
+1. `jailbee claude ls` — the row for this repo's holder is `live` and bold,
+   names the account in use, and its `GROUP` and `USED BY` cells match the
+   repo's group and the repos/containers reading it. Every other credential
+   group on the host is a row too; `STATE` is `empty` for one holding no
+   login.
+2. `jailbee claude park` — that row becomes `empty`, a new `parked` row
+   appears, and `ls <holder>/.credentials.json` is gone.
 3. In a container of that holder, run `claude` and `/login` as the **second**
-   account. Back on the host, `jailbee claude ls` shows two rows and the new
-   one is `live`.
+   account. Back on the host, `jailbee claude ls` shows the holder `live`
+   again with the new account, the first still `parked`.
 4. **The hot-reload gate.** Leave an interactive `claude` running in a
    container. On the host, `jailbee claude use <first account>`. Ask the
    session a question **without restarting it**: it must answer. Then check
@@ -3026,6 +3030,19 @@ Needs two Claude accounts. Everything below runs on the host.
    up on the old account, and no `.oauth_refresh.lock` may be left behind
    (`ls -a <holder>`).
 7. `jailbee claude rm <parked account>` — confirms, then the row is gone.
+8. **The group-visibility gate** (what `claude ls` was rebuilt for). Move one
+   container into a group no repo resolves to:
+   `jailbee claude group use <fresh-group> <container>`, then on the host
+   `jailbee claude ls`. That group must be a row of its own, `USED BY` must
+   name **that container** (not a count, since no repo resolves to the
+   group), and the row must be `empty` until a `/login` in the container or a
+   `jailbee claude use -g <fresh-group>` fills it. `jailbee claude ls -g
+   <fresh-group>` must narrow to that row plus the parked store, and
+   `jailbee claude group` must point at `jailbee claude ls` rather than
+   printing a list of group names.
+9. **The degradation gate.** With the Incus daemon stopped
+   (`sudo systemctl stop incus`), `jailbee claude ls` must still print the
+   table, with `containers ?` in `USED BY` and a warning — not an error.
 
 ## Cache pool smoke test (`pool.py`, `pooled_caches`)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from jailbee import claude_pool
+from jailbee import claude_overview, claude_pool
 from jailbee.claude_pool import PoolChange, Slot
 from jailbee.cli import app
 from jailbee.global_config import GlobalConfig
@@ -35,44 +35,186 @@ def repo(tmp_path, mocker, make_cfg):
     return cfg
 
 
-def test_ls_renders_the_live_account_first(repo, mocker):
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[
-            Slot("me@corp.com#a1b2c3d4", Path("/h/.credentials.json"), live=True),
-            Slot("other@x.com", Path("/s/other@x.com.json"), live=False),
-        ],
+def _row(
+    account: str | None,
+    *,
+    group: str | None = None,
+    prefix: str | None = None,
+    repos: tuple[str, ...] = (),
+    containers: tuple[str, ...] = (),
+    mine: bool = False,
+    live: bool = True,
+):
+    """One `claude_overview` row, built the way `build` builds them.
+
+    Real `Row`s rather than mocks: the display properties (`state`, `account`,
+    `org_hint`) are the module's own, and a stub of them would test nothing.
+    """
+    slot = (
+        None
+        if account is None
+        else Slot(
+            account,
+            Path("/h/.credentials.json") if live else Path(f"/s/{account}.json"),
+            live=live,
+        )
     )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
-    result = runner.invoke(app, ["claude", "ls"])
-    assert result.exit_code == 0, result.output
-    assert result.output.index("me@corp.com") < result.output.index("other@x.com")
-    assert "live" in result.output
+    return claude_overview.Row(
+        slot=slot,
+        group=group,
+        prefix=prefix,
+        holder=Path("/h"),
+        repos=repos,
+        containers=containers,
+        mine=mine,
+    )
 
 
-def test_ls_json_carries_the_fields(repo, mocker):
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@corp.com#a1b2c3d4", Path("/h/c.json"), live=True)],
+def _overview(*rows, unreachable: tuple[str, ...] = (), containers_known: bool = True):
+    return claude_overview.Overview(
+        rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
     )
-    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+
+
+def _built(mocker, overview) -> None:
+    mocker.patch("jailbee.claude_overview.build", return_value=overview)
+
+
+def test_ls_says_which_account_is_live_in_each_group(repo, mocker):
+    """The question `claude ls` could not answer before: one row per holder,
+    each naming the login it holds."""
+    _built(
+        mocker,
+        _overview(
+            _row("staff@corp.com", group="staff", repos=("app",), containers=("app-x",)),
+            _row("demo@corp.com", group="demo", containers=("app-y",)),
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output) == [
-        {"account": "me@corp.com#a1b2c3d4", "org": "a1b2c3d4", "state": "live"}
-    ]
+    assert "staff@corp.com" in result.output
+    assert "demo@corp.com" in result.output
+    assert "GROUP" in result.output
+
+
+def test_ls_names_the_containers_of_a_group_no_repo_resolves_to(repo, mocker):
+    """A temporary override is the only thing keeping such a group in use, so
+    the containers are named rather than counted — nothing else points at it."""
+    _built(mocker, _overview(_row("demo@corp.com", group="demo", containers=("app-y",))))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "app-y" in result.output
+    assert "no repo" in result.output
+
+
+def test_ls_counts_the_containers_of_a_group_repos_resolve_to(repo, mocker):
+    """With repos named, container names would only add width: the repo list is
+    what a holder-wide switch moves."""
+    _built(
+        mocker,
+        _overview(
+            _row(
+                "staff@corp.com",
+                group="staff",
+                repos=("app", "other"),
+                containers=("app-x", "other-y"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "app, other" in result.output
+    assert "2 containers" in result.output
+    assert "app-x" not in result.output
+
+
+def test_ls_shows_a_group_that_holds_no_login(repo, mocker):
+    """`jailbee claude group` printed such a group's name and nothing said it
+    was empty; a `/login` is what it is waiting for."""
+    _built(mocker, _overview(_row(None, group="fresh")))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "fresh" in result.output
+    assert "empty" in result.output
+    assert "no login" in result.output
+
+
+def test_ls_says_a_group_is_unused_when_nothing_reads_it(repo, mocker):
+    _built(mocker, _overview(_row(None, group="fresh")))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert "unused" in result.output
+
+
+def test_ls_names_an_ungrouped_holder_by_its_repo(repo, mocker):
+    """Without a group the holder is one repo's own config home, so calling it
+    a group would name something that does not exist."""
+    _built(
+        mocker,
+        _overview(_row("me@corp.com", prefix="scratch", repos=("scratch",))),
+    )
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "(no group)" in result.output
+    assert "scratch" in result.output
+
+
+def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
+    """Every group on the host is a row now, so the title must stay host-wide:
+    naming one group read as a claim over all of it, and a user asked why an
+    account had "appeared in" a group they had never touched."""
+    _built(mocker, _overview(_row("me@corp.com", group="gisgro", mine=True)))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    flat = _flat(result.output)
+    assert "Claude logins on this host" in flat
+    assert "logins for group" not in flat
+
+
+def test_ls_says_which_holder_this_repo_uses(repo, mocker):
+    cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    _built(mocker, _overview(_row("me@corp.com", group="gisgro", mine=True)))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    flat = _flat(result.output)
+    assert f"This repo ({cfg.container_prefix}) → group `gisgro`" in flat
+    assert "/data/creds/gisgro" in flat
+
+
+def test_ls_says_when_this_repo_shares_no_group(repo, mocker):
+    _built(mocker, _overview(_row("me@corp.com", prefix=repo.container_prefix, mine=True)))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    flat = _flat(result.output)
+    assert f"This repo ({repo.container_prefix}) → no credential group" in flat
 
 
 def test_ls_does_not_print_the_organization_twice(repo, mocker):
     """`Slot.org_hint` is parsed back out of `Slot.name`, so rendering the name
     in ACCOUNT beside the org in ORG repeated the same eight characters in
-    every row. COLUMNS is pinned: Rich wraps a narrow table, and a wrapped
-    cell would satisfy the substring assertions by accident."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@corp.com#a1b2c3d4", Path("/h/.credentials.json"), live=True)],
-    )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
+    every row."""
+    _built(mocker, _overview(_row("me@corp.com#a1b2c3d4", group="staff")))
+
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
     assert result.output.count("a1b2c3d4") == 1
     assert "me@corp.com" in result.output
@@ -82,15 +224,16 @@ def test_ls_does_not_print_the_organization_twice(repo, mocker):
 def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
     """Dropping the org must not drop the `~` half: it is the only thing
     telling two grants of one account apart, and `claude use` needs it."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[
-            Slot("me@corp.com#a1b2c3d4~live", Path("/h/.credentials.json"), live=True),
-            Slot("me@corp.com#a1b2c3d4~20260828-101500", Path("/s/x.json"), live=False),
-        ],
+    _built(
+        mocker,
+        _overview(
+            _row("me@corp.com#a1b2c3d4~live", group="staff"),
+            _row("me@corp.com#a1b2c3d4~20260828-101500", live=False),
+        ),
     )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
+
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
     assert "me@corp.com~live" in result.output
     assert "me@corp.com~20260828-101500" in result.output
@@ -99,77 +242,176 @@ def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
 def test_ls_hides_the_org_column_when_no_account_has_one(repo, mocker):
     """A store of personal accounts has no organization anywhere, and a column
     of "-" earns no width."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@personal.com", Path("/h/.credentials.json"), live=True)],
-    )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
+    _built(mocker, _overview(_row("me@personal.com", group="staff")))
+
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
     assert "ORG" not in result.output
     assert "ACCOUNT" in result.output
 
 
-def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
-    """The table mixes two scopes: only the `live` row belongs to this holder,
-    while every `parked` row comes from the host-wide store and so appears
-    under every group. A title naming one group read as a claim over all of it,
-    and a user asked why an account had "appeared in" a group they had never
-    touched. The group belongs where the holder is stated, under the table."""
-    cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.cli._claude_authoritative", return_value={cfg.container_prefix})
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[
-            Slot("me@corp.com", Path("/h/.credentials.json"), live=True),
-            Slot("unknown-20260828-163305", Path("/s/u.json"), live=False),
-        ],
+def test_ls_reports_the_repos_it_could_not_read(repo, mocker):
+    """A repo whose config will not load may hold a holder this table is
+    missing, and silence would understate what the host really has."""
+    _built(
+        mocker,
+        _overview(_row("me@corp.com", group="staff"), unreachable=("broken",)),
     )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
+
     result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "broken" in result.output
+
+
+def test_ls_says_so_when_the_container_column_could_not_be_filled(repo, mocker):
+    """An unreachable Incus daemon costs the container column, not the
+    listing — but an empty column must not read as "no containers"."""
+    _built(
+        mocker,
+        _overview(_row("me@corp.com", group="staff", repos=("app",)), containers_known=False),
+    )
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
-    assert "Claude logins on this host" in flat
-    assert "logins for group" not in flat
-    assert "Live in group `gisgro` → /data/creds/gisgro" in flat
-    assert "Parked logins are host-wide" in flat
+    assert "could not be listed" in flat
+    assert "no containers" not in flat
 
 
-def test_ls_names_the_repo_when_it_shares_no_group(repo, mocker):
-    """Without a group the holder is the repo's own config home, so calling it
-    a group would name something that does not exist."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+def test_ls_filters_to_one_group_and_the_parked_store(repo, mocker):
+    """`-g` used to point the whole command at another holder; now it narrows
+    the host-wide table, and a parked login stays activatable into it."""
+    _built(
+        mocker,
+        _overview(
+            _row("staff@corp.com", group="staff"),
+            _row("demo@corp.com", group="demo"),
+            _row("old@corp.com", live=False),
+        ),
     )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    result = runner.invoke(app, ["claude", "ls", "-g", "demo"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
-    flat = _flat(result.output)
-    assert f"Live in {repo.container_prefix} (no group)" in flat
-    assert "group `" not in flat
+    assert "demo@corp.com" in result.output
+    assert "staff@corp.com" not in result.output
+    assert "old@corp.com" in result.output
 
 
-def test_ls_omits_the_host_wide_note_when_nothing_is_parked(repo, mocker):
-    """One live login and an empty store: there is no second scope to explain,
-    and a line that fires on every listing stops being read."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@corp.com", Path("/h/.credentials.json"), live=True)],
+def test_ls_explains_the_parked_scope_only_when_filtered(repo, mocker):
+    """Unfiltered, every row names its own group and the mixing is visible. Under
+    `-g` the parked rows sit beside one group again, which is what made a user
+    ask why an account had appeared in a group they never touched."""
+    overview = _overview(
+        _row("staff@corp.com", group="staff"), _row("old@corp.com", live=False)
     )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    _built(mocker, overview)
+
+    plain = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    filtered = runner.invoke(app, ["claude", "ls", "-g", "staff"], env={"COLUMNS": "200"})
+
+    assert "host-wide" not in _flat(plain.output)
+    assert "host-wide" in _flat(filtered.output)
+
+
+def test_ls_says_when_the_host_has_no_such_group(repo, mocker):
+    _built(mocker, _overview(_row("staff@corp.com", group="staff")))
+
+    result = runner.invoke(app, ["claude", "ls", "-g", "nope"], env={"COLUMNS": "200"})
+
     assert result.exit_code == 0, result.output
-    assert "host-wide" not in _flat(result.output)
+    assert "nope" in result.output
 
 
-def test_ls_says_so_when_the_pool_is_empty(repo, mocker):
-    mocker.patch("jailbee.claude_pool.list_slots", return_value=[])
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
+def test_ls_rejects_a_group_name_outside_the_grammar(repo, mocker):
+    """The name reaches `group_dir` as a path component elsewhere, so the CLI
+    refuses the same names everywhere rather than only where it writes."""
+    _built(mocker, _overview(_row("staff@corp.com", group="staff")))
+
+    result = runner.invoke(app, ["claude", "ls", "-g", "../etc"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 2
+
+
+def test_ls_advises_a_login_when_the_host_holds_none(repo, mocker):
+    """The caller's own holder is always a row, so an all-empty host still
+    renders a table — and the advice has to be about getting a login in."""
+    _built(mocker, _overview(_row(None, prefix=repo.container_prefix, mine=True)))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "/login" in result.output
+
+
+def test_ls_json_carries_the_holder_of_every_row(repo, mocker):
+    """A script reading this needs the group: two holders can be logged into one
+    account, and the account name alone no longer identifies a row."""
+    _built(
+        mocker,
+        _overview(
+            _row(
+                "me@corp.com#a1b2c3d4",
+                group="staff",
+                repos=("app",),
+                containers=("app-x",),
+                mine=True,
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {
+            "account": "me@corp.com#a1b2c3d4",
+            "org": "a1b2c3d4",
+            "state": "live",
+            "group": "staff",
+            "repos": ["app"],
+            "containers": ["app-x"],
+        }
+    ]
+
+
+def test_ls_json_stays_a_clean_payload(repo, mocker):
+    """The per-command facts under the table are not rows: printing them in
+    JSON mode would make the output unparseable for the caller that asked."""
+    _built(
+        mocker,
+        _overview(_row("me@corp.com", group="staff"), unreachable=("broken",)),
+    )
+
+    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {
+            "account": "me@corp.com",
+            "org": None,
+            "state": "live",
+            "group": "staff",
+            "repos": [],
+            "containers": [],
+        }
+    ]
+
+
+def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
+    """`registered_repos`, the credential reads and the store glob all raise
+    `OSError`, and a traceback is not a diagnosis."""
+    mocker.patch(
+        "jailbee.claude_overview.build", side_effect=OSError("permission denied: _parked")
+    )
+
     result = runner.invoke(app, ["claude", "ls"])
-    assert result.exit_code == 0, result.output
-    assert "park" in result.output
+
+    assert result.exit_code == 2
+    assert "permission denied" in result.output
 
 
 def test_use_without_an_account_picks_from_a_menu(repo, mocker):
@@ -412,63 +654,6 @@ def test_rm_refuses_the_live_account(repo, mocker):
     remove.assert_not_called()
 
 
-def test_ls_names_the_repos_that_share_the_holder(repo, mocker):
-    """A switch is holder-wide, so who else moves with it is part of reading
-    the table — and the in-container skill file promises `ls` says so."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@x.com", Path("/h/.credentials.json"), live=True)],
-    )
-    mocker.patch(
-        "jailbee.claude_pool.members",
-        return_value=(
-            [
-                claude_pool.Member("app", Path("/repos/app/.shared/claude")),
-                claude_pool.Member("other", Path("/repos/other/.shared/claude")),
-            ],
-            ["broken"],
-        ),
-    )
-    mocker.patch("jailbee.claude_groups.deviating_containers", return_value=[])
-
-    result = runner.invoke(app, ["claude", "ls"])
-
-    assert result.exit_code == 0, result.output
-    assert "app, other" in result.output
-    # A member whose config would not load shares the holder too — silently
-    # dropping it would understate who the next switch moves.
-    assert "broken" in result.output
-
-
-def test_ls_json_stays_a_clean_payload(repo, mocker):
-    """The member list is a per-command fact, not a row: printing it in JSON
-    mode would make the output unparseable for the caller that asked for it."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots",
-        return_value=[Slot("me@x.com", Path("/h/c.json"), live=True)],
-    )
-    mocker.patch(
-        "jailbee.claude_pool.members",
-        return_value=([claude_pool.Member("app", Path("/repos/app"))], []),
-    )
-
-    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output) == [{"account": "me@x.com", "org": None, "state": "live"}]
-
-
-def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
-    """`_registered_repos`, `holder.mkdir` and every credential read raise
-    `OSError`, and a traceback is not a diagnosis."""
-    mocker.patch(
-        "jailbee.claude_pool.list_slots", side_effect=OSError("permission denied: _parked")
-    )
-    result = runner.invoke(app, ["claude", "ls"])
-    assert result.exit_code == 2
-    assert "permission denied" in result.output
-
-
 def test_use_exits_2_on_an_os_error(repo, mocker):
     """`_move_file` and `_atomic_write` raise `OSError` mid-move: the one
     moment the user most needs a message rather than a stack trace."""
@@ -530,3 +715,36 @@ def test_rm_speaks_the_shared_live_account_refusal(repo, mocker):
     # contain: a re-inlined literal that merely echoes one phrase from it
     # would still pass a substring check, but not this one.
     assert claude_pool.live_account_refusal("me@x.com") in result.output
+
+
+def test_ls_reads_no_login_even_on_the_row_this_repo_uses(repo, mocker):
+    """Bold marks the caller's holder, and an empty one has no account to bold:
+    a first smoke test rendered the literal `None` in the ACCOUNT column."""
+    _built(mocker, _overview(_row(None, group="fresh", mine=True)))
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "(no login)" in result.output
+    assert "None" not in result.output
+
+
+def test_ls_filters_to_the_ungrouped_holders(repo, mocker):
+    """`none` spells "no credential group" everywhere else on the command line
+    (`group set none`, `group use none`, `new --claude-group none`), so it has
+    to mean the same here rather than being refused as a reserved word."""
+    _built(
+        mocker,
+        _overview(
+            _row("staff@corp.com", group="staff"),
+            _row("me@corp.com", prefix="scratch", repos=("scratch",)),
+            _row("old@corp.com", live=False),
+        ),
+    )
+
+    result = runner.invoke(app, ["claude", "ls", "-g", "none"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "me@corp.com" in result.output
+    assert "staff@corp.com" not in result.output
+    assert "old@corp.com" in result.output

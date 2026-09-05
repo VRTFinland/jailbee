@@ -430,3 +430,26 @@ def test_container_groups_ignores_a_garbage_label(monkeypatch, tmp_path):
     assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
         ("myrepo-a", "myrepo", "work")
     ]
+
+
+def test_authoritative_in_answers_the_no_group_question_too(monkeypatch, tmp_path):
+    """An ungrouped holder is the same question with "no group" as the answer:
+    a repo whose containers span a group can no longer name its own login."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    by_prefix = {"clean": {None}, "spanning": {None, "personal"}}
+
+    assert claude_groups.authoritative_in(by_prefix, None) == {"clean"}
+
+
+def test_authoritative_in_is_the_rule_authoritative_prefixes_applies(monkeypatch, tmp_path):
+    """One implementation, so a caller holding a prefetched `groups_by_prefix`
+    cannot drift from the `Incus`-taking wrapper."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("mixed-a"), _raw("mixed-b", "personal"), _raw("clean-a")]
+    gcfg = _gcfg(group="work")
+
+    by_prefix = claude_groups.groups_by_prefix_from(gcfg, rows, ["mixed", "clean"])
+
+    assert claude_groups.authoritative_in(by_prefix, "work") == (
+        claude_groups.authoritative_prefixes_from(gcfg, rows, "work", ["mixed", "clean"])
+    )

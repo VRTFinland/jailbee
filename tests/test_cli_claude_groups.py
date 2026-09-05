@@ -286,33 +286,23 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
 
 
-def test_claude_ls_group_flag_points_at_another_holder(group_env, mocker):
-    from jailbee import claude_groups
+def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
+    """`-g` narrows the host-wide table; it must not point the *config* at
+    another group. A holder view keeps the calling repo's config home while
+    naming another group's directory (see `cli._holder_view`), and
+    `claude_overview.build` reads both."""
+    from jailbee import claude_groups, claude_overview
 
     captured = {}
 
-    def fake_list_slots(cfg, gcfg, *, authoritative):
+    def fake_build(cfg, gcfg, incus):
         captured["holder"] = cfg.claude_credentials_dir
-        return []
+        return claude_overview.Overview(rows=(), unreachable=(), containers_known=True)
 
-    mocker.patch("jailbee.claude_pool.list_slots", side_effect=fake_list_slots)
-    mocker.patch("jailbee.claude_pool.members", return_value=([], []))
+    mocker.patch("jailbee.claude_overview.build", side_effect=fake_build)
+
     runner.invoke(app, ["claude", "ls", "-g", "personal"])
-    assert captured["holder"] == claude_groups.group_dir("personal")
 
-
-def test_claude_ls_without_the_flag_uses_the_repo_group(group_env, mocker):
-    from jailbee import claude_groups
-
-    captured = {}
-
-    def fake_list_slots(cfg, gcfg, *, authoritative):
-        captured["holder"] = cfg.claude_credentials_dir
-        return []
-
-    mocker.patch("jailbee.claude_pool.list_slots", side_effect=fake_list_slots)
-    mocker.patch("jailbee.claude_pool.members", return_value=([], []))
-    runner.invoke(app, ["claude", "ls"])
     assert captured["holder"] == claude_groups.group_dir("work")
 
 
@@ -445,3 +435,18 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     assert "personal@example.com" in result.output
     stored = claude_pool.store_dir() / "personal@example.com.json"
     assert json.loads(stored.read_text())["claudeAiOauth"]["refreshToken"] == "rt-personal"
+
+
+def test_status_points_at_claude_ls_for_the_host_wide_picture(group_env):
+    """A bare list of group names was the second place claiming to describe the
+    host's groups, and it could not say which account any of them held.
+    `jailbee claude ls` answers that, so status names the command instead."""
+    from jailbee import claude_groups
+
+    claude_groups.group_dir("personal").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group"])
+
+    assert result.exit_code == 0, result.output
+    assert "jailbee claude ls" in result.output
+    assert "Credential groups on this host" not in result.output

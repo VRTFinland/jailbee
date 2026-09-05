@@ -335,17 +335,34 @@ def authoritative_prefixes(
 def authoritative_prefixes_from(
     gcfg: GlobalConfig,
     rows: Sequence[dict[str, Any]],
-    group: str,
+    group: str | None,
     prefixes: Collection[str],
 ) -> set[str]:
     """The prefixes whose `oauthAccount` can be trusted to describe `group`.
+
+    `authoritative_in` applied to a fresh `groups_by_prefix_from`.
+    """
+    return authoritative_in(groups_by_prefix_from(gcfg, rows, prefixes), group)
+
+
+def authoritative_in(
+    by_prefix: dict[str, set[str | None]],
+    group: str | None,
+) -> set[str]:
+    """The prefixes in `by_prefix` whose `oauthAccount` describes `group`.
 
     A repo is authoritative for a group only when *every* group its
     containers use is that one. A repo spanning two groups shares one
     `~/.claude` between them, so its `oauthAccount` names whichever
     account ran most recently — see `claude_pool.account_of`.
+
+    `group=None` asks the same question of a repo's *own* config home,
+    which is a holder like any other: a repo with one container moved into
+    a group can no longer name the login it keeps for itself.
+
+    Takes the mapping rather than building one, so a caller resolving many
+    holders — `claude_overview` — computes it once for the whole host.
     """
-    by_prefix = groups_by_prefix_from(gcfg, rows, prefixes)
     return {prefix for prefix, groups in by_prefix.items() if groups == {group}}
 
 
@@ -379,7 +396,9 @@ def container_groups(
         label = _label_group(row.get("config") or {})
         group = (None if resolved is None else resolved.name) if label is INHERIT else label
         out.append((name, prefix, group))  # type: ignore[arg-type] # narrowed by sentinel
-    return sorted(out)
+    # By container name only: a `None` group would make a whole-tuple sort
+    # raise as soon as two entries shared a name and a prefix.
+    return sorted(out, key=lambda triple: triple[0])
 
 
 def deviating_containers(cfg: Config, incus: Incus) -> list[tuple[str, str | None]]:
