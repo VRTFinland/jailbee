@@ -235,7 +235,10 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
         # A hint, not a closed set (spec 10.3) — say so, or the free-text arm
         # looks like a bug the first time someone needs it.
         out.append(
-            ("class:dim", f"Suggestions: {', '.join(str(c) for c in spec.choices)} (or free text)\n")
+            (
+                "class:dim",
+                f"Suggestions: {', '.join(str(c) for c in spec.choices)} (or free text)\n",
+            )
         )
     blocked = edit_block(spec, state.layer)
     if blocked is not None:
