@@ -162,6 +162,12 @@ def run_apply(
     mirror_endpoint = _mirror_endpoint_or_warn(cfg, incus, gcfg)
     mirror_ca_pem = _read_mirror_ca_or_warn(gcfg) if mirror_endpoint else None
 
+    # Before `refresh_pool`, which writes the ACL with `incus network acl
+    # edit` and fails against a name nobody created. `jailbee init` is where a
+    # configured repo's ACL comes from, but a scratch directory never runs it:
+    # `jailbee new` bootstraps one straight through `run_apply`.
+    _ensure_repo_acl(cfg, incus)
+
     with Session(get_engine()) as session:
         register_repo(session, cfg)
         refresh_result = refresh_pool(
@@ -256,7 +262,16 @@ def run_apply(
     profiles_changed: list[str] = []
     profiles_unchanged: list[str] = []
     for name, new_yaml in profile_yamls.items():
-        if _profile_differs(incus, name, new_yaml):
+        if not incus.profile_exists(name):
+            # Same bootstrap as the ACL above: `incus profile edit` does not
+            # create, and `_profile_differs` cannot read a profile that isn't
+            # there. Counted as changed — it is new content in Incus, and the
+            # restart offer below should treat it as such.
+            info(f"  Creating profile {name}...")
+            incus.profile_create(name)
+            incus.profile_set_yaml(name, new_yaml)
+            profiles_changed.append(name)
+        elif _profile_differs(incus, name, new_yaml):
             info(f"  Updating profile {name}...")
             incus.profile_set_yaml(name, new_yaml)
             profiles_changed.append(name)
@@ -459,6 +474,30 @@ def _apply_acl_with_nft_quirk(incus: Incus, name: str, acl_yaml: str) -> None:
     from jailbee.egress_pool import _apply_acl_with_nft_quirk as impl
 
     impl(incus, name, acl_yaml)
+
+
+def _ensure_repo_acl(cfg: Config, incus: Incus) -> bool:
+    """Create the repo's `<prefix>-allowlist` ACL if it does not exist yet.
+
+    Empty on creation — `refresh_pool` fills it moments later, and the
+    `<prefix>-net-strict` profile written further down references it by name,
+    so it has to exist before either. Returns True when it created one.
+
+    Not `init_command.apply_allowlist_acl`: that one is deliberately
+    first-time-only and raises when the ACL already exists, which is the
+    normal case here. Creating an empty ACL is safe in both directions — an
+    ACL with no rules denies everything, so a repo whose refresh then fails
+    is left closed, not open.
+    """
+    from jailbee.network import acl_name
+    from jailbee.tui import info
+
+    name = acl_name(cfg)
+    if incus.network_acl_exists(name):
+        return False
+    info(f"  Creating ACL {name}...")
+    incus.network_acl_create(name)
+    return True
 
 
 def _ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
