@@ -67,6 +67,7 @@ EXPECTED_SURFACE = frozenset(
         "device_name",
         "format_loose_after",
         "load_config",
+        "load_config_from_layers",
         "load_config_from_text",
         "load_config_unsanitized",
         "load_repo_config",

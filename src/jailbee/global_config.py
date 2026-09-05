@@ -187,19 +187,46 @@ _LS_DEFAULT = ColumnConfig()
 _DASHBOARD_DEFAULT = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
 
 
-def _load_unsanitized(path: Path) -> GlobalConfig:
-    """Load global config with schema validation but no column-block recovery.
+def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
+    """Validate the host-level half of an already-parsed `global.yaml`.
 
     `global.yaml` is also the source for Config-layer overlay keys (gpg,
     ssh, chrome, jetbrains, host_mounts, ...). Those are split out by
     `_split_host_keys()` at `load_config()` time; here we discard them
     and validate only the host-level subset.
 
-    Genuine schema problems (bad YAML, a non-mapping top level, or a
-    ``docker_registry_mirror``/``ls``/``dashboard`` block shaped wrong —
-    e.g. ``fields`` not a list) raise ``ConfigError``: those are host-level
-    keys, and unlike a column *name* typo (see ``load_global_config``) there
-    is nothing sensible to recover to.
+    Genuine schema problems (a ``docker_registry_mirror``/``ls``/
+    ``dashboard`` block shaped wrong — e.g. ``fields`` not a list) raise
+    ``ConfigError``: those are host-level keys, and unlike a column *name*
+    typo (see ``load_global_config``) there is nothing sensible to recover
+    to.
+
+    Split from ``_load_unsanitized`` so a caller holding a mapping that is
+    not on disk — the config editor validating a staged global layer
+    before writing it — can reach the same rules. `path` is used only to
+    label errors. The mirror of `config.loader.load_config_from_layers`
+    on the `Config` side, and the reason that seam is symmetric: without
+    it, ten of the twelve host-level paths the editor offers would be
+    written unvalidated.
+    """
+    # Local import: config.py imports ConfigError from this module, so a
+    # module-level import would form a cycle.
+    from jailbee.config import _split_host_keys
+
+    host_raw, _ = _split_host_keys(raw)
+    try:
+        return GlobalConfig.model_validate(host_raw)
+    except ValidationError as e:
+        raise ConfigError(f"Global config validation failed in {path}:\n{e}") from e
+
+
+def _load_unsanitized(path: Path) -> GlobalConfig:
+    """Load global config with schema validation but no column-block recovery.
+
+    A missing file is an ordinary state and yields a defaulted
+    ``GlobalConfig``. Bad YAML and a non-mapping top level raise
+    ``ConfigError``; everything past the parse is
+    ``validate_global_raw``'s.
 
     Shared by ``load_global_config`` (which sanitizes the result before
     returning it) and ``global_config_issues`` (which inspects it as-is, so
@@ -213,15 +240,7 @@ def _load_unsanitized(path: Path) -> GlobalConfig:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
     if not isinstance(raw, dict):
         raise ConfigError(f"Top level of {path} must be a mapping; got {type(raw).__name__}.")
-    # Local import: config.py imports ConfigError from this module, so a
-    # module-level import would form a cycle.
-    from jailbee.config import _split_host_keys
-
-    host_raw, _ = _split_host_keys(raw)
-    try:
-        return GlobalConfig.model_validate(host_raw)
-    except ValidationError as e:
-        raise ConfigError(f"Global config validation failed in {path}:\n{e}") from e
+    return validate_global_raw(raw, path)
 
 
 def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:

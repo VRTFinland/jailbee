@@ -4474,3 +4474,59 @@ def test_is_synthetic_is_false_for_a_hand_built_config():
     from jailbee.config import Config
 
     assert Config().is_synthetic() is False
+
+
+def test_load_config_from_layers_ignores_the_global_file_on_disk(tmp_path, monkeypatch, mocker):
+    """The editor validates a staged global layer that is not on disk yet.
+
+    If this read the real file, a staged change could never be checked
+    before writing it — which is the order spec 3.5 requires.
+
+    Uses the module's own `_write_global` helper (defined above) rather than
+    a second one: it already isolates via `monkeypatch.setenv("XDG_CONFIG_HOME", ...)`
+    at the same path `default_global_config_path()` resolves to.
+    """
+    from jailbee.config.loader import load_config_from_layers
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    on_disk = _write_global(tmp_path, monkeypatch, "defaults:\n  memory: 1GB\n")
+
+    cfg = load_config_from_layers(
+        {"defaults": {"memory": "9GB"}},
+        {},
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="<staged>",
+    )
+
+    assert cfg.defaults.memory == "9GB"
+    assert on_disk.read_text() == "defaults:\n  memory: 1GB\n"
+
+
+def test_load_config_from_layers_still_applies_the_repo_ban_list(tmp_path, mocker):
+    """The seam must not become a way around the placement constraints."""
+    from jailbee.config import ConfigError
+    from jailbee.config.loader import load_config_from_layers
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+
+    with pytest.raises(ConfigError, match="`github` block is not allowed"):
+        load_config_from_layers(
+            {},
+            {"github": {"enabled": False}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="<staged>",
+        )
+
+
+def test_load_config_from_repo_raw_reads_the_global_file(tmp_path, monkeypatch, mocker):
+    """The existing entry point keeps its behaviour: global comes from disk."""
+    from jailbee.config.loader import _load_config_from_repo_raw
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    _write_global(tmp_path, monkeypatch, "defaults:\n  memory: 1GB\n")
+
+    cfg = _load_config_from_repo_raw({}, tmp_path / "repo" / ".jailbee" / "config.yaml", origin="x")
+    assert cfg.defaults.memory == "1GB"
