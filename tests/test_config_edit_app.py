@@ -626,9 +626,7 @@ def test_a_write_error_is_reported_and_the_session_survives(editor, mocker):
     and the staged edit is still staged (which is what makes the second `q`
     necessary — the unsaved-changes warning eats the first).
     """
-    mocker.patch(
-        "jailbee.config_edit.save.commit", side_effect=OSError(13, "Permission denied")
-    )
+    mocker.patch("jailbee.config_edit.save.commit", side_effect=OSError(13, "Permission denied"))
     specs = repo_specs()
     idx = _index_of_section(specs, "gpg")
     before = editor.repo.read_text()

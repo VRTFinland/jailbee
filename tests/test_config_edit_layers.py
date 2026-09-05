@@ -350,9 +350,7 @@ def test_a_global_save_is_not_held_hostage_to_the_directory_name(tmp_path, monke
     assert layers.validate(got, "global", [YamlChange(("defaults", "cpu"), 8)]) is None
 
 
-def test_a_bad_container_prefix_in_the_global_layer_is_still_caught(
-    tmp_path, monkeypatch, mocker
-):
+def test_a_bad_container_prefix_in_the_global_layer_is_still_caught(tmp_path, monkeypatch, mocker):
     """The placeholder stands in for the *derived* prefix, not for the key.
 
     Substituting one unconditionally would let the editor write a

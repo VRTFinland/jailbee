@@ -1874,9 +1874,7 @@ def run(
                 repo's merged config.
                 """
                 prefix = fold_target(groups, selected) or ""
-                note = config_edit_reject_note_for_prefix(
-                    groups, prefix, global_layer=global_layer
-                )
+                note = config_edit_reject_note_for_prefix(groups, prefix, global_layer=global_layer)
                 if note is not None:
                     set_notice(note)
                     return
