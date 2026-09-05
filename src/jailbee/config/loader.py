@@ -315,10 +315,14 @@ def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origi
     """Build a validated `Config` from an already-parsed repo layer.
 
     The shared body of `load_config_from_text` (repo layer from YAML text) and
-    a future synthesized layer built in memory from `global.yaml`'s
+    the synthesized layer built in memory from `global.yaml`'s
     `scratch.config`. `path` derives `repo_root` and need not exist; `origin`
     is the human-readable source used in error messages, which for a
     synthesized layer is the global config file rather than `path`.
+
+    Reads the global layer from disk. A caller holding a global layer that
+    is not on disk — the config editor validating a staged change before
+    writing it — calls `load_config_from_layers` directly.
     """
     # Local import avoids a circular dependency at module load: global_config
     # already imports from this module's ConfigError, and importing
@@ -326,6 +330,31 @@ def _load_config_from_repo_raw(repo_raw: dict[str, object], path: Path, *, origi
     from jailbee.global_config import default_global_config_path
 
     global_raw = _read_yaml_or_empty(default_global_config_path())
+    return load_config_from_layers(global_raw, repo_raw, path, origin=origin)
+
+
+def load_config_from_layers(
+    global_raw: dict[str, object],
+    repo_raw: dict[str, object],
+    path: Path,
+    *,
+    origin: str,
+) -> Config:
+    """Build a validated `Config` from two already-parsed raw layers.
+
+    Every rule `_load_config_from_repo_raw` applies applies here — the
+    retired-key check, the pull and agents migration checks, the `github`
+    and `claude_credentials` placement bans, the deep merge, the 0600
+    token-permission check — because this *is* that function's body. The
+    only difference is that `global_raw` is supplied rather than read, so
+    the config editor can validate a staged global layer before anything
+    reaches disk (spec 3.5 step 2).
+
+    `global_raw` is the whole `global.yaml` mapping, host-level keys
+    included; the split is done here, exactly as the on-disk path does it.
+    """
+    from jailbee.global_config import default_global_config_path
+
     _check_retired_keys(global_raw)
     host_raw, global_for_merge = _split_host_keys(global_raw)
     _check_retired_keys(repo_raw)
