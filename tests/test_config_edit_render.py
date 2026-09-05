@@ -247,7 +247,11 @@ def test_edit_block_refuses_a_secret():
     assert "0600" in reason
 
 
-def test_footer_names_the_keys_the_bindings_actually_have():
+def test_footer_names_every_action_the_editor_offers():
+    """The footer text itself, not the bindings — `_bindings` lives in
+    `app.py` and nothing here reads it. What this pins is that no action
+    quietly drops out of the one line the user is told to read.
+    """
     text = _text(footer())
     for key in ("search", "toggle", "edit", "reset", "show all", "save", "quit"):
         assert key in text

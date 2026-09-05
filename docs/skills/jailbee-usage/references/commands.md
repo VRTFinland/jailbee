@@ -76,10 +76,11 @@ Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, then edits a field
 inherits (by deleting the key, so it keeps following jailbee's default rather
 than freezing at today's) · `/` searches names and descriptions across every
 section and ignores the basic/advanced filter · `a` shows every field, not
-just the curated set · `d` previews the diff · `s` or `Ctrl-S` saves · `Esc`
-goes back · `q` quits (twice, if there are unsaved edits). **`Ctrl-C` abandons
-the editor immediately and unconditionally — unlike `q`, it has no
-unsaved-changes guard, so any staged edits are silently discarded.** Inside
+just the curated set · `d` previews the diff (`n` or `Esc` closes it) ·
+`s` or `Ctrl-S` saves · `Esc` goes back · `q` quits (twice, if there are
+unsaved edits). **`Ctrl-C` abandons the editor immediately and
+unconditionally — unlike `q`, it has no unsaved-changes guard, so any staged
+edits are silently discarded.** Inside
 the modal that opens on `Enter`, a single-line field commits with `Enter`; a
 multi-line one (a list or map) commits with `Ctrl-S`, since `Enter` there
 inserts a new row instead.
@@ -87,6 +88,14 @@ inserts a new row instead.
 A save is validated through the real config loader before anything is
 written, so the editor cannot produce a file the CLI would reject, and the
 previous contents are kept in a `.bak` sibling.
+
+Two refusals to know about. It needs a real terminal at *both* ends —
+`jailbee config edit > out.txt` would paint a full-screen application into the
+file, so it declines. And a directory with no `.jailbee/config.yaml` is
+refused for the repo layer: its config is synthesized from `global.yaml`'s
+`scratch.config`, a layer the editor cannot show, and saving here would create
+a config file that stops that layer being used at all. Run `jailbee config
+init` there first, or edit the global layer, where those settings live.
 
 Not editable here yet: lists of structured entries (`host_mounts`,
 `host_ports`, `host_devices`, `shared_caches`, `agents`, `optional_mounts`,

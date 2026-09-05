@@ -332,8 +332,8 @@ class Editor:
         Origins describe the layers as saved (spec 10.1 option b), and a save
         has just changed what "as saved" means — so they are rebuilt here, and
         only here. The cursor, the open section, the search and the show-all
-        flag survive: the user's place in a 169-field tree is expensive to
-        find again.
+        flag survive: the user's place in a tree of eighty-odd fields is
+        expensive to find again.
         """
         from jailbee.config_edit.layers import read_layers, resolve
 
