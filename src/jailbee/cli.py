@@ -751,6 +751,21 @@ def list_cmd(
     )
 
 
+_NOT_A_GIT_REPO_ERROR = (
+    "{repo_root} is not a git repository — there is nothing to clone. Use "
+    "`jailbee new <name> --mount` to bind-mount it into the container instead."
+)
+"""Shared wording for `new_cmd`'s two "no .git here" guards.
+
+One is the synthetic-only guard just below (a scratch directory with no
+`.git/`); the other, further down, is the pre-existing check that still fires
+for a *configured* repo whose directory lacks `.git`. Both guards keep their
+own placement, gating condition and exit code — only the sentence itself is
+shared, so the two stop disagreeing on "repository" vs "repo", on flag order,
+and on `jb` vs `jailbee`.
+"""
+
+
 @app.command("new")
 def new_cmd(
     container_branch: Annotated[
@@ -948,8 +963,8 @@ def new_cmd(
             [
                 f"{cfg.repo_root} has no .jailbee/config.yaml — using scratch "
                 f"defaults from {default_global_config_path()} (scratch.config), "
-                f"base image '{cfg.golden.alias}'. Run `jb config init` here for "
-                f"a real repo config."
+                f"base image '{cfg.golden.alias}'.",
+                "Run `jb config init` here for a real repo config.",
             ]
         )
 
@@ -959,11 +974,7 @@ def new_cmd(
     # this check would not fix, and widening it would change behaviour nobody
     # asked about.
     if cfg.is_synthetic() and not mount and not (cfg.repo_root / ".git").exists():
-        error(
-            f"{cfg.repo_root} is not a git repository — there is nothing to "
-            f"clone.\nUse `jb new --mount <name>` to bind-mount it into the "
-            f"container instead."
-        )
+        error(_NOT_A_GIT_REPO_ERROR.format(repo_root=cfg.repo_root))
         raise typer.Exit(2)
 
     _advise_upgrade(cfg)
@@ -1165,11 +1176,7 @@ def new_cmd(
             raise typer.Exit(2)
     else:
         if not (cfg.repo_root / ".git").exists():
-            error(
-                f"host path is not a git repo: {cfg.repo_root}. "
-                "Use `jailbee new <name> --mount` to create a mount-mode container "
-                "instead."
-            )
+            error(_NOT_A_GIT_REPO_ERROR.format(repo_root=cfg.repo_root))
             raise typer.Exit(2)
 
     # If the user typed `jailbee new <name>` and a branch of that name already
@@ -1301,10 +1308,11 @@ def new_cmd(
     if cfg.is_synthetic() and from_base is None and not incus.image_exists(cfg.golden.alias):
         from jailbee.golden import build_golden_image
 
+        _base_build_cmd = "jb base build"
         if not _is_tty():
             error(
                 f"The shared scratch base image '{cfg.golden.alias}' does not "
-                f"exist yet.\nBuild it once with:  jb base build"
+                f"exist yet.\nBuild it once with:  {_base_build_cmd}"
             )
             raise typer.Exit(1)
         info(
@@ -1313,7 +1321,7 @@ def new_cmd(
             f"operation shared by every scratch directory on this host."
         )
         if not default_confirm("Build it now?"):
-            error("Aborted. Build it later with:  jb base build")
+            error(f"Aborted. Build it later with:  {_base_build_cmd}")
             raise typer.Exit(1)
         build_golden_image(cfg, incus)
         _record_upgrade_action(cfg, "base_build")
