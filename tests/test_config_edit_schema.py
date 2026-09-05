@@ -109,3 +109,30 @@ def test_opaque_is_only_ever_the_scratch_overlay():
         if classify(info.annotation).kind is FieldKind.OPAQUE
     ]
     assert opaque == ["ScratchConfig.config"]
+
+
+def test_container_prefix_is_editable_and_documented():
+    """A real YAML key, not a computed attribute.
+
+    `_build_config_from_dict` tells users to "Set `container_prefix:` ...
+    explicitly", so the editor must be able to. Only the *fallback* is
+    computed.
+    """
+    from jailbee.config_edit.schema import COMPUTED_FIELDS
+
+    assert ("Config", "container_prefix") not in COMPUTED_FIELDS
+    info = Config.model_fields["container_prefix"]
+    assert (info.description or "").strip()
+
+
+def test_computed_fields_are_the_four_that_have_no_yaml_key():
+    from jailbee.config_edit.schema import COMPUTED_FIELDS
+
+    assert COMPUTED_FIELDS == frozenset(
+        {
+            ("Config", "repo_root"),
+            ("Config", "default_branch"),
+            ("Config", "upstream_remote"),
+            ("Config", "claude_credentials_dir"),
+        }
+    )

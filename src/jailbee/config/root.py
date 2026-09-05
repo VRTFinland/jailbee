@@ -367,7 +367,17 @@ class Config(BaseModel):
             "overrides it."
         ),
     )
-    container_prefix: str = ""
+    container_prefix: str = Field(
+        default="",
+        description=(
+            "Name prefix for this repo's containers, images and shared state — "
+            "containers are `<prefix>-<branch>` and the golden image is "
+            "`<prefix>-base`. Must match `[a-z0-9][a-z0-9-]*`. Left empty it "
+            "defaults to the repo directory's name, which is usually right; set "
+            "it explicitly when two checkouts share a directory name, or when the "
+            "directory name is not a valid prefix."
+        ),
+    )
     after_new: Literal["shell", "tmux", "none"] = Field(
         default="none",
         description=(

@@ -43,6 +43,27 @@ class FieldKind(StrEnum):
     OPAQUE = "opaque"
 
 
+COMPUTED_FIELDS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("Config", "repo_root"),
+        ("Config", "default_branch"),
+        ("Config", "upstream_remote"),
+        ("Config", "claude_credentials_dir"),
+    }
+)
+"""(model, field) pairs that are never YAML keys, so never editable.
+
+Set by `_build_config_from_dict` from the repo checkout and from
+`global.yaml`'s host-level block. Rendering one as editable would offer
+the user a key the loader overwrites on the next load.
+
+`container_prefix` is deliberately **not** here: its *fallback* is
+computed (`repo_root.name` when unset), but the key itself is a
+documented, hand-edited YAML key. `tests/test_config_schema_closure.py`
+imports this set, so the exclusion list exists once.
+"""
+
+
 @dataclass(frozen=True)
 class Classified:
     """What `classify` learned from one annotation.

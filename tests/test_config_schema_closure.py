@@ -16,18 +16,12 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from jailbee.config import ClaudeAgentConfig, Config
+from jailbee.config_edit.schema import COMPUTED_FIELDS
 from jailbee.global_config import GlobalConfig
 
-# Computed at load time, never YAML keys. See the `Config` docstring.
-EXCLUDED: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("Config", "repo_root"),
-        ("Config", "default_branch"),
-        ("Config", "container_prefix"),
-        ("Config", "upstream_remote"),
-        ("Config", "claude_credentials_dir"),
-    }
-)
+# Computed at load time, never YAML keys. Defined next to the editor that
+# depends on the distinction; see `COMPUTED_FIELDS`.
+EXCLUDED = COMPUTED_FIELDS
 
 
 def walk_models(*roots: type[BaseModel]) -> list[type[BaseModel]]:
