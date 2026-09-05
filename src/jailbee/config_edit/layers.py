@@ -26,6 +26,7 @@ from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
 from jailbee.config.loader import load_config_from_layers
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
 from jailbee.config_writer import DELETE, YamlChange
+from jailbee.global_config import validate_global_raw
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -243,6 +244,15 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
     would miss exactly the cross-layer failures worth catching — a global
     `autostart` step colliding with a repo one, for instance. The repo
     path used is whichever config the editor was opened against.
+
+    A staged *global* layer gets a second pass, `validate_global_raw`,
+    because the loader splits the `_HOST_LEVEL_KEYS` off and uses them for
+    one thing only (`claude_credentials`); the rest of `global.yaml`'s
+    host-level half — `docker_registry_mirror`, `ls`, `dashboard`,
+    `scratch` — reaches no schema at all on that path. The loader runs
+    first: it is the broader check (it scans the whole global mapping for
+    retired keys and sees both layers for the cross-layer rules), so its
+    diagnosis is the more general one when both would fire.
     """
     global_raw = layers.global_raw
     repo_raw = layers.repo_raw
@@ -254,6 +264,8 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
         load_config_from_layers(
             global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)
         )
+        if layer == "global":
+            validate_global_raw(global_raw, layers.global_path)
     except ConfigError as e:
         return str(e)
     return None

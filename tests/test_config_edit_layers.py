@@ -284,6 +284,50 @@ def test_validate_catches_a_cross_field_rule_not_just_the_schema(opened):
     assert "api_tokens" in error
 
 
+def test_validate_rejects_a_malformed_host_level_block(opened):
+    """`docker_registry_mirror` is host-level: the loader never sees it.
+
+    `load_config_from_layers` splits the `_HOST_LEVEL_KEYS` off and uses
+    them for one thing only, so without a `validate_global_raw` pass the
+    editor would happily write a `global.yaml` that every later
+    `_load_unsanitized` rejects outright.
+    """
+    got = opened()
+
+    error = layers.validate(
+        got, "global", [YamlChange(("docker_registry_mirror", "port"), "not-a-number")]
+    )
+
+    assert error is not None
+    assert "docker_registry_mirror" in error
+
+
+def test_validate_rejects_a_malformed_column_block(opened):
+    """`ls.hide` must be a list; `_load_unsanitized` will not recover it."""
+    got = opened()
+
+    error = layers.validate(got, "global", [YamlChange(("ls", "hide"), "not-a-list")])
+
+    assert error is not None
+    assert "ls" in error
+
+
+def test_validate_rejects_a_malformed_scratch_block(opened):
+    got = opened()
+
+    error = layers.validate(got, "global", [YamlChange(("scratch", "enabled"), "maybe")])
+
+    assert error is not None
+    assert "scratch" in error
+
+
+def test_validate_accepts_a_good_host_level_change(opened):
+    """The host-level pass must not reject what the CLI would accept."""
+    got = opened()
+
+    assert layers.validate(got, "global", [YamlChange(("ls", "hide"), ["ip"])]) is None
+
+
 def test_validate_leaves_the_in_memory_layers_untouched(opened):
     """A rejected save must not corrupt the editor's live view of the file."""
     got = opened("defaults:\n  cpu: 2\n")
