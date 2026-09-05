@@ -216,3 +216,67 @@ def test_render_documented_wraps_a_long_description():
         if stripped.startswith("#")
     )
     assert comment_words == WithLongDescription.model_fields["enabled"].description
+
+
+def test_render_global_yaml_documents_both_halves():
+    """The host-level block is modelled on GlobalConfig, the rest on Config."""
+    from jailbee.config_writer import render_global_yaml
+
+    text = render_global_yaml({"gpg": {"enabled": True}, "scratch": {"enabled": True}})
+    assert "gpg:" in text
+    assert "scratch:" in text
+    # Each half got its own model's description, so neither is uncommented.
+    gpg_at = text.index("gpg:")
+    scratch_at = text.index("scratch:")
+    assert gpg_at < scratch_at  # Config overlay first, host-level block after
+    assert text.count("#") > 4
+
+
+def test_render_global_yaml_omits_the_host_section_when_there_is_none():
+    from jailbee.config_writer import render_global_yaml
+
+    text = render_global_yaml({"gpg": {"enabled": True}})
+    assert "scratch" not in text
+    assert not text.endswith("\n\n")
+
+
+def test_render_global_yaml_round_trips_through_the_loader(tmp_path):
+    """A regenerated global file still loads."""
+    import yaml
+
+    from jailbee.config_writer import render_global_yaml
+    from jailbee.global_config import validate_global_raw
+
+    raw = {"gpg": {"enabled": True}, "scratch": {"enabled": False}}
+    reparsed = yaml.safe_load(render_global_yaml(raw))
+    assert reparsed == raw
+    validate_global_raw(reparsed, tmp_path / "global.yaml")
+
+
+def test_write_text_atomic_creates_at_0600_and_preserves_an_existing_mode(tmp_path):
+    import stat
+
+    from jailbee.config_writer import write_text_atomic
+
+    fresh = tmp_path / "new.yaml"
+    write_text_atomic(fresh, "a: 1\n")
+    assert fresh.read_text() == "a: 1\n"
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o600
+
+    existing = tmp_path / "old.yaml"
+    existing.write_text("a: 1\n")
+    existing.chmod(0o644)
+    write_text_atomic(existing, "a: 2\n")
+    assert existing.read_text() == "a: 2\n"
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o644
+
+    write_text_atomic(existing, "a: 3\n", mode=0o600)
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+
+
+def test_write_text_atomic_leaves_no_temp_file_behind(tmp_path):
+    from jailbee.config_writer import write_text_atomic
+
+    target = tmp_path / "x.yaml"
+    write_text_atomic(target, "a: 1\n")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["x.yaml"]
