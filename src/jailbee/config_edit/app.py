@@ -12,7 +12,7 @@ install.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
@@ -46,11 +46,12 @@ if TYPE_CHECKING:
     from prompt_toolkit.output import Output
 
     from jailbee.config_edit.layers import LayerName, LayerSet, Origin
-    from jailbee.config_edit.save import WritePolicy
+    from jailbee.config_edit.save import SavePlan, WritePolicy
     from jailbee.config_edit.schema import FieldSpec
 
 _SECTION_WIDTH = 20
 _HELP_HEIGHT = 9
+_UNSAVED = "Unsaved changes — press q again to discard, or s to save."
 
 _TEXT_KINDS = frozenset(
     {FieldKind.STR, FieldKind.INT, FieldKind.PATH, FieldKind.CHOICE, FieldKind.SCALAR_UNION}
@@ -102,6 +103,8 @@ class Editor:
     message: str = ""
     message_style: str = "class:notice"
     prompt: _Prompt | None = field(default=None)
+    confirm: SavePlan | None = field(default=None)
+    diff_open: bool = False
 
     def notice(self, text: str, *, style: str = "class:notice") -> None:
         """Say something on the message line. Cleared by the next keypress."""
@@ -242,6 +245,105 @@ class Editor:
         self.state = st.stage(self.state, spec.path, parsed)
         self.prompt = None
 
+    # -- saving -----------------------------------------------------------
+
+    def save(self) -> None:
+        """Validate, then write — in that order, with nothing written on failure.
+
+        Spec 3.5. Validation runs the *real* loader over the staged mapping,
+        which is what makes it impossible for the editor to write a file the
+        CLI would then reject: the retired-key check, the placement bans, the
+        `container_prefix` regex and the cross-layer uniqueness rules are all
+        loader-level and none of them is visible to pydantic alone.
+        """
+        from jailbee.config_edit.layers import raw_for, validate
+        from jailbee.config_edit.save import build_plan
+
+        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
+        if not edits:
+            self.notice("Nothing to save.")
+            return
+        error = validate(self.layer_set, self.state.layer, edits)
+        if error is not None:
+            self.notice(error, style="class:error")
+            return
+        plan = build_plan(
+            self.layer_set, self.state.layer, edits, self.state.specs, self.policy
+        )
+        if plan.must_confirm:
+            self.confirm = plan
+            return
+        self._write(plan)
+
+    def confirm_save(self, *, accept: bool) -> None:
+        """Answer the mandatory diff confirmation."""
+        plan = self.confirm
+        self.confirm = None
+        if plan is None or not accept:
+            self.notice("Not saved.")
+            return
+        self._write(plan)
+
+    def _write(self, plan: SavePlan) -> None:
+        from jailbee.config_edit.save import commit
+
+        backup = commit(plan)
+        self._reload()
+        where = f" (backup: {backup.name})" if backup is not None else ""
+        self.notice(f"Saved {plan.path}{where}")
+
+    def _reload(self) -> None:
+        """Re-read both layers and re-resolve origins, keeping the view put.
+
+        Origins describe the layers as saved (spec 10.1 option b), and a save
+        has just changed what "as saved" means — so they are rebuilt here, and
+        only here. The cursor, the open section, the search and the show-all
+        flag survive: the user's place in a 169-field tree is expensive to
+        find again.
+        """
+        from jailbee.config_edit.layers import read_layers, resolve
+
+        self.layer_set = read_layers(self.layer_set.repo_path, self.layer_set.global_path)
+        fresh = st.open_editor(
+            layer=self.state.layer,
+            specs=self.state.specs,
+            origins=resolve(self.state.specs, self.layer_set),
+        )
+        self.state = replace(
+            fresh,
+            section=self.state.section,
+            index=self.state.index,
+            query=self.state.query,
+            show_all=self.state.show_all,
+        )
+
+    def show_diff(self) -> None:
+        """`d`: the same preview the mandatory confirmation shows, on demand."""
+        from jailbee.config_edit.layers import raw_for, validate
+        from jailbee.config_edit.save import build_plan
+
+        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
+        if not edits:
+            self.notice("Nothing staged — no diff to show.")
+            return
+        error = validate(self.layer_set, self.state.layer, edits)
+        if error is not None:
+            self.notice(error, style="class:error")
+            return
+        self.confirm = build_plan(
+            self.layer_set, self.state.layer, edits, self.state.specs, self.policy
+        )
+        self.diff_open = True
+
+    def close_diff(self) -> None:
+        self.confirm = None
+        self.diff_open = False
+
+    def dirty(self) -> bool:
+        from jailbee.config_edit.layers import raw_for
+
+        return st.is_dirty(self.state, raw_for(self.layer_set, self.state.layer))
+
 
 def run_editor(
     *,
@@ -332,6 +434,13 @@ def _build_application(
                 ),
                 filter=Condition(lambda: editor.prompt is not None),
             ),
+            ConditionalContainer(
+                Window(
+                    FormattedTextControl(_diff_text(editor)),
+                    wrap_lines=False,
+                ),
+                filter=Condition(lambda: editor.confirm is not None),
+            ),
             Window(FormattedTextControl(message_line), height=1),
             Window(FormattedTextControl(render.footer), height=1),
         ]
@@ -344,6 +453,27 @@ def _build_application(
         input=input,
         output=output,
     )
+
+
+def _diff_text(editor: Editor):  # type: ignore[no-untyped-def]  # returns a pt callable
+    def render_diff() -> StyleAndTextTuples:
+        plan = editor.confirm
+        if plan is None:
+            return []
+        head: StyleAndTextTuples = [("class:title", f" {plan.policy} → {plan.path} \n")]
+        if plan.dropped_comments and not editor.diff_open:
+            head.append(
+                (
+                    "class:error",
+                    f"This rewrites the file and drops {len(plan.dropped_comments)} "
+                    f"hand-written comment line(s). Save anyway? [y/N]\n",
+                )
+            )
+        elif editor.diff_open:
+            head.append(("class:dim", "Esc to close\n"))
+        return head + [("", plan.diff or "(no textual change)\n")]
+
+    return render_diff
 
 
 def _multiline(editor: Editor) -> bool:
@@ -379,19 +509,23 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
 
     editing = Condition(lambda: editor.prompt is not None)
     browsing = ~editing
+    confirming = Condition(lambda: editor.confirm is not None)
 
-    kb.add("up", filter=browsing)(_act(lambda: editor.move(-1)))
-    kb.add("k", filter=browsing)(_act(lambda: editor.move(-1)))
-    kb.add("down", filter=browsing)(_act(lambda: editor.move(1)))
-    kb.add("j", filter=browsing)(_act(lambda: editor.move(1)))
-    kb.add("enter", filter=browsing)(_act_focus(editor.enter))
-    kb.add("escape", filter=browsing, eager=True)(_act(editor.back))
-    kb.add("a", filter=browsing)(
+    kb.add("up", filter=browsing & ~confirming)(_act(lambda: editor.move(-1)))
+    kb.add("k", filter=browsing & ~confirming)(_act(lambda: editor.move(-1)))
+    kb.add("down", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
+    kb.add("j", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
+    kb.add("enter", filter=browsing & ~confirming)(_act_focus(editor.enter))
+    kb.add("escape", filter=browsing & ~confirming, eager=True)(_act(editor.back))
+    kb.add("a", filter=browsing & ~confirming)(
         _act(lambda: setattr(editor, "state", st.toggle_show_all(editor.state)))
     )
-    kb.add(" ", filter=browsing)(_act(editor.toggle))
-    kb.add("r", filter=browsing)(_act(editor.reset))
-    kb.add("/", filter=browsing)(_act_focus(editor.open_search))
+    kb.add(" ", filter=browsing & ~confirming)(_act(editor.toggle))
+    kb.add("r", filter=browsing & ~confirming)(_act(editor.reset))
+    kb.add("/", filter=browsing & ~confirming)(_act_focus(editor.open_search))
+    kb.add("c-s", filter=browsing & ~confirming)(_act(editor.save))
+    kb.add("s", filter=browsing & ~confirming)(_act(editor.save))
+    kb.add("d", filter=browsing & ~confirming)(_act(editor.show_diff))
 
     @kb.add("enter", filter=editing & Condition(lambda: not _multiline(editor)))
     @kb.add("c-s", filter=editing)
@@ -407,9 +541,28 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
         editor.cancel_prompt()
         event.app.layout.focus(fields_window)
 
-    @kb.add("q", filter=browsing)
-    @kb.add("c-c", filter=browsing)
+    @kb.add("y", filter=confirming & Condition(lambda: not editor.diff_open))
+    def _yes(_event: KeyPressEvent) -> None:
+        editor.confirm_save(accept=True)
+
+    @kb.add("n", filter=confirming & Condition(lambda: not editor.diff_open))
+    @kb.add("escape", filter=confirming, eager=True)
+    def _no(_event: KeyPressEvent) -> None:
+        if editor.diff_open:
+            editor.close_diff()
+        else:
+            editor.confirm_save(accept=False)
+
+    @kb.add("q", filter=browsing & ~confirming)
     def _quit(event: KeyPressEvent) -> None:
+        if editor.dirty() and editor.message != _UNSAVED:
+            editor.notice(_UNSAVED, style="class:error")
+            return
         event.app.exit()
+
+    def _abandon(event: KeyPressEvent) -> None:
+        event.app.exit()
+
+    kb.add("c-c")(_abandon)
 
     return kb

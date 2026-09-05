@@ -224,12 +224,17 @@ def test_a_toggle_that_is_not_saved_leaves_the_file_alone(rendered, tmp_path):
     """Space stages `gpg.enabled`'s flip — drawn as a `-> true` suffix on its
     row — but nothing reaches the file without Ctrl-S; saving is task 9, so
     only the staging half of "toggle" is testable here.
+
+    Ends `qq`, not `q`: task 9's quit binding now warns once when something
+    is staged and unsaved (`editor.dirty()`), so the first `q` only shows
+    that warning and the second is what actually exits — a lone `q` here
+    hangs the pipe rather than failing an assertion (confirmed by hand).
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "gpg")
     repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
     before = repo.read_text()
-    text = rendered(f"{'j' * idx}\r q")
+    text = rendered(f"{'j' * idx}\r qq")
     assert "→ true" in text
     assert repo.read_text() == before
 
@@ -240,12 +245,15 @@ def test_r_stages_a_reset_without_saving(rendered, tmp_path):
     Saving it (so the key is actually gone from the file) is task 9's Ctrl-S;
     here only the staging half of "reset" is testable, same as the toggle
     test above.
+
+    Ends `qq` for the same reason as the toggle test above: a staged reset
+    is still unsaved, so the quit warning eats the first `q`.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "gpg")
     repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
     before = repo.read_text()
-    text = rendered(f"{'j' * idx}\rrq")
+    text = rendered(f"{'j' * idx}\rrqq")
     assert "→ reset" in text
     assert repo.read_text() == before
 
@@ -267,13 +275,19 @@ def test_enter_opens_a_prompt_and_escape_cancels_it(rendered, tmp_path):
     `q` and never reach the trailing commit/quit keys, so the "-> q" marker
     would never appear — that is what actually exercises the gating, since
     every other prompt test in this file happens to avoid the letter.
+
+    `committed` ends `qq`, not `q`: once the typed value is staged, task 9's
+    quit binding warns once before exiting (`editor.dirty()`), so a lone
+    trailing `q` here would hang the pipe. `cancelled` needs no such change —
+    Escape discards the typed text without staging anything, so quitting
+    there is never blocked.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "container_prefix")
     repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
     before = repo.read_text()
 
-    committed = rendered(f"{'j' * idx}\r\rq\rq")
+    committed = rendered(f"{'j' * idx}\r\rq\rqq")
     assert "→ q" in committed
 
     cancelled = rendered(f"{'j' * idx}\r\rq\x1bq")
@@ -302,3 +316,149 @@ def test_a_field_that_cannot_be_edited_here_says_so(rendered, tmp_path):
     assert "is host-local and is rejected in a repo config" in text
     assert "●" not in text
     assert repo.read_text() == before
+
+
+def test_a_save_writes_the_file_and_clears_the_pending_marks(editor):
+    """`gpg` is not section index 0 in `repo_specs()` (`container_user` is —
+    see `_index_of_section`'s other uses in this file), so the cursor has to
+    be walked there with `j` first; a bare `Enter` would open the wrong
+    section and stage nothing.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    assert editor(f"{'j' * idx}\r \x13q") == 0
+    text = editor.repo.read_text()
+    assert "enabled: true" in text
+    # The patch policy left the rest of the file alone.
+    assert text.startswith("gpg:")
+
+
+def test_a_save_with_nothing_staged_writes_nothing(editor):
+    before = editor.repo.read_text()
+    assert editor("\x13q") == 0
+    assert editor.repo.read_text() == before
+    assert not (editor.repo.parent / "config.yaml.bak").exists()
+
+
+def test_a_save_keeps_a_backup(editor):
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    assert editor(f"{'j' * idx}\r \x13q") == 0
+    assert (editor.repo.parent / "config.yaml.bak").read_text() == "gpg:\n  enabled: false\n"
+
+
+def test_an_invalid_value_is_refused_before_anything_is_written(tmp_path):
+    """The real loader rejects a bad container_prefix; nothing reaches disk.
+
+    Navigates by section rather than the brief's `/container_prefix` search:
+    `container_prefix`'s own description text — "Defaults to
+    `~/.local/share/jailbee/shared/<container_prefix>`" — is quoted verbatim
+    inside `shared_dir`'s description too, so that search string matches five
+    other fields' descriptions before it ever reaches `container_prefix`
+    itself (checked by hand: `shared_dir`, `share_local`, `golden.alias`,
+    `jetbrains.share_idea`, `github.api_tokens` all precede it in schema
+    order), and the brief's bare `/container_prefix\\r\\r` lands the edit on
+    `shared_dir` instead. `container_prefix` is a top-level leaf and so is
+    its own one-field section (`state.sections`' docstring), reached the same
+    way `test_enter_opens_a_prompt_and_escape_cancels_it` already does.
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from jailbee.config_edit.app import run_editor
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text("container_prefix: fine\n")
+    glob = tmp_path / "global.yaml"
+    layer_set = read_layers(repo, glob)
+    specs = repo_specs()
+    idx = _index_of_section(specs, "container_prefix")
+    with create_pipe_input() as pipe:
+        # Enter the container_prefix section, Enter to edit it, clear the
+        # preloaded "fine", type an illegal value, Enter to commit, Ctrl-S to
+        # save, quit twice (the rejected edit stays staged, so a lone `q`
+        # only hits the unsaved-changes warning and hangs the pipe — the
+        # second `q` is what actually exits; confirmed by hand).
+        pipe.send_text(f"{'j' * idx}\r\r" + "\x15" + "Not A Prefix" + "\r\x13qq")
+        run_editor(
+            layer="repo",
+            layer_set=layer_set,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            policy="patch",
+            input=pipe,
+            output=DummyOutput(),
+        )
+    assert repo.read_text() == "container_prefix: fine\n"
+
+
+def test_a_regenerate_over_a_commented_file_needs_a_confirmation(tmp_path):
+    """The diff preview is mandatory when hand-written comments would be lost.
+
+    Declining leaves `ssh.enabled`'s toggle still staged (declining a save
+    does not discard the edit), so the run needs a second `q`: the first hits
+    the new unsaved-changes warning and only the second actually exits —
+    confirmed by hand that a single trailing `q` here hangs the pipe rather
+    than failing an assertion, since nothing further is queued once the
+    warning holds the app open.
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from jailbee.config_edit.app import run_editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    glob = tmp_path / "global.yaml"
+    glob.write_text("# my own note\nssh:\n  enabled: false\n")
+    layer_set = read_layers(repo, glob)
+    specs = global_specs()
+
+    with create_pipe_input() as pipe:
+        # Toggle ssh.enabled, save, answer `n` to the confirmation, quit twice.
+        pipe.send_text("/ssh.enabled\r \x13nqq")
+        run_editor(
+            layer="global",
+            layer_set=layer_set,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            policy="regenerate",
+            input=pipe,
+            output=DummyOutput(),
+        )
+    assert "# my own note" in glob.read_text()
+
+
+def test_space_toggles_a_boolean_and_the_title_counts_it(editor):
+    """Enter the gpg section, Space on `enabled`, then save and quit.
+
+    Deferred from task 8 (ruling R3): staging alone was already covered there
+    (`test_a_toggle_that_is_not_saved_leaves_the_file_alone`); what only
+    becomes testable once `save` exists is that Ctrl-S actually writes the
+    toggle to disk. The name is task 8's own — it was never about asserting
+    on the title bar's `modified:` counter (which embeds the full tmp_path
+    and reliably wraps past `_CapturingOutput`'s 80 columns, dropping the
+    digit — checked by hand), so this only asserts what task 8 already
+    asserted, plus the save.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    assert editor(f"{'j' * idx}\r \x13q") == 0
+    assert "enabled: true" in editor.repo.read_text()
+
+
+def test_r_stages_a_reset_of_a_key_the_layer_holds(editor):
+    """`gpg.enabled` is in the repo file, so `r` stages a delete, and saving
+    actually removes the key from disk.
+
+    Complements (rather than repeats) `test_r_stages_a_reset_without_saving`:
+    that one proves the staged `"→ reset"` marker and a byte-identical file
+    (Ctrl-S was unbound in task 8); this one proves the save side — the key
+    is actually gone once Ctrl-S runs.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    assert editor(f"{'j' * idx}\rr\x13q") == 0
+    assert "enabled" not in editor.repo.read_text()
