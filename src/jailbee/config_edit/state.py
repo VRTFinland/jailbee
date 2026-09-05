@@ -154,8 +154,15 @@ def effective(state: EditorState, path: tuple[str, ...]) -> object:
     """The value the user currently sees for `path`.
 
     A staged edit wins over the resolved origin; a staged reset falls back
-    to whatever the origin says, which after a save will be the inherited
-    or default value.
+    to the origin.
+
+    `state.origins` reports the layers **as saved**: it is resolved once
+    in `open_editor` against the files on disk and never recomputed. So
+    immediately after `reset_current` on a key the open layer holds, this
+    returns the value being deleted, not the value the key will inherit
+    once the delete is written. Recomputing origins against staged edits
+    belongs to the UI plan, the same limitation `inherited_entries`
+    carries for the same reason.
 
     Membership is tested before reading, not folded into a
     `state.staged.get(path, ...)` default: `None` is a legitimate staged

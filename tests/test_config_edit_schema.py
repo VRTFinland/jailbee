@@ -276,8 +276,14 @@ def test_loose_auto_revert_appears_once_on_the_config_side():
     assert len(enabled) == 1
 
 
-def test_global_only_keys_match_the_loader_ban_list():
-    """The editor must disable exactly what `_load_config_from_repo_raw` rejects."""
+def test_global_only_keys_is_the_documented_ban_list():
+    """Pins our copy of the keys `load_config_from_layers` refuses in a repo config.
+
+    The loader is the source of truth; this only holds `GLOBAL_ONLY_KEYS`
+    to the list as documented, so a silent edit to the constant is caught.
+    It does not derive the list from the loader, so it cannot notice the
+    loader growing a fourth ban.
+    """
     from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
 
     assert GLOBAL_ONLY_KEYS == frozenset({"github", "claude_credentials", "claude_credentials_dir"})

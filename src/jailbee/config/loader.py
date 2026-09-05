@@ -342,7 +342,7 @@ def load_config_from_layers(
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
-    Every rule `_load_config_from_repo_raw` applies applies here — the
+    Every rule `_load_config_from_repo_raw` applies also applies here — the
     retired-key check, the pull and agents migration checks, the `github`
     and `claude_credentials` placement bans, the deep merge, the 0600
     token-permission check — because this *is* that function's body. The
@@ -353,6 +353,10 @@ def load_config_from_layers(
     `global_raw` is the whole `global.yaml` mapping, host-level keys
     included; the split is done here, exactly as the on-disk path does it.
     """
+    # Local import for the same cycle as in `_load_config_from_repo_raw`:
+    # global_config imports ConfigError from this package, so importing
+    # default_global_config_path at module top would close the loop. Only
+    # the path is wanted here — the file itself is never read.
     from jailbee.global_config import default_global_config_path
 
     _check_retired_keys(global_raw)

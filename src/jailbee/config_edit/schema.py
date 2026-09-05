@@ -29,7 +29,7 @@ from jailbee.global_config import GlobalConfig
 class FieldKind(StrEnum):
     """How the editor renders and edits one field.
 
-    Twelve kinds cover all 183 fields reachable from `Config` and
+    Twelve kinds cover all 188 fields reachable from `Config` and
     `GlobalConfig`. `OPAQUE` is the honest thirteenth: a field whose
     schema cannot generate a form.
     """
@@ -248,6 +248,10 @@ def _walk(
             continue
         found = classify(info.annotation)
         path = (*prefix, name)
+        # The `item_model is not None` half is load-bearing, not defensive:
+        # `_is_model` is a `TypeGuard`, so `Classified.item_model` is typed
+        # `type[BaseModel] | None` and mypy --strict needs the narrowing
+        # before it can be passed to `_walk`.
         if found.kind is FieldKind.SUBMODEL and found.item_model is not None:
             # `stack` guards a self-referential model from recursing
             # forever. None exists today; the guard costs one comparison
@@ -295,7 +299,8 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("host_ports",),
         ("share_local",),
         ("shared_caches",),
-        # Host-tooling master switches. Their sub-fields stay advanced.
+        # Host-tooling master switches, plus JetBrains' companion IDE
+        # choice. Their other sub-fields stay advanced.
         ("gpg", "enabled"),
         ("ssh", "enabled"),
         ("jetbrains", "enabled"),
@@ -312,9 +317,9 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("pull", "destroy_container"),
     }
 )
-"""The ~28 paths the default view shows; everything else is behind "show all".
+"""The 28 paths the default view shows; everything else is behind "show all".
 
-Curation lives here rather than as metadata on the models: 183 field
+Curation lives here rather than as metadata on the models: 188 field
 definitions should not also carry a presentational concern, and the
 curated set is only reviewable when it is readable in one place.
 
@@ -327,7 +332,7 @@ this filter entirely) is the real answer at this schema size.
 GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
     {"github", "claude_credentials", "claude_credentials_dir"}
 )
-"""Top-level keys `_load_config_from_repo_raw` refuses in a repo config.
+"""Top-level keys `load_config_from_layers` refuses in a repo config.
 
 Tokens and credential-group names are host-local: a repo config is
 typically committed, so a value here would leak or would name a group
@@ -336,7 +341,7 @@ and renders them disabled with the reason (spec 3.3) rather than hiding
 them, so the setting does not appear to have vanished.
 
 Kept in step with the ban list in `config/loader.py` by
-`test_global_only_keys_match_the_loader_ban_list`.
+`test_global_only_keys_is_the_documented_ban_list`.
 """
 
 
