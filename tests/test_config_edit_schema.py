@@ -202,10 +202,11 @@ def test_build_specs_covers_every_config_leaf():
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
 
-    The plan's task-3 brief said 76 for `Config`; re-measuring against the
-    actual schema on this branch gives 77 (see task-3-report.md for the
-    full per-model breakdown and the two independent recounts that agree
-    with the code). `GlobalConfig`'s 14 matches the brief exactly.
+    The plan's task-3 brief said 76 for `Config`. That count predates
+    Task 2, which removed `container_prefix` from `COMPUTED_FIELDS` —
+    turning it from an excluded computed attribute into an editable leaf
+    and adding exactly one to the count: 76 + 1 = 77. `GlobalConfig`'s 14
+    is unaffected, since `container_prefix` only ever lived on `Config`.
     """
     from jailbee.config_edit.schema import build_specs
 
