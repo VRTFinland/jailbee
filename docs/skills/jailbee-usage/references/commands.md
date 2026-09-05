@@ -901,6 +901,18 @@ repo reads is `jailbee claude ls`, per-container labels are `jailbee ls`'s
 reported by `jailbee doctor` (nothing clears those but the commands below,
 and until then they would outrank the next `claude group set`).
 
+### `jailbee claude group ls [-o json] [--fields …]`
+
+The credential groups on this host and what each one holds: the same rows and
+the same columns as `jailbee claude ls`, narrowed to rows that *are* a group.
+A parked login belongs to no group and an ungrouped holder is one repo's own,
+so neither appears here — that wider question is `claude ls`, which this
+command names under its table.
+
+Use it before `create`, `rm` or `set`: those act on groups, and this is the
+list of what there is to act on. An `empty` / `unused` row is a group nothing
+holds and nothing reads, which is exactly what `rm` will let you remove.
+
 ### `jailbee claude group create <name>`
 
 Create an empty credential group. Nothing has to exist first — `set`, `use`

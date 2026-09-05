@@ -6,6 +6,8 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from tests.conftest import claude_overview_of, claude_row
+from tests.conftest import flat_output as _flat
 
 runner = CliRunner()
 
@@ -825,3 +827,116 @@ def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
     assert result.exit_code == 2
     assert "notes.txt" in result.output
     assert (holder / "notes.txt").exists()
+
+
+# --- Listing the groups themselves -------------------------------------------
+
+
+def _built(mocker, *rows, **kwargs) -> None:
+    """Point `claude group ls` at a fabricated host-wide overview."""
+    mocker.patch("jailbee.claude_overview.build", return_value=claude_overview_of(*rows, **kwargs))
+
+
+def test_group_ls_lists_every_group_and_what_it_holds(group_env, mocker):
+    _built(
+        mocker,
+        claude_row("staff@corp.com", group="staff", repos=("myrepo",), containers=("myrepo-a",)),
+        claude_row(None, group="fresh"),
+    )
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "staff@corp.com" in result.output
+    assert "fresh" in result.output
+    assert "unused" in result.output
+    assert "Credential groups on this host" in _flat(result.output)
+
+
+def test_group_ls_leaves_out_the_parked_store_and_ungrouped_holders(group_env, mocker):
+    """The subject here is the group, not the login: a parked file belongs to
+    no group, and an ungrouped holder is one repo's own. Both are `claude ls`."""
+    _built(
+        mocker,
+        claude_row("staff@corp.com", group="staff"),
+        claude_row("mine@corp.com", prefix="scratch", repos=("scratch",)),
+        claude_row("old@corp.com", live=False),
+    )
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "staff@corp.com" in result.output
+    assert "mine@corp.com" not in result.output
+    assert "old@corp.com" not in result.output
+
+
+def test_group_ls_says_which_group_this_repo_uses(group_env, mocker):
+    _built(mocker, claude_row("staff@corp.com", group="work", mine=True))
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert f"This repo ({group_env[0].container_prefix}) → group `work`" in _flat(result.output)
+
+
+def test_group_ls_points_at_claude_ls_for_the_whole_host(group_env, mocker):
+    """`claude group --help` names no way to see the logins themselves, and the
+    parked store is invisible from this table by design."""
+    _built(mocker, claude_row("staff@corp.com", group="staff"))
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert "jailbee claude ls" in _flat(result.output)
+
+
+def test_group_ls_says_when_the_host_has_no_groups(group_env, mocker):
+    """Parked logins and ungrouped holders can still exist, so "no groups" is
+    not "nothing here" — and the next step is `create`."""
+    _built(mocker, claude_row("old@corp.com", live=False))
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "group create" in _flat(result.output)
+
+
+def test_group_ls_json_carries_the_same_fields_as_claude_ls(group_env, mocker):
+    """One field set for both tables: two renderings of one row model could
+    only disagree."""
+    import json
+
+    _built(
+        mocker,
+        claude_row("staff@corp.com", group="staff", repos=("myrepo",), containers=("myrepo-a",)),
+    )
+
+    result = runner.invoke(app, ["claude", "group", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {
+            "account": "staff@corp.com",
+            "org": None,
+            "state": "live",
+            "group": "staff",
+            "repos": ["myrepo"],
+            "containers": ["myrepo-a"],
+        }
+    ]
+
+
+def test_group_ls_warns_when_the_containers_could_not_be_listed(group_env, mocker):
+    _built(mocker, claude_row("staff@corp.com", group="staff"), containers_known=False)
+
+    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert "could not be listed" in _flat(result.output)
+
+
+def test_group_ls_exits_2_when_the_store_cannot_be_read(group_env, mocker):
+    mocker.patch("jailbee.claude_overview.build", side_effect=OSError("permission denied"))
+
+    result = runner.invoke(app, ["claude", "group", "ls"])
+
+    assert result.exit_code == 2
+    assert "permission denied" in result.output

@@ -1799,8 +1799,9 @@ touched until one of those commands runs — `jailbee claude group` names them.
 `jailbee claude group` is a command group with no status view of its own: the
 host-wide picture is `jailbee claude ls`, per-container labels are `jailbee
 ls`'s `CLAUDE` column, and `jailbee doctor` reports an override that only
-repeats this repo's group. `jailbee claude group create <name>` creates an
-empty group and `jailbee claude group rm <name>` removes one nothing uses
+repeats this repo's group. `jailbee claude group ls` lists the groups
+themselves and what each holds, `jailbee claude group create <name>` creates
+an empty group, and `jailbee claude group rm <name>` removes one nothing uses
 (parking any login it holds rather than deleting it). `jailbee claude
 group set <name>|none` and `jailbee claude group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `global.yaml`'s

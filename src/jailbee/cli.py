@@ -8021,6 +8021,38 @@ def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[claud
     ]
 
 
+def _claude_holder_line(cfg: "Config") -> None:
+    """State which holder *this* repo reads, under a host-wide table.
+
+    Shared by `claude ls` and `claude group ls`: the row is bold in both, and
+    the fact behind the bold has to be spelled out somewhere.
+    """
+    from jailbee import claude_pool
+    from jailbee.paths import display_path
+
+    group = claude_pool.group_name(cfg)
+    where = "no credential group" if group is None else f"group `{group}`"
+    info(
+        f"This repo ({cfg.container_prefix}) → {where} "
+        f"· {display_path(claude_pool.holder_dir(cfg))}"
+    )
+
+
+def _claude_overview_warnings(overview: "claude_overview.Overview") -> None:
+    """What could not be read while building the table, for either listing."""
+    if not overview.containers_known:
+        warn(
+            "Containers could not be listed, so USED BY names repos only. "
+            "An empty container column here does not mean a holder is unused."
+        )
+    if overview.unreachable:
+        warn(
+            "Could not read the config of: "
+            f"{', '.join(overview.unreachable)}. A holder of theirs may be "
+            "missing from this table."
+        )
+
+
 def _claude_ref_or_pick(
     cfg: "Config",
     gcfg: "GlobalConfig",
@@ -8127,6 +8159,11 @@ def claude_ls_cmd(
     repo keeping its own login, and the parked store. `USED BY` says who reads
     each holder — including containers moved by `jailbee claude group use`,
     which is the only evidence a group no repo resolves to is in use at all.
+
+    `jailbee claude group ls` narrows the same rows to the credential groups
+    themselves, which is what `create`, `rm` and `set` act on. The reference
+    lives in the help rather than under every table: one more line on every
+    run is a line that stops being read.
     """
     from jailbee import claude_groups, claude_overview, claude_pool
     from jailbee.incus import Incus
@@ -8212,17 +8249,7 @@ def claude_ls_cmd(
             "Parked logins are host-wide — any of them can be activated into "
             "any group, which is why they are listed here too."
         )
-    if not overview.containers_known:
-        warn(
-            "Containers could not be listed, so USED BY names repos only. "
-            "An empty container column here does not mean a holder is unused."
-        )
-    if overview.unreachable:
-        warn(
-            "Could not read the config of: "
-            f"{', '.join(overview.unreachable)}. A holder of theirs may be "
-            "missing from this table."
-        )
+    _claude_overview_warnings(overview)
     if not any(r.state in ("live", "parked") for r in overview.rows):
         info(
             "No login on this host yet: run `claude` in a container and /login, "
@@ -8586,6 +8613,66 @@ def _write_repo_group(config: Path | None, value: object) -> None:
         [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
     )
     _reapply_binds_profile(config)
+
+
+@group_app.command("ls")
+def claude_group_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help="Comma-separated fields. Allowed: group, account, org, state, "
+            "used_by, repos, containers.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List the credential groups on this host and what each one holds.
+
+    `jailbee claude ls` answers the wider question — every login, parked ones
+    and repos keeping their own included. This is the same rows narrowed to
+    the groups themselves, which is what `create`, `rm` and `set` act on.
+    """
+    from jailbee import claude_overview, claude_pool
+    from jailbee.incus import Incus
+    from jailbee.tui import console
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        overview = claude_overview.build(cfg, gcfg, Incus())
+    except (claude_pool.PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    # A parked login belongs to no group and an ungrouped holder is one repo's
+    # own; both are `claude ls`'s subject, not this command's.
+    rows = [r for r in overview.rows if r.group is not None]
+    table_format.emit(
+        rows,
+        _claude_fields(overview.containers_known),
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title="Credential groups on this host",
+        empty_message=(
+            "No credential groups on this host. `jailbee claude group create <name>` "
+            "makes one; without any, every repo keeps its own login."
+        ),
+    )
+    if fmt != "table":
+        return
+    _claude_holder_line(cfg)
+    _claude_overview_warnings(overview)
+    info("Every login on this host, parked ones included: `jailbee claude ls`.")
 
 
 @group_app.command("create")

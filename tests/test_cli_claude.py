@@ -6,24 +6,15 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from jailbee import claude_overview, claude_pool
+from jailbee import claude_pool
 from jailbee.claude_pool import PoolChange, Slot
 from jailbee.cli import app
 from jailbee.global_config import GlobalConfig
+from tests.conftest import claude_overview_of as _overview
+from tests.conftest import claude_row as _row
+from tests.conftest import flat_output as _flat
 
 runner = CliRunner()
-
-
-def _flat(output: str) -> str:
-    """`output` with every whitespace run collapsed to one space.
-
-    Rich wraps a table's title to the *table's* width, not the terminal's, so
-    pinning COLUMNS does not stop a title from wrapping above a narrow table —
-    and a wrapped title is still the right title. Assertions on title text go
-    through this; assertions on cell content do not need it, because COLUMNS
-    controls the columns.
-    """
-    return " ".join(output.split())
 
 
 @pytest.fixture
@@ -33,47 +24,6 @@ def repo(tmp_path, mocker, make_cfg):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
     return cfg
-
-
-def _row(
-    account: str | None,
-    *,
-    group: str | None = None,
-    prefix: str | None = None,
-    repos: tuple[str, ...] = (),
-    containers: tuple[str, ...] = (),
-    mine: bool = False,
-    live: bool = True,
-):
-    """One `claude_overview` row, built the way `build` builds them.
-
-    Real `Row`s rather than mocks: the display properties (`state`, `account`,
-    `org_hint`) are the module's own, and a stub of them would test nothing.
-    """
-    slot = (
-        None
-        if account is None
-        else Slot(
-            account,
-            Path("/h/.credentials.json") if live else Path(f"/s/{account}.json"),
-            live=live,
-        )
-    )
-    return claude_overview.Row(
-        slot=slot,
-        group=group,
-        prefix=prefix,
-        holder=Path("/h"),
-        repos=repos,
-        containers=containers,
-        mine=mine,
-    )
-
-
-def _overview(*rows, unreachable: tuple[str, ...] = (), containers_known: bool = True):
-    return claude_overview.Overview(
-        rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
-    )
 
 
 def _built(mocker, overview) -> None:

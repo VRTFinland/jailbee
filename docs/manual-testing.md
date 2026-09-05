@@ -3054,7 +3054,9 @@ Needs two Claude accounts. Everything below runs on the host.
     <container>` (naming the repo's own group) must likewise clear the
     override instead of writing one, and `jailbee new --claude-group Y` must
     create a container with no label at all.
-11. **The group lifecycle gate.** `jailbee claude group create tmpgrp` must
+11. **The group lifecycle gate.** `jailbee claude group ls` must list every
+    group on the host and no parked login;
+    `jailbee claude group create tmpgrp` must
     make a 0700 directory that `jailbee claude ls` shows as `empty` /
     `unused`, and `jailbee claude group rm tmpgrp` must remove it. Then check
     each refusal against real state: `rm` on the repo's own group (names the

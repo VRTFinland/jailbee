@@ -58,6 +58,66 @@ def make_config(
     return cfg
 
 
+def flat_output(output: str) -> str:
+    """`output` with every whitespace run collapsed to one space.
+
+    Rich wraps a table's title to the *table's* width, not the terminal's, so
+    pinning COLUMNS does not stop a title or a long info line from wrapping —
+    and a wrapped line is still the right line. Assertions on such text go
+    through this; assertions on cell content do not need it.
+    """
+    return " ".join(output.split())
+
+
+def claude_row(
+    account: str | None,
+    *,
+    group: str | None = None,
+    prefix: str | None = None,
+    repos: tuple[str, ...] = (),
+    containers: tuple[str, ...] = (),
+    mine: bool = False,
+    live: bool = True,
+):
+    """One `claude_overview.Row`, built the way `build` builds them.
+
+    Real `Row`s rather than mocks: the display properties (`state`, `account`,
+    `org_hint`) are the module's own, and a stub of them would test nothing.
+    Shared by the `claude ls` and `claude group ls` tests, which render the
+    same rows through the same field specs and must not drift apart.
+    """
+    from jailbee import claude_overview
+    from jailbee.claude_pool import Slot
+
+    slot = (
+        None
+        if account is None
+        else Slot(
+            account,
+            Path("/h/.credentials.json") if live else Path(f"/s/{account}.json"),
+            live=live,
+        )
+    )
+    return claude_overview.Row(
+        slot=slot,
+        group=group,
+        prefix=prefix,
+        holder=Path("/h"),
+        repos=repos,
+        containers=containers,
+        mine=mine,
+    )
+
+
+def claude_overview_of(*rows, unreachable: tuple[str, ...] = (), containers_known: bool = True):
+    """An `Overview` around `rows`, with nothing unreadable by default."""
+    from jailbee import claude_overview
+
+    return claude_overview.Overview(
+        rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
+    )
+
+
 # Module-level alias for tests that prefer `from tests.conftest import make_cfg`
 # over the pytest fixture form.
 make_cfg = make_config
