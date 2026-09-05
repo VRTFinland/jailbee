@@ -4,6 +4,26 @@
 
 ### Fixed
 
+- **The first `jailbee new` in a scratch directory no longer dies with
+  "Network ACL not found".** A scratch directory has never run
+  `jailbee init`, so `jailbee new` bootstraps its profiles through
+  `run_apply` — but `run_apply` was an update-only path that assumed
+  `<prefix>-allowlist` and the four profiles already existed. The first
+  thing it does is refresh the egress pool, which writes the ACL with
+  `incus network acl edit`, and against an ACL nobody created that fails
+  outright:
+
+      refresh_pool: ACL write failed for <repo>: `incus network acl edit
+      <repo>-allowlist` failed: Error: Network ACL not found
+
+  The profile loop right behind it had the same defect one step later
+  (`incus profile edit` does not create, and the diff check cannot read a
+  profile that does not exist). `jailbee apply` now creates the repo's ACL
+  before the refresh and creates any profile that is missing, so it
+  completes a first-time or half-finished repo instead of failing on it.
+  The egress refresh recreates a repo ACL that has gone missing as well,
+  which repairs the timer path — it runs with no `apply` in front of it.
+
 - **A malformed `loose_auto_revert.after` no longer crashes `jailbee net
   loose` with a traceback.** The field is typed `str | int` and parsed
   only by `LooseAutoRevert.duration()`, so a value like `30min` or `30h`
