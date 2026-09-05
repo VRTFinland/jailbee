@@ -1729,6 +1729,19 @@ def run(
                     # the rewrite, leaving the child's title on screen forever.
                     last_title = None
 
+            def _report_vanished_repo(repo: RepoTarget) -> None:
+                """Notice-and-refresh for an `OSError` from a repo-rooted dispatch.
+
+                Shared by `dispatch` and `create_container`: both hand a real
+                repo root to a child process as `cwd`, and both can have that
+                directory vanish between a refresh and the keypress that
+                dispatches — `subprocess`/`Popen` raise, not exit non-zero,
+                for a missing `cwd`. Previously uncaught on either path, this
+                took the whole TUI down.
+                """
+                set_notice(f"'{repo.repo_root}' no longer exists")
+                force.set()
+
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
                 group = _find_group(groups, target)
@@ -1740,12 +1753,7 @@ def run(
                 try:
                     rc = foreground(lambda: _dispatch_action(repo, verb, target))
                 except OSError:
-                    # The repo root vanished between a refresh and this
-                    # keypress — `subprocess`/`Popen` raise, not exit
-                    # non-zero, for a missing `cwd`. Previously uncaught,
-                    # this took the whole TUI down.
-                    set_notice(f"'{repo.repo_root}' no longer exists")
-                    force.set()
+                    _report_vanished_repo(repo)
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
@@ -1802,7 +1810,11 @@ def run(
                     _wait_for_return()
                     return rc
 
-                rc = foreground(ask_and_run)
+                try:
+                    rc = foreground(ask_and_run)
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
                 if rc != 0:
                     set_notice(f"'jailbee new' exited {rc}")
                 force.set()  # the new container should appear on the next frame

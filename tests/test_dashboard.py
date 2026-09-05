@@ -3214,6 +3214,33 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
+def test_create_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
+    """The identical failure as the test above, reached through a different
+    keypress: `create_container`'s own `subprocess.run(new_container_argv(...),
+    cwd=repo.cwd())` raises the same uncaught `OSError` if the repo root
+    disappeared between a refresh and "n". Exercises `_report_vanished_repo`'s
+    other call site (shared with `dispatch`) rather than assuming the fix
+    generalizes.
+    """
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    # Patches the same `subprocess.run` `new_container_base_default` calls
+    # through `git.get_current_branch` — that call already tolerates OSError
+    # and returns None, so this only affects the `ask_and_run` subprocess.run
+    # below (see git.get_current_branch's own try/except).
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
+    mocker.patch("typer.prompt", side_effect=["work", "main"])
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    # The repo header row is selected by default (no navigation needed): "n"
+    # asks for a branch and a base (both mocked above) and then runs
+    # `jailbee new` through `create_container`'s own dispatch, not `dispatch`.
+    rc = _drive_run(mocker, [b"n"], groups=[group])
+
+    assert rc == 0  # run() returned normally — the OSError did not propagate
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert any(n is not None and str(tmp_path) in n for n in notices)
+
+
 def test_parse_key_maps_n_to_the_new_container_token():
     assert dashboard.parse_key(b"n") == "new"
 
