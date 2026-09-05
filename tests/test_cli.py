@@ -73,6 +73,21 @@ def test_config_show_with_explicit_path() -> None:
     assert "container_user" in result.stdout
 
 
+def test_explicit_config_path_that_does_not_exist_exits_1() -> None:
+    """An explicit `--config PATH` that does not exist is a typo, not "no
+    config file here" — it must still error rather than fall into the
+    scratch-synthesis path (`_resolve_config_path_or_none` only swallows
+    `ConfigNotFoundError` for the *no `--config` given* case). Only a
+    loader-unit-level test (`test_invalid_yaml_raises` in test_config.py)
+    covered this before; this is the CLI-level guard against a future
+    refactor of `_resolve_config_path`/`_resolve_config_path_or_none` widening
+    that swallow to cover an explicit path too.
+    """
+    result = run_cli("ls", "--config", "/nonexistent/config.yaml")
+    assert result.returncode == 1
+    assert "Config file not found" in result.stderr
+
+
 def test_config_validate_failure_for_missing_repo() -> None:
     result = run_cli("config", "validate", "--config", str(FIXTURES / "minimal_config.yaml"))
     # exit 2 = runtime issues; exit 0 if /tmp/test-repo happens to exist
