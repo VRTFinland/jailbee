@@ -5,7 +5,11 @@ value"; the editor also has to answer "which file said so", because that
 is what every row's origin marker shows and what decides whether `r`
 deletes a key or does nothing (spec 3.3).
 
-This is the only module in `config_edit` that touches the filesystem.
+One of the package's two filesystem modules: this one *reads* — both raw
+layers, and, through `validate`, the whole config-loading subsystem over a
+staged one. `save` is the other, and the only one that writes. Everything
+else in `config_edit` is pure (`schema`, `state`, `values`, `render`) or the
+terminal driver (`app`).
 """
 
 from __future__ import annotations

@@ -655,3 +655,23 @@ def test_an_unloadable_rendering_is_reported_instead_of_written(editor, mocker):
     before = editor.repo.read_text()
     assert editor(f"{'j' * idx}\r \x13qq") == 0
     assert editor.repo.read_text() == before
+
+
+def test_n_closes_a_read_only_diff(rendered):
+    """`n` is filtered on `confirming` alone, so it answers the read-only diff
+    too — the `[y/N]` prompt trains the user to press it, and `escape` used to
+    be the only key that worked there.
+
+    Both runs end with Ctrl-C rather than `q`: piped input is coalesced into a
+    single render right before the app quits, so what the capture sees is the
+    frame at exit, and `q` is filtered out while a diff is open (which is what
+    the unfixed binding would have turned into a hang).
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+
+    still_open = rendered(f"{'j' * idx}\r d\x03")
+    assert "Esc to close" in still_open
+
+    closed = rendered(f"{'j' * idx}\r dn\x03")
+    assert "Esc to close" not in closed

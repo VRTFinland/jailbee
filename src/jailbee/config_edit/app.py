@@ -535,6 +535,10 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
       `escape` while a *read-only* diff is open) sets none at all, leaving
       whatever notice was already on screen — neither path reads the old
       message back, so not clearing has no effect worth guarding against.
+      `n` is filtered on `confirming` alone, unlike `y`: the `[y/N]` prompt
+      trains the user to press it, and closing a diff they opened themselves
+      is harmless. `y`'s extra `not diff_open` is what stops `d` from
+      becoming a second, unannounced save key.
     * `_abandon` (`c-c`) doesn't clear either, but it exits the application
       immediately, so there is no next frame for a stale notice to appear in.
     """
@@ -596,7 +600,7 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     def _yes(_event: KeyPressEvent) -> None:
         editor.confirm_save(accept=True)
 
-    @kb.add("n", filter=confirming & Condition(lambda: not editor.diff_open))
+    @kb.add("n", filter=confirming)
     @kb.add("escape", filter=confirming, eager=True)
     def _no(_event: KeyPressEvent) -> None:
         if editor.diff_open:
