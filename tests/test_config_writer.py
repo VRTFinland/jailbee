@@ -230,6 +230,38 @@ def test_render_global_yaml_documents_both_halves():
     scratch_at = text.index("scratch:")
     assert gpg_at < scratch_at  # Config overlay first, host-level block after
     assert text.count("#") > 4
+    # A word from `ScratchConfig.enabled`'s own description, below `scratch:`.
+    # `Config` has no `scratch` field, so a single-pass render against `Config`
+    # alone would leave the host half undocumented and this word absent — which
+    # is the whole point of the two passes.
+    assert "synthesizes" in text[scratch_at:]
+
+
+def test_render_global_yaml_survives_a_host_only_mapping(tmp_path):
+    """A global.yaml with no Config overlay still renders to one YAML document.
+
+    `render_documented({}, Config)` emits `{}` as the body; appending the host
+    block after that would make two documents in one stream and the file would
+    no longer load at all.
+    """
+    import yaml
+
+    from jailbee.config_writer import render_global_yaml
+    from jailbee.global_config import validate_global_raw
+
+    raw: dict[str, object] = {"scratch": {"enabled": True}}
+    text = render_global_yaml(raw)
+    assert yaml.safe_load(text) == raw
+    validate_global_raw(yaml.safe_load(text), tmp_path / "global.yaml")
+
+
+def test_render_global_yaml_survives_an_empty_mapping():
+    """Nothing set at all still renders to a loadable (empty) document."""
+    import yaml
+
+    from jailbee.config_writer import render_global_yaml
+
+    assert yaml.safe_load(render_global_yaml({})) == {}
 
 
 def test_render_global_yaml_omits_the_host_section_when_there_is_none():

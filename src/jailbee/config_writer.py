@@ -321,6 +321,13 @@ def render_global_yaml(raw: dict[str, object], *, header: str = DOCUMENTED_HEADE
 
     `raw` must be the raw YAML mapping, never `model_dump()` output — see
     `render_documented`, whose contract this inherits.
+
+    Either half may be empty. An empty overlay is skipped rather than rendered,
+    because `render_documented({}, Config)` emits `{}` as the document body and
+    appending the host block after that would produce *two* YAML documents in
+    one stream — a file no loader accepts. A host-only `global.yaml` is an
+    ordinary hand-written state: someone who ever only set
+    `claude_credentials:` or `docker_registry_mirror:` has one.
     """
     # Local imports: `jailbee.config` imports `ConfigError` from
     # `global_config`, so pulling either in at module top would close a cycle
@@ -331,6 +338,8 @@ def render_global_yaml(raw: dict[str, object], *, header: str = DOCUMENTED_HEADE
 
     host = {k: v for k, v in raw.items() if k in _HOST_LEVEL_KEYS}
     overlay = {k: v for k, v in raw.items() if k not in _HOST_LEVEL_KEYS}
+    if not overlay and host:
+        return header + render_documented(host, GlobalConfig, header="")
     text = render_documented(overlay, Config, header=header)
     if host:
         text += "\n" + render_documented(host, GlobalConfig, header="")
