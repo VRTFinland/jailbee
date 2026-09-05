@@ -169,6 +169,47 @@ def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
     assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == ()
 
 
+def test_host_level_list_paths_inherit_nothing(tmp_path):
+    """`ls`/`dashboard` never reach `deep_merge`, so nothing is appended.
+
+    `_split_host_keys` routes the five `_HOST_LEVEL_KEYS` out of the
+    Config overlay before the merge runs, and `Config._effective_columns`
+    merges the two blocks field-by-field with `model_copy(update=...)` —
+    a repo `hide` *replaces* the global one. Reporting the global entries
+    as inherited context here would tell the user they are appending to a
+    list that in fact gets thrown away.
+    """
+    _write(tmp_path / "global.yaml", "ls:\n  hide:\n    - ip\n")
+    _write(tmp_path / "repo.yaml", "ls:\n  hide:\n    - branch\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    assert layers.inherited_entries(_spec("ls.hide"), got, "repo") == ()
+
+
+def test_an_explicit_null_in_the_repo_layer_discards_the_global_list(tmp_path):
+    """`null` is a reset too — it just takes `deep_merge`'s other branch.
+
+    Only two lists hit the append rule. A `None` overlay falls through to
+    the scalar/type-mismatch branch where the overlay simply wins, so the
+    global entries are gone; the same is true of any non-list value a
+    hand-edited file might hold there.
+    """
+    _write(tmp_path / "global.yaml", "egress_allow:\n  - a.example\n")
+    _write(tmp_path / "repo.yaml", "egress_allow: null\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == ()
+
+
+def test_a_non_list_in_the_repo_layer_discards_the_global_list(tmp_path):
+    """A hand-broken scalar where a list belongs also wins outright."""
+    _write(tmp_path / "global.yaml", "egress_allow:\n  - a.example\n")
+    _write(tmp_path / "repo.yaml", "egress_allow: a.example\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == ()
+
+
 def test_apply_changes_does_not_mutate_the_input():
     raw = {"defaults": {"cpu": 2}}
     out = layers.apply_changes(raw, [YamlChange(("defaults", "cpu"), 8)])

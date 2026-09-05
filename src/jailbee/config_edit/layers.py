@@ -16,7 +16,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.config import ConfigError
-from jailbee.config.common import _read_yaml_or_empty
+
+# `_HOST_LEVEL_KEYS` is the loader's own routing table: the keys
+# `_split_host_keys` lifts out of `global.yaml` *before* `deep_merge` runs.
+# This module reports what a save will do, so it has to agree with that
+# routing exactly — a key on one side of the boundary merges by
+# `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
+from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
 from jailbee.config.loader import load_config_from_layers
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
 from jailbee.config_writer import DELETE, YamlChange
@@ -161,20 +167,32 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
     Empty for the global layer (nothing above it to inherit from) and for
     every non-list kind (those override, so there is no context to show).
 
-    If the repo layer has an explicit empty list (`egress_allow: []`),
-    `deep_merge` treats it as a reset that discards the global entries
-    entirely, so this returns `()` — nothing is inherited when the list
-    is explicitly empty. This function reports on layers as they are
-    saved to disk, not on staged edits; if the user then adds entries,
-    the list becomes non-empty and inheritance reappears after a save.
-    Recomputing against staged edits belongs to the UI plan.
+    Two further rules, both of which say "nothing is inherited":
+
+    * **Host-level paths never reach `deep_merge` at all.** The five keys
+      in `_HOST_LEVEL_KEYS` are split off `global.yaml` into a separate
+      `GlobalConfig` object, and `ls`/`dashboard` are then merged
+      field-by-field by `Config._effective_columns`, which *replaces*.
+      A repo `ls.hide` throws the global one away rather than adding to it.
+    * **Only a non-empty repo list appends.** `[]` is `deep_merge`'s
+      explicit reset; `null` and any non-list value take its
+      overlay-wins branch. All three discard the global entries.
+
+    This function reports on layers as they are saved to disk, not on
+    staged edits; if the user then adds entries, the list becomes
+    non-empty and inheritance reappears after a save. Recomputing against
+    staged edits belongs to the UI plan.
     """
     if layer != "repo" or spec.kind not in _APPENDING_KINDS:
         return ()
-    # If the repo layer has an explicit empty list, it resets (discards)
-    # the global entries rather than appending to them.
+    if spec.path[0] in _HOST_LEVEL_KEYS:
+        # Split out before deep_merge ever runs; global.yaml's block is a
+        # separate object merged field-wise by Config._effective_columns.
+        return ()
     repo_present, repo_value = lookup(layers.repo_raw, spec.path)
-    if repo_present and repo_value == []:
+    if repo_present and not (isinstance(repo_value, list) and repo_value):
+        # [] resets, null and any non-list hit deep_merge's overlay-wins
+        # branch; only a non-empty repo list appends.
         return ()
     present, value = lookup(layers.global_raw, spec.path)
     if not present or not isinstance(value, list):
