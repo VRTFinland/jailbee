@@ -78,6 +78,9 @@ jailbee destroy feat-foo --force
 (shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
 "Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).
+A repo with no `.jailbee/config.yaml` (a scratch directory) is listed and acted
+on exactly like a configured one — no `--config` flag to pass, since the
+dashboard runs each action's child process from that repo's own root.
 `jailbee gui` (== `jailbee dashboard --gui`) opens the same dashboard as a graphical Qt
 window instead of a terminal TUI. Its **View** menu switches between a wide
 Table layout and a width-adaptive Cards layout (the default on a fresh
