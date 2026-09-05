@@ -7,8 +7,11 @@ every row's origin marker shows (spec 3.3).
 
 from __future__ import annotations
 
+import pytest
+
 from jailbee.config_edit import layers
 from jailbee.config_edit.schema import repo_specs
+from jailbee.config_writer import DELETE, YamlChange
 
 
 def _write(path, text):
@@ -164,3 +167,88 @@ def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
 
     assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == ()
+
+
+def test_apply_changes_does_not_mutate_the_input():
+    raw = {"defaults": {"cpu": 2}}
+    out = layers.apply_changes(raw, [YamlChange(("defaults", "cpu"), 8)])
+    assert out == {"defaults": {"cpu": 8}}
+    assert raw == {"defaults": {"cpu": 2}}
+
+
+def test_apply_changes_creates_missing_parents_and_deletes():
+    out = layers.apply_changes({}, [YamlChange(("gpg", "enabled"), True)])
+    assert out == {"gpg": {"enabled": True}}
+    assert layers.apply_changes(out, [YamlChange(("gpg", "enabled"), DELETE)]) == {"gpg": {}}
+
+
+@pytest.fixture
+def opened(tmp_path, monkeypatch, mocker):
+    """A `LayerSet` over an isolated global.yaml, with git detection stubbed.
+
+    `validate` runs the real loader, which calls `detect_default_branch`
+    and `detect_upstream_remote` against a tmp dir that is not a git
+    repo; unpatched they shell out. `XDG_CONFIG_HOME` is what makes
+    `default_global_config_path()` — which the loader calls itself —
+    point at the same file this fixture wrote.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+
+    def _open(global_text=""):
+        from jailbee.global_config import default_global_config_path
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        global_path = default_global_config_path()
+        global_path.parent.mkdir(parents=True, exist_ok=True)
+        global_path.write_text(global_text)
+        return layers.read_layers(
+            tmp_path / "repo" / ".jailbee" / "config.yaml", global_path
+        )
+
+    return _open
+
+
+def test_validate_accepts_a_good_repo_change(opened):
+    got = opened()
+    assert layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)]) is None
+
+
+def test_validate_rejects_a_bad_value_and_names_the_field(opened):
+    got = opened()
+    error = layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), "lots")])
+    assert error is not None
+    assert "cpu" in error
+
+
+def test_validate_checks_a_staged_global_layer_without_writing_it(opened):
+    """The whole reason load_config_from_layers exists."""
+    got = opened("defaults:\n  cpu: 2\n")
+
+    error = layers.validate(got, "global", [YamlChange(("defaults", "cpu"), "lots")])
+
+    assert error is not None
+    assert got.global_path.read_text() == "defaults:\n  cpu: 2\n", "nothing was written"
+
+
+def test_validate_catches_a_cross_field_rule_not_just_the_schema(opened):
+    """`github.enabled` with no tokens is a loader rule, not a pydantic one.
+
+    Validating with `Config.model_validate` alone would let it through and
+    the next CLI command would fail instead.
+    """
+    got = opened()
+
+    error = layers.validate(got, "global", [YamlChange(("github", "enabled"), True)])
+
+    assert error is not None
+    assert "api_tokens" in error
+
+
+def test_validate_leaves_the_in_memory_layers_untouched(opened):
+    """A rejected save must not corrupt the editor's live view of the file."""
+    got = opened("defaults:\n  cpu: 2\n")
+
+    layers.validate(got, "global", [YamlChange(("defaults", "cpu"), "lots")])
+
+    assert got.global_raw == {"defaults": {"cpu": 2}}

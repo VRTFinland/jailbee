@@ -11,11 +11,15 @@ This is the only module in `config_edit` that touches the filesystem.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from jailbee.config import ConfigError
 from jailbee.config.common import _read_yaml_or_empty
+from jailbee.config.loader import load_config_from_layers
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
+from jailbee.config_writer import DELETE, YamlChange
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -176,3 +180,66 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
     if not present or not isinstance(value, list):
         return ()
     return tuple(value)
+
+
+def apply_changes(
+    raw: dict[str, object], changes: Sequence[YamlChange]
+) -> dict[str, object]:
+    """`raw` with `changes` applied, as a new mapping.
+
+    The in-memory twin of `config_writer._apply`, for the dry run: the
+    validator needs the resulting mapping, not the resulting YAML text.
+    Deep-copies first, because `raw` is the editor's live view of the file
+    and a rejected validation must leave it untouched.
+    """
+    out = deepcopy(raw)
+    for change in changes:
+        *parents, leaf = change.path
+        node: dict[str, object] = out
+        for key in parents:
+            child = node.get(key)
+            if not isinstance(child, dict):
+                child = {}
+                node[key] = child
+            node = child
+        if change.value is DELETE:
+            node.pop(leaf, None)
+        else:
+            node[leaf] = change.value
+    return out
+
+
+def validate(
+    layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]
+) -> str | None:
+    """The error a save would produce, or `None` if the staged layer loads.
+
+    Runs the *real* loader over the staged mapping (spec 3.5 step 2), so
+    the editor cannot write a file the CLI would then reject. That catches
+    more than pydantic does: the retired-key check, the placement bans,
+    the container_prefix regex, the shared-cache and autostart uniqueness
+    rules, and `github.enabled` with no tokens are all loader-level.
+
+    Nothing is written — this is the check that runs *before* the backup
+    and the write.
+
+    Deliberately loads the *repo* config even when the global layer is the
+    one being edited. A global-layer change is only meaningful through its
+    effect on some repo's merged config, and validating it in isolation
+    would miss exactly the cross-layer failures worth catching — a global
+    `autostart` step colliding with a repo one, for instance. The repo
+    path used is whichever config the editor was opened against.
+    """
+    global_raw = layers.global_raw
+    repo_raw = layers.repo_raw
+    if layer == "repo":
+        repo_raw = apply_changes(repo_raw, changes)
+    else:
+        global_raw = apply_changes(global_raw, changes)
+    try:
+        load_config_from_layers(
+            global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)
+        )
+    except ConfigError as e:
+        return str(e)
+    return None
