@@ -1,20 +1,26 @@
 """Map dashboard menu verbs to concrete ``jailbee`` commands and launch specs.
 
 Framework-free (no PySide6). Mirrors the TUI's dispatch: every action runs
-``jailbee <verb> <name> --config <path>`` so the target repo's own config drives
-behaviour. How the GUI has to *run* that command differs per verb, though: some
-need a real TTY, some exist only for the text they print, and the rest are fire
-and forget — see :data:`LaunchMode`.
+``jailbee <verb> <name>`` addressed at one repo — ``--config <path>`` for a
+configured repo, the child's working directory for one with no config file
+(see :class:`jailbee.dashboard.RepoTarget`) — so the target repo's own config
+drives behaviour. How the GUI has to *run* that command differs per verb,
+though: some need a real TTY, some exist only for the text they print, and the
+rest are fire and forget — see :data:`LaunchMode`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.dashboard import ATTACH_VERBS, PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, build_terminal_command
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from jailbee.dashboard import RepoTarget
 
 # How the GUI has to run a verb.
 #   "terminal" — needs an interactive TTY, so it gets a host terminal window.
@@ -68,21 +74,33 @@ class TerminalNotFoundError(RuntimeError):
 
 @dataclass(frozen=True)
 class ActionCommand:
-    """A resolved jailbee command plus how the GUI should launch it."""
+    """A resolved jailbee command plus how the GUI should launch it.
+
+    ``cwd`` is the repo root the child must run in. Never optional: it is how a
+    repo with no config file is addressed at all, and every spawn site — the
+    detached ``Popen``, the terminal wrapper, the output window's ``QProcess``
+    — passes it straight through.
+    """
 
     argv: list[str]
     launch: LaunchMode
     confirm: bool
+    cwd: Path
 
 
 def build_action(
     verb: str,
     container: str,
-    config_path: Path,
+    target: RepoTarget,
     *,
     extra_flags: list[str] | None = None,
 ) -> ActionCommand:
-    """Build the jailbee command for ``verb`` on ``container`` under ``config_path``.
+    """Build the jailbee command for ``verb`` on ``container`` in ``target``.
+
+    ``target`` says how to address the repo: ``--config <path>`` for a
+    configured one, the child's cwd for a repo with no config file (see
+    :class:`jailbee.dashboard.RepoTarget`). The cwd is set either way, so
+    there is one launch path rather than two.
 
     ``verb`` may be a single token (``"shell"``) or a space-separated
     multi-token subcommand (``"net loose"``) — it's split into separate argv
@@ -110,12 +128,12 @@ def build_action(
     captured — that knowledge stays in one place here.
     """
     confirm = verb in _CONFIRM_VERBS
-    argv = ["jailbee", *verb.split(), container, "--config", str(config_path)]
+    argv = ["jailbee", *verb.split(), container, *target.flags()]
     if verb in _ASSUME_YES_VERBS:
         argv.append("--force")
     if extra_flags:
         argv += extra_flags
-    return ActionCommand(argv=argv, launch=launch_mode(verb), confirm=confirm)
+    return ActionCommand(argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd())
 
 
 def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list[str]:

@@ -21,6 +21,7 @@ from jailbee.global_config import (
 from jailbee.paths import find_repo_config
 from jailbee.tui import (
     confirm_destroy_risk,
+    default_confirm,
     error,
     error_plain,
     info,
@@ -51,9 +52,64 @@ ConfigOption = Annotated[
 
 
 def _resolve_config_path(path: Path | None) -> Path:
+    """The repo config file to load, raising when there is none.
+
+    INVARIANT — may only be called where `cfg.is_synthetic()` is known false.
+
+    `find_repo_config()` raises `ConfigNotFoundError` unconditionally in a
+    directory with no `.jailbee/config.yaml`, and since scratch containers
+    every command runs in such a directory: a call reached from one is not an
+    error message, it is a traceback. Either guard the call on
+    `not cfg.is_synthetic()` (as `config show --layer effective` does) or use
+    `_resolve_config_path_or_none` and handle `None` — which is what a
+    subprocess spawn wants anyway, since a worker with no `--config` resolves
+    the same synthesized config from its inherited cwd.
+
+    Grep `_resolve_config_path(` before adding a call site: the whole list is
+    short on purpose, and every entry on it carries the guard.
+    """
     if path is not None:
         return path
     return find_repo_config()
+
+
+def _resolve_config_path_or_none(path: Path | None) -> Path | None:
+    """`_resolve_config_path`, but None instead of raising when there is none.
+
+    Isolates the one `ConfigNotFoundError` case a command treats as
+    "synthesize a config" rather than "exit 1": no explicit `--config` and no
+    `.jailbee/config.yaml` in the current directory. An explicit `--config
+    PATH` that does not exist is not this case — `_resolve_config_path`
+    returns it unchanged, so the caller's own `ConfigError` handling still
+    reports a typo'd path as an error, not an invitation to synthesize.
+
+    This is what almost every caller wants. `_load_or_exit`, `config
+    show`/`validate`, `destroy`, `net egress export` and the three background
+    worker spawns all go through here; `_resolve_config_path` itself survives
+    only for the two sites that have already established there is a file.
+    """
+    from jailbee.config import ConfigNotFoundError
+
+    try:
+        return _resolve_config_path(path)
+    except ConfigNotFoundError:
+        return None
+
+
+def _egress_config_source(cfg: "Config", config: Path | None) -> str:
+    """Where this config's `egress_allow:` key lives, for "edit it there".
+
+    A synthesized config has no repo file: the entry came from `global.yaml`'s
+    `scratch.config` block, so name that — labelled exactly as every other
+    synthesized source is (`SCRATCH_ORIGIN_SUFFIX`) — rather than a
+    `.jailbee/config.yaml` path that does not exist.
+    """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    if cfg.is_synthetic():
+        return f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+    # `_resolve_config_path` invariant: guarded by `is_synthetic()` above.
+    return str(_resolve_config_path(config))
 
 
 def _now() -> datetime:
@@ -265,7 +321,27 @@ def config_show(
         return
 
     if layer == "repo":
-        path = _resolve_config_path(config)
+        from jailbee.config import SCRATCH_ORIGIN_SUFFIX, synthesized_repo_layer
+
+        path = _resolve_config_path_or_none(config)
+        if path is None:
+            # `synthesized_repo_layer`, not `scratch_repo_layer`: the guarded
+            # entry point, so this diagnostic reports the same refusal the
+            # load path gives (`scratch.enabled: false`, `$HOME` and its
+            # ancestors, an un-sluggable directory name) instead of printing a
+            # layer no command in this directory would ever load.
+            #
+            # Built before the header is printed, so a refusal is not preceded
+            # by a line announcing a synthesis that did not happen.
+            try:
+                raw = synthesized_repo_layer(Path.cwd())
+            except ConfigError as e:
+                error_plain(str(e))
+                raise typer.Exit(1) from e
+            gpath = default_global_config_path()
+            info(f"# Repo config: none — synthesized from {gpath}{SCRATCH_ORIGIN_SUFFIX}")
+            typer.echo(yaml.safe_dump(raw, sort_keys=False), nl=False)
+            return
         info(f"# Repo config: {path}")
         if not path.exists():
             return
@@ -273,9 +349,18 @@ def config_show(
         return
 
     # effective (default) — current behaviour
-    path = _resolve_config_path(config)
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
     cfg = _load_or_exit(config)
-    info(f"# Effective config (merged from global + {path})")
+    if cfg.is_synthetic():
+        info(
+            f"# Effective config (merged from global + "
+            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX})"
+        )
+    else:
+        # `_resolve_config_path` invariant: the `is_synthetic()` branch above
+        # is what makes this call safe — there is a file here.
+        info(f"# Effective config (merged from global + {_resolve_config_path(config)})")
     data = cfg.model_dump(mode="json")
 
     from sqlmodel import Session
@@ -303,17 +388,25 @@ def config_show(
 @config_app.command("validate")
 def config_validate(config: ConfigOption = None) -> None:
     """Validate the configuration file (schema + runtime paths)."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX, load_repo_config_unsanitized
     from jailbee.global_config import global_config_issues
 
-    path = _resolve_config_path(config)
+    path = _resolve_config_path_or_none(config)
     try:
-        # `load_config_unsanitized`, not `load_config`: ordinary loading now
-        # recovers from a typo in the repo's own `ls:`/`dashboard:` blocks
-        # (see `config.load_config`), but the one command whose job is
-        # validating config should still catch it, with the allowed names
-        # listed — `validate_runtime()` below only sees that if it gets the
-        # raw, unrecovered blocks.
-        cfg = load_config_unsanitized(path)
+        if path is None:
+            # No repo config file: validate what the commands actually load —
+            # the layer synthesized from `global.yaml`'s `scratch.config`.
+            cfg = load_repo_config_unsanitized(Path.cwd())
+            label = f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+        else:
+            # `load_config_unsanitized`, not `load_config`: ordinary loading now
+            # recovers from a typo in the repo's own `ls:`/`dashboard:` blocks
+            # (see `config.load_config`), but the one command whose job is
+            # validating config should still catch it, with the allowed names
+            # listed — `validate_runtime()` below only sees that if it gets the
+            # raw, unrecovered blocks.
+            cfg = load_config_unsanitized(path)
+            label = str(path)
     except ConfigError as e:
         # `error_plain`: a validator message can carry square brackets — the
         # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
@@ -321,7 +414,7 @@ def config_validate(config: ConfigOption = None) -> None:
         # rule the message exists to state.
         error_plain(str(e))
         raise typer.Exit(1) from e
-    success(f"Schema OK: {path}")
+    success(f"Schema OK: {label}")
 
     issues = cfg.validate_runtime()
 
@@ -442,8 +535,16 @@ def init(config: ConfigOption = None) -> None:
 
     install_systemd_units()
 
-    with Session(get_engine()) as session:
-        egress_pool.register_repo(session, cfg)
+    # `PrefixCollisionError` is possible here too: `jailbee init` loads a
+    # synthesized config in a directory that has none. Reported, not raised as
+    # a traceback — the profiles and ACL above are already written, so this is
+    # the one step that failed, not the command.
+    try:
+        with Session(get_engine()) as session:
+            egress_pool.register_repo(session, cfg)
+    except egress_pool.PrefixCollisionError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
 
     # Linger keeps the timer firing when no user session is open.
     # Inform but don't enforce — needs root.
@@ -705,6 +806,21 @@ def list_cmd(
     )
 
 
+_NOT_A_GIT_REPO_ERROR = (
+    "{repo_root} is not a git repository — there is nothing to clone. Use "
+    "`jailbee new <name> --mount` to bind-mount it into the container instead."
+)
+"""Shared wording for `new_cmd`'s two "no .git here" guards.
+
+One is the synthetic-only guard just below (a scratch directory with no
+`.git/`); the other, further down, is the pre-existing check that still fires
+for a *configured* repo whose directory lacks `.git`. Both guards keep their
+own placement, gating condition and exit code — only the sentence itself is
+shared, so the two stop disagreeing on "repository" vs "repo", on flag order,
+and on `jb` vs `jailbee`.
+"""
+
+
 @app.command("new")
 def new_cmd(
     container_branch: Annotated[
@@ -886,6 +1002,53 @@ def new_cmd(
     from jailbee.lifecycle import NewContainerOptions, new_container, short_name
 
     cfg = _load_or_exit(config)
+
+    if cfg.is_synthetic():
+        # `new_cmd` uses the local name `hint` below for an unrelated string,
+        # so the imported function is aliased to avoid shadowing it.
+        from jailbee.tui import hint as print_hint
+
+        # One line per invocation, on stderr (like the upgrade/post-install
+        # hints — `warn`, despite its name, prints to stdout, which would
+        # collide with output other commands script against). Names the
+        # source so the values are traceable, and points at the real answer:
+        # for work that outlives an afternoon, a repo config beats host-wide
+        # scratch defaults.
+        print_hint(
+            [
+                f"{cfg.repo_root} has no .jailbee/config.yaml — using scratch "
+                f"defaults from {default_global_config_path()} (scratch.config), "
+                f"base image '{cfg.golden.alias}'.",
+                "Run `jb config init` here for a real repo config.",
+            ]
+        )
+
+    # Clone mode fetches from the `/mnt/host-source` bind and would fail inside
+    # the container with git's own error. Narrowed to a synthesized config on
+    # purpose: a *configured* repo in a non-git directory is broken in ways
+    # this check would not fix, and widening it would change behaviour nobody
+    # asked about.
+    if cfg.is_synthetic() and not mount and not (cfg.repo_root / ".git").exists():
+        error(_NOT_A_GIT_REPO_ERROR.format(repo_root=cfg.repo_root))
+        raise typer.Exit(2)
+
+    # Pre-flight, not a late failure: `register_repo` enforces this rule for
+    # every command (`apply`, `init`, and the two calls further down), but
+    # reaching it there would mean refusing *after* a multi-minute scratch
+    # base-image build. Same read, so the two cannot disagree.
+    if cfg.is_synthetic():
+        from sqlmodel import Session
+
+        from jailbee.db import get_engine
+        from jailbee.egress_pool import PrefixCollisionError, check_prefix_collision
+
+        try:
+            with Session(get_engine()) as session:
+                check_prefix_collision(session, cfg)
+        except PrefixCollisionError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+
     _advise_upgrade(cfg)
     _advise_setup()
 
@@ -1085,11 +1248,7 @@ def new_cmd(
             raise typer.Exit(2)
     else:
         if not (cfg.repo_root / ".git").exists():
-            error(
-                f"host path is not a git repo: {cfg.repo_root}. "
-                "Use `jailbee new <name> --mount` to create a mount-mode container "
-                "instead."
-            )
+            error(_NOT_A_GIT_REPO_ERROR.format(repo_root=cfg.repo_root))
             raise typer.Exit(2)
 
     # If the user typed `jailbee new <name>` and a branch of that name already
@@ -1214,6 +1373,53 @@ def new_cmd(
             claude_group=resolved_claude_group,
         )
 
+    # The shared scratch base image is built once per host, not per directory.
+    # Checked before anything is created, and before the implicit `apply`
+    # below, so declining costs nothing. `--from-base` names an image
+    # explicitly and skips this entirely.
+    if cfg.is_synthetic() and from_base is None and not incus.image_exists(cfg.golden.alias):
+        from jailbee.golden import build_golden_image
+
+        _base_build_cmd = "jb base build"
+        if not _is_tty():
+            error(
+                f"The shared scratch base image '{cfg.golden.alias}' does not "
+                f"exist yet.\nBuild it once with:  {_base_build_cmd}"
+            )
+            raise typer.Exit(1)
+        info(
+            f"No scratch base image yet. Building '{cfg.golden.alias}' takes "
+            f"several minutes and downloads packages; it is a one-time "
+            f"operation shared by every scratch directory on this host."
+        )
+        if not default_confirm("Build it now?"):
+            error(f"Aborted. Build it later with:  {_base_build_cmd}")
+            raise typer.Exit(1)
+        build_golden_image(cfg, incus)
+        _record_upgrade_action(cfg, "base_build")
+
+    # A scratch directory has run neither `jb init` nor `jb apply`, so its
+    # profile set does not exist yet and `new_container`'s `profile_assign`
+    # would fail. `run_apply` and not `init_command`: the latter refuses when
+    # profiles already exist, and a second definition of what a profile set
+    # contains is exactly what must not exist. Unattended and unprompted —
+    # unlike the image build this is seconds and needs no network.
+    if cfg.is_synthetic():
+        from jailbee.apply import run_apply
+        from jailbee.profiles import profile_names
+
+        names = profile_names(cfg)
+        wanted = (names.base, names.binds, names.net_strict, names.net_loose)
+        if any(not incus.profile_exists(p) for p in wanted):
+            info(f"→ First container in {cfg.repo_root}: creating its profiles...")
+            # no_restart: this repo has no containers yet, so there is nothing
+            # a restart could apply to. `run_apply` re-registers the repo and
+            # refreshes the egress pool itself (apply.py:165-173); the
+            # `register_repo`/`refresh_pool` call further below runs again
+            # regardless — both are idempotent, and skipping it here would
+            # change behaviour for configured repos, which this block must not.
+            run_apply(cfg, incus, gcfg, assume_yes=True, no_restart=True)
+
     # Register this repo with the refresh timer and resolve the pool
     # *before* creating the container so that the new container's
     # first /etc/hosts pin (done inside new_container) sees fresh IPs.
@@ -1268,6 +1474,10 @@ def new_cmd(
         job_file = log_dir / f"{container_name}-{stamp}.job.json"
         job_file.write_text(json.dumps(job))
 
+        # `--config` only when there is a file: a scratch directory has none,
+        # and the worker re-synthesizes the same config from the `cwd` below.
+        # Same shape as `dashboard.RepoTarget.flags()`.
+        worker_config_path = _resolve_config_path_or_none(config)
         worker_argv = [
             sys.executable,
             "-m",
@@ -1275,8 +1485,7 @@ def new_cmd(
             "_new-worker",
             "--job",
             str(job_file),
-            "--config",
-            str(_resolve_config_path(config)),
+            *(["--config", str(worker_config_path)] if worker_config_path is not None else []),
         ]
         # Deliberately not closed here: the handle is inherited by the
         # detached child as its stdout/stderr; the parent returns immediately
@@ -1858,13 +2067,26 @@ def _run_dashboard(
     *, interval: float | None, git_interval: float, no_git: bool, gui: bool, foreground: bool
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend."""
-    from jailbee.config import ConfigNotFoundError
+    from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
 
+    # A launch-time probe, not a load: the dashboards re-resolve per gather.
+    # `Path.cwd()` only counts as a repo if its config actually loads — with
+    # `scratch.enabled: false` a config-less directory is still nothing to show,
+    # and neither is a directory whose config file exists but does not parse.
+    #
+    # `OSError` as well as `ConfigError`, and not one without the other: the
+    # loader wraps YAML and Pydantic failures as `ConfigError` but lets
+    # `read_text()`'s own errors through raw, so an unreadable config file (bad
+    # permissions, a dangling symlink, an I/O error) arrives here as a bare
+    # `OSError`. The stat this replaced degraded gracefully; a traceback at
+    # `jb dashboard` launch is the one failure a user cannot work around. Kept
+    # to these two on purpose — a programming error must still surface.
     try:
-        cwd_config: Path | None = find_repo_config()
-    except ConfigNotFoundError:
-        cwd_config = None
+        load_repo_config(Path.cwd())
+        cwd_root: Path | None = Path.cwd()
+    except (ConfigError, OSError):
+        cwd_root = None
 
     if gui:
         try:
@@ -1883,14 +2105,16 @@ def _run_dashboard(
         if foreground:
             return qtui_app.run(
                 Incus(),
-                cwd_config=cwd_config,
+                cwd_root=cwd_root,
                 interval=interval,
                 git_interval=git_interval,
                 no_git=no_git,
             )
 
-        if qtui_app.preflight(cwd_config) is None:
-            error("No repos registered and no .jailbee/config.yaml in the current directory.")
+        if qtui_app.preflight(cwd_root) is None:
+            from jailbee.dashboard import NOTHING_TO_SHOW
+
+            error(NOTHING_TO_SHOW)
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
@@ -1922,7 +2146,7 @@ def _run_dashboard(
 
     return dashboard.run(
         Incus(),
-        cwd_config=cwd_config,
+        cwd_root=cwd_root,
         interval=interval if interval is not None else 3.0,
         git_interval=git_interval,
         no_git=no_git,
@@ -2269,7 +2493,7 @@ def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: 
 
 def _spawn_boot_worker(
     cfg: "Config",
-    config_path: Path,
+    config_path: Path | None,
     full_name: str,
     *,
     restart: bool,
@@ -2280,6 +2504,11 @@ def _spawn_boot_worker(
     Mirrors the `jailbee destroy --background` spawn: the worker inherits a
     log file as stdout/stderr and runs in its own session so it survives the
     parent shell exiting.
+
+    `config_path` is `None` in a scratch directory, where no config file
+    exists: `--config` is then omitted and the worker re-synthesizes the same
+    config from the `cwd` it is started in (always `cfg.repo_root`). Same
+    shape as `dashboard.RepoTarget.flags()`.
 
     Refuses while another job for this container is still live. Unlike a
     create or a destroy, a boot is not the last thing to happen to the
@@ -2315,8 +2544,7 @@ def _spawn_boot_worker(
         "_boot-worker",
         "--name",
         full_name,
-        "--config",
-        str(config_path),
+        *(["--config", str(config_path)] if config_path is not None else []),
     ]
     if restart:
         worker_argv.append("--restart")
@@ -2400,7 +2628,7 @@ def start(
     if run_in_background:
         _spawn_boot_worker(
             cfg,
-            _resolve_config_path(config),
+            _resolve_config_path_or_none(config),
             name,
             restart=False,
             no_autostart=no_autostart,
@@ -2478,7 +2706,7 @@ def restart(
     if run_in_background:
         _spawn_boot_worker(
             cfg,
-            _resolve_config_path(config),
+            _resolve_config_path_or_none(config),
             name,
             restart=True,
             no_autostart=no_autostart,
@@ -2515,12 +2743,14 @@ def _destroy_batch(cfg: "Config", incus: "IncusType", names: list[str]) -> None:
         raise typer.Exit(1)
 
 
-def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> None:
+def _spawn_destroy_worker(cfg: "Config", config_path: Path | None, full_name: str) -> None:
     """Spawn a detached `_destroy-worker` for one container and record its job row.
 
     Mirrors the `jailbee new --background` spawn: the worker inherits a log
     file as stdout/stderr and runs in its own session so it survives the
     parent shell exiting.
+
+    `config_path` is `None` in a scratch directory — see `_spawn_boot_worker`.
     """
     from datetime import datetime as _dt
 
@@ -2542,8 +2772,7 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
         "--name",
         full_name,
         "--force",
-        "--config",
-        str(config_path),
+        *(["--config", str(config_path)] if config_path is not None else []),
     ]
     # Deliberately not closed here: the handle is inherited by the
     # detached child as its stdout/stderr; the parent returns immediately
@@ -2683,7 +2912,11 @@ def destroy(
     else:
         run_in_background = cfg.destroy.background
 
-    config_path = _resolve_config_path(config)
+    # `_or_none`: computed eagerly, before the background branch and before
+    # `Incus()`, so the raising sibling would traceback out of *every*
+    # `jailbee destroy` in a scratch directory — the one cleanup path the
+    # throwaway container has.
+    config_path = _resolve_config_path_or_none(config)
 
     incus = Incus()
 
@@ -5713,7 +5946,7 @@ def egress_rm_cmd(
                     error(
                         f"'{entry}' comes from your config, not from a repo "
                         f"override — overrides can only widen the allowlist.\n"
-                        f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                        f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
                     )
                 else:
                     error(f"'{entry}' is not a repo override.")
@@ -5728,7 +5961,7 @@ def egress_rm_cmd(
                 error(
                     f"'{entry}' comes from your config, not from an override "
                     f"on '{container}' — overrides can only widen the allowlist.\n"
-                    f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                    f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
                 )
             else:
                 error(f"'{entry}' is not an override on '{container}'.")
@@ -5852,7 +6085,17 @@ def egress_export_cmd(
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
-    config_path = _resolve_config_path(config)
+    config_path = _resolve_config_path_or_none(config)
+    if config_path is None:
+        # Scratch directory: there is no `egress_allow:` key here to replace,
+        # and `global.yaml`'s `scratch.config` is host-wide — promoting a
+        # single directory's overrides into it would widen every other scratch
+        # container's allowlist too, so point at a real repo config instead.
+        error(
+            f"{cfg.repo_root} has no repo config to write `egress_allow` into.\n"
+            f"Run `jailbee config init` here first."
+        )
+        raise typer.Exit(1)
     if not config_path.is_file():
         error(f"No repo config at {config_path} — there is no key to replace.")
         raise typer.Exit(1)
@@ -6844,10 +7087,24 @@ def _load_or_exit(config_path: Path | None) -> "Config":
     equivalent global-layer warning (see ``_load_global``). `jailbee config
     validate` is the one place such a typo is still an error (it calls
     `load_config_unsanitized` directly, bypassing this function).
+
+    With no `--config` and no config file in the current directory, the config
+    is synthesized from `global.yaml`'s `scratch:` block rather than being an
+    error — see `config.load_repo_config`. An explicit `--config PATH` that
+    does not exist stays an error: that is a typo, not an invitation to
+    synthesize. `scratch.enabled: false` restores the previous behaviour, via
+    the `ConfigNotFoundError` the loader still raises.
     """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX, load_repo_config
+
     try:
-        path = _resolve_config_path(config_path)
-        cfg = load_config(path)
+        path = _resolve_config_path_or_none(config_path)
+        if path is None:
+            cfg = load_repo_config(Path.cwd())
+            label = f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+        else:
+            cfg = load_config(path)
+            label = str(path)
     except ConfigError as e:
         # `error_plain`: a validator message can carry square brackets — the
         # `host_ports` name rule quotes the regex `[a-z0-9][a-z0-9-]*` — and
@@ -6856,7 +7113,7 @@ def _load_or_exit(config_path: Path | None) -> "Config":
         error_plain(str(e))
         raise typer.Exit(1) from e
     for w in cfg.column_warnings():
-        warn(f"{path}: {w}")
+        warn(f"{label}: {w}")
     return cfg
 
 

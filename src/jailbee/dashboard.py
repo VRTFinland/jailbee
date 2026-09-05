@@ -36,7 +36,7 @@ from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
     ColumnConfig,
     format_loose_after,
-    load_config,
+    load_repo_config,
 )
 from jailbee.dashboard_settings import (
     SettingsState,
@@ -59,6 +59,7 @@ from jailbee.lifecycle import (
     list_containers,
     ls_field_specs,
 )
+from jailbee.paths import repo_config_path
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -74,11 +75,33 @@ log = logging.getLogger(__name__)
 
 FieldSpecCI = table_format.FieldSpec[ContainerInfo]
 
+NOTHING_TO_SHOW = (
+    "No repos registered, and no jailbee config could be loaded for the current "
+    "directory. Run `jailbee config init` here, `jailbee config validate` if a "
+    "config file already exists, or start the dashboard from a registered repo."
+)
+"""Launch-time guard message shared by the TUI, the Qt window and `cli`.
+
+Deliberately does not name a cause: the current directory resolves to nothing
+whether it has no `.jailbee/config.yaml` and `scratch.enabled` is false, or it
+is `$HOME`/the filesystem root (which scratch refuses), or its name slugifies
+to nothing, or its config file exists but does not parse.
+
+The remedy is cause-neutral for the same reason: both branches out of it work
+whichever of those fired, and naming no cause must not also mean leaving the
+user with no next step — which is what the earlier, single-cause wording
+carried by implication and this one has to say outright.
+"""
+
 
 @dataclass
 class RepoGroup:
-    """One repo's containers. ``config_path`` is None for orphan groups
-    (jailbee-managed containers whose repo config could not be loaded).
+    """One repo's containers. ``repo_root`` is None for orphan groups
+    (jailbee-managed containers whose repo config could not be loaded) and is
+    what distinguishes them. ``config_path`` is None for those *and* for a repo
+    that has no ``.jailbee/config.yaml`` of its own, whose config is
+    synthesized — so it gates nothing on its own: it says only whether a child
+    is addressed with ``--config`` or by its cwd (see :class:`RepoTarget`).
     ``ide_enabled``/``chrome_enabled`` mirror the repo's own
     ``jetbrains.enabled``/``chrome.enabled`` config and gate the
     corresponding action-menu entries; orphan groups keep both False.
@@ -102,28 +125,69 @@ class RepoGroup:
     push_source_default: str = "base"
 
 
-def registered_repo_configs() -> list[Path]:
-    """Existing ``.jailbee/config.yaml`` paths for all RegisteredRepo rows."""
+@dataclass(frozen=True)
+class RepoTarget:
+    """How a spawned `jailbee` child is pointed at one repo.
+
+    A configured repo is addressed with ``--config <path>``, which works from
+    any cwd and is what both front-ends have always done. A repo with no config
+    file has no path to point at, so it is addressed by running the child in
+    the repo root and letting the ordinary cwd resolution synthesize the config
+    (`config.load_repo_config`). Setting the cwd for both cases keeps one code
+    path; only the flag differs, and an explicit ``--config`` wins over cwd
+    resolution anyway, so a configured repo's behaviour is unchanged.
+    """
+
+    repo_root: Path
+    config_path: Path | None
+
+    @classmethod
+    def of(cls, group: RepoGroup) -> RepoTarget | None:
+        """The target for ``group``, or None for an orphan group (no repo root).
+
+        This is the actionability test both front-ends gate on. It is *not*
+        ``config_path is not None``: that would refuse a repo whose config was
+        synthesized rather than read, which is a real repo with real containers
+        and a root to run in.
+        """
+        if group.repo_root is None:
+            return None
+        return cls(Path(group.repo_root), group.config_path)
+
+    def flags(self) -> list[str]:
+        """The ``--config`` argv fragment, empty when there is no file."""
+        return ["--config", str(self.config_path)] if self.config_path is not None else []
+
+    def cwd(self) -> Path:
+        """The directory to run the child in — always the repo root."""
+        return self.repo_root
+
+
+def registered_repo_roots() -> list[Path]:
+    """Repo roots for all ``RegisteredRepo`` rows whose directory still exists.
+
+    This used to return config-file paths, which silently dropped a repo that
+    has no config file — the scratch case, which is a real repo with real
+    containers. A row whose directory is gone is skipped; the dashboard never
+    prunes the registry (``refresh_all`` does).
+    """
     from sqlmodel import Session, select
 
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
-    from jailbee.paths import repo_config_path
 
     out: list[Path] = []
     with Session(get_engine()) as session:
         for repo in session.exec(select(RegisteredRepo)).all():
-            # A stale registry row whose config file is gone is silently
-            # skipped (the dashboard never prunes the registry).
-            found = repo_config_path(Path(repo.repo_root))
-            if found is not None:
-                out.append(found)
+            root = Path(repo.repo_root)
+            if root.is_dir():
+                out.append(root)
     return out
 
 
-def collect_config_paths(cwd_config: Path | None) -> list[Path]:
-    """Registered repo configs plus the cwd config, deduped, cwd first."""
-    candidates = ([cwd_config] if cwd_config is not None else []) + registered_repo_configs()
+def collect_repo_roots(cwd_root: Path | None) -> list[Path]:
+    """Registered repo roots plus the cwd's, deduped, cwd first."""
+    candidates = ([cwd_root] if cwd_root is not None else []) + registered_repo_roots()
     seen: set[Path] = set()
     ordered: list[Path] = []
     for p in candidates:
@@ -220,26 +284,30 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
 
 def gather_rows(
     incus: Incus,
-    config_paths: list[Path],
+    repo_roots: list[Path],
     *,
-    cwd_config: Path | None,
+    cwd_root: Path | None,
     with_git: bool,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
 
-    Each path's own config drives accurate git-status/base/background-jobs.
-    An unloadable config is skipped (read-only — the registry is never
-    pruned here). A final ``all_repos=True`` scan surfaces jailbee-managed
-    containers whose repo we could not load, as view-only orphan groups.
+    Each root's own config drives accurate git-status/base/background-jobs.
+    Repos are identified by their root, not by their config file, so a repo
+    with no ``.jailbee/config.yaml`` — whose config ``load_repo_config``
+    synthesizes — groups its own containers instead of falling through to the
+    orphan bucket. An unloadable config is skipped (read-only — the registry
+    is never pruned here). A final ``all_repos=True`` scan surfaces
+    jailbee-managed containers whose repo we could not load, as view-only
+    orphan groups.
     """
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
     gcfg = _global_config_or_defaults()
-    for path in config_paths:
+    for root in repo_roots:
         try:
-            cfg = load_config(path)
-        except Exception:  # many failure modes: OSError, YAML parse, Pydantic validation
+            cfg = load_repo_config(root)
+        except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
             continue
         if base_cfg is None:
             base_cfg = cfg
@@ -256,7 +324,7 @@ def gather_rows(
                 RepoGroup(
                     cfg.container_prefix,
                     str(cfg.repo_root),
-                    path,
+                    repo_config_path(root),
                     containers,
                     ide_enabled=cfg.jetbrains.enabled,
                     chrome_enabled=cfg.chrome.enabled,
@@ -285,21 +353,23 @@ def gather_rows(
             groups.append(RepoGroup(prefix, None, None, orphans[prefix]))
 
     def _sort_key(g: RepoGroup) -> tuple[bool, bool, str]:
-        is_cwd = cwd_config is not None and g.config_path == cwd_config
-        return (not is_cwd, g.config_path is None, g.prefix)
+        # Orphan groups are the ones with no repo root — `config_path` is no
+        # longer the discriminator, since a scratch repo has a root but no file.
+        is_cwd = cwd_root is not None and g.repo_root == str(cwd_root)
+        return (not is_cwd, g.repo_root is None, g.prefix)
 
     groups.sort(key=_sort_key)
     return groups
 
 
-def gather_live(incus: Incus, cwd_config: Path | None, *, with_git: bool) -> list[RepoGroup]:
-    """One snapshot for a *live* dashboard: config paths re-resolved per gather.
+def gather_live(incus: Incus, cwd_root: Path | None, *, with_git: bool) -> list[RepoGroup]:
+    """One snapshot for a *live* dashboard: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
     underneath them: `jailbee new` registers a repo the first time it is used
     (`cli.py`), and `egress_pool.refresh_all` unregisters — then a later
     command re-registers — a repo whose config file momentarily disappeared.
-    A path list captured at launch therefore goes stale, and a repo missing
+    A root list captured at launch therefore goes stale, and a repo missing
     from it is not merely absent: `gather_rows`'s ``all_repos`` scan still
     finds its containers and files them under a view-only orphan group, where
     ``actions_for_container`` yields no actions and the right-click menu never
@@ -310,9 +380,7 @@ def gather_live(incus: Incus, cwd_config: Path | None, *, with_git: bool) -> lis
     database — cheap next to the `incus list` (and git probes) in the gather
     it precedes.
     """
-    return gather_rows(
-        incus, collect_config_paths(cwd_config), cwd_config=cwd_config, with_git=with_git
-    )
+    return gather_rows(incus, collect_repo_roots(cwd_root), cwd_root=cwd_root, with_git=with_git)
 
 
 def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[RepoGroup]) -> None:
@@ -440,7 +508,7 @@ class MenuContext:
     """
 
     state: str
-    has_config: bool
+    has_repo: bool
     mode: str = "clone"
     ide_enabled: bool = False
     chrome_enabled: bool = False
@@ -486,8 +554,10 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
-    Empty for orphan rows (no loadable config ⇒ no safe dispatch). "Launch
-    IDE"/"Launch Chrome" only appear when the repo's own config enables
+    Empty for orphan rows (no repo root ⇒ nothing to address a child at, see
+    :meth:`RepoTarget.of`); a repo with no config file of its own is *not* one
+    of those and gets the full menu. "Launch IDE"/"Launch Chrome" only appear
+    when the repo's own config enables
     `jetbrains`/`chrome` respectively (``ide_enabled``/``chrome_enabled``,
     sourced from ``RepoGroup.ide_enabled``/``chrome_enabled``) — dispatching
     `jailbee ide`/`jailbee chrome` when the feature is disabled would just fail.
@@ -516,7 +586,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     front-end splits them into argv, and Typer accepts options before the
     positional container name.
     """
-    if not ctx.has_config:
+    if not ctx.has_repo:
         return []
     prefix: list[tuple[str, str]] = []
     if ctx.job_clearable:
@@ -820,7 +890,7 @@ def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
     """The menu for ``name``, or None when there is nothing to show.
 
     None covers every no-actions case — unknown container, nothing selected,
-    or a view-only (config-less) group. Callers surface :func:`view_only_note`
+    or a view-only (orphan) group. Callers surface :func:`view_only_note`
     instead, because an empty menu frame is indistinguishable from a broken one.
     """
     actions = actions_for_container(groups, name)
@@ -1124,7 +1194,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
 
     Single source of truth shared by the TUI action menu, the Qt table view,
     and the Qt card view. Returns ``[]`` for an unknown container or a
-    view-only (config-less) group.
+    view-only (orphan) group.
     """
     group = _find_group(groups, name)
     if group is None or name is None:
@@ -1142,7 +1212,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
     return menu_actions(
         MenuContext(
             state=container.state,
-            has_config=group.config_path is not None,
+            has_repo=RepoTarget.of(group) is not None,
             mode=container.mode,
             ide_enabled=group.ide_enabled,
             chrome_enabled=group.chrome_enabled,
@@ -1168,11 +1238,17 @@ def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
     disabled entry in the Qt menus — because an action menu that silently
     declines to open
     is indistinguishable from a broken one.
+
+    The one remaining cause is an orphan group: jailbee-managed containers
+    whose repo could not be located at all. It is deliberately not phrased as
+    "no config loaded" any more — a repo with no config file still *has* a
+    loaded config (a synthesized one) and is fully actionable, so that wording
+    described the wrong thing.
     """
     group = _find_group(groups, name)
-    if group is None or group.config_path is not None:
+    if group is None or RepoTarget.of(group) is not None:
         return None
-    return f"No config loaded for repo '{group.prefix}' — '{name}' is view-only"
+    return f"No repo found for '{group.prefix}' — '{name}' is view-only"
 
 
 def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoGroup | None:
@@ -1180,9 +1256,11 @@ def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoG
 
     A container row yields its own group; a repo header yields that group.
     None when nothing is selected, when the selection is stale (the row moved
-    out from under the cursor between frames), or when the group has no config
-    to create against — an orphan group is jailbee-managed containers whose
-    repo config could not be loaded, the same reason it gets no action menu.
+    out from under the cursor between frames), or when the group has no repo
+    root to create in — an orphan group is jailbee-managed containers whose
+    repo could not be located, the same reason it gets no action menu. A repo
+    with no config file is not one of those: `jailbee new` run in its root
+    synthesizes the same config the dashboard is already showing.
     """
     if selected is None:
         return None
@@ -1190,7 +1268,7 @@ def new_container_target(groups: list[RepoGroup], selected: Row | None) -> RepoG
         group = next((g for g in groups if g.prefix == selected.key), None)
     else:
         group = _find_group(groups, selected.key)
-    if group is None or group.config_path is None:
+    if group is None or RepoTarget.of(group) is None:
         return None
     return group
 
@@ -1206,14 +1284,14 @@ def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -
     group it actually had a real prefix for). The TUI, which resolves a
     ``Row`` rather than a bare prefix, delegates to this for its repo-header
     case. An empty or unrecognised ``prefix`` gets the generic "select a
-    repo" wording; a real group with no loaded config names itself.
+    repo" wording; a real group with no repo root names itself.
     """
     group = next((g for g in groups if g.prefix == prefix), None) if prefix else None
     if group is None:
         return "Select a repo or a container first"
-    if group.config_path is not None:
+    if RepoTarget.of(group) is not None:
         return None
-    return f"'{group.prefix}' has no jailbee config — nothing to create against"
+    return f"'{group.prefix}' has no repo directory — nothing to create against"
 
 
 def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
@@ -1223,7 +1301,7 @@ def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> 
     nothing is indistinguishable from a broken one, so every refusal has a
     sentence naming its own cause. Delegates to
     :func:`new_container_reject_note_for_prefix` once a ``Row`` has been
-    resolved to a prefix, so the "has no jailbee config" sentence is phrased
+    resolved to a prefix, so the "has no repo directory" sentence is phrased
     in exactly one place.
     """
     if new_container_target(groups, selected) is not None:
@@ -1258,8 +1336,11 @@ def new_container_base_default(repo_root: str | None) -> str | None:
     return git.get_current_branch(Path(repo_root))
 
 
-def new_container_argv(config_path: Path, branch: str, base: str) -> list[str]:
-    """``jailbee new <branch> <base> --config <path>``.
+def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
+    """``jailbee new <branch> <base>``, plus ``target``'s ``--config`` if any.
+
+    A repo with no config file gets no flag; the caller runs the child in
+    ``target.cwd()`` instead — see :class:`RepoTarget`.
 
     ``base`` is positional, not a flag: `jailbee new`'s second positional is
     the branch a *new* branch forks off (`lifecycle.resolve_clone_ref`).
@@ -1271,7 +1352,7 @@ def new_container_argv(config_path: Path, branch: str, base: str) -> list[str]:
     the branch-autostart escalation, and both front-ends give it a terminal to
     ask in rather than answering for the user.
     """
-    return ["jailbee", "new", branch, base, "--config", str(config_path)]
+    return ["jailbee", "new", branch, base, *target.flags()]
 
 
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"
@@ -1351,27 +1432,48 @@ def _wait_for_return() -> None:
         pass
 
 
-def _run_paged(argv: list[str], pager: list[str]) -> int:
+class _PagerUnavailableError(OSError):
+    """The pager process itself could not be started.
+
+    Raised only from the viewer ``Popen`` below — never from the producer's —
+    so a caller catching this specifically (rather than bare ``OSError``) can
+    tell "the pager is missing" apart from "the producer couldn't even start"
+    (e.g. its ``cwd`` has vanished) and fall back to the unpaged path only for
+    the former. A bare ``OSError`` out of this function is always the
+    producer's.
+    """
+
+
+def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     """Pipe ``argv``'s stdout into ``pager``; return the command's exit code.
 
     Two processes rather than a shell string, so there is no quoting to get
     wrong. Stderr stays attached to the terminal: an error message must not be
     swallowed by the pager. The pager owns the terminal until the user quits
     it, which is why the paged path needs no keypress pause of its own.
+
+    ``cwd`` applies to the producer only — it is how a repo with no config file
+    is addressed at all (see :class:`RepoTarget`). The pager is a plain viewer
+    on a pipe and has no repo of its own.
+
+    Raises a bare ``OSError`` (uncaught here) if the producer itself cannot be
+    started — most notably a ``cwd`` that has disappeared out from under a
+    dispatch — and :class:`_PagerUnavailableError` if the pager cannot be started,
+    so callers do not conflate the two.
     """
-    producer = subprocess.Popen(argv, stdout=subprocess.PIPE)
+    producer = subprocess.Popen(argv, stdout=subprocess.PIPE, cwd=cwd)
     out = producer.stdout
     if out is None:  # unreachable with stdout=PIPE; keeps mypy honest
         return producer.wait()
     try:
         viewer = subprocess.Popen(pager, stdin=out)
-    except OSError:
+    except OSError as exc:
         # The pager vanished between which() and exec. Nothing will ever read
         # the pipe, so kill the producer rather than leaving it blocked on a
         # full one, and let the caller fall back to the unpaged path.
         producer.kill()
         producer.wait()
-        raise
+        raise _PagerUnavailableError(str(exc)) from exc
     finally:
         # The viewer owns the read end now. Keeping this copy open would stop
         # the pager ever seeing EOF, so it would hang on a finished command.
@@ -1380,13 +1482,17 @@ def _run_paged(argv: list[str], pager: list[str]) -> int:
     return producer.wait()
 
 
-def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
-    """Run ``jailbee <verb> <name> --config <config_path>``; return its exit code.
+def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
+    """Run ``jailbee <verb> <name>`` against ``target``; return its exit code.
 
     The single dispatch point shared by the inline action menu and the
     quick-action keys, so both reuse the real command's behaviour and the
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
     ``"pr --open"``, ``"job log --follow"``).
+
+    Every child runs in ``target.cwd()``, and a configured repo additionally
+    gets ``--config``: a repo with no config file has no path to pass, so the
+    working directory is the only thing that says which repo this is.
 
     Verbs in :data:`ATTACH_VERBS` gain ``--force``; ``--force`` means
     something different on every other command (and most don't accept it),
@@ -1397,8 +1503,14 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
     otherwise turn colour off), a keypress pause for the other printing verbs,
     and nothing at all for the rest. A missing or unstartable pager degrades to
     the pause rather than losing the output.
+
+    Raises ``OSError`` (uncaught here) if ``target.cwd()`` has disappeared out
+    from under the dispatch — the caller (:func:`run`'s ``dispatch``) turns
+    that into a notice naming the directory rather than letting it take the
+    whole TUI down. That is deliberately *not* caught as "pager failed": see
+    :class:`_PagerUnavailableError`.
     """
-    argv = ["jailbee", *verb.split(), name, "--config", str(config_path)]
+    argv = ["jailbee", *verb.split(), name, *target.flags()]
     if verb in ATTACH_VERBS:
         argv.append("--force")
     style = dispatch_style(verb)
@@ -1406,10 +1518,10 @@ def _dispatch_action(config_path: Path, verb: str, name: str) -> int:
         pager = pager_argv()
         if pager is not None:
             try:
-                return _run_paged([*argv, "--color"], pager)
-            except OSError as exc:
+                return _run_paged([*argv, "--color"], pager, target.cwd())
+            except _PagerUnavailableError as exc:
                 log.debug("pager %s failed: %s", pager, exc)
-    rc = subprocess.run(argv, check=False).returncode
+    rc = subprocess.run(argv, check=False, cwd=target.cwd()).returncode
     if style != "plain":
         _wait_for_return()
     return rc
@@ -1440,7 +1552,7 @@ def _refresh_due(
 
 def run(
     incus: Incus,
-    cwd_config: Path | None,
+    cwd_root: Path | None,
     *,
     interval: float,
     git_interval: float,
@@ -1460,8 +1572,8 @@ def run(
         return 1
 
     # Launch-time guard only; `gather_live` re-resolves the list per gather.
-    if not collect_config_paths(cwd_config):
-        error("No repos registered and no .jailbee/config.yaml in the current directory.")
+    if not collect_repo_roots(cwd_root):
+        error(NOTHING_TO_SHOW)
         return 1
 
     from jailbee.db import get_engine
@@ -1510,7 +1622,7 @@ def run(
                 if forced:
                     force.clear()
                 try:
-                    groups = gather_live(incus, cwd_config, with_git=do_git)
+                    groups = gather_live(incus, cwd_root, with_git=do_git)
                 except Exception as exc:  # surface any gather failure to the main thread
                     worker_error.append(exc)
                     stop.set()
@@ -1617,13 +1729,32 @@ def run(
                     # the rewrite, leaving the child's title on screen forever.
                     last_title = None
 
+            def _report_vanished_repo(repo: RepoTarget) -> None:
+                """Notice-and-refresh for an `OSError` from a repo-rooted dispatch.
+
+                Shared by `dispatch` and `create_container`: both hand a real
+                repo root to a child process as `cwd`, and both can have that
+                directory vanish between a refresh and the keypress that
+                dispatches — `subprocess`/`Popen` raise, not exit non-zero,
+                for a missing `cwd`. Previously uncaught on either path, this
+                took the whole TUI down.
+                """
+                set_notice(f"'{repo.repo_root}' no longer exists")
+                force.set()
+
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
                 group = _find_group(groups, target)
-                if group is None or group.config_path is None:
+                if group is None:
                     return
-                config_path = group.config_path
-                rc = foreground(lambda: _dispatch_action(config_path, verb, target))
+                repo = RepoTarget.of(group)
+                if repo is None:
+                    return  # an orphan group: no repo root to address a child at
+                try:
+                    rc = foreground(lambda: _dispatch_action(repo, verb, target))
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
                 if rc != 0:
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
                 force.set()  # an action likely changed state — refresh ASAP
@@ -1646,8 +1777,8 @@ def run(
                     return
                 group = new_container_target(groups, selected)
                 assert group is not None  # guaranteed by the note being None
-                config_path = group.config_path
-                assert config_path is not None  # ditto
+                repo = RepoTarget.of(group)
+                assert repo is not None  # ditto: new_container_target rejects rootless groups
                 base_default = new_container_base_default(group.repo_root)
 
                 def ask_and_run() -> int:
@@ -1674,12 +1805,16 @@ def run(
                         _wait_for_return()
                         return 0
                     rc = subprocess.run(
-                        new_container_argv(config_path, branch, base), check=False
+                        new_container_argv(repo, branch, base), check=False, cwd=repo.cwd()
                     ).returncode
                     _wait_for_return()
                     return rc
 
-                rc = foreground(ask_and_run)
+                try:
+                    rc = foreground(ask_and_run)
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
                 if rc != 0:
                     set_notice(f"'jailbee new' exited {rc}")
                 force.set()  # the new container should appear on the next frame

@@ -87,6 +87,40 @@ class DockerRegistryMirror(BaseModel):
             object.__setattr__(self, "data_dir", _default_registry_data_dir())
 
 
+class ScratchConfig(BaseModel):
+    """Defaults for a directory that has no `.jailbee/config.yaml`.
+
+    `config` is a repo-config document — the same schema as
+    `.jailbee/config.yaml` — merged as the repo layer by
+    `config.load_repo_config` when there is no file to read. Deliberately
+    untyped here: declaring the `Config` schema a second time would create a
+    second place to keep in sync with every future config key, and the real
+    validator runs on it anyway at synthesis time.
+
+    `enabled: false` restores the pre-feature behaviour — a missing config
+    file is `ConfigNotFoundError` everywhere.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether `jailbee` synthesizes a repo config for a directory with no "
+            "`.jailbee/config.yaml`. `false` restores the pre-feature behaviour: a "
+            "missing config file is `ConfigNotFoundError` everywhere."
+        ),
+    )
+    config: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "Raw repo-config overrides applied on top of the built-in defaults for a "
+            "directory with no `.jailbee/config.yaml`. Same shape as "
+            "`.jailbee/config.yaml` itself — validated against the `Config` schema at "
+            "synthesis time, not here."
+        ),
+    )
+
+
 class GlobalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # default_factory ensures DockerRegistryMirror's model_post_init re-runs
@@ -137,6 +171,14 @@ class GlobalConfig(BaseModel):
             "each needing its own `/login`. Host-level only — setting this or the "
             "computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is "
             "rejected at load time."
+        ),
+    )
+    scratch: ScratchConfig = Field(
+        default_factory=ScratchConfig,
+        description=(
+            "Defaults for a directory that has no `.jailbee/config.yaml`. Host-level "
+            "only: a repo's own config file cannot set this — it would be an unknown "
+            "top-level key there."
         ),
     )
 

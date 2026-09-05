@@ -437,19 +437,17 @@ def test_refresh_all_iterates_registered_repos(
     )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
-        assert path.name == "config.yaml", (
-            f"load_config must be called with the config file path, got {path}"
+    def fake_load(repo_root: Path) -> Any:
+        assert repo_root.name in ("a", "b"), (
+            f"load_repo_config must be called with the repo root, got {repo_root}"
         )
-        assert path.parent.name == ".gie"
-        repo_root = path.parent.parent
         m = mocker.Mock()
         m.container_prefix = repo_root.name.upper()
         m.repo_root = repo_root
         m.effective_egress_allow.return_value = []
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mock_refresh = mocker.patch.object(
         egress_pool,
         "refresh_pool",
@@ -489,16 +487,15 @@ def test_refresh_all_does_not_unregister_a_repo_migrated_to_jailbee_dir(
     )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
-        assert path.name == "config.yaml"
-        assert path.parent.name == ".jailbee"
+    def fake_load(repo_root: Path) -> Any:
+        assert repo_root == repo
         m = mocker.Mock()
         m.container_prefix = "M"
-        m.repo_root = path.parent.parent
+        m.repo_root = repo_root
         m.effective_egress_allow.return_value = []
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
         "refresh_pool",
@@ -541,6 +538,94 @@ def test_refresh_all_self_prunes_missing_config(
     assert rows == []
 
 
+def test_refresh_all_keeps_a_synthetic_row_with_no_config_file(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """The reason the column exists: pruning here would let a scratch
+    container's strict-mode ACL pool go stale, and strict is the default."""
+    from datetime import UTC, datetime
+
+    from jailbee.egress_pool import refresh_all
+    from jailbee.global_config import GlobalConfig
+
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = tmp_path / "tutkimus"
+    (repo / ".git").mkdir(parents=True)
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="tutkimus",
+            repo_root=str(repo),
+            registered_at=datetime.now(UTC),
+            synthetic_config=True,
+        )
+    )
+    db_session.commit()
+    refresh_pool = mocker.patch("jailbee.egress_pool.refresh_pool")
+    mocker.patch("jailbee.egress_pool.check_and_revert_loose")
+
+    refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
+
+    assert db_session.get(RegisteredRepo, "tutkimus") is not None
+    assert refresh_pool.call_count == 1
+
+
+def test_refresh_all_still_prunes_a_non_synthetic_row_with_no_config(
+    db_session: Session, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from datetime import UTC, datetime
+
+    from jailbee.egress_pool import refresh_all
+    from jailbee.global_config import GlobalConfig
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="myrepo",
+            repo_root=str(repo),
+            registered_at=datetime.now(UTC),
+            synthetic_config=False,
+        )
+    )
+    db_session.commit()
+
+    refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
+
+    assert db_session.get(RegisteredRepo, "myrepo") is None
+
+
+def test_refresh_all_prunes_a_row_whose_directory_is_gone(
+    db_session: Session, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A vanished directory must be pruned without ever reaching the config
+    loader — asserted directly, since this branch would "pass" for the wrong
+    reason if it fell through to the (also-pruning) missing-config branch."""
+    from datetime import UTC, datetime
+
+    from jailbee.egress_pool import refresh_all
+    from jailbee.global_config import GlobalConfig
+
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="tutkimus",
+            repo_root=str(tmp_path / "gone"),
+            registered_at=datetime.now(UTC),
+            synthetic_config=True,
+        )
+    )
+    db_session.commit()
+    load_repo_config = mocker.patch("jailbee.egress_pool.load_repo_config")
+
+    refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
+
+    assert db_session.get(RegisteredRepo, "tutkimus") is None
+    load_repo_config.assert_not_called()
+
+
 def test_refresh_all_skips_on_prefix_mismatch(
     db_session: Session,
     gcfg: Any,
@@ -564,14 +649,13 @@ def test_refresh_all_skips_on_prefix_mismatch(
     )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
-        assert path.name == "config.yaml"
+    def fake_load(repo_root: Path) -> Any:
         m = mocker.Mock()
         m.container_prefix = "NEW"  # config says NEW, registry has OLD
-        m.repo_root = path.parent.parent
+        m.repo_root = repo_root
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mock_refresh = mocker.patch.object(egress_pool, "refresh_pool")
 
     egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
@@ -605,14 +689,14 @@ def test_refresh_all_invokes_loose_revert_per_repo(
     )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
+    def fake_load(repo_root: Path) -> Any:
         m = mocker.Mock()
         m.container_prefix = "A"
-        m.repo_root = path.parent.parent
+        m.repo_root = repo_root
         m.effective_egress_allow.return_value = []
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
         "refresh_pool",
@@ -656,14 +740,14 @@ def test_refresh_all_continues_when_loose_revert_raises(
     )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
+    def fake_load(repo_root: Path) -> Any:
         m = mocker.Mock()
         m.container_prefix = "A"
-        m.repo_root = path.parent.parent
+        m.repo_root = repo_root
         m.effective_egress_allow.return_value = []
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
         "refresh_pool",
@@ -747,14 +831,14 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
         )
     db_session.commit()
 
-    def fake_load(path: Path) -> Any:
+    def fake_load(repo_root: Path) -> Any:
         m = mocker.Mock()
-        m.container_prefix = path.parent.parent.name.upper()
-        m.repo_root = path.parent.parent
+        m.container_prefix = repo_root.name.upper()
+        m.repo_root = repo_root
         m.effective_egress_allow.return_value = []
         return m
 
-    mocker.patch("jailbee.egress_pool.load_config", side_effect=fake_load)
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
 
     def refresh(cfg_arg: Any, *a: Any, **kw: Any) -> Any:
         if cfg_arg.container_prefix == "A":

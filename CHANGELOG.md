@@ -159,6 +159,29 @@
   creation time. A running Claude session blocks a group change unless
   `--force` is passed, since a live token refresh could otherwise overwrite
   the target group's login.
+- **`jailbee new` (and every other command) now works in a directory with no
+  `.jailbee/config.yaml`.** A new `scratch:` block in `global.yaml`
+  (`enabled: true` by default, seeded by `jailbee config init --global`) lets
+  JailBee synthesize a repo config from `scratch.config` instead of exiting
+  with "run `jailbee config init`" — layered over the same built-in defaults
+  and global-config overlay every repo already gets. Every such directory
+  gets its own `container_prefix` (slugified from the directory name) and
+  Incus profiles, created on first use, but shares one golden image across
+  the whole host — alias `jailbee-scratch-base`, built once and offered
+  interactively the first time it's missing. A non-git directory needs
+  `jailbee new --mount <name>`; the filesystem root, `$HOME` and any ancestor
+  of `$HOME` (`/home`, `/Users`) are refused outright, and a scratch directory
+  whose derived prefix collides with a *configured* repo's is refused rather
+  than taking its registration over. `jailbee net egress export` is the one
+  command that still needs a real config file — there is no `egress_allow:`
+  key to replace. `jailbee config validate`/`show` report the synthesized source as
+  `global.yaml (scratch.config)` instead of dying on the missing file — the
+  former also no longer prints an unhandled traceback in a config-less
+  directory, which it did before this change. The registry's
+  `RegisteredRepo` gained `synthetic_config` (schema v10), so a scratch
+  repo's egress pool keeps refreshing instead of being pruned as soon as its
+  (nonexistent) config file goes missing. See
+  [`scratch`](docs/config.md#scratch).
 
 ## 1.2.2 - 2026-08-28
 

@@ -13,6 +13,8 @@ non-modal wrapper the dashboard opens today.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QFont, QTextCursor
 from PySide6.QtWidgets import (
@@ -25,6 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 # `job log --follow` streams until it is stopped, so the document is bounded
 # rather than growing for as long as the window stays open.
 _MAX_BLOCKS = 5000
@@ -36,13 +41,19 @@ class CommandOutputView(QWidget):
     ``finished`` carries the exit code and fires for every ending — a clean
     exit, a failure, or the Stop button — so the host can refresh the
     dashboard once and only once.
+
+    ``cwd`` is the repo root the command belongs to. Required rather than
+    optional: a repo with no config file is addressed by its working directory
+    alone, so a view left in the GUI's own directory would silently run against
+    the wrong repo.
     """
 
     finished = Signal(int)
 
-    def __init__(self, argv: list[str], parent: QWidget | None = None) -> None:
+    def __init__(self, argv: list[str], cwd: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._argv = argv
+        self._cwd = cwd
 
         self._text = QPlainTextEdit(self)
         self._text.setReadOnly(True)
@@ -80,6 +91,7 @@ class CommandOutputView(QWidget):
 
     def start(self) -> None:
         """Spawn the command. Called once per view."""
+        self._proc.setWorkingDirectory(str(self._cwd))
         self._proc.start(self._argv[0], self._argv[1:])
 
     def stop(self) -> None:
@@ -139,12 +151,14 @@ class CommandOutputView(QWidget):
 class CommandOutputDialog(QDialog):
     """A non-modal window hosting one :class:`CommandOutputView`."""
 
-    def __init__(self, argv: list[str], title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, argv: list[str], title: str, cwd: Path, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(900, 500)
-        self.view = CommandOutputView(argv, self)
+        self.view = CommandOutputView(argv, cwd, self)
         layout = QVBoxLayout(self)
         layout.addWidget(self.view)
         self.view.start()

@@ -17,20 +17,28 @@ from jailbee.qtui.window import MainWindow
 
 
 def test_preflight_returns_none_when_no_configs(mocker):
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[])
     assert qapp.preflight(None) is None
 
 
 def test_preflight_returns_paths_when_present(mocker):
     paths = [Path("/repo/.gie/config.yaml")]
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=paths)
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=paths)
     assert qapp.preflight(Path("/repo/.gie/config.yaml")) == paths
 
 
 def test_run_returns_1_when_no_configs(mocker):
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[])
     rc = qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
     assert rc == 1
+
+
+def test_the_launch_guard_message_is_the_tuis_own(mocker):
+    """The TUI, the Qt window and `cli`'s pre-detach check all print the same
+    sentence — one constant rather than three copies that drift apart."""
+    import jailbee.dashboard as dash
+
+    assert qapp.NOTHING_TO_SHOW is dash.NOTHING_TO_SHOW
 
 
 def test_on_groups_updates_tree_and_status_bar(mocker):
@@ -100,7 +108,7 @@ def test_run_wires_window_signals_to_controller_not_worker(mocker):
     ``AppController`` slot that calls the worker method directly instead.
     """
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
@@ -169,7 +177,7 @@ def test_groups_ready_from_worker_thread_handled_on_main_thread(qtbot, mocker):
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        cwd_config=Path("/repo/.gie/config.yaml"),
+        cwd_root=Path("/repo"),
         interval=0.5,
         git_interval=10.0,
         git_enabled=True,
@@ -221,7 +229,7 @@ def test_wire_delivers_interval_and_force_to_a_real_worker_thread(qtbot, mocker)
 
     worker = RefreshWorker(
         incus=mocker.Mock(),
-        cwd_config=Path("/repo/.gie/config.yaml"),
+        cwd_root=Path("/repo"),
         interval=0.5,
         git_interval=10.0,
         git_enabled=True,
@@ -450,7 +458,7 @@ def test_on_card_style_changed_persists(mocker):
 
 def test_run_restores_card_style(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
@@ -480,7 +488,7 @@ def test_run_restores_enabled_columns_and_folded_repos(mocker):
     """`run()` must seed the window's Columns menu and the card view's fold
     state from the Qt front-end's own `view_prefs` row — not from the TUI's."""
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     window = mock_window_cls.return_value
     mocker.patch("jailbee.qtui.app.QThread")
@@ -512,8 +520,13 @@ def _controller_with_group(
     push_source_default="base",
     base_branch=None,
     pr_number=None,
+    with_config=True,
 ):
-    """An AppController holding one snapshot row, so on_action can resolve a config."""
+    """An AppController holding one snapshot row, so on_action can resolve a config.
+
+    ``with_config=False`` builds the scratch case: a real repo root with no
+    config file, whose ``RepoGroup.config_path`` is None.
+    """
     from jailbee.dashboard import RepoGroup
     from jailbee.lifecycle import ContainerInfo
 
@@ -529,13 +542,14 @@ def _controller_with_group(
         base_branch=base_branch,
         pr_number=pr_number,
     )
-    config_path = tmp_path / ".gie" / "config.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    # container_prefix must be set explicitly: tmp_path's own basename (a
-    # pytest-generated test name) contains underscores and would otherwise
-    # fail load_config's prefix validation — the destroy guard loads this
-    # file for real (destroy_guard.assess needs a Config), so it must parse.
-    config_path.write_text("container_prefix: p\n")
+    config_path = tmp_path / ".jailbee" / "config.yaml"
+    if with_config:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        # container_prefix must be set explicitly: tmp_path's own basename (a
+        # pytest-generated test name) contains underscores and would otherwise
+        # fail load_config's prefix validation — the destroy guard loads this
+        # file for real (destroy_guard.assess needs a Config), so it must parse.
+        config_path.write_text("container_prefix: p\n")
     # load_config() also shells out to git — `git remote` to resolve the
     # upstream remote, then `git symbolic-ref` for the default branch. tmp_path
     # isn't a git repo, so those calls would fail harmlessly on their own — but
@@ -549,7 +563,7 @@ def _controller_with_group(
         RepoGroup(
             prefix="p",
             repo_root=str(tmp_path),
-            config_path=config_path,
+            config_path=config_path if with_config else None,
             containers=[ci],
             loose_ttl_default=loose_ttl_default,
             push_action_default=push_action_default,
@@ -703,6 +717,73 @@ def test_on_action_net_strict_does_not_open_a_duration_dialog(mocker, tmp_path):
     controller.on_action("net strict", "p-foo")
 
     get_item.assert_not_called()
+
+
+def test_on_action_launches_a_configured_repo_in_its_repo_root(mocker, tmp_path):
+    """The cwd is set for both kinds of repo — one code path — while
+    `--config` still addresses the configured one exactly as before."""
+    controller = _controller_with_group(mocker, tmp_path)
+    mocker.patch("jailbee.qtui.app.detect_terminal", return_value=None)
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("net strict", "p-foo")
+
+    assert popen.call_args.args[0] == [
+        "jailbee",
+        "net",
+        "strict",
+        "p-foo",
+        "--config",
+        str(tmp_path / ".jailbee" / "config.yaml"),
+    ]
+    assert popen.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_on_action_launches_a_scratch_repo_in_its_repo_root(mocker, tmp_path):
+    """No `--config` to pass, so the child's cwd is the only thing that says
+    which repo the action belongs to."""
+    controller = _controller_with_group(mocker, tmp_path, with_config=False)
+    mocker.patch("jailbee.qtui.app.detect_terminal", return_value=None)
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_action("net strict", "p-foo")
+
+    assert popen.call_args.args[0] == ["jailbee", "net", "strict", "p-foo"]
+    assert popen.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_on_action_gives_the_output_window_the_repo_root(mocker, tmp_path):
+    """The printing verbs run under a QProcess rather than a Popen, so the cwd
+    has to reach that path too — otherwise `git diff` in a scratch repo
+    resolves whichever directory the GUI itself was started in."""
+    controller = _controller_with_group(mocker, tmp_path, with_config=False)
+    open_output = mocker.patch.object(qapp.AppController, "_open_output")
+
+    controller.on_action("git diff", "p-foo")
+
+    argv = open_output.call_args.args[0]
+    assert argv == ["jailbee", "git", "diff", "p-foo"]
+    assert open_output.call_args.args[2] == tmp_path
+
+
+def test_destroy_guard_reads_a_scratch_repos_config_from_its_root(mocker, tmp_path):
+    """The guard used to load `group.config_path`, which a scratch repo has
+    none of. Loading from the repo root synthesizes the same config the
+    dashboard is already displaying, so the risk line survives."""
+    controller = _controller_with_group(mocker, tmp_path, with_config=False)
+    controller._latest[0].containers[0].git_status = GitStatus(
+        wt="+12 -3", ahead_diff="clean", ahead_count="0", conflict="ok"
+    )
+    load = mocker.patch("jailbee.config.load_repo_config")
+    mocker.patch("jailbee.destroy_guard.assess", return_value=None)
+    mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    )
+
+    controller.on_action("destroy", "p-foo")
+
+    load.assert_called_once_with(tmp_path)
 
 
 def test_on_action_git_diff_opens_an_output_window_instead_of_spawning(mocker, tmp_path):
@@ -968,14 +1049,14 @@ def test_destroy_clean_container_gets_the_plain_dialog(mocker, tmp_path):
 
 
 def test_destroy_guard_assess_failure_is_logged_at_debug(mocker, tmp_path, caplog):
-    """A malformed `.gie/config.yaml` must not block the destroy guard — the
-    outcome stays "no risk shown", same as before — but the failure must be
+    """A malformed `.jailbee/config.yaml` must not block the destroy guard —
+    the outcome stays "no risk shown", same as before — but the failure must be
     discoverable rather than vanishing into a bare `except Exception: pass`."""
     controller = _controller_with_group(mocker, tmp_path)
     controller._latest[0].containers[0].git_status = GitStatus(
         wt="+12 -3", ahead_diff="clean", ahead_count="0", conflict="ok"
     )
-    mocker.patch("jailbee.config.load_config", side_effect=ValueError("boom"))
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ValueError("boom"))
     question = mocker.patch(
         "jailbee.qtui.app.QMessageBox.question",
         return_value=QMessageBox.StandardButton.No,
@@ -1052,7 +1133,7 @@ def test_non_destroy_verbs_do_not_assess(mocker, tmp_path):
 
 def test_run_uses_persisted_interval_when_cli_none(mocker):
     mocker.patch("jailbee.qtui.app.QApplication")
-    mocker.patch("jailbee.qtui.app.collect_config_paths", return_value=[Path("/x")])
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
     mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
     mocker.patch("jailbee.qtui.app.QThread")
     mocker.patch("jailbee.qtui.app.RefreshWorker")
@@ -1147,8 +1228,36 @@ def test_on_new_container_launches_in_a_terminal(mocker):
         "--config",
         "/repo/.jailbee/config.yaml",
     ]
+    assert action.cwd == Path("/repo")
     popen.assert_called_once()
+    assert popen.call_args.kwargs["cwd"] == Path("/repo")
     worker.force.assert_called_once()
+
+
+def test_on_new_container_omits_config_and_runs_a_scratch_repo_in_its_root(mocker):
+    """`jailbee new` in a repo with no config file is addressed by its cwd:
+    there is no path to pass, and the terminal wrapper must inherit the root."""
+    from jailbee.qtui.prompts import NewContainerAnswers
+
+    mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    dialog = mocker.Mock()
+    dialog.exec.return_value = QDialog.DialogCode.Accepted
+    dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")
+    mocker.patch("jailbee.qtui.app.NewContainerDialog", return_value=dialog)
+    mocker.patch("jailbee.qtui.app.detect_terminal", return_value=mocker.sentinel.term)
+    resolve = mocker.patch(
+        "jailbee.qtui.app.resolve_launch", return_value=["xterm", "-e", "jailbee", "new"]
+    )
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups([RepoGroup("s", "/scratch", None, [])])
+
+    controller.on_new_container("s")
+
+    action = resolve.call_args.args[0]
+    assert action.argv == ["jailbee", "new", "feat-x", "main"]
+    assert action.cwd == Path("/scratch")
+    assert popen.call_args.kwargs["cwd"] == Path("/scratch")
 
 
 def test_on_new_container_does_nothing_when_the_dialog_is_cancelled(mocker):

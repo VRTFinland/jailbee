@@ -73,6 +73,21 @@ def test_config_show_with_explicit_path() -> None:
     assert "container_user" in result.stdout
 
 
+def test_explicit_config_path_that_does_not_exist_exits_1() -> None:
+    """An explicit `--config PATH` that does not exist is a typo, not "no
+    config file here" — it must still error rather than fall into the
+    scratch-synthesis path (`_resolve_config_path_or_none` only swallows
+    `ConfigNotFoundError` for the *no `--config` given* case). Only a
+    loader-unit-level test (`test_invalid_yaml_raises` in test_config.py)
+    covered this before; this is the CLI-level guard against a future
+    refactor of `_resolve_config_path`/`_resolve_config_path_or_none` widening
+    that swallow to cover an explicit path too.
+    """
+    result = run_cli("ls", "--config", "/nonexistent/config.yaml")
+    assert result.returncode == 1
+    assert "Config file not found" in result.stderr
+
+
 def test_config_validate_failure_for_missing_repo() -> None:
     result = run_cli("config", "validate", "--config", str(FIXTURES / "minimal_config.yaml"))
     # exit 2 = runtime issues; exit 0 if /tmp/test-repo happens to exist
@@ -674,19 +689,27 @@ def test_chrome_pool_ls_alias_keeps_its_help_text():
     assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
 
 
-def test_ls_without_dot_jailbee_config_exits_with_error(tmp_path, monkeypatch):
+def test_ls_without_dot_jailbee_config_synthesizes_by_default(tmp_path, monkeypatch, mocker):
+    """Superseded expectation: this used to assert `ls` exits 1 in a
+    config-less directory. Scratch-config synthesis (`scratch.enabled`
+    defaults to true in `global.yaml`) makes that exactly the case this
+    feature is meant to fix — see `test_ls_works_in_a_directory_with_no_config`
+    below for the discriminating version of that scenario. This test now
+    covers the distinct case that one: no `.git` directory at all. Scratch
+    synthesis has no git dependency (`detect_upstream_remote`/
+    `detect_default_branch` degrade to a fallback when there is no repo), so
+    `ls` must still succeed here."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
 
-    monkeypatch.chdir(tmp_path)
-    runner = CliRunner()
-    result = runner.invoke(app, ["ls"])
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=False)
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = []
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
-    assert ".jailbee/config.yaml" in combined
-    assert "jailbee config init" in combined
+    result = CliRunner().invoke(app, ["ls"])
+
+    assert result.exit_code == 0, result.output
 
 
 # ---- multi-repo CLI behavior ----
@@ -8550,3 +8573,585 @@ def test_init_cmd_warns_instead_of_aborting_when_the_mirror_is_down(tmp_path, mo
     assert result.exit_code == 0, result.stdout
     run_init.assert_called_once()
     assert run_init.call_args.kwargs["mirror_endpoint"] is None
+
+
+# ---------------------------------------------------------------------------
+# _load_or_exit: scratch (config-less) directories
+# ---------------------------------------------------------------------------
+
+
+def _scratch_cwd(
+    tmp_path,
+    monkeypatch,
+    mocker,
+    *,
+    git: bool = False,
+    global_yaml: str = "{}\n",
+):
+    """Shared setup for CLI tests exercising a directory with no
+    `.jailbee/config.yaml` — the "scratch" config path.
+
+    Points $XDG_CONFIG_HOME at a fresh `global.yaml` carrying `global_yaml`,
+    creates `tmp_path/tutkimus` (with a `.git/` when `git=True`, for commands
+    that need a repo to look like one), chdirs into it, and patches
+    `detect_default_branch` so config loading never shells out to git.
+    Returns the directory. Shared across every scratch-directory CLI test
+    (this task and the config show/validate and `jb new` pre-flight tests
+    that build on it).
+    """
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text(global_yaml)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    repo = tmp_path / "tutkimus"
+    if git:
+        (repo / ".git").mkdir(parents=True)
+    else:
+        repo.mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    return repo
+
+
+def test_ls_works_in_a_directory_with_no_config(tmp_path, monkeypatch, mocker):
+    """The whole point of hooking in at the loader: commands that never
+    mention scratch work in a scratch directory, and the container prefix
+    they operate on is derived from the directory name — not merely "no
+    error was raised"."""
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=True)
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "tutkimus-feat-x",
+            "status": "Running",
+            "profiles": ["default", "tutkimus-base", "tutkimus-binds", "tutkimus-net-strict"],
+            "state": None,
+            "config": {},
+        }
+    ]
+    incus_mock.return_value.config_get.return_value = None
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    # Only reachable if `cfg.container_prefix` was synthesized as "tutkimus"
+    # (slugified from the directory name) — a config load failure would have
+    # exited 1 before any container was ever filtered or printed.
+    assert "feat-x" in result.stdout
+
+
+def test_ls_still_errors_when_scratch_is_disabled(tmp_path, monkeypatch, mocker):
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        git=True,
+        global_yaml="scratch:\n  enabled: false\n",
+    )
+
+    result = CliRunner().invoke(app, ["ls"])
+
+    assert result.exit_code == 1
+    assert "jailbee config init" in result.output
+    # Distinguishes the new `ConfigNotFoundError` raised by
+    # `load_repo_config`/`_synthesize_repo_config` (which names
+    # `scratch.enabled` and the global config file) from the old
+    # `find_repo_config` message, which never mentions either — without
+    # this, the assertions above pass whether or not `_load_or_exit` was
+    # ever changed to call the new loader.
+    assert "scratch.enabled" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `config show` / `config validate` in a scratch (config-less) directory
+# ---------------------------------------------------------------------------
+
+
+def test_config_validate_in_a_scratch_directory(tmp_path, monkeypatch, mocker):
+    """`config validate` must report the synthesized source, not traceback on
+    the uncaught `ConfigNotFoundError` `_resolve_config_path` used to raise
+    for a directory with no `.jailbee/config.yaml`."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    gpath = tmp_path / ".config" / "jailbee" / "global.yaml"
+
+    result = CliRunner().invoke(app, ["config", "validate"])
+    # Rich wraps long lines (mid-word, no hyphen) at the runner's terminal
+    # width, so compare against the output with newlines collapsed rather
+    # than the raw string.
+    collapsed = result.output.replace("\n", "")
+
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    # Named for the source label, not merely "it didn't crash": a stray
+    # `path = _resolve_config_path(config)` left in place would traceback
+    # before this line is ever printed, and a label that silently fell back
+    # to some other string would pass an exit-code-only assertion.
+    assert f"Schema OK: {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+
+
+def test_config_validate_reports_a_scratch_config_typo(tmp_path, monkeypatch, mocker):
+    """A schema error in `global.yaml`'s `scratch.config` block must surface
+    as a normal validation failure, labeled so the user knows it came from
+    the synthesized layer rather than a (nonexistent) repo config file."""
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        global_yaml="scratch:\n  config:\n    defaults:\n      cpu: banana\n",
+    )
+
+    result = CliRunner().invoke(app, ["config", "validate"])
+
+    assert result.exit_code == 1
+    assert "scratch.config" in result.output
+
+
+def test_config_show_layer_repo_prints_the_synthesized_layer(tmp_path, monkeypatch, mocker):
+    """`--layer repo` in a scratch directory prints the in-memory synthesized
+    layer (what `scratch_repo_layer` builds), not a nonexistent file path."""
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 0, result.output
+    assert "container_prefix: tutkimus" in result.output
+    assert "jailbee-scratch-base" in result.output
+
+
+def test_config_show_layer_repo_respects_scratch_disabled(tmp_path, monkeypatch, mocker):
+    """M1: `--layer repo` called `scratch_repo_layer` directly, skipping
+    `_synthesize_repo_config`'s `scratch.enabled` check — so it printed a
+    synthesized layer under a "synthesized from …" header while `config
+    validate` in the same directory correctly errored. A diagnostic must not
+    describe a config no command there would ever load."""
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        global_yaml="scratch:\n  enabled: false\n",
+    )
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "scratch.enabled" in result.output
+    # The header must not have been printed ahead of the refusal, and neither
+    # must the layer it announced.
+    assert "synthesized from" not in result.output
+    assert "jailbee-scratch-base" not in result.output
+
+
+def test_config_show_layer_repo_refuses_an_ancestor_of_home(tmp_path, monkeypatch, mocker):
+    """The other guard `--layer repo` skipped: `_refuse_scratch_root`. Same
+    reasoning — `jb new` here is refused, so describing the directory's config
+    as if it were usable is a lie."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    home = tmp_path / "home" / "someone"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home.parent)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "ancestor of your home directory" in " ".join(result.output.split())
+    assert "synthesized from" not in result.output
+
+
+def test_config_show_layer_repo_reports_an_unusable_directory_name(tmp_path, monkeypatch, mocker):
+    """The third escape M1 names: a `ConfigError` from an empty slug used to
+    propagate out of the command uncaught."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    weird = tmp_path / "..."
+    weird.mkdir()
+    monkeypatch.chdir(weird)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "jailbee config init" in " ".join(result.output.split())
+
+
+def test_config_show_default_layer_in_a_scratch_directory(tmp_path, monkeypatch, mocker):
+    """The default (`effective`) layer must also survive a scratch directory.
+
+    Ruling 6: the brief's own replacement snippet for this branch left the
+    unconditional `path = _resolve_config_path(config)` call in place, which
+    still tracebacks with an uncaught `ConfigNotFoundError` here — exactly
+    the directory this feature exists for. Only testing `--layer repo` (as
+    the brief does) would leave this regression unverified.
+    """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    gpath = tmp_path / ".config" / "jailbee" / "global.yaml"
+
+    result = CliRunner().invoke(app, ["config", "show"])
+    # Rich wraps long lines (mid-word, no hyphen) at the runner's terminal
+    # width, so compare against the output with newlines collapsed rather
+    # than the raw string.
+    collapsed = result.output.replace("\n", "")
+
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert f"merged from global + {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+    assert "container_prefix: tutkimus" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flights in a scratch (config-less) directory
+# ---------------------------------------------------------------------------
+
+
+def _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, *, git: bool, image_exists: bool = True):
+    """`_setup_new_cmd_env` for a directory with no `.jailbee/config.yaml`.
+
+    Builds on `_scratch_cwd` for the directory/XDG/`detect_default_branch`
+    setup, then adds what `new_cmd` additionally needs: a mocked `Incus`,
+    the docker-mirror pre-flight, and `lifecycle.new_container`.
+
+    Returns `(new_container_mock, incus_mock)` — the `Incus` mock comes back
+    so a test (or a later task's pre-flight test) can change
+    `image_exists` / `profile_exists` without patching `jailbee.incus.Incus`
+    a second time and losing this one's return values.
+    """
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    _scratch_cwd(tmp_path, monkeypatch, mocker, git=git)
+
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.image_exists.return_value = image_exists
+    incus.profile_exists.return_value = True
+
+    mirror_data_dir = tmp_path / "registry"
+    (mirror_data_dir / "ca").mkdir(parents=True)
+    (mirror_data_dir / "ca" / "ca.crt").write_text("fake-ca")
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig(
+            docker_registry_mirror=DockerRegistryMirror(data_dir=mirror_data_dir)
+        ),
+    )
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        return_value=("10.234.216.1", 3128),
+    )
+    mocker.patch("jailbee.apply.run_apply")
+
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    new_container.return_value = "tutkimus-work"
+    return new_container, incus
+
+
+def test_new_in_a_non_git_scratch_dir_requires_mount(tmp_path, monkeypatch, mocker):
+    """Clone mode has nothing to clone in a scratch directory with no
+    `.git/` — `jb new` must refuse early with actionable advice, rather than
+    let the clone fail deep inside container creation."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=False)
+
+    result = CliRunner().invoke(app, ["new", "work"])
+    # Rich wraps long lines at the runner's terminal width and may or may not
+    # leave a trailing space at the break, so normalize all whitespace
+    # (including newlines) to single spaces before matching a phrase that
+    # spans a wrap point.
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 2
+    assert "not a git repository" in collapsed
+    assert "--mount" in collapsed
+
+
+def test_new_mount_in_a_non_git_scratch_dir_proceeds(tmp_path, monkeypatch, mocker):
+    """--mount does not clone, so the same non-git scratch directory must be
+    accepted rather than rejected by the new guard."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=False)
+
+    result = CliRunner().invoke(app, ["new", "--mount", "work", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_count == 1
+
+
+def test_new_in_a_git_scratch_dir_without_mount_proceeds(tmp_path, monkeypatch, mocker):
+    """Task 11's non-git guard exempts a scratch directory that IS a git
+    repo, but nothing yet drove that exemption end-to-end through `new_cmd`
+    (it was only proved by construction). A git scratch directory with no
+    `--mount` must not trip the guard and must reach `new_container`."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the shared scratch base image
+# ---------------------------------------------------------------------------
+
+
+def test_new_builds_the_scratch_base_image_after_confirming(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert build.call_count == 1
+    assert new_container.call_count == 1
+
+
+def test_new_aborts_when_the_image_build_is_declined(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    assert build.call_count == 0
+    assert new_container.call_count == 0
+
+
+def test_new_without_a_tty_names_the_build_command(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, _incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    assert "jb base build" in result.output
+    assert build.call_count == 0
+    assert new_container.call_count == 0
+
+
+def test_new_skips_the_image_check_for_a_configured_repo(tmp_path, mocker):
+    """The check must not fire for repos that manage their own base image.
+
+    `image_exists` is forced to False here (rather than left at
+    `_setup_new_cmd_env`'s unconfigured Mock default, which is truthy) so
+    that this test would actually fail if the `cfg.is_synthetic()` gate were
+    missing — otherwise a missing gate would still pass, because the
+    unconfigured mock's `image_exists()` already returns something truthy.
+    """
+    from typer.testing import CliRunner
+
+    import jailbee.incus as incus_mod
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+    incus_mod.Incus.return_value.image_exists.return_value = False
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert build.call_count == 0
+    assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the missing profile set
+# ---------------------------------------------------------------------------
+
+
+def test_new_applies_profiles_for_a_scratch_repo(tmp_path, monkeypatch, mocker):
+    """A scratch directory has run neither `jb init` nor `jb apply`, and
+    `new_container` would fail assigning profiles that do not exist.
+
+    `_scratch_new_cmd_env` already patches `jailbee.apply.run_apply` (with
+    `incus.profile_exists` defaulting to True), but doesn't hand back that
+    mock. Re-patching the same target here shadows it with a fresh mock that
+    `cli.py`'s lazy `from jailbee.apply import run_apply` resolves to at call
+    time, so asserting on *this* mock is asserting on what `new_cmd` actually
+    calls.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = False
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 1
+    assert run_apply.call_args.kwargs["assume_yes"] is True
+    assert run_apply.call_args.kwargs["no_restart"] is True
+    assert new_container.call_count == 1
+
+
+def test_new_skips_apply_when_the_profiles_exist(tmp_path, monkeypatch, mocker):
+    """The mirror image of the above: once a scratch repo's profiles exist
+    (e.g. a previous `jb new` already created them), the pre-flight must not
+    fire again on every subsequent `jb new`."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = True
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 0
+
+
+def test_new_does_not_apply_for_a_configured_repo(tmp_path, mocker):
+    """A configured repo (a real `.jailbee/config.yaml`) has always run `jb
+    init`/`jb apply` before its first `jb new`, so the implicit-apply
+    pre-flight must be scoped to `cfg.is_synthetic()` and never fire here —
+    even if `profile_exists` were somehow False."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+    import jailbee.incus as incus_mod
+
+    incus_mod.Incus.return_value.profile_exists.return_value = False
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 0
+    assert new_container.call_count == 1
+
+
+def test_new_checks_all_four_profile_names(tmp_path, monkeypatch, mocker):
+    """The pre-flight must check the whole profile set (`base`, `binds`,
+    `net_strict`, `net_loose`), not just the first one it happens to look
+    at. `profile_exists` reports every profile present except `net-loose`
+    (the last name `profile_names` produces) — an implementation that only
+    consulted `base` (or stopped early) would see nothing missing and skip
+    the apply, so this fails unless all four are actually checked.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.side_effect = lambda name: not name.endswith("-net-loose")
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert run_apply.call_count == 1
+    assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the scratch notice
+# ---------------------------------------------------------------------------
+
+
+def test_new_prints_the_scratch_notice(tmp_path, monkeypatch, mocker):
+    """A scratch directory (no `.jailbee/config.yaml`) must be told, on
+    stderr, that it's running on synthesized defaults — which directory,
+    which shared base image, and how to make the setup permanent.
+
+    Asserted on `result.stderr` specifically (not merged output): the design
+    spec requires the notice on the stderr channel, and this repo's
+    `CliRunner` genuinely separates stdout/stderr (see
+    `test_config_validate_keeps_bracketed_text_in_a_validator_message` for
+    the same pattern against `error`/`error_plain`).
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = tmp_path / "tutkimus"
+    _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+    # Rich wraps long lines at the runner's terminal width, so collapse
+    # whitespace (including newlines) before matching phrases that may span
+    # a wrap point — the repo path alone can push the line past 80 columns.
+    collapsed = " ".join(result.stderr.split())
+
+    assert result.exit_code == 0, result.output
+    assert str(repo) in collapsed
+    assert "has no .jailbee/config.yaml" in collapsed
+    assert "jailbee-scratch-base" in collapsed
+    assert "jb config init" in collapsed
+
+
+def test_new_prints_no_notice_for_a_configured_repo(tmp_path, mocker):
+    """A configured repo (a real `.jailbee/config.yaml`) must never print the
+    scratch notice — asserted against the notice's own distinctive literal,
+    not the word "scratch" (which a wholly unrelated `jb new` message could
+    legitimately mention some day, and which would still pass this assertion
+    even if the feature were deleted outright)."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+    # Rich wraps long lines at the runner's terminal width, so collapse
+    # whitespace (including newlines) before matching — a raw substring
+    # check would spuriously pass even when the notice IS present, if Rich
+    # happens to wrap the line exactly inside the phrase.
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    # Merged output (not just stderr): the notice must not print on *any*
+    # channel for a configured repo.
+    assert "has no .jailbee/config.yaml" not in collapsed

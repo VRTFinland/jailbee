@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, select
 
-from jailbee.config import load_config
+from jailbee.config import ConfigError, load_repo_config
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 from jailbee.egress import resolve_with_status
 from jailbee.loose_revert import check_and_revert_loose
@@ -47,13 +47,64 @@ class RefreshResult:
     error: str | None = None
 
 
+class PrefixCollisionError(ConfigError):
+    """A scratch directory would take over a configured repo's registration."""
+
+
+def check_prefix_collision(session: Session, cfg: Config) -> None:
+    """Refuse a scratch directory that would displace a configured repo.
+
+    `RegisteredRepo`'s primary key is `container_prefix`, and a synthesized
+    config derives that from the directory's *name* — nobody chose it. So
+    `~/Downloads/myapp` claims the same key as `~/src/myapp`, and taking the
+    row over would repoint it at the scratch directory: the next `refresh_all`
+    tick loads the scratch config for that prefix (whose `container_prefix`
+    still matches, so the mismatch skip does not fire) and re-renders the
+    configured repo's egress ACL from scratch defaults. Its own
+    `egress_allow` would silently stop being enforced.
+
+    Only this one direction is refused. Scratch-vs-scratch collisions are
+    accepted by design (spec §11.2): both directories chose the same name and
+    neither has anything to lose. A *configured* repo's owner made no choice
+    at all, which is why they get an error instead of a surprise.
+
+    Raised from `register_repo` rather than checked in one command, so
+    `jailbee new`, `jailbee apply` and `jailbee init` are all covered by the
+    same rule; `new_cmd` calls it once more up front so the refusal arrives
+    before an image build rather than after one.
+    """
+    if not cfg.is_synthetic():
+        return
+    existing = session.get(RegisteredRepo, cfg.container_prefix)
+    if existing is None or existing.synthetic_config:
+        return
+    repo_root = str(Path(cfg.repo_root).resolve())
+    if existing.repo_root == repo_root:
+        return
+    raise PrefixCollisionError(
+        f"Container prefix '{cfg.container_prefix}' is already registered to "
+        f"{existing.repo_root}, which has its own .jailbee/config.yaml.\n"
+        f"{cfg.repo_root} has no config file, so jailbee derived the same "
+        f"prefix from its directory name — using it here would take over that "
+        f"repo's registration and re-render its egress allowlist from scratch "
+        f"defaults.\n"
+        f"Run `jailbee config init` in {cfg.repo_root} and set an explicit "
+        f"`container_prefix:`, or rename the directory."
+    )
+
+
 def register_repo(session: Session, cfg: Config) -> None:
     """Idempotently register the repo so the timer refreshes it.
 
     Handles three transitions: brand-new registration, repo `mv` (same
     prefix, new path), and config-edited prefix change (different
     prefix at the same path). The latter clears the stale row.
+
+    Refuses (`PrefixCollisionError`) the one takeover that is never a
+    transition — see `check_prefix_collision`.
     """
+    check_prefix_collision(session, cfg)
+
     prefix = cfg.container_prefix
     repo_root = str(Path(cfg.repo_root).resolve())
 
@@ -78,10 +129,19 @@ def register_repo(session: Session, cfg: Config) -> None:
                 container_prefix=prefix,
                 repo_root=repo_root,
                 registered_at=datetime.now(UTC),
+                synthetic_config=cfg.is_synthetic(),
             )
         )
-    elif existing.repo_root != repo_root:
-        existing.repo_root = repo_root
+    else:
+        if existing.repo_root != repo_root:
+            existing.repo_root = repo_root
+        # Both directions are real transitions: a scratch directory gains a
+        # `.jailbee/config.yaml`, or a configured repo's config is deleted.
+        # The flag is what `refresh_all` consults before pruning a row whose
+        # config file it cannot find.
+        synthetic = cfg.is_synthetic()
+        if existing.synthetic_config != synthetic:
+            existing.synthetic_config = synthetic
     session.commit()
 
 
@@ -569,8 +629,11 @@ def refresh_all(
 ) -> dict[str, RefreshResult]:
     """Iterate every registered repo and refresh its pool.
 
-    Self-prunes registrations where neither ``.jailbee/config.yaml`` nor the
-    deprecated ``.gie/config.yaml`` exists any more.
+    Self-prunes registrations whose repo root directory is gone, and
+    registrations whose config file is gone — unless the registration is
+    ``synthetic_config``, in which case "no config file" is the normal state
+    (the config comes from ``global.yaml``'s ``scratch:`` block) and the row
+    is kept.
     Skips (without pruning) cycles where the repo's ``container_prefix``
     no longer matches the registered value — user must run ``jailbee apply``
     to migrate.
@@ -580,9 +643,24 @@ def refresh_all(
 
     for repo in repos:
         repo_root = Path(repo.repo_root)
-        config_yaml = repo_config_path(repo_root)
 
-        if config_yaml is None:
+        # A directory that no longer exists can never be refreshed again,
+        # whatever kind of registration it is.
+        if not repo_root.is_dir():
+            log.info(
+                "refresh_all: unregistering %s — repo root gone at %s",
+                repo.container_prefix,
+                repo_root,
+            )
+            session.delete(repo)
+            session.commit()
+            continue
+
+        # "No config file" means two different things now. For a registration
+        # that had one, it means the config was deleted — prune, as before.
+        # For a synthetic registration it is the normal state: the config comes
+        # from `global.yaml`'s `scratch:` block.
+        if repo_config_path(repo_root) is None and not repo.synthetic_config:
             log.info(
                 "refresh_all: unregistering %s — config not found at %s",
                 repo.container_prefix,
@@ -593,8 +671,11 @@ def refresh_all(
             continue
 
         try:
-            cfg = load_config(config_yaml)
+            cfg = load_repo_config(repo_root)
         except Exception as e:
+            # Includes `ConfigNotFoundError` for a synthetic row while
+            # `scratch.enabled` is false — skipped, not pruned, so re-enabling
+            # the feature brings the repo straight back.
             log.warning(
                 "refresh_all: skipping %s — config load failed: %s",
                 repo.container_prefix,

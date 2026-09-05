@@ -17,6 +17,22 @@ _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
+def slugify_prefix(name: str) -> str:
+    """Turn a directory name into a `container_prefix`, or `""` if impossible.
+
+    `_PREFIX_RE` allows only `[a-z0-9][a-z0-9-]*`, and directory names
+    routinely break it (`Tutkimus_A`, `my project`). Lowercases, every run of
+    characters outside `[a-z0-9]` becomes one `-`, and leading/trailing `-`
+    are trimmed. `""` means nothing usable survived (`"..."`), which callers
+    report rather than passing on.
+
+    Related to `lifecycle.derive_container_name`, which applies a similar
+    transformation to branch names, but uses a different character class
+    `[a-z0-9-]` (preserving dashes) and includes per-segment dot stripping.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 class ContainerUser(BaseModel):
     model_config = ConfigDict(extra="forbid")
     uid: int = Field(

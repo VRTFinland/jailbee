@@ -151,6 +151,21 @@ jailbee new feat/my-branch   # spin up an isolated env for a branch
 See **[Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md)** for the full first-run
 walkthrough.
 
+### Trying it without a repo config
+
+Skip `jailbee config init` and `jailbee init` entirely for a quick look —
+`cd` into any git repo and just run `jailbee new work`. With no
+`.jailbee/config.yaml` in the directory, JailBee synthesizes a config from
+`~/.config/jailbee/global.yaml`'s `scratch:` block, creates that directory's
+Incus profiles on the fly, and boots the container from a golden image
+shared by every such directory on the host (alias `jailbee-scratch-base`).
+The first time, it asks to build that image (a one-time, few-minutes cost);
+every later scratch directory reuses it immediately. A directory that isn't
+a git repo needs `jailbee new --mount work` instead, since there's no
+upstream to clone from. See [`scratch`](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md#scratch)
+for the config block, and run `jailbee config init` once the work outlives
+an afternoon.
+
 ## Post-install setup
 
 Installing the package puts `jailbee` and `jb` on your `PATH` and nothing

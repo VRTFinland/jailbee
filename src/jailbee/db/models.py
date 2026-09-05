@@ -97,7 +97,14 @@ class RefreshState(SQLModel, table=True):
 
 
 class RegisteredRepo(SQLModel, table=True):
-    """Repos the refresh timer iterates. Self-pruned on missing config."""
+    """Repos the refresh timer iterates.
+
+    Self-pruned when the config file is gone — unless `synthetic_config`,
+    which marks a registration whose config was never a file at all (a
+    directory relying on `global.yaml`'s `scratch:` block). Pruning those on
+    "no config found" would let a scratch container's strict-mode ACL pool go
+    stale, and strict is the default network mode.
+    """
 
     __tablename__ = "registered_repo"
 
@@ -108,6 +115,7 @@ class RegisteredRepo(SQLModel, table=True):
         default=None,
         sa_column=Column(_UTCDateTime, nullable=True),
     )
+    synthetic_config: bool = Field(default=False)
 
 
 JOB_CREATE = "create"

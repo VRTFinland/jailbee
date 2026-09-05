@@ -110,8 +110,8 @@ def _raw_container(name: str, *profiles: str) -> dict[str, Any]:
 def completion_repo(tmp_path, mocker):
     """Point `completion._load()` at a fabricated repo and a MagicMock Incus.
 
-    `_load` imports load_config/find_repo_config/Incus lazily at call time, so
-    patching them on their defining modules is enough. Shared by
+    `_load` imports load_repo_config/Incus lazily at call time, so patching
+    them on their defining modules is enough. Shared by
     tests/test_completion.py and tests/test_completion_e2e.py.
     """
     repo_root = tmp_path / "myrepo"
@@ -119,11 +119,7 @@ def completion_repo(tmp_path, mocker):
     cfg = make_config(repo_root)
     assert cfg.container_prefix == "myrepo"
 
-    mocker.patch(
-        "jailbee.paths.find_repo_config",
-        return_value=repo_root / ".jailbee" / "config.yaml",
-    )
-    mocker.patch("jailbee.config.load_config", return_value=cfg)
+    mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
         _raw_container("myrepo-feat-foo", "myrepo-base", "myrepo-net-strict"),

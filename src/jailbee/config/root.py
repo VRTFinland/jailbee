@@ -398,6 +398,14 @@ class Config(BaseModel):
     # meaning of its own. See `column_warnings()` and `load_config`.
     _column_warnings: list[str] = PrivateAttr(default_factory=list)
 
+    # Set by `load_repo_config` when there was no config file to read and the
+    # repo layer was synthesized from `global.yaml`'s `scratch.config`. A
+    # private attribute for the reason `_column_warnings` is one: `Config` is
+    # extra="forbid", so a declared field would be YAML-settable (needing the
+    # explicit ban `claude_credentials_dir` carries) and would appear in
+    # `jailbee config show`'s dump as if it were configuration.
+    _synthetic: bool = PrivateAttr(default=False)
+
     def column_warnings(self) -> list[str]:
         """Column-block fixes `load_config()` made, for the caller to surface.
 
@@ -406,6 +414,18 @@ class Config(BaseModel):
         surfaces the equivalent list for `global.yaml`.
         """
         return list(self._column_warnings)
+
+    def is_synthetic(self) -> bool:
+        """True when this config was synthesized for a directory with no
+        `.jailbee/config.yaml` — see `loader.load_repo_config`.
+
+        Marks a config that has no file behind it, so callers can tell the two
+        apart: there is no `repo_root/.jailbee/` to write to, no committed
+        settings to trust, and the golden image is the host-shared
+        `SCRATCH_BASE_ALIAS` rather than one built for this directory. False
+        for every `Config` built any other way, including a hand-built one.
+        """
+        return self._synthetic
 
     @field_validator("egress_allow")
     @classmethod

@@ -513,3 +513,110 @@ def test_net_status_is_silent_when_no_repo_config_is_reachable(mocker, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+# --- scratch (config-less) directories -----------------------------------
+#
+# C1: `net egress export` and the two config-sourced refusals in `net egress
+# rm` called `cli._resolve_config_path`, which raises unconditionally. In a
+# directory with no `.jailbee/config.yaml` — where every other command now
+# works — that was an uncaught `ConfigNotFoundError` traceback rather than an
+# error message. These drive the real loader (no `_load_or_exit` mock), so
+# `cfg.is_synthetic()` is genuinely true.
+
+
+def _scratch_repo(tmp_path, monkeypatch, mocker, *, egress_allow=None):
+    """A directory with no config file, whose scratch defaults carry
+    `egress_allow`. Returns (repo_root, global.yaml path)."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    gpath = xdg / "jailbee" / "global.yaml"
+    gpath.write_text(
+        yaml.safe_dump({"scratch": {"config": {"egress_allow": list(egress_allow or [])}}})
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    repo_root = tmp_path / "tutkimus"
+    repo_root.mkdir()
+    monkeypatch.chdir(repo_root)
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    return repo_root, gpath
+
+
+def test_export_in_a_scratch_directory_names_config_init(tmp_path, monkeypatch, mocker):
+    """There is no `egress_allow:` key here to replace, and `global.yaml`'s
+    `scratch.config` is host-wide — so `export` must say so instead of
+    tracebacking on `_resolve_config_path`."""
+    repo_root, _gpath = _scratch_repo(tmp_path, monkeypatch, mocker)
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+
+    result = runner.invoke(app, ["net", "egress", "export"])
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 1
+    # Not merely "exit 1": the traceback path also exits non-zero under
+    # CliRunner, so assert on the message the fix introduces and on the
+    # absence of the exception it replaces.
+    assert "Traceback" not in result.output
+    assert "ConfigNotFoundError" not in result.output
+    assert str(repo_root) in collapsed
+    assert "has no repo config to write `egress_allow` into" in collapsed
+    assert "jailbee config init" in collapsed
+    # The replacement block must NOT have been printed — there is nothing to
+    # paste it into.
+    assert "nexus.corp:443" not in result.stdout
+
+
+def test_rm_of_a_scratch_config_entry_names_the_global_file(tmp_path, monkeypatch, mocker):
+    """The entry came from `global.yaml`'s `scratch.config` block, so the
+    refusal must name that (with `SCRATCH_ORIGIN_SUFFIX`) rather than a
+    `.jailbee/config.yaml` that does not exist."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _repo_root, gpath = _scratch_repo(tmp_path, monkeypatch, mocker, egress_allow=["nexus.corp"])
+
+    result = runner.invoke(
+        app, ["net", "egress", "rm", "--repo", "nexus.corp"], env={"COLUMNS": "250"}
+    )
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "comes from your config" in collapsed
+    assert f"Edit {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+
+
+def test_container_rm_of_a_scratch_config_entry_names_the_global_file(
+    tmp_path, monkeypatch, mocker
+):
+    """The container-scope twin of the above — a second `_resolve_config_path`
+    call site on the same command, reachable only with a container name."""
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    _repo_root, gpath = _scratch_repo(tmp_path, monkeypatch, mocker, egress_allow=["nexus.corp"])
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "tutkimus-feat"))
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=[])
+
+    result = runner.invoke(
+        app, ["net", "egress", "rm", "nexus.corp", "feat"], env={"COLUMNS": "250"}
+    )
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "comes from your config" in collapsed
+    assert f"Edit {gpath}{SCRATCH_ORIGIN_SUFFIX}" in collapsed
+
+
+def test_export_for_a_configured_repo_still_names_the_repo_file(tmp_path, mocker):
+    """The scratch branch must not swallow the configured case: a real repo
+    still exports its `egress_allow:` replacement block."""
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+
+    result = runner.invoke(app, ["net", "egress", "export"])
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(result.stdout) == {"egress_allow": ["github.com", "nexus.corp:443"]}

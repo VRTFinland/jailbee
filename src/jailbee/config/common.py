@@ -64,9 +64,26 @@ CONTAINER_USERNAME = "dev"
 # layer: a group name in a committed `.jailbee/config.yaml` would apply to
 # every teammate. It is resolved to `Config.claude_credentials_dir` on the
 # load path (Task 2) instead of being merged.
+#
+# `scratch` is here for a load-breaking reason, not a tidiness one: this set
+# routes a key to `GlobalConfig` *instead of* the `deep_merge` layer. Left
+# out, `scratch:` would be merged into every repo's config as an unknown
+# top-level key, and `Config` is extra="forbid" — every command in every
+# configured repo on the host would start failing validation.
 _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"docker_registry_mirror", "ls", "dashboard", "claude_credentials"}
+    {"docker_registry_mirror", "ls", "dashboard", "claude_credentials", "scratch"}
 )
+
+
+SCRATCH_ORIGIN_SUFFIX = " (scratch.config)"
+"""Appended to `global.yaml`'s path to name the synthesized repo layer's source.
+
+A synthesized repo layer has no file of its own: it comes from the `scratch:`
+block of the global config, so error messages and `jailbee config show` label
+it `<global.yaml> (scratch.config)`. One constant rather than the literal
+repeated at each site, so the label the user sees and the label they can grep
+for stay the same string.
+"""
 
 
 def _split_host_keys(

@@ -2,25 +2,54 @@ from pathlib import Path
 
 import pytest
 
+from jailbee.dashboard import RepoTarget
 from jailbee.qtui import actions as a
 from jailbee.qtui.terminal import TerminalSpec
 
 
+def _t(config_path: str, repo_root: str = "/repo") -> RepoTarget:
+    """A configured repo's target. ``repo_root`` only feeds ``cwd``, which the
+    argv assertions below don't read, so one default serves every case."""
+    return RepoTarget(Path(repo_root), Path(config_path))
+
+
+def test_build_action_omits_config_for_a_scratch_repo():
+    """A repo with no config file has no path to point `--config` at: the flag
+    must be absent, and the repo root carried as the child's cwd instead.
+
+    Pinning the whole argv here would only assert `--force` (`shell` is an
+    attach verb) — which is exactly what the missing flag would hide.
+    """
+    action = a.build_action("shell", "tutkimus-work", RepoTarget(Path("/tutkimus"), None))
+
+    assert "--config" not in action.argv
+    assert action.argv[:3] == ["jailbee", "shell", "tutkimus-work"]
+    assert action.cwd == Path("/tutkimus")
+
+
+def test_build_action_carries_the_repo_root_as_the_childs_cwd():
+    """Set for a configured repo too: one code path, and an explicit
+    `--config` wins over cwd resolution anyway."""
+    ac = a.build_action("start", "p-foo", _t("/repo/.gie/config.yaml"))
+
+    assert ac.cwd == Path("/repo")
+
+
 def test_build_action_non_interactive():
-    ac = a.build_action("start", "p-foo", Path("/repo/.gie/config.yaml"))
+    ac = a.build_action("start", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.argv == ["jailbee", "start", "p-foo", "--config", "/repo/.gie/config.yaml"]
     assert ac.launch == "detached"
     assert ac.confirm is False
 
 
 def test_build_action_shell_is_interactive():
-    ac = a.build_action("shell", "p-foo", Path("/repo/.gie/config.yaml"))
+    ac = a.build_action("shell", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.launch == "terminal"
     assert ac.confirm is False
 
 
 def test_build_action_destroy_requires_confirm():
-    ac = a.build_action("destroy", "p-foo", Path("/repo/.gie/config.yaml"))
+    ac = a.build_action("destroy", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.confirm is True
     assert ac.launch == "detached"
 
@@ -30,7 +59,7 @@ def test_build_action_destroy_passes_force():
     must run non-interactively with ``--force``. Without it, ``gie destroy``
     calls ``typer.confirm`` on a stdin the detached Popen child can't answer,
     aborting the destroy silently."""
-    ac = a.build_action("destroy", "p-foo", Path("/repo/.gie/config.yaml"))
+    ac = a.build_action("destroy", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.argv == [
         "jailbee",
         "destroy",
@@ -51,7 +80,7 @@ def test_build_action_attach_verbs_pass_force_without_confirming():
     started from a terminal, so the prompt would hang unseen.
     """
     for verb in ("shell", "tmux", "ide", "chrome"):
-        ac = a.build_action(verb, "p-foo", Path("/repo/.gie/config.yaml"))
+        ac = a.build_action(verb, "p-foo", _t("/repo/.gie/config.yaml"))
         assert ac.confirm is False
         assert ac.argv == [
             "jailbee",
@@ -64,24 +93,24 @@ def test_build_action_attach_verbs_pass_force_without_confirming():
 
 
 def test_resolve_launch_non_interactive_returns_argv_unchanged():
-    ac = a.build_action("stop", "p-foo", Path("/x/config.yaml"))
+    ac = a.build_action("stop", "p-foo", _t("/x/config.yaml"))
     assert a.resolve_launch(ac, None) == ac.argv
 
 
 def test_resolve_launch_interactive_wraps_in_terminal():
-    ac = a.build_action("shell", "p-foo", Path("/x/config.yaml"))
+    ac = a.build_action("shell", "p-foo", _t("/x/config.yaml"))
     spec = TerminalSpec(binary="xterm", run_args=["-e"])
     assert a.resolve_launch(ac, spec) == ["xterm", "-e", *ac.argv]
 
 
 def test_resolve_launch_interactive_without_terminal_raises():
-    ac = a.build_action("tmux", "p-foo", Path("/x/config.yaml"))
+    ac = a.build_action("tmux", "p-foo", _t("/x/config.yaml"))
     with pytest.raises(a.TerminalNotFoundError):
         a.resolve_launch(ac, None)
 
 
 def test_build_action_multi_token_verb_splits_into_argv():
-    ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"))
+    ac = a.build_action("net loose", "p-foo", _t("/x/config.yaml"))
     assert ac.argv == ["jailbee", "net", "loose", "p-foo", "--config", "/x/config.yaml"]
     assert ac.launch == "detached"
     assert ac.confirm is False
@@ -91,12 +120,12 @@ def test_net_loose_without_answers_carries_no_duration_flag():
     """The duration is one of the GUI-collected answers now (see
     ``AppController._collect_answers``), so ``build_action`` itself never
     invents one."""
-    ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"))
+    ac = a.build_action("net loose", "p-foo", _t("/x/config.yaml"))
     assert "--for" not in ac.argv
 
 
 def test_net_loose_duration_arrives_as_extra_flags():
-    ac = a.build_action("net loose", "p-foo", Path("/x/config.yaml"), extra_flags=["--for", "2h"])
+    ac = a.build_action("net loose", "p-foo", _t("/x/config.yaml"), extra_flags=["--for", "2h"])
     assert ac.argv == [
         "jailbee",
         "net",
@@ -141,7 +170,7 @@ def test_launch_mode_classifies_the_verbs():
 
 
 def test_build_action_sets_the_launch_mode():
-    ac = a.build_action("git diff", "alpha-x", Path("/repo/.jailbee/config.yaml"))
+    ac = a.build_action("git diff", "alpha-x", _t("/repo/.jailbee/config.yaml"))
     assert ac.launch == "output"
     assert ac.argv == [
         "jailbee",
@@ -155,8 +184,8 @@ def test_build_action_sets_the_launch_mode():
 
 def test_resolve_launch_only_wraps_terminal_verbs():
     spec = TerminalSpec(binary="xterm", run_args=["-e"])
-    output = a.build_action("git diff", "alpha-x", Path("/c.yaml"))
-    interactive = a.build_action("shell", "alpha-x", Path("/c.yaml"))
+    output = a.build_action("git diff", "alpha-x", _t("/c.yaml"))
+    interactive = a.build_action("shell", "alpha-x", _t("/c.yaml"))
 
     assert a.resolve_launch(output, spec) == output.argv  # not wrapped
     assert a.resolve_launch(interactive, spec)[:2] == ["xterm", "-e"]
@@ -168,7 +197,7 @@ def test_build_action_appends_the_answers_as_flags():
     ac = a.build_action(
         "git push",
         "alpha-x",
-        Path("/repo/.jailbee/config.yaml"),
+        _t("/repo/.jailbee/config.yaml"),
         extra_flags=["--merge", "--current"],
     )
     assert ac.argv == [
@@ -189,7 +218,7 @@ def test_pr_refresh_keeps_its_flag_ahead_of_the_container_name():
     ac = a.build_action(
         "git push --pr",
         "alpha-x",
-        Path("/repo/.jailbee/config.yaml"),
+        _t("/repo/.jailbee/config.yaml"),
         extra_flags=["--rebase"],
     )
     assert ac.argv == [
@@ -210,8 +239,8 @@ def test_git_pull_needs_confirmation_but_no_force():
     """--force is destroy's way of skipping a prompt the detached child cannot
     answer. `jailbee git pull <name>` has no such prompt, and --force there
     means something else entirely."""
-    pull = a.build_action("git pull", "alpha-x", Path("/c.yaml"))
-    destroy = a.build_action("destroy", "alpha-x", Path("/c.yaml"))
+    pull = a.build_action("git pull", "alpha-x", _t("/c.yaml"))
+    destroy = a.build_action("destroy", "alpha-x", _t("/c.yaml"))
 
     assert pull.confirm is True
     assert "--force" not in pull.argv
@@ -222,5 +251,5 @@ def test_git_pull_needs_confirmation_but_no_force():
 def test_extra_flags_come_after_the_force_flag():
     """Order matters only for readability, but a flag landing between the verb
     and its container name would be a parse hazard, so pin it."""
-    ac = a.build_action("destroy", "alpha-x", Path("/c.yaml"), extra_flags=["--quiet"])
+    ac = a.build_action("destroy", "alpha-x", _t("/c.yaml"), extra_flags=["--quiet"])
     assert ac.argv[-2:] == ["--force", "--quiet"]

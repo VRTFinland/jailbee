@@ -806,6 +806,26 @@ def test_resolved_snippet_names_sees_a_repo_owned_snippet(tmp_path, make_cfg):
     assert "docker" in resolved_snippet_names(cfg)
 
 
+def test_a_scratch_directorys_install_d_never_reaches_the_shared_image(tmp_path, make_cfg):
+    """M3: a synthesized config builds the *host-shared* `jailbee-scratch-base`
+    image, so no per-directory input may reach it (spec §6). A directory with
+    a `.jailbee/install.d/` but no `config.yaml` would otherwise inject its
+    snippets into an image every scratch container on the host runs."""
+    repo_root = tmp_path / "tutkimus"
+    snippet = repo_root / ".jailbee" / "install.d" / "50-docker.sh"
+    snippet.parent.mkdir(parents=True)
+    snippet.write_text("#!/bin/bash\n")
+    cfg = make_cfg(repo_root)
+
+    # Sanity: without the guard this snippet IS picked up — so the assertion
+    # below tests the guard rather than a directory that was never read.
+    assert snippet in resolved_snippet_paths(cfg)
+
+    cfg._synthetic = True
+    assert snippet not in resolved_snippet_paths(cfg)
+    assert "docker" not in resolved_snippet_names(cfg)
+
+
 def test_resolved_snippet_names_honours_disable_snippets(tmp_path, make_cfg):
     cfg = _repo_cfg(
         tmp_path,

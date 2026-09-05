@@ -123,13 +123,20 @@ def _load() -> tuple[Config, Incus] | None:
     Completion is best-effort: outside a repo root, or with a config that fails
     validation, there is nothing to complete and no way to report an error, so
     the caller turns None into an empty candidate list.
+
+    `load_repo_config`, not `load_config(find_repo_config())`: a scratch
+    directory has containers to complete just like a configured repo does, and
+    the file-backed loader would raise `ConfigNotFoundError` there and silently
+    complete nothing. `ConfigNotFoundError` is a `ConfigError`, so
+    `scratch.enabled: false` still lands in the same never-raise branch below.
     """
-    from jailbee.config import ConfigError, load_config
+    from pathlib import Path
+
+    from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
-    from jailbee.paths import find_repo_config
 
     try:
-        cfg = load_config(find_repo_config())
+        cfg = load_repo_config(Path.cwd())
     # A config file with invalid UTF-8 bytes makes Path.read_text() raise
     # UnicodeDecodeError, which config.py does not wrap (config.py:97).
     # ValueError covers it and keeps the never-raise contract airtight.

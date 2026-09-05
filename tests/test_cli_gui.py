@@ -3,12 +3,13 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from jailbee.config import ConfigNotFoundError
 
 runner = CliRunner()
 
 
 def test_dashboard_gui_flag_detaches(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
@@ -26,7 +27,7 @@ def test_dashboard_gui_flag_detaches(mocker):
 
 
 def test_gui_alias_detaches(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
@@ -44,7 +45,7 @@ def test_gui_alias_detaches(mocker):
 
 
 def test_gui_foreground_runs_inprocess(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
     popen = mocker.patch("subprocess.Popen")
@@ -57,7 +58,7 @@ def test_gui_foreground_runs_inprocess(mocker):
 
 
 def test_gui_no_configs_errors_before_detach(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=None)
     popen = mocker.patch("subprocess.Popen")
@@ -70,7 +71,7 @@ def test_gui_no_configs_errors_before_detach(mocker):
 
 
 def test_dashboard_without_flag_uses_tui(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
     drun = mocker.patch("jailbee.dashboard.run", return_value=0)
@@ -85,7 +86,7 @@ def test_dashboard_without_flag_uses_tui(mocker):
 
 
 def test_gui_missing_pyside_shows_install_hint(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     popen = mocker.patch("subprocess.Popen")
     # Simulate PySide6 not installed: importing qtui.app raises ImportError.
@@ -109,7 +110,7 @@ def test_gui_missing_pyside_shows_install_hint(mocker):
 
 
 def test_gui_detach_omits_interval_when_not_given(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     popen = mocker.patch("subprocess.Popen")
@@ -120,7 +121,7 @@ def test_gui_detach_omits_interval_when_not_given(mocker):
 
 
 def test_gui_detach_forwards_explicit_interval(mocker):
-    mocker.patch("jailbee.cli.find_repo_config", return_value=None)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     mocker.patch("jailbee.qtui.app.run", return_value=0)

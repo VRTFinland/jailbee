@@ -64,7 +64,7 @@ def resolve_snippets(
     *,
     bundled_dir: Path,
     user_dir: Path,
-    repo_dir: Path,
+    repo_dir: Path | None,
     disabled: list[str],
     available_dir: Path | None = None,
     enabled: list[str] | None = None,
@@ -81,8 +81,11 @@ def resolve_snippets(
     "available" library (see ``resolve_available``) between bundled and
     user precedence — only snippets named in ``enabled`` are staged.
 
-    Missing dirs are treated as empty (no error). Empty files ARE kept —
-    the runtime ``[ -s "$f" ]`` check inside install.sh skips them.
+    Missing dirs are treated as empty (no error), and so is a ``repo_dir`` of
+    ``None`` — which is how a synthesized config says "this directory
+    contributes nothing", the image it builds being shared host-wide. Empty
+    files ARE kept — the runtime ``[ -s "$f" ]`` check inside install.sh skips
+    them.
     """
     effective: dict[str, Path] = {}
     if bundled_dir.is_dir():
@@ -93,7 +96,7 @@ def resolve_snippets(
         for path in matched:
             effective[path.name] = path
     for d in (user_dir, repo_dir):
-        if not d.is_dir():
+        if d is None or not d.is_dir():
             continue
         for path in sorted(d.glob("*.sh")):
             effective[path.name] = path
@@ -235,7 +238,18 @@ def resolved_snippet_paths(cfg: Config) -> list[Path]:
     # exactly as `global_config` does — hardcoding ~/.config would look in a
     # directory that variable's user never writes.
     user_install_d = default_global_config_path().parent / "install.d"
-    repo_install_d = cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
+    # A synthesized config builds the *host-shared* `jailbee-scratch-base`
+    # image (see `config.SCRATCH_BASE_ALIAS`). Reading this directory's
+    # `install.d/` would put one directory's snippets into an image every
+    # scratch container on the host runs — spec §6 says no per-directory input
+    # reaches it. Contrived (a `.jailbee/install.d` with no `config.yaml`
+    # beside it) but host-wide when it happens, so the guard is here rather
+    # than in a comment.
+    repo_install_d = (
+        None
+        if cfg.is_synthetic()
+        else cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
+    )
     enabled = list(dict.fromkeys([*cfg.golden.enable_snippets, *cfg.golden.stacks.snippet_names()]))
     return resolve_snippets(
         bundled_dir=_resource_dir("install.d"),

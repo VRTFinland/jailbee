@@ -9,6 +9,23 @@ Goal: take any existing git repo and make `jailbee new <name>` work for it. The 
 
 This skill walks Claude through inspecting the repo, generating a tailored config, and (optionally) adding `install.d/` snippets for stack tools the bundled golden image doesn't cover.
 
+**A quicker path exists for throwaway work.** `jailbee new` already runs in
+a directory with no `.jailbee/config.yaml` — it synthesizes one from the
+host's `global.yaml` `scratch:` block instead (see the jailbee-usage skill's
+[Working without a repo config](../jailbee-usage/SKILL.md#working-without-a-repo-config-scratch-directories)).
+If the user only wants an isolated shell for an afternoon — reading an
+unfamiliar codebase, poking at a dataset, trying a tool — say so and skip
+straight to `jailbee new`; don't run this skill's workflow unasked. Reach
+for a real `.jailbee/config.yaml` (this skill) once any of these hold: the
+work will outlive the session, the repo needs a non-default stack
+(`golden.stacks`, `extra_apt_packages`) or autostart steps, it needs
+`egress_allow` entries beyond what `scratch.config` gives every directory on
+the host, or the config is meant to be committed and shared with a team —
+`scratch.config` is host-local and never reaches git. One more trigger is not
+a choice: if `jailbee new` refuses because the directory name slugifies to a
+`container_prefix` a configured repo already owns, run this skill and set
+`container_prefix:` explicitly.
+
 `gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
 1.1.0** and no longer exists — always use `jailbee` in every command you write
 or suggest. A repo whose config still lives in `.gie/` is still read

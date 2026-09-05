@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 def state_dir() -> Path:
@@ -44,7 +44,7 @@ def get_engine() -> Engine:
     """Return a SQLite engine for `state.sqlite`, bootstrapping it once.
 
     Cached per database path, for the lifetime of the process. Callers treat
-    this as cheap — `dashboard.registered_repo_configs` calls it on every
+    this as cheap — `dashboard.registered_repo_roots` calls it on every
     refresh tick — and without the cache each of those calls opened a new
     connection pool *and* re-ran `_ensure_schema`, `create_all` included.
 
@@ -177,6 +177,22 @@ def _migrate_to_v9(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v10(conn: Connection) -> None:
+    """v9 -> v10: add `registered_repo.synthetic_config`.
+
+    A real `ALTER TABLE`, not a no-op version guard like v7-v9: the column
+    lands on a table that already exists, so `create_all` will not add it.
+    Guarded by its own `PRAGMA table_info` check, like `_migrate_to_v4`, so
+    replaying the chain is a no-op. Existing rows default to 0 — every repo
+    registered before this version had a config file.
+    """
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(registered_repo)")}
+    if "synthetic_config" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE registered_repo ADD COLUMN synthetic_config BOOLEAN NOT NULL DEFAULT 0"
+        )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -187,6 +203,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     7: _migrate_to_v7,
     8: _migrate_to_v8,
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 
