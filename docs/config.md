@@ -1796,9 +1796,12 @@ no credential device: the label is then the only thing mounting one, so it is
 not redundant and is left alone. Overrides that already existed are not
 touched until one of those commands runs — `jailbee claude group` names them.
 
-`jailbee claude group` with no subcommand prints this repo's permanent group
-plus any of its containers currently deviating from it; the host-wide view of
-every group and the account each holds is `jailbee claude ls`. `jailbee claude
+`jailbee claude group` is a command group with no status view of its own: the
+host-wide picture is `jailbee claude ls`, per-container labels are `jailbee
+ls`'s `CLAUDE` column, and `jailbee doctor` reports an override that only
+repeats this repo's group. `jailbee claude group create <name>` creates an
+empty group and `jailbee claude group rm <name>` removes one nothing uses
+(parking any login it holds rather than deleting it). `jailbee claude
 group set <name>|none` and `jailbee claude group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `global.yaml`'s
 `claude_credentials.repos.<container_prefix>` instead of a container label,

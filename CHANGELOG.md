@@ -53,6 +53,12 @@
 
 ### Changed
 
+- **`jailbee claude group` is now a command group with no status view of its
+  own.** Bare `jailbee claude group` prints its help. Everything it used to
+  print lives where it belongs: which holder this repo reads is `jailbee
+  claude ls`, per-container labels are `jailbee ls`'s `CLAUDE` column, and an
+  override that only repeats this repo's group is a new `jailbee doctor`
+  check. Four partial views of the same state could only disagree.
 - **A container override that only repeats the repo's credential group is
   now dropped instead of kept.** The override is an instance-local
   `claude-creds` device plus a label, and both outrank the profile — so a
@@ -129,6 +135,21 @@
 
 ### Added
 
+- **`jailbee claude group create <name>`** creates an empty credential group
+  before anything is assigned to it. `set`, `use` and `claude use -g` all
+  create the directory on demand, so this is for the case where the group
+  should exist first; it is idempotent, and the new group shows up in
+  `jailbee claude ls` as `empty` / `unused`.
+- **`jailbee claude group rm <name> [--yes]`** removes a credential group
+  nothing uses — until now nothing could, and an unused group's only trace
+  was a directory to delete by hand. It refuses (with no `--force`) while a
+  repo resolves to the group, while the group is the host's default, or while
+  a container has been moved into it, naming what to fix in each case; when
+  the containers cannot be listed it refuses rather than guessing, since a
+  stopped container keeps its label. A login the group still holds is
+  **parked** into the host-wide store rather than deleted, so `jailbee claude
+  rm` stays the only command that destroys a credential, and the directory is
+  removed with `rmdir`, never recursively.
 - **`jailbee doctor` now checks the `/etc/subuid` delegation `raw.idmap`
   needs.** Every container maps the host user's own uid/gid into its
   namespace, and `newuidmap` installs no segment `/etc/subuid` has not
