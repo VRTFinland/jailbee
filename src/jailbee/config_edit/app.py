@@ -481,9 +481,26 @@ def _multiline(editor: Editor) -> bool:
 def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     """The editor's keys.
 
-    Every binding clears the message line first: a notice that outlived the
-    keypress it answered would read as a fresh complaint about the key just
-    pressed.
+    Most handlers clear the message line first — via `_act`/`_act_focus`, or
+    explicitly in `_commit`/`_cancel` — so a notice that outlived the keypress
+    it answered doesn't read as a fresh complaint about the key just pressed.
+    Three handlers deliberately do not, each for a different reason, and none
+    of them should be "fixed" into consistency with the rest:
+
+    * `_quit` skips it on purpose. It compares `editor.message` against
+      `_UNSAVED` to tell a first press (while dirty) from a confirming
+      second one. Clearing the message first would make that comparison
+      always true, so the second `q` could never be told apart from the
+      first — the double-press-to-quit-while-dirty behaviour would trap the
+      user in the warning forever with no way out.
+    * `_yes`/`_no` (the confirm modal's accept/decline) don't clear either,
+      but harmlessly: `confirm_save` always sets its own fresh notice
+      ("Saved ..." or "Not saved."), and `close_diff` (reached via `n` or
+      `escape` while a *read-only* diff is open) sets none at all, leaving
+      whatever notice was already on screen — neither path reads the old
+      message back, so not clearing has no effect worth guarding against.
+    * `_abandon` (`c-c`) doesn't clear either, but it exits the application
+      immediately, so there is no next frame for a stale notice to appear in.
     """
     kb = KeyBindings()
 

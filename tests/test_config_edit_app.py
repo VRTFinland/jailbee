@@ -20,6 +20,17 @@ from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import read_layers, resolve
 from jailbee.config_edit.schema import repo_specs
 
+# A miscounted keystroke sequence in this file doesn't fail an assertion — it
+# leaves `run_editor`'s `Application` waiting on a modal (a field prompt, the
+# save confirmation, or task 9's dirty-quit warning) with the pipe's input
+# exhausted, so the whole pytest process hangs rather than reporting a
+# failure. Scoped to this file rather than `[tool.pytest.ini_options]`, which
+# would change how every other suite runs. Every test here (call, not
+# collection/setup) measured under 0.1s across three full-file runs — 10s
+# leaves roughly a 100x margin, generous enough to absorb a slow CI box
+# without waiting minutes to notice a real hang.
+pytestmark = pytest.mark.timeout(10)
+
 
 class _CapturingOutput(DummyOutput):
     """A `DummyOutput` that remembers every fragment prompt_toolkit painted.
@@ -429,6 +440,49 @@ def test_a_regenerate_over_a_commented_file_needs_a_confirmation(tmp_path):
             output=DummyOutput(),
         )
     assert "# my own note" in glob.read_text()
+
+
+def test_y_accepts_the_regenerate_confirmation_and_writes_it(tmp_path):
+    """`y` is the write side of the same mandatory confirmation the decline
+    test above exercises — the design point of spec 2.5 is that dropping a
+    hand-written comment is not silently refused, only gated on an explicit
+    yes. Asserting merely "the file changed" would pass even if the wrong
+    thing changed; this checks the specific comment `build_plan` reported as
+    dropped is actually gone, and the edited value actually landed, so a
+    broken `y` binding (or one that fires but writes the wrong plan) is
+    caught either way.
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from jailbee.config_edit.app import run_editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    glob = tmp_path / "global.yaml"
+    glob.write_text("# my own note\nssh:\n  enabled: false\n")
+    layer_set = read_layers(repo, glob)
+    specs = global_specs()
+
+    with create_pipe_input() as pipe:
+        # Toggle ssh.enabled, save, answer `y` to the confirmation, quit.
+        # A single trailing `q` suffices here (unlike the decline test): a
+        # successful save reloads and clears `dirty()`, so the quit warning
+        # never fires.
+        pipe.send_text("/ssh.enabled\r \x13yq")
+        run_editor(
+            layer="global",
+            layer_set=layer_set,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            policy="regenerate",
+            input=pipe,
+            output=DummyOutput(),
+        )
+    text = glob.read_text()
+    assert "# my own note" not in text
+    assert "enabled: true" in text
 
 
 def test_space_toggles_a_boolean_and_the_title_counts_it(editor):
