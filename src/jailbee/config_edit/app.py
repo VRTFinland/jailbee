@@ -267,9 +267,7 @@ class Editor:
         if error is not None:
             self.notice(error, style="class:error")
             return
-        plan = build_plan(
-            self.layer_set, self.state.layer, edits, self.state.specs, self.policy
-        )
+        plan = build_plan(self.layer_set, self.state.layer, edits, self.state.specs, self.policy)
         if plan.must_confirm:
             self.confirm = plan
             return
@@ -471,7 +469,7 @@ def _diff_text(editor: Editor):  # type: ignore[no-untyped-def]  # returns a pt 
             )
         elif editor.diff_open:
             head.append(("class:dim", "Esc to close\n"))
-        return head + [("", plan.diff or "(no textual change)\n")]
+        return [*head, ("", plan.diff or "(no textual change)\n")]
 
     return render_diff
 
