@@ -20,7 +20,7 @@ Common conventions:
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `net install`)](#setup--host)
-- [Config (`config show|validate|init`)](#config)
+- [Config (`config show|validate|init|edit`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
@@ -59,6 +59,42 @@ speculatively.
 | `jailbee config init [--global]` | Write a fully-commented `.jailbee/config.yaml` (or `~/.config/jailbee/global.yaml` with `--global`). The template comments ARE the schema docs. |
 | `jailbee config show` | Print the merged effective config (global + per-repo) as YAML. Use to check active `push.default_*`, `new.background`, etc. Prints the resolved `agents:` block too — preset fields filled in whether or not the repo's own config mentions them, so it's the way to check what a `claude`/`codex`/… preset actually resolved to rather than re-deriving it by hand. |
 | `jailbee config validate` | Schema + cross-field + runtime-path checks. Fail-closed: unknown keys, bad `container_prefix`, malformed `egress_allow`, reserved `provision_env` keys, duplicate autostart step names, and unknown `optional_mounts` references are rejected. |
+
+### `jailbee config edit`
+
+Interactive editor for either config layer, with each field's own help text.
+
+```bash
+jailbee config edit                      # this repo's .jailbee/config.yaml
+jailbee config edit --global             # ~/.config/jailbee/global.yaml
+jailbee config edit --config <path>      # a specific repo's config
+jailbee config edit --write regenerate   # override the write policy once
+```
+
+Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, then edits a field ·
+`Space` toggles a true/false field · `r` resets a field to whatever it
+inherits (by deleting the key, so it keeps following jailbee's default rather
+than freezing at today's) · `/` searches names and descriptions across every
+section and ignores the basic/advanced filter · `a` shows every field, not
+just the curated set · `d` previews the diff · `s` or `Ctrl-S` saves · `Esc`
+goes back · `q` quits (twice, if there are unsaved edits). Inside the modal
+that opens on `Enter`, a single-line field commits with `Enter`; a multi-line
+one (a list or map) commits with `Ctrl-S`, since `Enter` there inserts a new
+row instead.
+
+A save is validated through the real config loader before anything is
+written, so the editor cannot produce a file the CLI would reject, and the
+previous contents are kept in a `.bak` sibling.
+
+Not editable here yet: lists of structured entries (`host_mounts`,
+`host_ports`, `host_devices`, `shared_caches`, `agents`, `optional_mounts`,
+`autostart.*.steps`) have no drill-down screen; secrets (`github.api_tokens`)
+are never editable, so a token is never painted on a terminal; and
+`scratch.config`'s free-form YAML has no schema to build a form from. Each
+row shows its own reason; edit any of these by hand.
+
+Reachable from both dashboards: `e` (repo) and `E` (global) in
+`jailbee dashboard`, and the **Config** menu in the Qt GUI.
 
 ## Create & lifecycle
 

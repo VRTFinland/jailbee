@@ -871,3 +871,8 @@ Set at load time by `_build_config_from_dict`:
 - `jailbee config init` — write `<cwd>/.jailbee/config.yaml`
 - `jailbee config init --global` — write `~/.config/jailbee/global.yaml`
 - `--force` overwrites an existing file
+
+## Editing files
+
+- `jailbee config edit` — edit the repo config interactively
+- `jailbee config edit --global` — edit `~/.config/jailbee/global.yaml`

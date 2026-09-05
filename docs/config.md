@@ -1907,6 +1907,26 @@ For anything that outlasts an afternoon, `jailbee config init` is still the
 answer: a committed, editable, per-repo config beats host-wide scratch
 defaults shared with every other directory on the machine.
 
+### `config_edit`
+
+Settings for `jailbee config edit` itself. Host-level only, like
+`docker_registry_mirror` and `claude_credentials`: how your own files get
+written is a personal editing habit, so a repo's `.jailbee/config.yaml`
+cannot set it.
+
+```yaml
+config_edit:
+  write_policy: auto      # auto (default) | patch | regenerate
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `write_policy` | `auto` | How a save writes the file. `patch` touches only the keys you changed and leaves comments, key order and formatting alone. `regenerate` rewrites the whole file with jailbee's own generated comments — which drops anything you wrote in it by hand. `auto` picks per layer: `regenerate` for this file, which jailbee owns and nobody reviews, and `patch` for a repo config, which is committed and read as a PR diff. |
+
+`jailbee config edit --write patch|regenerate` overrides the key for one run.
+A `regenerate` that would drop hand-written comment lines always shows the
+diff and asks first — that confirmation cannot be turned off.
+
 ## `--config / -c` override
 
 `jailbee -c /path/to/config.yaml <subcommand>` bypasses discovery and uses
