@@ -172,7 +172,7 @@ def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
 def test_host_level_list_paths_inherit_nothing(tmp_path):
     """`ls`/`dashboard` never reach `deep_merge`, so nothing is appended.
 
-    `_split_host_keys` routes the five `_HOST_LEVEL_KEYS` out of the
+    `_split_host_keys` routes the `_HOST_LEVEL_KEYS` out of the
     Config overlay before the merge runs, and `Config._effective_columns`
     merges the two blocks field-by-field with `model_copy(update=...)` —
     a repo `hide` *replaces* the global one. Reporting the global entries

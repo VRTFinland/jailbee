@@ -169,7 +169,7 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
 
     Two further rules, both of which say "nothing is inherited":
 
-    * **Host-level paths never reach `deep_merge` at all.** The five keys
+    * **Host-level paths never reach `deep_merge` at all.** The keys
       in `_HOST_LEVEL_KEYS` are split off `global.yaml` into a separate
       `GlobalConfig` object, and `ls`/`dashboard` are then merged
       field-by-field by `Config._effective_columns`, which *replaces*.
