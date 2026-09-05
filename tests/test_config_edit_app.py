@@ -234,25 +234,50 @@ def test_a_toggle_that_is_not_saved_leaves_the_file_alone(rendered, tmp_path):
     assert repo.read_text() == before
 
 
+def test_r_stages_a_reset_without_saving(rendered, tmp_path):
+    """`gpg.enabled` is a key the repo layer actually holds, so `r` stages a
+    delete — `render._staged_suffix` draws that as `-> reset` on the row.
+    Saving it (so the key is actually gone from the file) is task 9's Ctrl-S;
+    here only the staging half of "reset" is testable, same as the toggle
+    test above.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    before = repo.read_text()
+    text = rendered(f"{'j' * idx}\rrq")
+    assert "→ reset" in text
+    assert repo.read_text() == before
+
+
 def test_enter_opens_a_prompt_and_escape_cancels_it(rendered, tmp_path):
     """Enter opens `container_prefix`'s section (first Enter), then the modal
     editor on the field itself (second Enter — a bool field never gets here
     since Enter toggles it directly instead of opening a prompt). Typed text
     stages once committed (Enter again, since it is not a multiline field) —
-    visible as a `-> x` marker. Escape throws the same typed text away
+    visible as a `-> q` marker. Escape throws the same typed text away
     instead of staging it. Neither run saves: that happens only via the
     browsing-mode Ctrl-S task 9 adds.
+
+    The typed character is deliberately `q`, not some other placeholder: `q`
+    also quits the app, but only while browsing (`kb.add("q", filter=browsing)`
+    in `_bindings`) — with the prompt open, `editing` is true and `browsing`
+    is false, so this `q` must land in the text buffer rather than exit the
+    app early. Without that gating, this run would quit right after typing
+    `q` and never reach the trailing commit/quit keys, so the "-> q" marker
+    would never appear — that is what actually exercises the gating, since
+    every other prompt test in this file happens to avoid the letter.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "container_prefix")
     repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
     before = repo.read_text()
 
-    committed = rendered(f"{'j' * idx}\r\rx\rq")
-    assert "→ x" in committed
+    committed = rendered(f"{'j' * idx}\r\rq\rq")
+    assert "→ q" in committed
 
-    cancelled = rendered(f"{'j' * idx}\r\rx\x1bq")
-    assert "→ x" not in cancelled
+    cancelled = rendered(f"{'j' * idx}\r\rq\x1bq")
+    assert "→ q" not in cancelled
     assert "●" not in cancelled
 
     assert repo.read_text() == before

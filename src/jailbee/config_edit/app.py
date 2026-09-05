@@ -55,7 +55,12 @@ _HELP_HEIGHT = 9
 _TEXT_KINDS = frozenset(
     {FieldKind.STR, FieldKind.INT, FieldKind.PATH, FieldKind.CHOICE, FieldKind.SCALAR_UNION}
 )
-_BLOCK_KINDS = frozenset({FieldKind.STR_LIST, FieldKind.STR_MAP, FieldKind.BOOL_MAP})
+_MAP_KINDS = frozenset({FieldKind.STR_MAP, FieldKind.BOOL_MAP})
+"""`STR_LIST` is deliberately absent: both dispatches below check it first
+(it needs `values.list_to_text`/`parse_list`, not the map functions), so a
+kind set that included it here could never actually match on it — that
+mismatch between name and contents is exactly what this set used to be
+called (`_BLOCK_KINDS`, holding all three) before a review caught it."""
 
 
 @dataclass
@@ -177,7 +182,7 @@ class Editor:
         value = st.effective(self.state, spec.path)
         if spec.kind is FieldKind.STR_LIST:
             self._open_prompt(spec, values.list_to_text(value), multiline=True)
-        elif spec.kind in _BLOCK_KINDS:  # STR_MAP or BOOL_MAP; STR_LIST is handled above
+        elif spec.kind in _MAP_KINDS:
             self._open_prompt(spec, values.map_to_text(value), multiline=True)
         elif spec.kind in _TEXT_KINDS:
             self._open_prompt(spec, values.to_text(spec, value), multiline=False)
@@ -227,7 +232,7 @@ class Editor:
         error: str | None
         if spec.kind is FieldKind.STR_LIST:
             parsed, error = values.parse_list(spec, text)
-        elif spec.kind in _BLOCK_KINDS:  # STR_MAP or BOOL_MAP; STR_LIST is handled above
+        elif spec.kind in _MAP_KINDS:
             parsed, error = values.parse_map(spec, text)
         else:
             parsed, error = values.parse_value(spec, text)
