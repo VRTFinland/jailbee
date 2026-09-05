@@ -86,6 +86,7 @@ name = "jailbee"
 version = "1.2.2"
 source = { editable = "." }
 dependencies = [
+    { name = "prompt-toolkit" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "questionary" },
@@ -113,6 +114,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.7" },
     { name = "pyyaml", specifier = ">=6.0" },
