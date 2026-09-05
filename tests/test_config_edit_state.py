@@ -10,6 +10,7 @@ from __future__ import annotations
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import Origin
 from jailbee.config_edit.schema import FieldKind, FieldSpec
+from jailbee.config_writer import DELETE, YamlChange
 
 
 def _spec(dotted, kind=FieldKind.BOOL, default=False, description="help", advanced=True):
@@ -140,3 +141,84 @@ def test_clearing_the_query_restores_the_section_view():
     cleared = st.set_query(got, "")
     assert cleared.section == "ssh"
     assert [s.label for s in st.visible_specs(cleared)] == ["enabled"]
+
+
+def test_effective_prefers_a_staged_value_over_the_resolved_origin():
+    got = st.stage(_open(), ("gpg", "enabled"), True)
+    assert st.effective(got, ("gpg", "enabled")) is True
+    assert st.effective(got, ("ssh", "enabled")) is False
+
+
+def test_toggle_flips_the_bool_under_the_cursor():
+    got = st.enter_section(_open(), "gpg")
+    got = st.toggle_show_all(got)
+    got = st.toggle_current(got)
+    assert st.effective(got, ("gpg", "enabled")) is True
+    assert st.effective(st.toggle_current(got), ("gpg", "enabled")) is False
+
+
+def test_toggle_is_a_no_op_on_a_non_bool():
+    got = st.toggle_show_all(st.enter_section(_open(), "chrome"))
+    assert st.toggle_current(got) == got
+
+
+def test_changes_drops_a_staged_value_equal_to_what_the_file_holds():
+    """The property patch_yaml's byte-identical no-op depends on.
+
+    Toggling a value and toggling it back must produce no diff at all.
+    """
+    raw = {"gpg": {"enabled": False}}
+    got = st.stage(_open(), ("gpg", "enabled"), False)
+    assert st.changes(got, raw) == ()
+    assert st.is_dirty(got, raw) is False
+
+
+def test_changes_emits_a_real_edit():
+    raw = {"gpg": {"enabled": False}}
+    got = st.stage(_open(), ("gpg", "enabled"), True)
+    assert st.changes(got, raw) == (YamlChange(("gpg", "enabled"), True),)
+    assert st.is_dirty(got, raw) is True
+
+
+def test_reset_deletes_the_key_from_this_layer():
+    """Spec 4.3: reset deletes, it does not write the default out.
+
+    A written-out default freezes at today's value; an inherited one keeps
+    following jailbee's own.
+    """
+    raw = {"gpg": {"enabled": True}}
+    got = st.toggle_show_all(st.enter_section(_open(), "gpg"))
+    got = st.reset_current(got, raw)
+    assert st.changes(got, raw) == (YamlChange(("gpg", "enabled"), DELETE),)
+
+
+def test_reset_on_an_inherited_key_stages_nothing():
+    """The key is not in this layer, so deleting it would be a no-op diff."""
+    raw: dict[str, object] = {}
+    got = st.toggle_show_all(st.enter_section(_open(), "gpg"))
+    got = st.reset_current(got, raw)
+    assert st.changes(got, raw) == ()
+
+
+def test_reset_discards_a_staged_edit_to_the_same_field():
+    raw: dict[str, object] = {}
+    got = st.stage(_open(), ("gpg", "enabled"), True)
+    got = st.toggle_show_all(st.enter_section(got, "gpg"))
+    assert st.changes(st.reset_current(got, raw), raw) == ()
+
+
+def test_changes_are_ordered_by_path_so_a_save_is_reproducible():
+    raw: dict[str, object] = {}
+    got = st.stage(_open(), ("ssh", "enabled"), True)
+    got = st.stage(got, ("gpg", "enabled"), True)
+    assert [c.path for c in st.changes(got, raw)] == [
+        ("gpg", "enabled"),
+        ("ssh", "enabled"),
+    ]
+
+
+def test_an_explicit_null_is_a_real_change_not_a_reset():
+    """`chrome.url: null` must reach the file as null, not as a deletion."""
+    raw: dict[str, object] = {}
+    got = st.stage(_open(), ("chrome", "url"), None)
+    assert st.changes(got, raw) == (YamlChange(("chrome", "url"), None),)
