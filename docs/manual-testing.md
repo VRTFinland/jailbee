@@ -3043,6 +3043,17 @@ Needs two Claude accounts. Everything below runs on the host.
 9. **The degradation gate.** With the Incus daemon stopped
    (`sudo systemctl stop incus`), `jailbee claude ls` must still print the
    table, with `containers ?` in `USED BY` and a warning — not an error.
+10. **The redundant-override gate.** With the repo in group `Y` and one
+    container overridden to `X` (`jailbee claude group use X <container>`),
+    run `jailbee claude group set X`. The command must report dropping that
+    container's override, and afterwards `incus config show <container>`
+    must carry **neither** `user.jailbee.claude_group` nor a local
+    `claude-creds` device — the container inherits the profile's. Prove the
+    point by then running `jailbee claude group set Z`: the container must
+    follow to `Z` rather than staying on `X`. `jailbee claude group use Y
+    <container>` (naming the repo's own group) must likewise clear the
+    override instead of writing one, and `jailbee new --claude-group Y` must
+    create a container with no label at all.
 
 ## Cache pool smoke test (`pool.py`, `pooled_caches`)
 
