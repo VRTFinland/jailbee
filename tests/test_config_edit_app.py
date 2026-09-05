@@ -340,11 +340,15 @@ def test_a_field_that_cannot_be_edited_here_says_so(rendered, tmp_path):
     assert repo.read_text() == before
 
 
-def test_a_save_writes_the_file_and_clears_the_pending_marks(editor):
+def test_a_save_writes_the_toggle_and_leaves_the_rest_of_the_file_alone(editor):
     """`gpg` is not section index 0 in `repo_specs()` (`container_user` is —
     see `_index_of_section`'s other uses in this file), so the cursor has to
     be walked there with `j` first; a bare `Enter` would open the wrong
     section and stage nothing.
+
+    Named for what it checks and no more: this fixture paints into a
+    `DummyOutput`, so no assertion here can see a pending mark. The marks are
+    `render.field_pane`'s and are covered in `test_config_edit_render.py`.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "gpg")
@@ -496,17 +500,17 @@ def test_y_accepts_the_regenerate_confirmation_and_writes_it(tmp_path):
     assert "enabled: true" in text
 
 
-def test_space_toggles_a_boolean_and_the_title_counts_it(editor):
+def test_space_toggles_a_boolean_and_ctrl_s_writes_it(editor):
     """Enter the gpg section, Space on `enabled`, then save and quit.
 
     Deferred from task 8 (ruling R3): staging alone was already covered there
     (`test_a_toggle_that_is_not_saved_leaves_the_file_alone`); what only
     becomes testable once `save` exists is that Ctrl-S actually writes the
-    toggle to disk. The name is task 8's own — it was never about asserting
-    on the title bar's `modified:` counter (which embeds the full tmp_path
-    and reliably wraps past `_CapturingOutput`'s 80 columns, dropping the
-    digit — checked by hand), so this only asserts what task 8 already
-    asserted, plus the save.
+    toggle to disk. Task 8's name for this claimed the title bar's `modified:`
+    counter too; nothing here asserts on it, and nothing can — the counter
+    embeds the full tmp_path and reliably wraps past `_CapturingOutput`'s 80
+    columns, dropping the digit (checked by hand). The name now says what is
+    actually checked.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "gpg")
@@ -527,3 +531,127 @@ def test_r_stages_a_reset_of_a_key_the_layer_holds(editor):
     idx = _index_of_section(specs, "gpg")
     assert editor(f"{'j' * idx}\rr\x13q") == 0
     assert "enabled" not in editor.repo.read_text()
+
+
+def test_the_confirmation_prints_the_comment_lines_it_would_drop(tmp_path):
+    """The mandatory confirmation shows the at-risk lines, not just a count.
+
+    Spec 2.5 makes this confirmation non-dismissible precisely so hand-written
+    text is not lost silently — and the diff pane below the header renders from
+    line 0 with no scrolling and no cursor, so on a real `global.yaml` (several
+    hundred diff lines) the dropped comments are off screen. The header is the
+    only place the user can actually read them.
+
+    Asserted against `_diff_text`'s own fragments rather than a pipe-driven
+    run: the diff *itself* quotes every dropped line as a `-` row, so a
+    screen-text assertion would pass with the header showing nothing but a
+    count. Here the plan carries an empty diff, so the lines can only come
+    from the header.
+    """
+    from jailbee.config_edit.app import Editor, _diff_text
+    from jailbee.config_edit.save import SavePlan
+
+    plan = SavePlan(
+        path=tmp_path / "global.yaml",
+        policy="regenerate",
+        old_text="",
+        new_text="",
+        diff="",
+        dropped_comments=("# keep me", "# and me"),
+    )
+    layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(layer="global", specs=(), origins={}),
+        policy="regenerate",
+        confirm=plan,
+    )
+    text = "".join(fragment for _style, fragment in _diff_text(editor)())
+    assert "# keep me" in text
+    assert "# and me" in text
+    assert "[y/N]" in text
+
+
+def test_the_confirmation_summarises_a_flood_of_dropped_comments(tmp_path):
+    """Past `_MAX_DROPPED_SHOWN` the header counts the rest instead of listing
+    it — the diff underneath must not be pushed off the pane by its own header.
+    """
+    from jailbee.config_edit.app import _MAX_DROPPED_SHOWN, Editor, _diff_text
+    from jailbee.config_edit.save import SavePlan
+
+    dropped = tuple(f"# note {i}" for i in range(_MAX_DROPPED_SHOWN + 3))
+    plan = SavePlan(
+        path=tmp_path / "global.yaml",
+        policy="regenerate",
+        old_text="",
+        new_text="",
+        diff="",
+        dropped_comments=dropped,
+    )
+    layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(layer="global", specs=(), origins={}),
+        policy="regenerate",
+        confirm=plan,
+    )
+    text = "".join(fragment for _style, fragment in _diff_text(editor)())
+    assert dropped[0] in text
+    assert dropped[-1] not in text
+    assert "and 3 more" in text
+
+
+def test_a_read_only_diff_cannot_be_committed_with_y(editor):
+    """`d` opens the plan for reading; `y` must not write it.
+
+    `y`'s binding is filtered on `not editor.diff_open`, which is the whole of
+    that guarantee — the confirm modal and the read-only diff share `confirm`,
+    so without the filter `d` would become a second, unannounced save key.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    before = editor.repo.read_text()
+    # Enter gpg, Space to stage, `d` to open the diff, `y` (must do nothing),
+    # Escape to close it, then two `q` (the edit is still staged and unsaved).
+    assert editor(f"{'j' * idx}\r dy\x1bqq") == 0
+    assert editor.repo.read_text() == before
+
+
+def test_a_write_error_is_reported_and_the_session_survives(editor, mocker):
+    """An unwritable file must not take the editor down with a traceback.
+
+    `commit` raising `OSError` is ordinary — a read-only file, a root-owned
+    `global.yaml`, a full disk. The key handler has no `except` of its own, so
+    the guard has to be in `_write`: the run still exits cleanly through `q`,
+    and the staged edit is still staged (which is what makes the second `q`
+    necessary — the unsaved-changes warning eats the first).
+    """
+    mocker.patch(
+        "jailbee.config_edit.save.commit", side_effect=OSError(13, "Permission denied")
+    )
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    before = editor.repo.read_text()
+    assert editor(f"{'j' * idx}\r \x13qq") == 0
+    assert editor.repo.read_text() == before
+
+
+def test_an_unloadable_rendering_is_reported_instead_of_written(editor, mocker):
+    """`build_plan`'s YAML guard reaches the message line, not a traceback.
+
+    `layers.validate` checks the staged *mapping* and structurally cannot see a
+    rendering defect, so `RenderedYamlError` is the last thing between a broken
+    renderer and a file no `load_config` can read. It must behave like every
+    other refusal: nothing written, session alive, edit still staged.
+    """
+    from jailbee.config_edit.save import RenderedYamlError
+
+    mocker.patch(
+        "jailbee.config_edit.save.build_plan",
+        side_effect=RenderedYamlError("rendered unreadable YAML"),
+    )
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    before = editor.repo.read_text()
+    assert editor(f"{'j' * idx}\r \x13qq") == 0
+    assert editor.repo.read_text() == before

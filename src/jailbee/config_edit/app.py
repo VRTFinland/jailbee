@@ -51,6 +51,12 @@ if TYPE_CHECKING:
 
 _SECTION_WIDTH = 20
 _HELP_HEIGHT = 9
+_MAX_DROPPED_SHOWN = 12
+"""How many dropped comment lines the confirmation prints before summarising.
+
+Enough to show the whole of any hand-written note anyone actually leaves in a
+config file, and few enough that the diff underneath is not pushed off the
+pane by the header that introduces it."""
 _UNSAVED = "Unsaved changes — press q again to discard, or s to save."
 
 _TEXT_KINDS = frozenset(
@@ -256,18 +262,9 @@ class Editor:
         `container_prefix` regex and the cross-layer uniqueness rules are all
         loader-level and none of them is visible to pydantic alone.
         """
-        from jailbee.config_edit.layers import raw_for, validate
-        from jailbee.config_edit.save import build_plan
-
-        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
-        if not edits:
-            self.notice("Nothing to save.")
+        plan = self._plan("Nothing to save.")
+        if plan is None:
             return
-        error = validate(self.layer_set, self.state.layer, edits)
-        if error is not None:
-            self.notice(error, style="class:error")
-            return
-        plan = build_plan(self.layer_set, self.state.layer, edits, self.state.specs, self.policy)
         if plan.must_confirm:
             self.confirm = plan
             return
@@ -282,10 +279,49 @@ class Editor:
             return
         self._write(plan)
 
+    def _plan(self, nothing_staged: str) -> SavePlan | None:
+        """The plan for the staged edits, or `None` with a notice explaining why.
+
+        Shared by `save` and `show_diff` so the two cannot drift on which
+        failures stop a save: nothing staged, a mapping the loader rejects, and
+        a rendering this package cannot read back (`RenderedYamlError`, spec
+        3.5's last line of defence — `validate` sees the mapping, never the
+        text). Every one of them keeps the session and the staged edits alive.
+        """
+        from jailbee.config_edit.layers import raw_for, validate
+        from jailbee.config_edit.save import RenderedYamlError, build_plan
+
+        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
+        if not edits:
+            self.notice(nothing_staged)
+            return None
+        error = validate(self.layer_set, self.state.layer, edits)
+        if error is not None:
+            self.notice(error, style="class:error")
+            return None
+        try:
+            return build_plan(
+                self.layer_set, self.state.layer, edits, self.state.specs, self.policy
+            )
+        except RenderedYamlError as e:
+            self.notice(str(e), style="class:error")
+            return None
+
     def _write(self, plan: SavePlan) -> None:
+        """Commit `plan`, then re-read what is now on disk.
+
+        An `OSError` here is ordinary — a read-only file, a root-owned
+        `global.yaml`, a full disk — and is reported rather than raised: the
+        key handler that called this has no `except`, so letting it out would
+        take the application down and throw away every staged edit with it.
+        """
         from jailbee.config_edit.save import commit
 
-        backup = commit(plan)
+        try:
+            backup = commit(plan)
+        except OSError as e:
+            self.notice(f"Could not write {plan.path}: {e}", style="class:error")
+            return
         self._reload()
         where = f" (backup: {backup.name})" if backup is not None else ""
         self.notice(f"Saved {plan.path}{where}")
@@ -317,20 +353,10 @@ class Editor:
 
     def show_diff(self) -> None:
         """`d`: the same preview the mandatory confirmation shows, on demand."""
-        from jailbee.config_edit.layers import raw_for, validate
-        from jailbee.config_edit.save import build_plan
-
-        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
-        if not edits:
-            self.notice("Nothing staged — no diff to show.")
+        plan = self._plan("Nothing staged — no diff to show.")
+        if plan is None:
             return
-        error = validate(self.layer_set, self.state.layer, edits)
-        if error is not None:
-            self.notice(error, style="class:error")
-            return
-        self.confirm = build_plan(
-            self.layer_set, self.state.layer, edits, self.state.specs, self.policy
-        )
+        self.confirm = plan
         self.diff_open = True
 
     def close_diff(self) -> None:
@@ -460,13 +486,23 @@ def _diff_text(editor: Editor):  # type: ignore[no-untyped-def]  # returns a pt 
             return []
         head: StyleAndTextTuples = [("class:title", f" {plan.policy} → {plan.path} \n")]
         if plan.dropped_comments and not editor.diff_open:
+            shown = plan.dropped_comments[:_MAX_DROPPED_SHOWN]
             head.append(
                 (
                     "class:error",
                     f"This rewrites the file and drops {len(plan.dropped_comments)} "
-                    f"hand-written comment line(s). Save anyway? [y/N]\n",
+                    f"hand-written comment line(s):\n",
                 )
             )
+            # Verbatim, not just counted (spec 2.5): the lines are what is at
+            # risk, they are short, and the diff below scrolls out of view — a
+            # count alone asks the user to consent to a loss they cannot see.
+            head.extend(("class:error", f"  {line}\n") for line in shown)
+            if len(plan.dropped_comments) > len(shown):
+                head.append(
+                    ("class:error", f"  … and {len(plan.dropped_comments) - len(shown)} more\n")
+                )
+            head.append(("class:error", "Save anyway? [y/N]\n"))
         elif editor.diff_open:
             head.append(("class:dim", "Esc to close\n"))
         return [*head, ("", plan.diff or "(no textual change)\n")]

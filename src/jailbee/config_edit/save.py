@@ -17,6 +17,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import yaml
+
 from jailbee.config_edit.layers import LayerName, apply_changes, lookup, raw_for
 from jailbee.config_writer import (
     patch_yaml,
@@ -52,6 +54,18 @@ _REPO_HEADER = (
 )
 
 _MASK = "********"
+
+
+class RenderedYamlError(RuntimeError):
+    """A rendered layer did not parse back as YAML.
+
+    Always a defect in this package's own rendering, never something the user
+    typed: `layers.validate` has already accepted the staged *mapping* by the
+    time a plan is built, and it structurally cannot see the rendered text.
+    Raised rather than returned so no caller can write the file by ignoring a
+    return value; `app.Editor` reports it on the message line and keeps the
+    session, so the staged work survives a renderer bug.
+    """
 
 
 def resolve_policy(
@@ -172,14 +186,23 @@ def build_plan(
     The diff is redacted against the secrets *already on disk*. Staged secrets
     cannot exist: `render.edit_block` refuses to open an editor on a secret
     field, so nothing in `changes` can carry one.
+
+    Raises `RenderedYamlError` if what was rendered will not parse back. That
+    check is defence in depth and belongs here rather than in
+    `layers.validate`: validation runs over the staged *mapping*, so a defect
+    in the rendering itself — the renderer emitting two YAML documents in one
+    stream, say — is invisible to it, and this is the last place before
+    `commit` where such a file can still be stopped.
     """
     path = layer_set.repo_path if layer == "repo" else layer_set.global_path
     old_text = path.read_text(encoding="utf-8") if path.exists() else ""
     raw = raw_for(layer_set, layer)
+    secrets = secret_values(raw, specs)
     if policy == "patch":
         new_text = patch_yaml(old_text, changes)
     else:
         new_text = render_layer(apply_changes(raw, changes), layer)
+    _reject_unloadable(new_text, path, secrets)
     diff = redact(
         "".join(
             difflib.unified_diff(
@@ -189,7 +212,7 @@ def build_plan(
                 tofile=f"{path} (after save)",
             )
         ),
-        secret_values(raw, specs),
+        secrets,
     )
     dropped = _dropped_comments(old_text, new_text) if policy == "regenerate" else ()
     return SavePlan(
@@ -200,6 +223,33 @@ def build_plan(
         diff=diff,
         dropped_comments=dropped,
     )
+
+
+def _reject_unloadable(new_text: str, path: Path, secrets: Sequence[str]) -> None:
+    """Raise `RenderedYamlError` unless `new_text` parses back as one mapping.
+
+    A single YAML document that loads to a mapping (or to nothing, for an empty
+    file) is the only shape any config layer may have. Two documents in one
+    stream — what a naive "header + block A + block B" renderer produces when
+    block A is empty — parse as a `ComposerError` here rather than reaching
+    disk and taking the next `load_config` down with them.
+
+    The parser's own message is redacted before it is shown: it quotes the
+    offending source line, which for `global.yaml` can be a `github.api_tokens`
+    entry.
+    """
+    try:
+        parsed = yaml.safe_load(new_text)
+    except yaml.YAMLError as e:
+        raise RenderedYamlError(
+            f"jailbee rendered {path} as YAML it cannot read back, so nothing was "
+            f"written. This is a bug in jailbee. Details: {redact(str(e), secrets)}"
+        ) from e
+    if parsed is not None and not isinstance(parsed, dict):
+        raise RenderedYamlError(
+            f"jailbee rendered {path} as a {type(parsed).__name__}, not a mapping, "
+            f"so nothing was written. This is a bug in jailbee."
+        )
 
 
 def _dropped_comments(old_text: str, new_text: str) -> tuple[str, ...]:
