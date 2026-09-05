@@ -151,6 +151,13 @@ def test_register_repo_sets_flag_when_a_config_file_disappears(
 
     register_repo(db_session, make_cfg(tmp_path / "tutkimus"))
 
+    # Confirm the initial insert really wrote False, so the next assertion
+    # proves a transition rather than passing by coincidence with the column
+    # default (which rules out an insert path that silently no-ops on the
+    # flag instead of actually recording it).
+    row = db_session.get(RegisteredRepo, "tutkimus")
+    assert row is not None and row.synthetic_config is False
+
     scratch_cfg = make_cfg(tmp_path / "tutkimus")
     scratch_cfg._synthetic = True
     register_repo(db_session, scratch_cfg)

@@ -88,8 +88,9 @@ def register_repo(session: Session, cfg: Config) -> None:
         # `.jailbee/config.yaml`, or a configured repo's config is deleted.
         # The flag is what `refresh_all` consults before pruning a row whose
         # config file it cannot find.
-        if existing.synthetic_config != cfg.is_synthetic():
-            existing.synthetic_config = cfg.is_synthetic()
+        synthetic = cfg.is_synthetic()
+        if existing.synthetic_config != synthetic:
+            existing.synthetic_config = synthetic
     session.commit()
 
 
