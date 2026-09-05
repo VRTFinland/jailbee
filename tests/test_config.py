@@ -4341,6 +4341,66 @@ def test_synthesized_column_typo_is_recovered_and_reported(tmp_path, monkeypatch
     assert raw.column_warnings() == []
 
 
+def test_load_repo_config_accepts_a_legacy_gie_dir_with_one_warning(tmp_path, mocker):
+    """`load_repo_config`/`load_repo_config_unsanitized` go through
+    `paths.repo_config_path_warned`, not the plain `repo_config_path` — the
+    only thing that pins that is this test. A future narrowing to a
+    `.jailbee`-only check would hand a legacy `.gie/` repo a *synthesized*
+    scratch config instead of erroring or reading the real file, and every
+    other test in this module (which all use `.jailbee`) would stay green.
+
+    `_warn_legacy_config_dir` is `functools.cache`d, so the cache is cleared
+    first — the same pattern `test_paths.py`'s own legacy-dir tests use —
+    otherwise an earlier test in the suite touching the same path could have
+    already spent the one warning.
+    """
+    from jailbee import paths
+
+    paths._warn_legacy_config_dir.cache_clear()
+    warn = mocker.patch("jailbee.tui.warn")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = tmp_path / "legacyrepo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".gie").mkdir()
+    (repo / ".gie" / "config.yaml").write_text("defaults:\n  cpu: 3\n")
+    from jailbee.config import load_repo_config, load_repo_config_unsanitized
+
+    cfg = load_repo_config(repo)
+
+    assert cfg.is_synthetic() is False
+    assert cfg.defaults.cpu == 3
+    warn.assert_called_once()
+
+    # A second load through either loader must not warn again — same cache.
+    load_repo_config_unsanitized(repo)
+    warn.assert_called_once()
+
+
+def test_load_repo_config_unsanitized_reads_a_real_file(tmp_path, mocker):
+    """`load_repo_config_unsanitized` has two branches — synthesize when there
+    is no file, else delegate to `load_config_unsanitized` on the real one —
+    and only the synthesized branch had a test
+    (`test_synthesized_column_typo_is_recovered_and_reported`). This exercises
+    the file-backed branch the same way: a column typo must survive
+    unsanitized here while `load_repo_config` (the sanitized loader) recovers
+    from it, and the result must not be flagged synthetic — a routing bug
+    that sent a real repo through `_synthesize_repo_config` would still pass
+    every other file-backed assertion in this module but fail that one.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="ls:\n  fields: [name, nosuchfield]\n")
+    from jailbee.config import load_repo_config, load_repo_config_unsanitized
+
+    cfg = load_repo_config(repo)
+    assert "nosuchfield" not in cfg.ls.fields
+    assert any("nosuchfield" in w for w in cfg.column_warnings())
+
+    raw = load_repo_config_unsanitized(repo)
+    assert raw.is_synthetic() is False
+    assert "nosuchfield" in raw.ls.fields
+    assert raw.column_warnings() == []
+
+
 def test_is_synthetic_survives_model_copy(tmp_path, monkeypatch, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     _write_global(tmp_path, monkeypatch)
