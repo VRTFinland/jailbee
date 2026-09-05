@@ -17,7 +17,7 @@ edit at all.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from prompt_toolkit.styles import Style
 
@@ -49,6 +49,11 @@ simply missing reads as a bug, one that explains itself reads as a boundary.
 _ORIGIN_LABEL = {"default": "(default)", "global": "(global)", "repo": "(repo)"}
 
 _VALUE_WIDTH = 22
+
+_NOT_STAGED: Final = object()
+"""`state.staged.get` default: `None` and `UNSET` are both real staged values,
+so absence needs a sentinel of its own (the same reason `state.effective` uses
+`in` rather than a default)."""
 
 EDITOR_STYLE = Style(
     [
@@ -247,8 +252,47 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
         out.append(("class:disabled", f"{blocked}\n"))
     inherited = inherited_entries(spec, layer_set, state.layer)
     if inherited:
-        out.append(("class:dim", "\nInherited from global (your entries are added to these):\n"))
-        out.extend(("class:dim", f"  · {entry}\n") for entry in inherited)
+        out.extend(_inherited_block(state, spec, inherited))
+    return out
+
+
+def _inherited_block(
+    state: EditorState, spec: FieldSpec, inherited: tuple[object, ...]
+) -> StyleAndTextTuples:
+    """The inherited-context lines, or the warning that replaces them.
+
+    `inherited_entries` answers against the layers **as saved** (spec 10.1
+    option b), which is right for an origin marker but not for a sentence about
+    what a save will do. A user who opens the list editor on
+    `egress_allow: [a.example]`, deletes every line and commits has staged `[]`
+    — `deep_merge`'s explicit reset — and saving it empties the allowlist
+    outright. Repeating "your entries are added to these" underneath that row
+    would state the exact inverse.
+
+    Two staged shapes keep the context, because for them it stays true: a
+    non-empty list still appends, and `UNSET` (`r`) deletes the repo key so the
+    global entries are inherited whole. Everything else — `[]`, `null`, a
+    scalar — takes `deep_merge`'s overlay-wins branch and discards them.
+    """
+    staged_value = state.staged.get(spec.path, _NOT_STAGED)
+    discards = (
+        staged_value is not _NOT_STAGED
+        and staged_value is not UNSET
+        and not (isinstance(staged_value, list) and staged_value)
+    )
+    if discards:
+        return [
+            (
+                "class:error",
+                f"\nSaving this discards the {len(inherited)} entr"
+                f"{'y' if len(inherited) == 1 else 'ies'} inherited from global — "
+                f"press `r` to inherit them instead.\n",
+            )
+        ]
+    out: StyleAndTextTuples = [
+        ("class:dim", "\nInherited from global (your entries are added to these):\n")
+    ]
+    out.extend(("class:dim", f"  · {entry}\n") for entry in inherited)
     return out
 
 

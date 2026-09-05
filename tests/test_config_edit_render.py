@@ -169,6 +169,64 @@ def test_help_pane_shows_inherited_list_context_for_an_appending_key(tmp_path):
     assert "global.example" in text
 
 
+def _egress_state(staged):
+    """A repo-layer state on the `egress_allow` section with `staged` applied."""
+    rows = list(SPECS)
+    return st.EditorState(
+        layer="repo",
+        specs=tuple(rows),
+        origins={s.path: Origin("default", s.default) for s in rows},
+        staged=staged,
+        section="egress_allow",
+    )
+
+
+def test_help_pane_warns_when_a_staged_empty_list_would_discard_the_inherited_entries(tmp_path):
+    """A staged `[]` is `deep_merge`'s explicit reset, so saving it empties the
+    allowlist — the inherited-context sentence would state the exact inverse.
+
+    `inherited_entries` answers against the layers as saved (spec 10.1 option
+    b), which is right for an origin marker and wrong for a claim about what
+    the save will do. This is the one place the two must not be the same.
+    """
+    layers = _layers(
+        tmp_path,
+        repo_text="egress_allow:\n  - repo.example\n",
+        global_text="egress_allow:\n  - global.example\n",
+    )
+    text = _text(help_pane(_egress_state({("egress_allow",): []}), layers))
+    assert "global.example" not in text
+    assert "added to these" not in text
+    assert "discards" in text
+    assert "`r`" in text
+
+
+def test_help_pane_keeps_the_inherited_entries_for_a_staged_non_empty_list(tmp_path):
+    """A non-empty repo list still appends, so the context stays true."""
+    layers = _layers(
+        tmp_path,
+        repo_text="egress_allow:\n  - repo.example\n",
+        global_text="egress_allow:\n  - global.example\n",
+    )
+    text = _text(help_pane(_egress_state({("egress_allow",): ["other.example"]}), layers))
+    assert "global.example" in text
+    assert "discards" not in text
+
+
+def test_help_pane_keeps_the_inherited_entries_for_a_staged_reset(tmp_path):
+    """`r` deletes the repo key, so the global entries are inherited whole —
+    the opposite of a discard, and the key the warning itself points at.
+    """
+    layers = _layers(
+        tmp_path,
+        repo_text="egress_allow:\n  - repo.example\n",
+        global_text="egress_allow:\n  - global.example\n",
+    )
+    text = _text(help_pane(_egress_state({("egress_allow",): st.UNSET}), layers))
+    assert "global.example" in text
+    assert "discards" not in text
+
+
 def test_edit_block_names_a_global_only_key():
     reason = edit_block(_spec("github.enabled"), "repo")
     assert reason is not None
