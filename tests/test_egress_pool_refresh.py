@@ -1231,3 +1231,74 @@ def test_refresh_pool_pins_container_extras_on_first_tick(
     assert {e.description for e in entries} == {"github.com", "nexus.corp"}
     nexus_entry = next(e for e in entries if e.description == "nexus.corp")
     assert nexus_entry.destinations == ["10.0.5.7"]
+
+
+# ---------------------------------------------------------------------------
+# The repo ACL is created when it is missing
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_pool_creates_the_repo_acl_when_absent(
+    db_session: Session,
+    make_cfg: Any,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    frozen_now: datetime,
+) -> None:
+    """`incus network acl edit` fails with "Network ACL not found" against an
+    ACL nobody created, and the refresh timer runs with no `jailbee apply` in
+    front of it to create one. Repair it here, exactly as
+    `_refresh_container_extras` already does for a container's own extra ACL.
+    """
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+    from jailbee.network import acl_name
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_pool._update_strict_container_hosts")
+    mocker.patch("jailbee.egress_pool._list_containers", return_value=[])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = False
+    incus.list_containers.return_value = []
+
+    result = refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"
+    incus.network_acl_create.assert_called_once_with(acl_name(cfg))
+    assert [c[0][0] for c in incus.network_acl_set_yaml.call_args_list] == [acl_name(cfg)]
+
+
+def test_refresh_pool_does_not_recreate_an_existing_repo_acl(
+    db_session: Session,
+    make_cfg: Any,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    frozen_now: datetime,
+) -> None:
+    """The mirror image: `incus network acl create` on a name that already
+    exists fails, so the normal per-tick path must not attempt it."""
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+    from jailbee.network import acl_name
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_pool._update_strict_container_hosts")
+    mocker.patch("jailbee.egress_pool._list_containers", return_value=[])
+    incus = mocker.MagicMock()
+    incus.network_acl_exists.return_value = True
+    incus.list_containers.return_value = []
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    incus.network_acl_create.assert_not_called()
+    assert [c[0][0] for c in incus.network_acl_set_yaml.call_args_list] == [acl_name(cfg)]
