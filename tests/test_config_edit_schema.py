@@ -228,3 +228,66 @@ def test_a_default_factory_field_reports_its_real_default():
     assert isinstance(caches, list) and caches, "the default set of shared caches"
     assert _by_path(specs, "pooled_caches").default == {}
     assert _by_path(specs, "egress_allow").default == []
+
+
+def test_repo_specs_is_the_config_tree():
+    from jailbee.config_edit.schema import build_specs, repo_specs
+
+    assert repo_specs() == build_specs(Config)
+
+
+def test_global_specs_routes_host_level_keys_to_globalconfig():
+    """`docker_registry_mirror` means a different model on each side.
+
+    In `global.yaml` it is the mirror daemon's own settings (port,
+    data_dir, image); in a repo config it is
+    `DockerRegistryMirrorRepoConfig`, which only has `extra_registries`.
+    """
+    from jailbee.config_edit.schema import global_specs, repo_specs
+
+    global_paths = {s.path for s in global_specs()}
+    repo_paths = {s.path for s in repo_specs()}
+
+    assert ("docker_registry_mirror", "port") in global_paths
+    assert ("docker_registry_mirror", "port") not in repo_paths
+    assert ("docker_registry_mirror", "extra_registries") in repo_paths
+    assert ("docker_registry_mirror", "extra_registries") not in global_paths
+
+
+def test_global_specs_keeps_the_config_overlay_keys():
+    from jailbee.config_edit.schema import global_specs
+
+    paths = {s.path for s in global_specs()}
+    assert ("gpg", "enabled") in paths
+    assert ("host_mounts",) in paths
+    assert ("claude_credentials", "group") in paths, "host-level, from GlobalConfig"
+
+
+def test_loose_auto_revert_appears_once_on_the_config_side():
+    """Declared on both models, but not host-level, so YAML routes it to Config.
+
+    `GlobalConfig.loose_auto_revert` is unreachable from YAML —
+    `_load_unsanitized` validates only the host-level subset. Emitting
+    both copies would show the user a duplicate section.
+    """
+    from jailbee.config_edit.schema import global_specs
+
+    enabled = [s for s in global_specs() if s.path == ("loose_auto_revert", "enabled")]
+    assert len(enabled) == 1
+
+
+def test_global_only_keys_match_the_loader_ban_list():
+    """The editor must disable exactly what `_load_config_from_repo_raw` rejects."""
+    from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
+
+    assert GLOBAL_ONLY_KEYS == frozenset({"github", "claude_credentials", "claude_credentials_dir"})
+
+
+def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
+    """Spec 3.3: a global-only key renders disabled with a reason, not absent.
+
+    Dropping it would leave the user wondering where the setting went.
+    """
+    from jailbee.config_edit.schema import repo_specs
+
+    assert ("github", "enabled") in {s.path for s in repo_specs()}

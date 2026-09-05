@@ -21,6 +21,10 @@ from pydantic import BaseModel, SecretStr
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
+from jailbee.config import Config
+from jailbee.config.common import _HOST_LEVEL_KEYS  # router impl; must stay in sync
+from jailbee.global_config import GlobalConfig
+
 
 class FieldKind(StrEnum):
     """How the editor renders and edits one field.
@@ -266,3 +270,40 @@ def _walk(
             )
         )
     return out
+
+
+GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
+    {"github", "claude_credentials", "claude_credentials_dir"}
+)
+"""Top-level keys `_load_config_from_repo_raw` refuses in a repo config.
+
+Tokens and credential-group names are host-local: a repo config is
+typically committed, so a value here would leak or would name a group
+that exists on one machine only. The editor keeps these in the repo tree
+and renders them disabled with the reason (spec 3.3) rather than hiding
+them, so the setting does not appear to have vanished.
+
+Kept in step with the ban list in `config/loader.py` by
+`test_global_only_keys_match_the_loader_ban_list`.
+"""
+
+
+def repo_specs() -> tuple[FieldSpec, ...]:
+    """Editable leaves of a repo's `.jailbee/config.yaml`."""
+    return build_specs(Config)
+
+
+def global_specs() -> tuple[FieldSpec, ...]:
+    """Editable leaves of `~/.config/jailbee/global.yaml`.
+
+    Two trees concatenated on the `_HOST_LEVEL_KEYS` boundary, the same
+    split `_split_host_keys` applies at load time and
+    `config_init.render_global_template` applies when generating the
+    file. Host-level keys are modelled on `GlobalConfig`; everything else
+    overlays `Config`. Three keys are declared on both models with
+    different shapes, so taking either tree whole would show the user the
+    wrong fields for half the file.
+    """
+    overlay = [s for s in build_specs(Config) if s.path[0] not in _HOST_LEVEL_KEYS]
+    host = [s for s in build_specs(GlobalConfig) if s.path[0] in _HOST_LEVEL_KEYS]
+    return tuple(overlay + host)
