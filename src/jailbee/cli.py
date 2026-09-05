@@ -8114,7 +8114,8 @@ def claude_ls_cmd(
         typer.Option(
             "--group",
             "-g",
-            help="Show only this credential group (the parked store stays listed).",
+            help="Show only this credential group, or `none` for the holders that "
+            "share no group. The parked store stays listed either way.",
             autocompletion=completion.complete_claude_group,
         ),
     ] = None,
