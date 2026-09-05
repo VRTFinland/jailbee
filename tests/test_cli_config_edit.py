@@ -1,8 +1,9 @@
 """The `jailbee config edit` command surface.
 
 The editor itself is mocked out — what is under test is which layer, which
-file and which write policy the command resolves, and that it refuses to open
-without a terminal.
+file and which write policy the command resolves, that it refuses to open
+without a terminal, and that `config init` hands off to it on the right
+layer for each of its two branches.
 """
 
 from __future__ import annotations
@@ -100,6 +101,20 @@ def test_config_init_offers_the_editor(tmp_path, mocker, monkeypatch):
 
     assert result.exit_code == 0
     run.assert_called_once()
+    assert run.call_args.kwargs["layer"] == "repo"
+
+
+def test_config_init_global_offers_the_editor(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
+
+    result = runner.invoke(app, ["config", "init", "--global"])
+
+    assert result.exit_code == 0
+    run.assert_called_once()
+    assert run.call_args.kwargs["layer"] == "global"
 
 
 def test_config_init_does_not_offer_the_editor_without_a_terminal(tmp_path, mocker, monkeypatch):
