@@ -291,3 +291,55 @@ def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
     from jailbee.config_edit.schema import repo_specs
 
     assert ("github", "enabled") in {s.path for s in repo_specs()}
+
+
+def test_every_basic_path_exists_in_a_layer_tree():
+    """A curated path that no longer exists would silently curate nothing."""
+    from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
+
+    known = {s.path for s in repo_specs()} | {s.path for s in global_specs()}
+    assert BASIC_FIELDS - known == frozenset()
+
+
+def test_basic_set_is_a_readable_shortlist():
+    """Spec 2.7 sizes it at ~25-30 of 90 leaves; a bloated set is no filter."""
+    from jailbee.config_edit.schema import BASIC_FIELDS
+
+    assert 20 <= len(BASIC_FIELDS) <= 35
+
+
+def test_a_spec_defaults_to_advanced():
+    """The safe direction: a field nobody curated must not sneak into the
+    short list."""
+    from jailbee.config_edit.schema import FieldSpec
+
+    invented = FieldSpec(
+        path=("something", "new"),
+        label="new",
+        kind=FieldKind.BOOL,
+        description="x",
+        default=False,
+    )
+    assert invented.advanced is True
+
+
+def test_the_most_used_keys_are_not_advanced():
+    from jailbee.config_edit.schema import repo_specs
+
+    specs = {s.path: s for s in repo_specs()}
+    for dotted in (
+        "container_prefix",
+        "defaults.network",
+        "egress_allow",
+        "golden.stacks.node",
+        "jetbrains.enabled",
+    ):
+        assert specs[tuple(dotted.split("."))].advanced is False, dotted
+
+
+def test_an_uncurated_key_is_advanced():
+    from jailbee.config_edit.schema import repo_specs
+
+    specs = {s.path: s for s in repo_specs()}
+    assert specs[("ssh", "seed_from_host")].advanced is True
+    assert specs[("jetbrains", "share_idea")].advanced is True

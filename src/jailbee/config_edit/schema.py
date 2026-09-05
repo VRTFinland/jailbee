@@ -267,9 +267,61 @@ def _walk(
                 item_model=found.item_model,
                 optional=found.optional,
                 secret=found.secret,
+                advanced=path not in BASIC_FIELDS,
             )
         )
     return out
+
+
+BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
+    {
+        # Identity and sizing — the first things a new repo sets.
+        ("container_prefix",),
+        ("defaults", "memory"),
+        ("defaults", "cpu"),
+        ("defaults", "network"),
+        ("defaults", "storage_pool"),
+        # Egress: the setting users reach for most after `net loose`.
+        ("egress_allow",),
+        # What goes in the image.
+        ("golden", "ubuntu_version"),
+        ("golden", "stacks", "java"),
+        ("golden", "stacks", "node"),
+        ("golden", "stacks", "python"),
+        ("golden", "stacks", "docker"),
+        ("golden", "extra_apt_packages"),
+        # Host plumbing.
+        ("host_mounts",),
+        ("host_ports",),
+        ("share_local",),
+        ("shared_caches",),
+        # Host-tooling master switches. Their sub-fields stay advanced.
+        ("gpg", "enabled"),
+        ("ssh", "enabled"),
+        ("jetbrains", "enabled"),
+        ("jetbrains", "ide"),
+        ("chrome", "enabled"),
+        # Agents and startup.
+        ("agents",),
+        ("autostart", "on_create"),
+        ("autostart", "on_start"),
+        ("after_new",),
+        # Workflow defaults people actually change.
+        ("new", "background"),
+        ("push", "default_action"),
+        ("pull", "destroy_container"),
+    }
+)
+"""The ~28 paths the default view shows; everything else is behind "show all".
+
+Curation lives here rather than as metadata on the models: 183 field
+definitions should not also carry a presentational concern, and the
+curated set is only reviewable when it is readable in one place.
+
+A path absent from this set is advanced. That is the safe default — the
+alternative silently rots as fields are added, and search (which ignores
+this filter entirely) is the real answer at this schema size.
+"""
 
 
 GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
