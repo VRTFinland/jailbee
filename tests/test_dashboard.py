@@ -3251,7 +3251,9 @@ def test_run_dispatches_e_and_shift_e_to_edit_config(mocker, tmp_path):
     or absent), not merely that ``edit_config`` was reached, so an inverted
     ``global_layer`` fails this test rather than sailing through it.
     """
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
+    )
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 0
 
@@ -3274,7 +3276,9 @@ def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tm
     and "e". Exercises `_report_vanished_repo`'s third call site rather than
     assuming the fix generalizes.
     """
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
+    )
     mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -3342,6 +3346,31 @@ def test_config_edit_reject_note_accepts_a_real_repo(tmp_path):
     from jailbee.dashboard import config_edit_reject_note_for_prefix
 
     group = dashboard.RepoGroup(
-        prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[]
+        prefix="demo",
+        repo_root=str(tmp_path),
+        config_path=tmp_path / ".jailbee" / "config.yaml",
+        containers=[],
     )
     assert config_edit_reject_note_for_prefix([group], "demo") is None
+
+
+def test_config_edit_reject_note_refuses_the_repo_layer_of_a_synthesized_config(tmp_path):
+    """A repo with no config file of its own has a third layer the editor
+    cannot see (``global.yaml``'s ``scratch.config``), and the first save
+    would stop that layer being used at all — so ``e`` is refused there.
+
+    ``E`` is not: it edits ``global.yaml``, which is where that directory's
+    settings actually live.
+    """
+    from jailbee.dashboard import config_edit_reject_note_for_prefix
+
+    group = dashboard.RepoGroup(
+        prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[]
+    )
+
+    note = config_edit_reject_note_for_prefix([group], "demo")
+
+    assert note is not None
+    assert "scratch.config" in note
+    assert "config init" in note
+    assert config_edit_reject_note_for_prefix([group], "demo", global_layer=True) is None

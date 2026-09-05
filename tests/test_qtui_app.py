@@ -1303,7 +1303,14 @@ def test_on_config_edit_launches_the_tui_in_a_terminal(mocker, tmp_path):
     mocker.patch("jailbee.qtui.app.resolve_launch", side_effect=lambda action, _t: action.argv)
     controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
     controller.on_groups(
-        [RepoGroup(prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[])]
+        [
+            RepoGroup(
+                prefix="demo",
+                repo_root=str(tmp_path),
+                config_path=tmp_path / ".jailbee" / "config.yaml",
+                containers=[],
+            )
+        ]
     )
 
     controller.on_config_edit("demo", False)
@@ -1311,6 +1318,28 @@ def test_on_config_edit_launches_the_tui_in_a_terminal(mocker, tmp_path):
     argv = popen.call_args.args[0]
     assert argv[:3] == ["jailbee", "config", "edit"]
     assert "--global" not in argv
+
+    controller.on_config_edit("demo", True)
+    assert "--global" in popen.call_args.args[0]
+
+
+def test_on_config_edit_refuses_the_repo_layer_of_a_synthesized_config(mocker, tmp_path):
+    """A repo with no config file of its own is refused for the repo layer and
+    allowed for the global one — so the Qt call site has to pass `global_layer`
+    through to the shared note, not just consult it.
+    """
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    mocker.patch("jailbee.qtui.app.resolve_launch", side_effect=lambda action, _t: action.argv)
+    warning = mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(
+        [RepoGroup(prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[])]
+    )
+
+    controller.on_config_edit("demo", False)
+
+    popen.assert_not_called()
+    warning.assert_called_once()
 
     controller.on_config_edit("demo", True)
     assert "--global" in popen.call_args.args[0]

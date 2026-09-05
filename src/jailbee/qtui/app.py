@@ -486,7 +486,7 @@ class AppController(QObject):
         terminal to a jailbee command already exists, so the whole Qt entry
         point is this method.
         """
-        note = config_edit_reject_note_for_prefix(self._latest, prefix)
+        note = config_edit_reject_note_for_prefix(self._latest, prefix, global_layer=global_layer)
         if note is not None:
             QMessageBox.warning(self._window, "No repo selected", note)
             return

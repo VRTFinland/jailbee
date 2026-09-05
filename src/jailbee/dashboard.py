@@ -1305,20 +1305,36 @@ def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -
     return f"'{group.prefix}' has no repo directory — nothing to create against"
 
 
-def config_edit_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -> str | None:
+def config_edit_reject_note_for_prefix(
+    groups: list[RepoGroup], prefix: str, *, global_layer: bool = False
+) -> str | None:
     """Why the config editor cannot be opened for ``prefix``, or None when it can.
 
     The config-editing twin of :func:`new_container_reject_note_for_prefix`:
     the same "is this a real repo" test (:meth:`RepoTarget.of`), but its own
     sentence, so a refusal names configuring rather than creating. Shared by
     both front-ends, so the wording is authored once.
+
+    A repo with no ``.jailbee/config.yaml`` (``config_path is None`` on a group
+    that does have a root) is refused for the *repo* layer only. Its effective
+    config comes from a third source the editor knows nothing about —
+    ``global.yaml``'s ``scratch.config`` — so every row would be wrong and the
+    first save would create a file that stops that source being used at all.
+    ``jailbee config edit`` refuses it too; refusing here as well is what turns
+    "exited 1" into a sentence. The *global* layer is unaffected: it edits
+    ``global.yaml``, which is exactly where such a directory's settings live.
     """
     group = next((g for g in groups if g.prefix == prefix), None) if prefix else None
     if group is None:
         return "Select a repo or a container first"
-    if RepoTarget.of(group) is not None:
-        return None
-    return f"'{group.prefix}' has no repo directory — no config to edit"
+    if RepoTarget.of(group) is None:
+        return f"'{group.prefix}' has no repo directory — no config to edit"
+    if not global_layer and group.config_path is None:
+        return (
+            f"'{group.prefix}' has no config file — its settings come from "
+            f"global.yaml's scratch.config. Run 'jailbee config init' there first"
+        )
+    return None
 
 
 def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
@@ -1858,7 +1874,9 @@ def run(
                 repo's merged config.
                 """
                 prefix = fold_target(groups, selected) or ""
-                note = config_edit_reject_note_for_prefix(groups, prefix)
+                note = config_edit_reject_note_for_prefix(
+                    groups, prefix, global_layer=global_layer
+                )
                 if note is not None:
                     set_notice(note)
                     return

@@ -443,6 +443,54 @@ def config_validate(config: ConfigOption = None) -> None:
     raise typer.Exit(2)
 
 
+def _is_full_screen_tty() -> bool:
+    """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
+
+    `_is_tty` asks about stdin alone, which is right for the questions the CLI
+    asks and is what its five other call sites want. An editor also *paints*:
+    `jailbee config edit > out.txt` has a perfectly good stdin and would fill
+    the file with escape codes, so this second gate exists rather than a change
+    to that one.
+    """
+    return _is_tty() and sys.stdout.isatty()
+
+
+def _refuse_synthesized_repo(cwd: Path) -> None:
+    """Refuse to edit a directory whose config is synthesized from `global.yaml`.
+
+    A directory with no `.jailbee/config.yaml` still has an effective config:
+    `scratch_repo_layer` merges jailbee's own defaults with `global.yaml`'s
+    `scratch.config`. The editor knows two layers, not that third one, so every
+    row here would show a value the directory does not actually use — and the
+    first save would create a real config file, at which point `find_repo_config`
+    succeeds, synthesis stops, and the directory silently loses everything
+    `scratch.config` gave it, the shared scratch base image included.
+
+    Refused rather than approximated: the alternative is an editor that is
+    wrong on every row and destructive on the first save.
+
+    Nothing is refused when synthesis would *not* apply (`scratch.enabled` is
+    false, or the directory is `$HOME` or an ancestor of it) — there is no third
+    layer to lose then, and an empty repo layer is the honest view.
+    """
+    from jailbee.config import synthesized_repo_layer
+
+    try:
+        synthesized_repo_layer(cwd)
+    except ConfigError:
+        return
+    gpath = default_global_config_path()
+    error_plain(
+        f"{cwd} has no repo config file — its settings are synthesized from "
+        f"`scratch.config` in {gpath}, a layer this editor cannot show. Saving here "
+        f"would create a config file and stop that layer being used at all, including "
+        f"the shared scratch base image.\n"
+        f"Run `jailbee config init` here first, then `jailbee config edit`. To change "
+        f"what every unconfigured directory gets, edit `scratch.config` in {gpath}."
+    )
+    raise typer.Exit(1)
+
+
 @config_app.command("edit")
 def config_edit_cmd(
     config: ConfigOption = None,
@@ -481,7 +529,7 @@ def config_edit_cmd(
         error(f"--write must be one of: patch, regenerate. Got: {write!r}")
         raise typer.Exit(2)
 
-    if not _is_tty():
+    if not _is_full_screen_tty():
         error("`jailbee config edit` needs a terminal. Use `jailbee config show` to read config.")
         raise typer.Exit(1)
 
@@ -491,6 +539,8 @@ def config_edit_cmd(
         # editor opens on an empty layer and a save creates it — the same
         # answer `jailbee config init` would give for this directory.
         cwd = Path.cwd()
+        if not global_:
+            _refuse_synthesized_repo(cwd)
         repo_path = cwd / repo_config_dir_name(cwd) / "config.yaml"
     global_path = default_global_config_path()
 
