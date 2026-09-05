@@ -32,9 +32,8 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 
-from jailbee.config_edit import render
+from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
-from jailbee.config_edit import values
 from jailbee.config_edit.layers import raw_for
 from jailbee.config_edit.schema import FieldKind
 
