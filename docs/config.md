@@ -1910,9 +1910,8 @@ defaults shared with every other directory on the machine.
 ### `config_edit`
 
 Settings for `jailbee config edit` itself. Host-level only, like
-`docker_registry_mirror` and `claude_credentials`: how your own files get
-written is a personal editing habit, so a repo's `.jailbee/config.yaml`
-cannot set it.
+`claude_credentials` and `scratch`: how your own files get written is a
+personal editing habit, so a repo's `.jailbee/config.yaml` cannot set it.
 
 ```yaml
 config_edit:

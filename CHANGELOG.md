@@ -30,9 +30,9 @@
   Open it with `jailbee config edit` (`--global` for the user-level file),
   with `e` / `E` in `jailbee dashboard`, or from the **Config** menu in the Qt
   GUI. `jailbee config init` now offers to open it. Lists of structured
-  entries (`host_mounts`, `agents`, `autostart` steps, …) and secrets
-  (`github.api_tokens`) are shown read-only for now, each with its own reason.
-  See [`config_edit`](docs/config.md#config_edit).
+  entries (`host_mounts`, `agents`, `autostart.on_create`/`autostart.on_start`,
+  …) and secrets (`github.api_tokens`) are shown read-only for now, each with
+  its own reason. See [`config_edit`](docs/config.md#config_edit).
 - **`jailbee doctor` now checks the `/etc/subuid` delegation `raw.idmap`
   needs.** Every container maps the host user's own uid/gid into its
   namespace, and `newuidmap` installs no segment `/etc/subuid` has not

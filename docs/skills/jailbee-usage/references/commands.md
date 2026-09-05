@@ -77,10 +77,12 @@ inherits (by deleting the key, so it keeps following jailbee's default rather
 than freezing at today's) · `/` searches names and descriptions across every
 section and ignores the basic/advanced filter · `a` shows every field, not
 just the curated set · `d` previews the diff · `s` or `Ctrl-S` saves · `Esc`
-goes back · `q` quits (twice, if there are unsaved edits). Inside the modal
-that opens on `Enter`, a single-line field commits with `Enter`; a multi-line
-one (a list or map) commits with `Ctrl-S`, since `Enter` there inserts a new
-row instead.
+goes back · `q` quits (twice, if there are unsaved edits). **`Ctrl-C` abandons
+the editor immediately and unconditionally — unlike `q`, it has no
+unsaved-changes guard, so any staged edits are silently discarded.** Inside
+the modal that opens on `Enter`, a single-line field commits with `Enter`; a
+multi-line one (a list or map) commits with `Ctrl-S`, since `Enter` there
+inserts a new row instead.
 
 A save is validated through the real config loader before anything is
 written, so the editor cannot produce a file the CLI would reject, and the
@@ -88,8 +90,13 @@ previous contents are kept in a `.bak` sibling.
 
 Not editable here yet: lists of structured entries (`host_mounts`,
 `host_ports`, `host_devices`, `shared_caches`, `agents`, `optional_mounts`,
-`autostart.*.steps`) have no drill-down screen; secrets (`github.api_tokens`)
-are never editable, so a token is never painted on a terminal; and
+`autostart.on_create`, `autostart.on_start`) have no drill-down screen.
+Secrets are never editable, but the reason shown differs by layer: at the
+repo layer (plain `jailbee config edit`), `github.api_tokens` is blocked
+because the whole `github` block is host-local and rejected in a repo config
+— the same reason blocks every other `github` field there too; at the global
+layer (`--global`), where `github` itself is allowed, `github.api_tokens` is
+blocked because the editor will not paint a token on a terminal. And
 `scratch.config`'s free-form YAML has no schema to build a form from. Each
 row shows its own reason; edit any of these by hand.
 
