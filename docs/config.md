@@ -1783,8 +1783,31 @@ which beats the host's `group` default.** A container with no override reads
 the repo's setting (`repos.<container_prefix>` if present, else `group`); a
 container with an override ignores both.
 
-`jailbee claude group` with no subcommand prints this repo's permanent group
-plus any of its containers currently deviating from it. `jailbee claude
+**An override that names the repo's own group is dropped rather than kept.**
+Because the label outranks the repo, one that merely repeats it would look
+like "follows the repo" right up to the next `jailbee claude group set`, and
+then silently keep that one container on the old group. So:
+
+* `jailbee claude group use <the repo's own group>` clears the override
+  instead of writing one, and says so;
+* `jailbee claude group set`/`unset` clear every override of this repo's
+  containers that the change has made redundant, after the profile has been
+  re-rendered;
+* `jailbee new --claude-group <the repo's own group>` creates no override at
+  all.
+
+The one exception is `claude.enabled: false`, where the repo's profile carries
+no credential device: the label is then the only thing mounting one, so it is
+not redundant and is left alone. Overrides that already existed are not
+touched until one of those commands runs — `jailbee claude group` names them.
+
+`jailbee claude group` is a command group with no status view of its own: the
+host-wide picture is `jailbee claude ls`, per-container labels are `jailbee
+ls`'s `CLAUDE` column, and `jailbee doctor` reports an override that only
+repeats this repo's group. `jailbee claude group ls` lists the groups
+themselves and what each holds, `jailbee claude group create <name>` creates
+an empty group, and `jailbee claude group rm <name>` removes one nothing uses
+(parking any login it holds rather than deleting it). `jailbee claude
 group set <name>|none` and `jailbee claude group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `global.yaml`'s
 `claude_credentials.repos.<container_prefix>` instead of a container label,
@@ -1798,12 +1821,17 @@ teammate** — there is nothing to `git add`. Restarting Claude in the
 affected container is still required to pick up the new login either way;
 none of these commands touch a running session.
 
-`jailbee claude ls`, `jailbee claude use` and `jailbee claude park` all take
-a `-g/--group <name>` flag that points the command at that group's holder
-instead of the repo's own. This matters when a group is otherwise
-unreachable through this repo — e.g. one only a container override uses,
-with no repo permanently assigned to it via `claude_credentials` — since
-without the flag those commands only ever see the repo's own group.
+`jailbee claude use` and `jailbee claude park` take a `-g/--group <name>`
+flag that points the command at that group's holder instead of the repo's
+own. This matters when a group is otherwise unreachable through this repo —
+e.g. one only a container override uses, with no repo permanently assigned to
+it via `claude_credentials` — since without the flag those commands only ever
+act on the repo's own group.
+
+`jailbee claude ls` takes `-g` too, but there it only **filters**: the
+listing is host-wide, so every group and the account it holds is already
+visible without the flag, including a group reachable only as a container
+override.
 
 **A `-g` command does not touch this repo's own config home.** A repo is a
 member of the holder its `claude_credentials` entry resolves to, and of no

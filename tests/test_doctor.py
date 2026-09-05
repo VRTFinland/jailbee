@@ -2477,3 +2477,53 @@ def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
     assert doctor._check_reserved_group_name(cfg, gcfg) == []
+
+
+def test_doctor_is_silent_without_a_redundant_override(tmp_path, make_cfg, mocker):
+    from jailbee.doctor import _check_redundant_claude_overrides
+
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": f"{tmp_path.name}-a", "status": "Running", "profiles": [], "config": {}}
+    ]
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+
+    assert _check_redundant_claude_overrides(cfg, incus) == []
+
+
+def test_doctor_flags_an_override_that_only_repeats_the_repos_group(tmp_path, make_cfg, mocker):
+    """Nothing clears these but a `claude group use`/`set`/`unset` the user
+    runs, and until then the label outranks the profile — so the next
+    `claude group set` would leave this container behind on the old group."""
+    from jailbee.doctor import _check_redundant_claude_overrides
+
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": f"{tmp_path.name}-a",
+            "status": "Running",
+            "profiles": [],
+            "config": {"user.jailbee.claude_group": "work"},
+        }
+    ]
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+
+    results = _check_redundant_claude_overrides(cfg, incus)
+
+    assert len(results) == 1
+    assert not results[0].ok
+    assert f"{tmp_path.name}-a" in results[0].detail
+    assert "claude group reset" in results[0].detail
+
+
+def test_doctor_stays_quiet_when_the_containers_cannot_be_listed(tmp_path, make_cfg, mocker):
+    """A discoverability nicety must not turn an unreachable daemon into a
+    failed check — the rule `_check_claude_pool` already follows."""
+    from jailbee.doctor import _check_redundant_claude_overrides
+    from jailbee.incus import IncusError
+
+    incus = mocker.MagicMock()
+    incus.list_containers.side_effect = IncusError("connection refused")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+
+    assert _check_redundant_claude_overrides(cfg, incus) == []

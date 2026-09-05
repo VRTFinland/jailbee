@@ -1974,3 +1974,131 @@ def test_sweep_leaves_a_hand_made_degenerate_acl_alone(make_cfg, tmp_path, mocke
 
     assert _sweep_orphan_extra_acls(cfg, incus) == []
     incus.network_acl_delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# First-time bootstrap: a repo that never ran `jailbee init`
+# ---------------------------------------------------------------------------
+
+
+def test_run_apply_creates_the_repo_acl_before_refreshing_the_pool(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, _no_egress_refresh: Any
+) -> None:
+    """`jailbee new` bootstraps a scratch directory through `run_apply` — the
+    repo has never run `jailbee init`, so `<prefix>-allowlist` does not exist.
+
+    `refresh_pool` writes that ACL with `incus network acl edit`, which fails
+    with "Network ACL not found" against an ACL nobody created. So `run_apply`
+    must create it, and must do so *before* the refresh — not merely somewhere
+    in the same run.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.egress_pool import RefreshResult
+    from jailbee.global_config import GlobalConfig
+    from jailbee.network import acl_name
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = False
+    incus.network_get.return_value = ""
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+
+    created_before_refresh: list[bool] = []
+
+    def _refresh(*_a: Any, **_k: Any) -> RefreshResult:
+        created_before_refresh.append(incus.network_acl_create.called)
+        return RefreshResult(container_prefix=cfg.container_prefix, status="ok")
+
+    _no_egress_refresh.side_effect = _refresh
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    incus.network_acl_create.assert_called_once_with(acl_name(cfg))
+    assert created_before_refresh == [True]
+
+
+def test_run_apply_leaves_an_existing_acl_alone(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The mirror image: an initialised repo's ACL is edited by `refresh_pool`,
+    never re-created — `incus network acl create` on an existing name fails."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    incus.network_acl_create.assert_not_called()
+
+
+def test_run_apply_creates_missing_profiles(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Same bootstrap, one step further: none of the four profiles exist yet.
+
+    `incus profile edit` does not create, and `_profile_differs` cannot even
+    read a profile that isn't there — `incus profile show` exits non-zero, as
+    the `profile_show` side effect here models. Every one of the four must be
+    created and then filled, and reported as changed.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.incus import IncusError
+    from jailbee.profiles import profile_names
+
+    cfg = make_cfg(tmp_path)
+    names = profile_names(cfg)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.profile_exists.return_value = False
+    incus.profile_show.side_effect = IncusError("Error: Profile not found")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    created = [c[0][0] for c in incus.profile_create.call_args_list]
+    assert sorted(created) == sorted([names.base, names.binds, names.net_strict, names.net_loose])
+    written = [c[0][0] for c in incus.profile_set_yaml.call_args_list]
+    assert sorted(written) == sorted(created)
+    assert sorted(result.profiles_changed) == sorted(created)
+
+
+def test_run_apply_creates_only_the_missing_profile(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A partially-created profile set (an aborted first bootstrap) must be
+    completed, not restarted: the profiles that exist keep going through the
+    diff check, and only the absent one is created."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.profiles import profile_names
+
+    cfg = make_cfg(tmp_path)
+    names = profile_names(cfg)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.profile_exists.side_effect = lambda name: name != names.net_loose
+    differs = mocker.patch("jailbee.apply._profile_differs", return_value=False)
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    incus.profile_create.assert_called_once_with(names.net_loose)
+    assert result.profiles_changed == [names.net_loose]
+    assert names.base in result.profiles_unchanged
+    assert names.net_loose not in [c[0][1] for c in differs.call_args_list]

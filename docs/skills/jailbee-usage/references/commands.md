@@ -135,7 +135,7 @@ use `jailbee git retarget`.
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
-| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation. See `jailbee claude group` below. |
+| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `claude group set`. See `jailbee claude group` below. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
 | `--no-autostart` | Skip the repo's autostart steps — fastest, least-risk way to get a container. Also skips reading the target branch's autostart config (see below): nothing runs, so there is nothing to diff or confirm. Enabled agents are still installed (that is infrastructure, not a user step), so `jailbee tmux` on such a container finds a session holding an `install-<agent>` window — but not the agent's own launch window. |
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
@@ -843,32 +843,54 @@ above), with no separate apply step needed.
 
 ## Claude accounts
 
-### `jailbee claude ls [-o json] [--fields account,org,state] [-g/--group <name>]`
+### `jailbee claude ls [-o json] [--fields group,account,org,state,used_by,repos,containers] [-g/--group <name>]`
 
-Every stored login on the host, the one live for this repo's holder first. The
-store is host-wide, not per group: a login parked from one credential group can
-be activated into another.
+**Every Claude login on this host, and which holder each one is live in.** One
+row per login file:
 
-`-g/--group <name>` points the command at that group's holder instead of
-the repo's own — the only way to reach a group that no repo permanently
-uses (e.g. one only a container override, see `jailbee claude group use`
-below, ever puts to use).
+- a **credential group** with the account it currently holds — every group on
+  the machine, not just this repo's;
+- a **repo keeping its own login** (`GROUP` reads `(no group)`), one row per
+  such repo, because those holders are separate;
+- every **parked** login in the host-wide store (`GROUP` reads `-`), each
+  activatable into any holder.
 
-The table's `ACCOUNT` column shows the **email** and `ORG` the truncated
-organization, because the org is parsed back out of the slot name and printing
-both repeated it in every row; `ORG` is hidden entirely when no stored account
-has an organization. A `~<disambiguator>` stays in `ACCOUNT` — it is what tells
-two grants of one account apart. **`-o json`'s `account` field carries the full
-slot name** (`<email>[#<org8>][~<disambiguator>]`), which is the reference to
-feed back to `claude use`/`claude rm`; the table splits it across two columns,
-so don't reconstruct a reference from the table when a script can ask for JSON.
-**The table mixes two scopes, and reading it wrong is the documented trap.**
-Only the `live` row belongs to this repo's holder; every `parked` row comes from
-the host-wide store, so *the same parked rows appear under every group*. A
-parked login showing up in a group you never touched is therefore expected, not
-a login that leaked between groups. The title says "on this host" for that
-reason, and the group, the holder directory and the member repos are stated
-under the table, where they describe the live row.
+`STATE` is `live`, `parked`, or `empty` — a credential group whose directory
+exists but holds no login, which is what a freshly created group looks like
+until a `/login` or a `claude use` fills it. An `empty` row has no account, so
+`ACCOUNT` reads `(no login)` and `-o json`'s `account` is `null`.
+
+`USED BY` says who reads a holder: the repos resolving to it, then its
+containers. **Container names are printed only when no repo resolves to the
+holder** — the temporary-override case (`jailbee claude group use`), where a
+container is the only thing keeping that group in use and naming it is what
+makes the group discoverable at all. Where repos are named, a count is enough:
+a switch moves the repos. An unreachable Incus daemon degrades the column to
+`containers ?` with a warning rather than failing the listing — an empty
+container column there does not mean a holder is unused.
+
+The row for the holder **this repo** reads is bold, and the line under the
+table names it explicitly — the repo's prefix, its credential group (or "no
+credential group") and the holder directory.
+
+`-g/--group <name>` narrows the table to one credential group, keeping the
+parked rows (they are what a `claude use -g` would activate into it). `-g none`
+narrows to the holders that share no group — the same word `group set`,
+`group use` and `new --claude-group` use for that. `-g` here does **not** point
+the command at another holder the way it does on `use`, `park` and `rm` —
+reading is host-wide now, so there is nothing to point at. Naming a group
+nothing on the host uses says so instead of failing.
+
+The `ACCOUNT` column shows the **email** and `ORG` the truncated organization,
+because the org is parsed back out of the slot name and printing both repeated
+it in every row; `ORG` is hidden entirely when no account has an organization.
+A `~<disambiguator>` stays in `ACCOUNT` — it is what tells two grants of one
+account apart. **`-o json`'s `account` field carries the full slot name**
+(`<email>[#<org8>][~<disambiguator>]`), the reference to feed back to
+`claude use`/`claude rm`, and its `group`, `repos` and `containers` fields carry
+the holder as data rather than as the rendered `USED BY` sentence. Two holders
+can be logged into the same account, so in JSON it is `group` plus `account`
+that identifies a row, not `account` alone.
 
 ### `jailbee claude use [<email|slot>] [-g/--group <name>]`
 
@@ -879,8 +901,11 @@ accounts share it, in which case the error names the full slot names
 adopts the new credential on its next turn; only the account name in `/status`
 can lag until it restarts.
 
-`-g/--group <name>` acts on that group's holder instead of the repo's own,
-the same escape hatch `claude ls` offers above.
+`-g/--group <name>` acts on that group's holder instead of the repo's own —
+the only way to fill a group that no repo permanently uses (one only a
+container override, see `jailbee claude group use` below, ever puts to use).
+Note this is a *different* `-g` from `claude ls`'s, which only filters a
+host-wide table.
 
 **Omit the account entirely to pick from an arrow-key menu** of the stored
 logins — the same affordance `jailbee shell`/`jailbee tmux` offer for
@@ -896,7 +921,7 @@ container of this holder prompts `/login`. This is how a second account enters
 the pool — there is no `add`, because only a browser login creates a credential.
 
 `-g/--group <name>` parks that group's live login instead of the repo's own,
-the same escape hatch `claude ls`/`claude use` offer above.
+the same escape hatch `claude use` offers above.
 
 **How the parked file gets its name, with and without `-g`.** JailBee names it
 after the account, read from `oauthAccount` in a member repo's `~/.claude` —
@@ -921,10 +946,56 @@ so this cannot be undone except by logging in again.
 
 ### `jailbee claude group`
 
-Show this repo's permanent credential group (or "no credential group" if it
-keeps its own login), and list any of its containers currently overriding
-that group for their own lifetime. Host-wide, every credential group that
-exists on the machine is listed too, for context — not just this repo's.
+A command group, not a command: bare `jailbee claude group` prints its help.
+The three views it used to print live where each belongs — which holder this
+repo reads is `jailbee claude ls`, per-container labels are `jailbee ls`'s
+`CLAUDE` column, and an override that only *repeats* this repo's group is
+reported by `jailbee doctor` (nothing clears those but the commands below,
+and until then they would outrank the next `claude group set`).
+
+### `jailbee claude group ls [-o json] [--fields …]`
+
+The credential groups on this host and what each one holds: the same rows and
+the same columns as `jailbee claude ls`, narrowed to rows that *are* a group.
+A parked login belongs to no group and an ungrouped holder is one repo's own,
+so neither appears here — that wider question is `claude ls`, which this
+command names under its table.
+
+Use it before `create`, `rm` or `set`: those act on groups, and this is the
+list of what there is to act on. An `empty` / `unused` row is a group nothing
+holds and nothing reads, which is exactly what `rm` will let you remove.
+
+### `jailbee claude group create <name>`
+
+Create an empty credential group. Nothing has to exist first — `set`, `use`
+and `claude use -g` all create the directory on demand — so this is for the
+case where the group should exist before any of them runs. Idempotent: an
+existing group is reported, not an error. The group shows up in `jailbee
+claude ls` as `empty` / `unused` until something is assigned to it.
+
+### `jailbee claude group rm <name> [--yes]`
+
+Remove a credential group nothing uses. There is no `--force`: it refuses
+while
+
+- **a repo resolves to it** — naming those repos. The next `jailbee apply`
+  would recreate the directory, and until it ran their containers would
+  mount an empty one;
+- **it is the host's default** (`claude_credentials.group`) — checked
+  separately, because a host with no registered repo still resolves every
+  repo to it;
+- **a container has been moved into it** — naming those containers. Read from
+  the label, so a container of a repo the registry never saw counts too. When
+  the containers cannot be listed at all, the command refuses rather than
+  guessing: a stopped container keeps its label and would come back reading a
+  directory that is gone.
+
+A login the group still holds is **parked**, never deleted: `--yes` (or a
+confirmation on a TTY) moves it into the host-wide store, where `jailbee
+claude ls` lists it as `parked` and `claude use` can activate it into any
+other group. `jailbee claude rm` remains the only command that destroys a
+credential. The directory itself is removed with `rmdir`, never recursively —
+anything else left in it is named instead of deleted.
 
 ### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
 
@@ -932,7 +1003,12 @@ Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
 (`none` keeps this repo on its own login instead of sharing); `unset`
 removes the entry so the host's default group applies again. Every
 container of the repo follows the change except one with its own `use`
-override. Refuses while Claude is running in any of the repo's containers
+override — and an override the change has made **redundant** (it names the
+group the repo now uses) is dropped, so that container really does follow the
+repo again instead of being pinned to a value that would outrank the next
+change. The overrides are cleared after the binds profile is re-rendered:
+the container's own device is what mounts its credential until the profile
+carries the same one. Refuses while Claude is running in any of the repo's containers
 unless `--force` is passed, because a live session can overwrite the
 target group's login on its next token refresh. Restart Claude in the
 containers afterwards to pick up the new login.
@@ -947,6 +1023,13 @@ inherits the repo's group again; destroying the container also drops it.
 Omit `<container>` to pick from this repo's containers. Same `--force`
 gate and same "restart Claude to pick up the new login" caveat as
 `set`/`unset`.
+
+**Naming the repo's own group is a `reset`.** `use` then clears the override
+rather than writing one that repeats the repo — such a label outranks the
+profile and would keep the container behind at the next `claude group set`.
+Both commands also leave the repo's recorded account alone when the
+container's *effective* group did not change: invalidating it there would
+throw away a name nothing can supply again until a container runs Claude.
 
 ## GUI
 

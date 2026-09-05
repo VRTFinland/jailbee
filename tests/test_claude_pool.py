@@ -1810,3 +1810,98 @@ def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
     account = claude_pool.note_account(cfg)
     assert account is not None
     assert account.record == SECOND_ACCOUNT_BLOCK
+
+
+# --- Reading a holder that no `Config` points at ------------------------------
+
+
+def test_note_account_at_names_the_login_in_a_bare_directory(tmp_path: Path) -> None:
+    """The host-wide listing has no `Config` per holder: it walks the credential
+    store and reads every directory it finds, including groups this repo does
+    not resolve to."""
+    holder = tmp_path / "creds" / "personal"
+    holder.mkdir(parents=True)
+    (holder / ".credentials.json").write_text(_grant("rt-personal"), encoding="utf-8")
+    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-personal"))
+
+    account = claude_pool.note_account_at(holder)
+
+    assert account is not None
+    assert account.identity == Identity("first@corp.com", "ccccdddd-1111")
+
+
+def test_note_account_at_ignores_a_note_whose_grant_has_moved_on(tmp_path: Path) -> None:
+    holder = tmp_path / "creds" / "personal"
+    holder.mkdir(parents=True)
+    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-old"))
+    (holder / ".credentials.json").write_text(_grant("rt-fresh-login"), encoding="utf-8")
+
+    assert claude_pool.note_account_at(holder) is None
+
+
+def test_live_slot_at_reads_a_holder_by_path(tmp_path: Path) -> None:
+    holder = tmp_path / "creds" / "work"
+    holder.mkdir(parents=True)
+    (holder / ".credentials.json").write_text(_grant("rt-work"), encoding="utf-8")
+
+    slot = claude_pool.live_slot_at(holder, Identity("first@corp.com", "ccccdddd-1111"))
+
+    assert slot == Slot(
+        name="first@corp.com#ccccdddd", path=holder / ".credentials.json", live=True
+    )
+
+
+def test_live_slot_at_is_none_for_a_group_directory_with_no_login(tmp_path: Path) -> None:
+    """An empty group is a row `jailbee claude ls` still has to show, so this
+    must answer "no login" rather than raise."""
+    holder = tmp_path / "creds" / "empty"
+    holder.mkdir(parents=True)
+
+    assert claude_pool.live_slot_at(holder, None) is None
+
+
+def test_account_of_prefers_the_holder_note_over_a_member_config_home(tmp_path: Path) -> None:
+    holder = tmp_path / "creds" / "work"
+    holder.mkdir(parents=True)
+    (holder / ".credentials.json").write_text(_grant("rt-work"), encoding="utf-8")
+    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-work"))
+    member_home = tmp_path / "member" / "claude"
+    _write_identity(member_home, SECOND_ACCOUNT_BLOCK)
+
+    account = claude_pool.account_of(
+        holder,
+        [claude_pool.Member("member", member_home)],
+        prefer="member",
+        authoritative={"member"},
+    )
+
+    assert account is not None
+    assert account.identity.email == "first@corp.com"
+
+
+def test_account_of_falls_back_to_an_authoritative_member(tmp_path: Path) -> None:
+    """Holders predating the note have no file of their own, and a member repo's
+    `oauthAccount` is then the only thing on the host that names the login."""
+    holder = tmp_path / "creds" / "work"
+    holder.mkdir(parents=True)
+    (holder / ".credentials.json").write_text(_grant("rt-work"), encoding="utf-8")
+    member_home = tmp_path / "member" / "claude"
+    _write_identity(member_home, SECOND_ACCOUNT_BLOCK)
+
+    account = claude_pool.account_of(
+        holder,
+        [claude_pool.Member("member", member_home)],
+        prefer="member",
+        authoritative={"member"},
+    )
+
+    assert account is not None
+    assert account.identity.email == "second@corp.com"
+
+
+def test_registered_repos_is_public(tmp_path: Path) -> None:
+    """`claude_overview` walks every registered repo, not just one holder's
+    members, so the registry read is part of the module's surface."""
+    _register("other", tmp_path / "other")
+
+    assert ("other", tmp_path / "other") in claude_pool.registered_repos()

@@ -225,9 +225,23 @@ def group_name(cfg: Config) -> str | None:
     return None if cfg.claude_credentials_dir is None else cfg.claude_credentials_dir.name
 
 
+CREDENTIAL_FILE = ".credentials.json"
+"""The filename Claude Code reads a login from, inside whichever holder it uses."""
+
+
+def credential_in(holder: Path) -> Path:
+    """The live credential file inside `holder`.
+
+    The path-shaped half of `live_credential_path`, for callers holding a
+    holder directory rather than a `Config` that names it: `claude_overview`
+    walks the credential store and reads groups no repo resolves to.
+    """
+    return holder / CREDENTIAL_FILE
+
+
 def live_credential_path(cfg: Config) -> Path:
     """The live credential file for this repo's holder."""
-    return holder_dir(cfg) / ".credentials.json"
+    return credential_in(holder_dir(cfg))
 
 
 def identity_file(home: Path) -> Path:
@@ -511,13 +525,18 @@ def parked_slots() -> list[Slot]:
     return [Slot(name=_slot_name(p), path=p, live=False) for p in files]
 
 
-def live_slot(cfg: Config, identity: Identity | None) -> Slot | None:
-    """The holder's live login, or None when nothing is logged in."""
-    path = live_credential_path(cfg)
+def live_slot_at(holder: Path, identity: Identity | None) -> Slot | None:
+    """`holder`'s live login, or None when nothing is logged in there."""
+    path = credential_in(holder)
     if not path.exists():
         return None
     name = slug_for(identity) if identity is not None else LIVE_UNIDENTIFIED
     return Slot(name=name, path=path, live=True)
+
+
+def live_slot(cfg: Config, identity: Identity | None) -> Slot | None:
+    """The holder's live login, or None when nothing is logged in."""
+    return live_slot_at(holder_dir(cfg), identity)
 
 
 def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
@@ -622,7 +641,7 @@ class Member:
     config_home: Path
 
 
-def _registered_repos() -> list[tuple[str, Path]]:
+def registered_repos() -> list[tuple[str, Path]]:
     """Every registered repo as (container_prefix, repo_root).
 
     Raises rather than degrading to empty: for a mutation, an unreadable
@@ -650,7 +669,7 @@ def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
     The single implementation of the group-matching rule; `doctor.py` filters
     the caller out of it for display.
     """
-    return sorted(prefix for prefix, _ in _registered_repos() if _resolves_to(gcfg, prefix, group))
+    return sorted(prefix for prefix, _ in registered_repos() if _resolves_to(gcfg, prefix, group))
 
 
 def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
@@ -683,7 +702,7 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
     assert group is not None  # the None case returned above
     found = [me] if _resolves_to(gcfg, cfg.container_prefix, group) else []
     unreachable: list[str] = []
-    for prefix, repo_root in _registered_repos():
+    for prefix, repo_root in registered_repos():
         if prefix == cfg.container_prefix or not _resolves_to(gcfg, prefix, group):
             continue
         if not repo_root.is_dir():
@@ -1036,8 +1055,8 @@ def write_account_note(holder: Path, record: dict[str, Any] | None, credential_r
         log.debug("could not note the account of the login in %s", holder, exc_info=True)
 
 
-def note_account(cfg: Config) -> LiveAccount | None:
-    """The account this holder's note names, while it still describes the grant.
+def note_account_at(holder: Path) -> LiveAccount | None:
+    """The account `holder`'s note names, while it still describes the grant.
 
     None for every other case: no note, an unreadable or malformed one, one
     whose fingerprint no longer matches the credential beside it, and one whose
@@ -1045,7 +1064,7 @@ def note_account(cfg: Config) -> LiveAccount | None:
     note a `park` failed to delete cannot name a holder's next login.
     """
     try:
-        data = json.loads(account_note_path(holder_dir(cfg)).read_text(encoding="utf-8"))
+        data = json.loads(account_note_path(holder).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
@@ -1054,23 +1073,28 @@ def note_account(cfg: Config) -> LiveAccount | None:
     grant = data.get("grant")
     if not isinstance(record, dict) or not isinstance(grant, str):
         return None
-    if grant != _grant_fingerprint(_login_of(live_credential_path(cfg))):
+    if grant != _grant_fingerprint(_login_of(credential_in(holder))):
         return None
     identity = identity_of(record)
     return None if identity is None else LiveAccount(identity=identity, record=record)
 
 
-def live_account(
-    cfg: Config,
+def note_account(cfg: Config) -> LiveAccount | None:
+    """The account this repo's holder notes, while it still describes the grant."""
+    return note_account_at(holder_dir(cfg))
+
+
+def account_of(
+    holder: Path,
     found: Sequence[Member],
     *,
     prefer: str,
     authoritative: Collection[str],
 ) -> LiveAccount | None:
-    """The account the holder's live credential belongs to, with its record.
+    """The account `holder`'s live credential belongs to, with its record.
 
     Two sources, and the holder's own note comes first: it is the only one tied
-    to the grant being named — `note_account` checks its fingerprint against
+    to the grant being named — `note_account_at` checks its fingerprint against
     the very credential a `park` is about to move — while a config home is tied
     to a repo and merely *usually* describes this holder (see
     `_member_account`). Where both speak they agree; where they disagree the
@@ -1080,7 +1104,20 @@ def live_account(
     holds. That is a fact to report, not an error: `park` then names the file
     `unknown_slot_name`, and `ls` shows `LIVE_UNIDENTIFIED`.
     """
-    return note_account(cfg) or _member_account(found, prefer=prefer, authoritative=authoritative)
+    return note_account_at(holder) or _member_account(
+        found, prefer=prefer, authoritative=authoritative
+    )
+
+
+def live_account(
+    cfg: Config,
+    found: Sequence[Member],
+    *,
+    prefer: str,
+    authoritative: Collection[str],
+) -> LiveAccount | None:
+    """The account this repo's holder holds, with its record."""
+    return account_of(holder_dir(cfg), found, prefer=prefer, authoritative=authoritative)
 
 
 def live_identity(

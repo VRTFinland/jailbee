@@ -2,12 +2,163 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The first `jailbee new` in a scratch directory no longer dies with
+  "Network ACL not found".** A scratch directory has never run
+  `jailbee init`, so `jailbee new` bootstraps its profiles through
+  `run_apply` — but `run_apply` was an update-only path that assumed
+  `<prefix>-allowlist` and the four profiles already existed. The first
+  thing it does is refresh the egress pool, which writes the ACL with
+  `incus network acl edit`, and against an ACL nobody created that fails
+  outright:
+
+      refresh_pool: ACL write failed for <repo>: `incus network acl edit
+      <repo>-allowlist` failed: Error: Network ACL not found
+
+  The profile loop right behind it had the same defect one step later
+  (`incus profile edit` does not create, and the diff check cannot read a
+  profile that does not exist). `jailbee apply` now creates the repo's ACL
+  before the refresh and creates any profile that is missing, so it
+  completes a first-time or half-finished repo instead of failing on it.
+  The egress refresh recreates a repo ACL that has gone missing as well,
+  which repairs the timer path — it runs with no `apply` in front of it.
+
+- **A malformed `loose_auto_revert.after` no longer crashes `jailbee net
+  loose` with a traceback.** The field is typed `str | int` and parsed
+  only by `LooseAutoRevert.duration()`, so a value like `30min` or `30h`
+  loads as a valid config and breaks at the first thing that reads it.
+  On a TTY that was the interactive prompt, which offered the
+  unparseable value as its pre-selected default and raised
+  `ValueError` out of `_prompt_loose_ttl` the moment it was accepted;
+  without a TTY it was `_switch`, *after* `switch_network` had already
+  run — leaving the container in loose with no TTL label and no
+  auto-revert. `jailbee net loose` now parses the effective policy once,
+  before it touches the network, and reports a fixable error (exit 2)
+  naming the file to edit; `--for` and `--no-revert` decide the TTL
+  themselves and keep working regardless. `jailbee config validate` also
+  flags the value now, so it can be found before a switch fails.
+- **`jailbee new` no longer fails on compositors that don't use
+  `wayland-0`.** jailbee decided a host was Wayland from
+  `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
+  regardless of that variable's value, so on Hyprland or Sway
+  (`wayland-1`) Incus rejected the device add with `Missing source path`
+  and the create died with a leftover instance behind it. The mount and
+  the base profile's `environment.WAYLAND_DISPLAY` now both name the
+  host's actual socket, and a socket that isn't on disk — a stale
+  `$WAYLAND_DISPLAY` inherited by a long-lived tmux session, or the
+  absolute path the Wayland spec also allows — is skipped with a warning
+  instead of aborting the create. Existing containers pick the profile
+  half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
+- **A renumbered compositor socket no longer needs a `jailbee apply`.** The
+  profile's `WAYLAND_DISPLAY` is only ever an apply-time snapshot of the
+  session that ran it, while the socket mount is recomputed on every boot —
+  so a reboot that renumbers the socket left the two disagreeing, and a GUI
+  app started by hand from `jailbee shell` looked for the wrong one. Each
+  container start now pins `WAYLAND_DISPLAY` on the instance alongside the
+  mount that decides it, and clears it when no socket was mounted. A
+  `WAYLAND_DISPLAY` set in `container.env` still wins.
+- **The grok agent preset now includes SuperGrok's auth and chat-proxy
+  hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
+  also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
+  inference, and hosted web search. Existing grok containers pick this
+  up on `jailbee apply`.
+- **A repo whose containers used two credential groups could park a login
+  under the wrong account's name.** `jailbee claude park`/`use` named a
+  parked slot from whichever container's config home had run Claude most
+  recently, even when that container belonged to a different credential
+  group than the one being parked from — silently mislabeling the stored
+  login. Parking and switching now only trust a container's config home
+  when it is an *authoritative* member of the group in question.
+
+### Changed
+
+- **`jailbee claude group` is now a command group with no status view of its
+  own.** Bare `jailbee claude group` prints its help. Everything it used to
+  print lives where it belongs: which holder this repo reads is `jailbee
+  claude ls`, per-container labels are `jailbee ls`'s `CLAUDE` column, and an
+  override that only repeats this repo's group is a new `jailbee doctor`
+  check. Four partial views of the same state could only disagree.
+- **A container override that only repeats the repo's credential group is
+  now dropped instead of kept.** The override is an instance-local
+  `claude-creds` device plus a label, and both outrank the profile — so a
+  container overridden to `X` while the repo moved to `X` looked exactly
+  like one following the repo, right up to the *next* `jailbee claude group
+  set`, which silently left it behind on `X`. Three commands now clear such
+  an override: `jailbee claude group use <the repo's own group>` clears it
+  rather than writing one, `jailbee claude group set`/`unset` clear every
+  override their change made redundant (after the binds profile is
+  re-rendered, so the credential is never unmounted in between), and
+  `jailbee new --claude-group <the repo's own group>` creates none at all.
+  With `claude.enabled: false` the label is the only thing mounting the
+  credential, so it is not treated as redundant. Overrides that already
+  exist are untouched until one of those commands runs, and `jailbee claude
+  group` names them so they can be found.
+- **`jailbee claude group use`/`reset` no longer discard the repo's recorded
+  account when nothing moved.** Both invalidated `oauthAccount`
+  unconditionally, which is right when the container changes holder and
+  wrong when it does not: the name is then lost until some container runs
+  Claude again, and nothing else on the host can supply it. They now
+  invalidate only when the container's effective group actually changed.
+- **`jailbee claude ls` now lists every login on the host and which holder
+  each one is live in.** It was a *holder* view: one `live` row — the
+  calling repo's — above the host-wide parked store. Which account a
+  credential group held was answerable only by naming that group with `-g`,
+  a group nothing but one container's temporary override used was not
+  discoverable at all, and a group created and never filled looked
+  identical to one that did not exist. The table now carries a `GROUP`
+  column and a row per login file: every credential group with the account
+  it holds (`empty` when it holds none), every repo keeping its own login,
+  and every parked login. A new `USED BY` column names the repos resolving
+  to each holder and its containers — container *names* where no repo
+  resolves to the holder, which is exactly the `jailbee claude group use`
+  case and the only evidence such a group is in use. The row this repo
+  reads is bold and named under the table. An unreachable Incus daemon
+  degrades the container column to `containers ?` instead of failing the
+  listing, which it used to do.
+  - `-g/--group` on `ls` now **filters** the host-wide table (keeping the
+    parked rows) rather than pointing the command at another holder; on
+    `use`, `park` and `rm` it keeps its old meaning. Nothing needs `-g` to
+    *see* a group any more. `-g none` filters to the holders that share no
+    group, the same word the writing commands use for that.
+  - `-o json` gains `group`, `repos` and `containers`, and now emits one
+    row per holder rather than one live row: a script that assumed a single
+    `state: live` row, or that identified a row by `account` alone, needs
+    updating — two holders can be logged into the same account, so the pair
+    `group` + `account` is what identifies a row. `--fields` accepts
+    `group`, `account`, `org`, `state`, `used_by`, `repos`, `containers`.
+  - `jailbee claude group` no longer prints its own list of the host's group
+    names. It was a second place claiming to describe them and could not say
+    which account any of them held; it now points at `jailbee claude ls`.
+
+- **`~/.config/jailbee/global.yaml` is now generated from the schema
+  instead of templated.** The ~230-line hand-maintained template
+  (`config_init._GLOBAL_TEMPLATE`) was a third independent copy of facts
+  already stated in `docs/config.md` and the `Config`/`GlobalConfig`
+  models, and could drift from either. `jailbee config init --global` now
+  renders the file from two `config_writer.render_documented()` passes —
+  one against `Config` for the per-repo-overlay blocks, one against
+  `GlobalConfig` for the host-level `claude_credentials` block — so every
+  comment is the field's own schema description and cannot go stale. The
+  generated file ships with exactly the same integrations enabled as
+  before: `gpg`, `ssh`, `jetbrains`, `chrome`, and `agents.claude` all
+  default to on, `github` is present but disabled, `claude_credentials`
+  defaults to the shared `"default"` group, and the host uid/gid and the
+  `~/.gitconfig` bind-mount are still substituted/seeded exactly as they
+  were.
+- **The dashboard title row no longer jumps.** The `⟳` marker that toggled
+  on and off with every gather re-centred the whole title, and the refresh
+  timing lived in the subtitle. The title is now left-aligned and ends in a
+  fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
+  width no longer changes between frames; the subtitle carries a transient
+  notice and nothing else.
+
 ### Added
 
 - **`jailbee config edit` — an interactive editor for both config layers.**
   jailbee exposes 85 settings on the global layer and 77 on a repo config,
   and until now there was no way to change one except by hand against a
-  1940-line reference. The editor generates its forms from the pydantic
+  1968-line reference. The editor generates its forms from the pydantic
   models themselves, so every field appears in it with its own help text and
   a new field cannot be forgotten; a closure test in CI
   holds that property up. It shows where each value actually comes from
@@ -38,6 +189,27 @@
   `global.yaml`'s `scratch.config`, and saving a file here would stop that
   layer being used at all — run `jailbee config init` there first. See
   [`config_edit`](docs/config.md#config_edit).
+- **`jailbee claude group ls`** lists the credential groups on this host and
+  what each one holds — the same rows and columns as `jailbee claude ls`,
+  narrowed to rows that *are* a group (a parked login belongs to none, and an
+  ungrouped holder is one repo's own). One builder behind both, so the two
+  tables cannot disagree. It is also the signpost the group's help was
+  missing once its status view went away.
+- **`jailbee claude group create <name>`** creates an empty credential group
+  before anything is assigned to it. `set`, `use` and `claude use -g` all
+  create the directory on demand, so this is for the case where the group
+  should exist first; it is idempotent, and the new group shows up in
+  `jailbee claude ls` as `empty` / `unused`.
+- **`jailbee claude group rm <name> [--yes]`** removes a credential group
+  nothing uses — until now nothing could, and an unused group's only trace
+  was a directory to delete by hand. It refuses (with no `--force`) while a
+  repo resolves to the group, while the group is the host's default, or while
+  a container has been moved into it, naming what to fix in each case; when
+  the containers cannot be listed it refuses rather than guessing, since a
+  stopped container keeps its label. A login the group still holds is
+  **parked** into the host-wide store rather than deleted, so `jailbee claude
+  rm` stays the only command that destroys a credential, and the directory is
+  removed with `rmdir`, never recursively.
 - **`jailbee doctor` now checks the `/etc/subuid` delegation `raw.idmap`
   needs.** Every container maps the host user's own uid/gid into its
   namespace, and `newuidmap` installs no segment `/etc/subuid` has not
@@ -143,79 +315,6 @@
   repo's egress pool keeps refreshing instead of being pruned as soon as its
   (nonexistent) config file goes missing. See
   [`scratch`](docs/config.md#scratch).
-
-### Fixed
-
-- **A malformed `loose_auto_revert.after` no longer crashes `jailbee net
-  loose` with a traceback.** The field is typed `str | int` and parsed
-  only by `LooseAutoRevert.duration()`, so a value like `30min` or `30h`
-  loads as a valid config and breaks at the first thing that reads it.
-  On a TTY that was the interactive prompt, which offered the
-  unparseable value as its pre-selected default and raised
-  `ValueError` out of `_prompt_loose_ttl` the moment it was accepted;
-  without a TTY it was `_switch`, *after* `switch_network` had already
-  run — leaving the container in loose with no TTL label and no
-  auto-revert. `jailbee net loose` now parses the effective policy once,
-  before it touches the network, and reports a fixable error (exit 2)
-  naming the file to edit; `--for` and `--no-revert` decide the TTL
-  themselves and keep working regardless. `jailbee config validate` also
-  flags the value now, so it can be found before a switch fails.
-- **`jailbee new` no longer fails on compositors that don't use
-  `wayland-0`.** jailbee decided a host was Wayland from
-  `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
-  regardless of that variable's value, so on Hyprland or Sway
-  (`wayland-1`) Incus rejected the device add with `Missing source path`
-  and the create died with a leftover instance behind it. The mount and
-  the base profile's `environment.WAYLAND_DISPLAY` now both name the
-  host's actual socket, and a socket that isn't on disk — a stale
-  `$WAYLAND_DISPLAY` inherited by a long-lived tmux session, or the
-  absolute path the Wayland spec also allows — is skipped with a warning
-  instead of aborting the create. Existing containers pick the profile
-  half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
-- **A renumbered compositor socket no longer needs a `jailbee apply`.** The
-  profile's `WAYLAND_DISPLAY` is only ever an apply-time snapshot of the
-  session that ran it, while the socket mount is recomputed on every boot —
-  so a reboot that renumbers the socket left the two disagreeing, and a GUI
-  app started by hand from `jailbee shell` looked for the wrong one. Each
-  container start now pins `WAYLAND_DISPLAY` on the instance alongside the
-  mount that decides it, and clears it when no socket was mounted. A
-  `WAYLAND_DISPLAY` set in `container.env` still wins.
-- **The grok agent preset now includes SuperGrok's auth and chat-proxy
-  hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
-  also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
-  inference, and hosted web search. Existing grok containers pick this
-  up on `jailbee apply`.
-- **A repo whose containers used two credential groups could park a login
-  under the wrong account's name.** `jailbee claude park`/`use` named a
-  parked slot from whichever container's config home had run Claude most
-  recently, even when that container belonged to a different credential
-  group than the one being parked from — silently mislabeling the stored
-  login. Parking and switching now only trust a container's config home
-  when it is an *authoritative* member of the group in question.
-
-### Changed
-
-- **`~/.config/jailbee/global.yaml` is now generated from the schema
-  instead of templated.** The ~230-line hand-maintained template
-  (`config_init._GLOBAL_TEMPLATE`) was a third independent copy of facts
-  already stated in `docs/config.md` and the `Config`/`GlobalConfig`
-  models, and could drift from either. `jailbee config init --global` now
-  renders the file from two `config_writer.render_documented()` passes —
-  one against `Config` for the per-repo-overlay blocks, one against
-  `GlobalConfig` for the host-level `claude_credentials` block — so every
-  comment is the field's own schema description and cannot go stale. The
-  generated file ships with exactly the same integrations enabled as
-  before: `gpg`, `ssh`, `jetbrains`, `chrome`, and `agents.claude` all
-  default to on, `github` is present but disabled, `claude_credentials`
-  defaults to the shared `"default"` group, and the host uid/gid and the
-  `~/.gitconfig` bind-mount are still substituted/seeded exactly as they
-  were.
-- **The dashboard title row no longer jumps.** The `⟳` marker that toggled
-  on and off with every gather re-centred the whole title, and the refresh
-  timing lived in the subtitle. The title is now left-aligned and ends in a
-  fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
-  width no longer changes between frames; the subtitle carries a transient
-  notice and nothing else.
 
 ## 1.2.2 - 2026-08-28
 

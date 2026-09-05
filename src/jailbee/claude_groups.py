@@ -20,10 +20,10 @@ survives a wiped ``state.sqlite``.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from jailbee.config.models_net import _CREDENTIAL_GROUP_RE
 
@@ -257,6 +257,47 @@ def set_container_group(
     incus.config_set(container, GROUP_LABEL, group)
 
 
+def override_is_redundant(cfg: Config, group: str | None) -> bool:
+    """Whether an override naming `group` only repeats the repo's own setting.
+
+    Such an override is not a preference but leftover state, and leaving it
+    in place is not harmless: the label outranks the profile, so the *next*
+    change to the repo's group would silently leave that one container
+    behind on the old one.
+
+    A named group is redundant only when the profile really carries the same
+    device. With ``claude.enabled: false`` it carries none
+    (`_profile_has_creds_device`), so the label is the only thing mounting
+    the credential and dropping it would change what the container reads.
+    ``None`` — the explicit "no group" override — is redundant whenever the
+    repo shares no group either: neither side then mounts anything, and the
+    env key the label writes names the config home Claude Code defaults to.
+    """
+    if group != repo_group(cfg):
+        return False
+    return group is None or _profile_has_creds_device(cfg)
+
+
+def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
+    """This repo's containers whose override only repeats the repo's group.
+
+    The counterpart of `deviating_containers`, read from the same payload: a
+    container is in exactly one of the two lists, or in neither because it
+    carries no usable label at all.
+    """
+    out: list[str] = []
+    for row in incus.list_containers():
+        name = str(row.get("name", ""))
+        if not name.startswith(f"{cfg.container_prefix}-"):
+            continue
+        label = _label_group(row.get("config") or {})
+        if label is INHERIT:
+            continue
+        if override_is_redundant(cfg, label):  # type: ignore[arg-type] # narrowed by sentinel
+            out.append(name)
+    return sorted(out)
+
+
 def clear_container_group(incus: Incus, container: str) -> None:
     """Drop the override so the container inherits the repo's group again."""
     from jailbee.profiles import CLAUDE_CREDS_DEVICE
@@ -283,19 +324,30 @@ def groups_by_prefix(
     incus: Incus,
     prefixes: Collection[str],
 ) -> dict[str, set[str | None]]:
+    """`groups_by_prefix_from` for a caller holding an `Incus` and no rows."""
+    return groups_by_prefix_from(gcfg, incus.list_containers(), prefixes)
+
+
+def groups_by_prefix_from(
+    gcfg: GlobalConfig,
+    rows: Sequence[dict[str, Any]],
+    prefixes: Collection[str],
+) -> dict[str, set[str | None]]:
     """For each prefix, the set of groups its containers use.
 
-    One `incus list` for all of them. A container with no override counts
-    as its repo's resolved group; a prefix with **no containers at all**
-    falls back to `{repo's resolved group}`, because with nothing writing
-    the shared config home the repo's own group is the best evidence there
-    is — and because that keeps behaviour identical for every repo that
-    never uses an override.
+    Takes the `incus list` payload rather than fetching it, so a caller
+    answering the same question for many groups — `claude_overview` — pays
+    for one `incus list` instead of one per group.
+
+    A container with no override counts as its repo's resolved group; a
+    prefix with **no containers at all** falls back to `{repo's resolved
+    group}`, because with nothing writing the shared config home the repo's
+    own group is the best evidence there is — and because that keeps
+    behaviour identical for every repo that never uses an override.
 
     Stopped containers count: a stopped container keeps its label and will
     write the config home again when it next runs.
     """
-    rows = incus.list_containers()
     result: dict[str, set[str | None]] = {}
     for prefix in prefixes:
         resolved = gcfg.claude_credentials.dir_for(prefix)
@@ -317,15 +369,77 @@ def authoritative_prefixes(
     group: str,
     prefixes: Collection[str],
 ) -> set[str]:
+    """`authoritative_prefixes_from` for a caller holding an `Incus`."""
+    return authoritative_prefixes_from(gcfg, incus.list_containers(), group, prefixes)
+
+
+def authoritative_prefixes_from(
+    gcfg: GlobalConfig,
+    rows: Sequence[dict[str, Any]],
+    group: str | None,
+    prefixes: Collection[str],
+) -> set[str]:
     """The prefixes whose `oauthAccount` can be trusted to describe `group`.
+
+    `authoritative_in` applied to a fresh `groups_by_prefix_from`.
+    """
+    return authoritative_in(groups_by_prefix_from(gcfg, rows, prefixes), group)
+
+
+def authoritative_in(
+    by_prefix: dict[str, set[str | None]],
+    group: str | None,
+) -> set[str]:
+    """The prefixes in `by_prefix` whose `oauthAccount` describes `group`.
 
     A repo is authoritative for a group only when *every* group its
     containers use is that one. A repo spanning two groups shares one
     `~/.claude` between them, so its `oauthAccount` names whichever
-    account ran most recently — see `claude_pool.live_account`.
+    account ran most recently — see `claude_pool.account_of`.
+
+    `group=None` asks the same question of a repo's *own* config home,
+    which is a holder like any other: a repo with one container moved into
+    a group can no longer name the login it keeps for itself.
+
+    Takes the mapping rather than building one, so a caller resolving many
+    holders — `claude_overview` — computes it once for the whole host.
     """
-    by_prefix = groups_by_prefix(gcfg, incus, prefixes)
     return {prefix for prefix, groups in by_prefix.items() if groups == {group}}
+
+
+def container_groups(
+    gcfg: GlobalConfig,
+    rows: Sequence[dict[str, Any]],
+    prefixes: Collection[str],
+) -> list[tuple[str, str, str | None]]:
+    """`(container, prefix, group)` for every container of a known prefix.
+
+    `group` is the container's own label where it has a usable one, else its
+    repo's resolved group. A `None` group is **not** one shared holder: such
+    a container reads its own repo's config home, which is why the prefix is
+    part of every triple.
+
+    A container whose prefix is not in `prefixes` is skipped: nothing on this
+    host says which group an unregistered repo resolves to, and an inherited
+    group guessed from the wrong repo would file a container under a login it
+    never reads. Where two prefixes both match — `app` and `app-web` for
+    `app-web-x` — the longest wins, since that is the one whose
+    `jailbee new` really created it.
+    """
+    ordered = sorted(prefixes, key=len, reverse=True)
+    out: list[tuple[str, str, str | None]] = []
+    for row in rows:
+        name = str(row.get("name", ""))
+        prefix = next((p for p in ordered if name.startswith(f"{p}-")), None)
+        if prefix is None:
+            continue
+        resolved = gcfg.claude_credentials.dir_for(prefix)
+        label = _label_group(row.get("config") or {})
+        group = (None if resolved is None else resolved.name) if label is INHERIT else label
+        out.append((name, prefix, group))  # type: ignore[arg-type] # narrowed by sentinel
+    # By container name only: a `None` group would make a whole-tuple sort
+    # raise as soon as two entries shared a name and a prefix.
+    return sorted(out, key=lambda triple: triple[0])
 
 
 def deviating_containers(cfg: Config, incus: Incus) -> list[tuple[str, str | None]]:
