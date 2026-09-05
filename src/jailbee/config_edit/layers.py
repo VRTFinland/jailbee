@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.common import _read_yaml_or_empty
+from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -106,3 +107,59 @@ def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[tuple[str, ...
             continue
         out[spec.path] = Origin("default", spec.default)
     return out
+
+
+_APPENDING_KINDS = frozenset({FieldKind.STR_LIST, FieldKind.MODEL_LIST})
+"""Kinds `deep_merge` appends rather than replaces (`config/common.py`).
+
+Only lists append. A dict deep-merges per key and a scalar is overridden,
+so for those the repo layer's value is the whole story and showing
+inherited context would misrepresent what saving does.
+"""
+
+
+def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
+    """Why `spec` cannot be edited in `layer`, or `None` if it can.
+
+    Returned rather than filtered so the field still renders, greyed, with
+    the reason next to it (spec 3.3). A silently missing setting reads as
+    a bug; a disabled one with a reason reads as a rule.
+
+    `GLOBAL_ONLY_KEYS` is checked against `spec.path[0]`. Of its three
+    members, only `github` appears as a top-level key in `repo_specs()`;
+    the other two (`claude_credentials` and `claude_credentials_dir`) are
+    either not `Config` fields at all or are in `COMPUTED_FIELDS` so
+    `build_specs` skips them. The set is kept complete to mirror the ban
+    list in `config/loader.py` exactly — a future maintainer should not
+    expect a fourth key to silence a repo-layer setting that has no visible
+    `repo_specs()` entry.
+    """
+    if spec.kind is FieldKind.OPAQUE:
+        return (
+            "Free-form overlay with no schema — edit it by hand in ~/.config/jailbee/global.yaml."
+        )
+    if layer == "repo" and spec.path[0] in GLOBAL_ONLY_KEYS:
+        return (
+            f"`{spec.path[0]}` is host-local and is rejected in a repo config — "
+            f"set it in ~/.config/jailbee/global.yaml."
+        )
+    return None
+
+
+def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tuple[object, ...]:
+    """Global list entries the repo layer's own entries will be appended to.
+
+    `deep_merge` appends lists, so a repo-level `egress_allow` adds to the
+    global one instead of replacing it. Showing only the repo's own
+    entries would let the user believe they had removed the rest; these
+    are rendered read-only above the editable ones.
+
+    Empty for the global layer (nothing above it to inherit from) and for
+    every non-list kind (those override, so there is no context to show).
+    """
+    if layer != "repo" or spec.kind not in _APPENDING_KINDS:
+        return ()
+    present, value = lookup(layers.global_raw, spec.path)
+    if not present or not isinstance(value, list):
+        return ()
+    return tuple(value)

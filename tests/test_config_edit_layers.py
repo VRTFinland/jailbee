@@ -75,3 +75,72 @@ def test_raw_for_selects_the_open_layer(tmp_path):
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     assert layers.raw_for(got, "repo") == {"defaults": {"cpu": 8}}
     assert layers.raw_for(got, "global") == {"defaults": {"cpu": 2}}
+
+
+def _spec(dotted):
+    wanted = tuple(dotted.split("."))
+    return next(s for s in repo_specs() if s.path == wanted)
+
+
+def test_github_is_disabled_in_the_repo_layer():
+    reason = layers.disabled_reason(_spec("github.api_tokens"), "repo")
+    assert reason is not None
+    assert "global.yaml" in reason
+
+
+def test_github_is_editable_in_the_global_layer():
+    assert layers.disabled_reason(_spec("github.api_tokens"), "global") is None
+
+
+def test_ordinary_fields_are_never_disabled():
+    assert layers.disabled_reason(_spec("gpg.enabled"), "repo") is None
+    assert layers.disabled_reason(_spec("gpg.enabled"), "global") is None
+
+
+def test_the_opaque_scratch_overlay_is_disabled_in_both_layers():
+    """`scratch.config` is free-form: there is no form to render for it."""
+    from jailbee.config_edit.schema import global_specs
+
+    spec = next(s for s in global_specs() if s.path == ("scratch", "config"))
+    reason = layers.disabled_reason(spec, "global")
+    assert reason is not None
+    assert "by hand" in reason
+
+
+def test_repo_layer_shows_the_global_list_entries_it_will_append_to(tmp_path):
+    """deep_merge appends lists, so the global entries are not being replaced."""
+    _write(tmp_path / "global.yaml", "egress_allow:\n  - a.example\n  - b.example\n")
+    _write(tmp_path / "repo.yaml", "egress_allow:\n  - c.example\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    assert layers.inherited_entries(_spec("egress_allow"), got, "repo") == (
+        "a.example",
+        "b.example",
+    )
+
+
+def test_the_global_layer_inherits_nothing(tmp_path):
+    _write(tmp_path / "global.yaml", "egress_allow:\n  - a.example\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    assert layers.inherited_entries(_spec("egress_allow"), got, "global") == ()
+
+
+def test_non_list_fields_inherit_nothing(tmp_path):
+    """Scalars override rather than append; showing context would be a lie."""
+    _write(tmp_path / "global.yaml", "defaults:\n  cpu: 2\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    assert layers.inherited_entries(_spec("defaults.cpu"), got, "repo") == ()
+
+
+def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
+    """`chrome.url: null` in the repo layer is the twin of the global test.
+
+    This closes a gap: `test_an_explicit_null_is_a_set_value_not_an_absent_one`
+    only covers the global layer. Both branches of `resolve()` are
+    structurally identical, so a mutation breaking only the repo one would
+    pass the suite without this twin.
+    """
+    _write(tmp_path / "repo.yaml", "chrome:\n  url: null\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("chrome", "url")] == layers.Origin("repo", None)
