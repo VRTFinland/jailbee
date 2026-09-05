@@ -361,6 +361,8 @@ def test_config_edit_is_rejected_in_a_repo_config(tmp_path):
 
     with pytest.raises(ConfigError):
         load_config_from_layers(
-            {}, {"config_edit": {"write_policy": "patch"}}, tmp_path / "config.yaml",
+            {},
+            {"config_edit": {"write_policy": "patch"}},
+            tmp_path / "config.yaml",
             origin=str(tmp_path),
         )
