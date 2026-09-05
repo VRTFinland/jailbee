@@ -9014,3 +9014,64 @@ def test_new_checks_all_four_profile_names(tmp_path, monkeypatch, mocker):
     assert result.exit_code == 0, result.output
     assert run_apply.call_count == 1
     assert new_container.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# `jb new` pre-flight: the scratch notice
+# ---------------------------------------------------------------------------
+
+
+def test_new_prints_the_scratch_notice(tmp_path, monkeypatch, mocker):
+    """A scratch directory (no `.jailbee/config.yaml`) must be told, on
+    stderr, that it's running on synthesized defaults — which directory,
+    which shared base image, and how to make the setup permanent.
+
+    Asserted on `result.stderr` specifically (not merged output): the design
+    spec requires the notice on the stderr channel, and this repo's
+    `CliRunner` genuinely separates stdout/stderr (see
+    `test_config_validate_keeps_bracketed_text_in_a_validator_message` for
+    the same pattern against `error`/`error_plain`).
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = tmp_path / "tutkimus"
+    _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+    # Rich wraps long lines at the runner's terminal width, so collapse
+    # whitespace (including newlines) before matching phrases that may span
+    # a wrap point — the repo path alone can push the line past 80 columns.
+    collapsed = " ".join(result.stderr.split())
+
+    assert result.exit_code == 0, result.output
+    assert str(repo) in collapsed
+    assert "has no .jailbee/config.yaml" in collapsed
+    assert "jailbee-scratch-base" in collapsed
+    assert "jb config init" in collapsed
+
+
+def test_new_prints_no_notice_for_a_configured_repo(tmp_path, mocker):
+    """A configured repo (a real `.jailbee/config.yaml`) must never print the
+    scratch notice — asserted against the notice's own distinctive literal,
+    not the word "scratch" (which a wholly unrelated `jb new` message could
+    legitimately mention some day, and which would still pass this assertion
+    even if the feature were deleted outright)."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-clone", "--no-autostart"])
+    # Rich wraps long lines at the runner's terminal width, so collapse
+    # whitespace (including newlines) before matching — a raw substring
+    # check would spuriously pass even when the notice IS present, if Rich
+    # happens to wrap the line exactly inside the phrase.
+    collapsed = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    # Merged output (not just stderr): the notice must not print on *any*
+    # channel for a configured repo.
+    assert "has no .jailbee/config.yaml" not in collapsed

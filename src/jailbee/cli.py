@@ -933,6 +933,26 @@ def new_cmd(
 
     cfg = _load_or_exit(config)
 
+    if cfg.is_synthetic():
+        # `new_cmd` uses the local name `hint` below for an unrelated string,
+        # so the imported function is aliased to avoid shadowing it.
+        from jailbee.tui import hint as print_hint
+
+        # One line per invocation, on stderr (like the upgrade/post-install
+        # hints — `warn`, despite its name, prints to stdout, which would
+        # collide with output other commands script against). Names the
+        # source so the values are traceable, and points at the real answer:
+        # for work that outlives an afternoon, a repo config beats host-wide
+        # scratch defaults.
+        print_hint(
+            [
+                f"{cfg.repo_root} has no .jailbee/config.yaml — using scratch "
+                f"defaults from {default_global_config_path()} (scratch.config), "
+                f"base image '{cfg.golden.alias}'. Run `jb config init` here for "
+                f"a real repo config."
+            ]
+        )
+
     # Clone mode fetches from the `/mnt/host-source` bind and would fail inside
     # the container with git's own error. Narrowed to a synthesized config on
     # purpose: a *configured* repo in a non-git directory is broken in ways
