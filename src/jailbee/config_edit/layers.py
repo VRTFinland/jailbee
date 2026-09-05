@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config import ConfigError
+from jailbee.config import ConfigError, load_config_from_layers
 
 # `_HOST_LEVEL_KEYS` is the loader's own routing table: the keys
 # `_split_host_keys` lifts out of `global.yaml` *before* `deep_merge` runs.
@@ -23,7 +23,6 @@ from jailbee.config import ConfigError
 # routing exactly — a key on one side of the boundary merges by
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
 from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
-from jailbee.config.loader import load_config_from_layers
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
 from jailbee.config_writer import DELETE, YamlChange
 from jailbee.global_config import validate_global_raw
