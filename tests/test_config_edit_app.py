@@ -140,18 +140,25 @@ def test_ctrl_c_quits(editor):
 
 
 def test_enter_opens_the_section_the_cursor_is_actually_on(rendered):
-    """Entering `ssh` (its one basic field is `enabled`) must actually put
-    that field on screen — nothing does while the section list has focus,
-    where the field pane only ever shows the "pick a section" placeholder.
+    """Entering `ssh` must actually put its cursor on `ssh.enabled` — nothing
+    does while the section list has focus, where the field pane only ever
+    shows the "pick a section" placeholder.
 
-    Overshoots the target by one `j` and corrects with a `k`, so a deleted
-    `k` binding lands on the wrong section (whose fields do not say
-    "enabled") and fails this test too, not just a deleted `up`.
+    Overshoots the target by one `j` and corrects with a `k`, so a broken
+    `k` binding lands one section further (`jetbrains`, which immediately
+    follows `ssh` in `repo_specs()` and also has a basic `enabled` field)
+    and fails this test too, not just a deleted `enter`. Asserting the
+    *dotted* path (`ssh.enabled`, as `render.help_pane` shows it) rather
+    than the bare label `"enabled"` is what makes that discrimination real:
+    both sections' `enabled` rows share the bare label, so a bare-label
+    assertion would pass even from the wrong section — confirmed by
+    deleting `k` and watching this assertion (only this one, once it reads
+    the dotted path) fail.
     """
     specs = repo_specs()
     idx = _index_of_section(specs, "ssh")
     text = rendered(f"{'j' * (idx + 1)}k\rq")
-    assert "enabled" in text
+    assert "ssh.enabled" in text
 
 
 def test_show_all_reveals_an_advanced_field_hidden_by_default(rendered):
@@ -162,6 +169,28 @@ def test_show_all_reveals_an_advanced_field_hidden_by_default(rendered):
     idx = _index_of_section(specs, "ssh")
     text = rendered(f"{'j' * (idx + 1)}k\raq")
     assert "seed_from_host" in text
+
+
+def test_escape_leaves_an_open_section_before_quitting(rendered):
+    """Enter `ssh`, then escape — the section must actually close before the
+    app quits, or its field-pane content lingers into the final frame.
+
+    Piped input arrives all at once (no per-keystroke delay), so
+    prompt_toolkit's `Application` coalesces the whole key string into a
+    single render right before quitting, after the one startup-only paint —
+    confirmed by hand against a real pipe-driven run. That is why this test
+    cannot assert on the "pick a section" placeholder's mere *presence*:
+    that text is also the very first frame's content regardless of what
+    `escape` does, present or absent. What discriminates is whether
+    `ssh.enabled` (drawn only once the section is genuinely open) ever
+    reaches that final frame: a working `escape` returns to the section
+    list before quit, so it is never drawn at all; a deleted `escape`
+    leaves the field pane showing it right up to exit.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "ssh")
+    text = rendered(f"{'j' * (idx + 1)}k\r\x1bq")
+    assert "ssh.enabled" not in text
 
 
 def test_the_editor_survives_a_missing_repo_config(tmp_path):
