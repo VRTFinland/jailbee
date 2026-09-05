@@ -453,3 +453,80 @@ def test_authoritative_in_is_the_rule_authoritative_prefixes_applies(monkeypatch
     assert claude_groups.authoritative_in(by_prefix, "work") == (
         claude_groups.authoritative_prefixes_from(gcfg, rows, "work", ["mixed", "clean"])
     )
+
+
+# --- An override that only repeats the repo's own group -----------------------
+
+
+def _enabled_cfg(tmp_path: Path, group: str | None = None):
+    """A repo with Claude *enabled*, so the binds profile carries the device.
+
+    `make_cfg` leaves `agents.claude` off, and `override_is_redundant` asks
+    whether the profile would mount the same credential — which it only does
+    when Claude is enabled. Every test here that is not about the disabled
+    case has to say so.
+    """
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
+    if group is None:
+        return cfg
+    return cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir(group)})
+
+
+def test_an_override_naming_the_repos_own_group_is_redundant(tmp_path: Path):
+    assert claude_groups.override_is_redundant(_enabled_cfg(tmp_path, "work"), "work") is True
+
+
+def test_an_override_naming_another_group_is_not_redundant(tmp_path: Path):
+    cfg = _enabled_cfg(tmp_path, "work")
+    assert claude_groups.override_is_redundant(cfg, "personal") is False
+
+
+def test_an_opt_out_override_is_redundant_when_the_repo_shares_nothing(tmp_path: Path):
+    """`use none` on a repo that already shares no group: neither the profile
+    nor the label mounts a credential, and the env key the label writes names
+    the config home Claude Code would default to anyway."""
+    assert claude_groups.override_is_redundant(_enabled_cfg(tmp_path), None) is True
+
+
+def test_an_opt_out_override_is_not_redundant_while_the_repo_has_a_group(tmp_path: Path):
+    cfg = _enabled_cfg(tmp_path, "work")
+    assert claude_groups.override_is_redundant(cfg, None) is False
+
+
+def test_a_matching_override_is_not_redundant_with_claude_disabled(tmp_path: Path):
+    """With `claude.enabled: false` the profile carries no credential device,
+    so the label is the only thing mounting one — dropping it would change
+    what the container reads, which is what "redundant" must never mean."""
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": False}
+    ).model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
+
+    assert claude_groups.override_is_redundant(cfg, "work") is False
+
+
+def test_redundant_overrides_lists_this_repos_matching_containers(mocker, tmp_path: Path):
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw("myrepo-matching", "work"),
+        _raw("myrepo-deviating", "personal"),
+        _raw("myrepo-inheriting"),
+        _raw("other-matching", "work"),
+    ]
+    cfg = _enabled_cfg(tmp_path, "work")
+
+    assert claude_groups.redundant_overrides(cfg, incus) == ["myrepo-matching"]
+
+
+def test_redundant_overrides_ignores_a_garbage_label(mocker, tmp_path: Path):
+    """An unusable label is already treated as "inherits" everywhere else, and
+    clearing it here would report a container as having been cleaned up when
+    the label it carries is not the one this rule is about."""
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a", "../../etc")]
+    cfg = _enabled_cfg(tmp_path, "work")
+
+    assert claude_groups.redundant_overrides(cfg, incus) == []

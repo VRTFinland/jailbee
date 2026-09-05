@@ -1778,6 +1778,24 @@ which beats the host's `group` default.** A container with no override reads
 the repo's setting (`repos.<container_prefix>` if present, else `group`); a
 container with an override ignores both.
 
+**An override that names the repo's own group is dropped rather than kept.**
+Because the label outranks the repo, one that merely repeats it would look
+like "follows the repo" right up to the next `jailbee claude group set`, and
+then silently keep that one container on the old group. So:
+
+* `jailbee claude group use <the repo's own group>` clears the override
+  instead of writing one, and says so;
+* `jailbee claude group set`/`unset` clear every override of this repo's
+  containers that the change has made redundant, after the profile has been
+  re-rendered;
+* `jailbee new --claude-group <the repo's own group>` creates no override at
+  all.
+
+The one exception is `claude.enabled: false`, where the repo's profile carries
+no credential device: the label is then the only thing mounting one, so it is
+not redundant and is left alone. Overrides that already existed are not
+touched until one of those commands runs — `jailbee claude group` names them.
+
 `jailbee claude group` with no subcommand prints this repo's permanent group
 plus any of its containers currently deviating from it; the host-wide view of
 every group and the account each holds is `jailbee claude ls`. `jailbee claude

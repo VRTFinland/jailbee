@@ -7137,6 +7137,75 @@ def test_new_container_applies_the_group_before_start(tmp_path, mocker):
     assert calls == ["set_group", "start"]
 
 
+def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, mocker):
+    """`--claude-group X` on a repo already in X must not create an override:
+    it outranks the profile, so the next `jailbee claude group set` would
+    leave this one container behind on X."""
+    from jailbee import claude_groups
+
+    cfg = _cfg_for_new(tmp_path).model_copy(
+        update={"claude_credentials_dir": claude_groups.group_dir("personal")}
+    )
+    incus = MagicMock()
+    incus.exists.return_value = False
+    # A real profile document, not a bare MagicMock: `new_container` reaches
+    # `_claude_creds_device_present`, which feeds `profile_show` to
+    # `yaml.safe_load`. PyYAML then reads a MagicMock stream forever, and the
+    # mock's own call recording eats the machine's memory — the failure looks
+    # like a pytest tmpdir OOM, nowhere near the cause.
+    incus.profile_show.return_value = "devices:\n  claude-creds:\n    source: /x\n"
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+            claude_group="personal",
+        ),
+    )
+
+    set_group.assert_not_called()
+
+
+def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker):
+    """`--claude-group none` where the repo already shares nothing: same rule,
+    and the label would otherwise survive the repo joining a group later."""
+    from jailbee import claude_groups
+
+    cfg = _cfg_for_new(tmp_path)  # no `claude_credentials_dir`
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+            claude_group=claude_groups.NO_GROUP,
+        ),
+    )
+
+    set_group.assert_not_called()
+
+
 def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

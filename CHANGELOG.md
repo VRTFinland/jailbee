@@ -53,6 +53,27 @@
 
 ### Changed
 
+- **A container override that only repeats the repo's credential group is
+  now dropped instead of kept.** The override is an instance-local
+  `claude-creds` device plus a label, and both outrank the profile — so a
+  container overridden to `X` while the repo moved to `X` looked exactly
+  like one following the repo, right up to the *next* `jailbee claude group
+  set`, which silently left it behind on `X`. Three commands now clear such
+  an override: `jailbee claude group use <the repo's own group>` clears it
+  rather than writing one, `jailbee claude group set`/`unset` clear every
+  override their change made redundant (after the binds profile is
+  re-rendered, so the credential is never unmounted in between), and
+  `jailbee new --claude-group <the repo's own group>` creates none at all.
+  With `claude.enabled: false` the label is the only thing mounting the
+  credential, so it is not treated as redundant. Overrides that already
+  exist are untouched until one of those commands runs, and `jailbee claude
+  group` names them so they can be found.
+- **`jailbee claude group use`/`reset` no longer discard the repo's recorded
+  account when nothing moved.** Both invalidated `oauthAccount`
+  unconditionally, which is right when the container changes holder and
+  wrong when it does not: the name is then lost until some container runs
+  Claude again, and nothing else on the host can supply it. They now
+  invalidate only when the container's effective group actually changed.
 - **`jailbee claude ls` now lists every login on the host and which holder
   each one is live in.** It was a *holder* view: one `live` row — the
   calling repo's — above the host-wide parked store. Which account a
