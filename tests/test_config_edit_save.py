@@ -61,15 +61,58 @@ def test_configured_policy_falls_back_to_auto_on_an_unreadable_global(tmp_path):
 def test_secret_values_finds_every_stored_token(tmp_path):
     layers = _layers(
         tmp_path,
-        global_text="github:\n  enabled: true\n  api_tokens:\n    github.com: ghp_secret\n",
+        global_text=(
+            "github:\n"
+            "  enabled: true\n"
+            "  api_tokens:\n"
+            "    github.com: ghp_short\n"
+            "    gitlab.com: ghp_much_longer_token\n"
+        ),
     )
-    assert secret_values(layers.global_raw, global_specs()) == ("ghp_secret",)
+    # Exact order, not just membership: longest first is the contract that
+    # makes `redact` mask a token-containing-a-token whole rather than
+    # leaving a tail behind (see test_redact_masks_longest_first).
+    assert secret_values(layers.global_raw, global_specs()) == (
+        "ghp_much_longer_token",
+        "ghp_short",
+    )
 
 
 def test_redact_masks_longest_first():
+    # Reversing this list's order (shortest first) would mask "ghp_abc" out
+    # of "ghp_abcdef" first, leaving a literal "def" tail behind in the
+    # output — "ghp_abc" not in masked and a "*" count would still both
+    # pass, which is exactly the defect this test must catch. Asserting the
+    # exact string (and, redundantly, the absent leaked fragment) closes
+    # that gap.
     masked = redact("ghp_abcdef and ghp_abc", ["ghp_abcdef", "ghp_abc"])
-    assert "ghp_abc" not in masked
-    assert masked.count("*") >= 8
+    assert masked == "******** and ********"
+    assert "def" not in masked
+
+
+def test_secret_values_feeds_redact_in_an_order_that_masks_containment_whole(tmp_path):
+    """`secret_values`'s order and `redact`'s masking, wired together.
+
+    Unlike the two tests above — which each fix one end of the contract in
+    isolation — this drives real stored tokens through `secret_values` and
+    into `redact`. If `secret_values`'s sort key regressed to shortest-first,
+    `ghp_abc` would come before `ghp_abcdef`, `redact` would mask the short
+    token out of the long one first, and a literal "def" tail would leak
+    into the result — which the exact-string assertion below would catch.
+    """
+    layers = _layers(
+        tmp_path,
+        global_text=(
+            "github:\n"
+            "  enabled: true\n"
+            "  api_tokens:\n"
+            "    a.example: ghp_abc\n"
+            "    b.example: ghp_abcdef\n"
+        ),
+    )
+    secrets = secret_values(layers.global_raw, global_specs())
+    masked = redact("ghp_abcdef and ghp_abc", secrets)
+    assert masked == "******** and ********"
 
 
 def test_a_token_never_reaches_the_diff(tmp_path):
@@ -177,16 +220,21 @@ def test_commit_never_widens_the_mode_of_a_token_bearing_file(tmp_path):
 
     from jailbee.config_edit.save import commit
 
+    # 0o640, not 0o600: 0o600 is also write_text_atomic's own fallback for a
+    # brand-new file with no mode= given, so it can't tell a correct
+    # mode=mode call apart from a regression that dropped the argument —
+    # both would produce a 0o600 backup. 0o640 only appears in the backup if
+    # the original's mode was actually threaded through.
     layers = _layers(tmp_path, global_text="github:\n  enabled: false\n")
-    layers.global_path.chmod(0o600)
+    layers.global_path.chmod(0o640)
     plan = build_plan(
         layers, "global", (YamlChange(("github", "enabled"), True),), global_specs(), "patch"
     )
     backup = commit(plan)
 
-    assert stat.S_IMODE(plan.path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(plan.path.stat().st_mode) == 0o640
     assert backup is not None
-    assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+    assert stat.S_IMODE(backup.stat().st_mode) == 0o640
 
 
 def test_commit_creates_a_missing_config_directory(tmp_path):
