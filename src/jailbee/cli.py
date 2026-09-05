@@ -443,6 +443,145 @@ def config_validate(config: ConfigOption = None) -> None:
     raise typer.Exit(2)
 
 
+def _is_full_screen_tty() -> bool:
+    """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
+
+    `_is_tty` asks about stdin alone, which is right for the questions the CLI
+    asks and is what its five other call sites want. An editor also *paints*:
+    `jailbee config edit > out.txt` has a perfectly good stdin and would fill
+    the file with escape codes, so this second gate exists rather than a change
+    to that one.
+    """
+    return _is_tty() and sys.stdout.isatty()
+
+
+def _refuse_synthesized_repo(cwd: Path) -> None:
+    """Refuse to edit a directory whose config is synthesized from `global.yaml`.
+
+    A directory with no `.jailbee/config.yaml` still has an effective config:
+    `scratch_repo_layer` merges jailbee's own defaults with `global.yaml`'s
+    `scratch.config`. The editor knows two layers, not that third one, so every
+    row here would show a value the directory does not actually use — and the
+    first save would create a real config file, at which point `find_repo_config`
+    succeeds, synthesis stops, and the directory silently loses everything
+    `scratch.config` gave it, the shared scratch base image included.
+
+    Refused rather than approximated: the alternative is an editor that is
+    wrong on every row and destructive on the first save.
+
+    Nothing is refused when synthesis would *not* apply (`scratch.enabled` is
+    false, or the directory is `$HOME` or an ancestor of it) — there is no third
+    layer to lose then, and an empty repo layer is the honest view.
+    """
+    from jailbee.config import synthesized_repo_layer
+
+    try:
+        synthesized_repo_layer(cwd)
+    except ConfigError:
+        return
+    gpath = default_global_config_path()
+    error_plain(
+        f"{cwd} has no repo config file — its settings are synthesized from "
+        f"`scratch.config` in {gpath}, a layer this editor cannot show. Saving here "
+        f"would create a config file and stop that layer being used at all, including "
+        f"the shared scratch base image.\n"
+        f"Run `jailbee config init` here first, then `jailbee config edit`. To change "
+        f"what every unconfigured directory gets, edit `scratch.config` in {gpath}."
+    )
+    raise typer.Exit(1)
+
+
+@config_app.command("edit")
+def config_edit_cmd(
+    config: ConfigOption = None,
+    global_: Annotated[
+        bool,
+        typer.Option(
+            "--global",
+            help="Edit ~/.config/jailbee/global.yaml instead of the repo config.",
+        ),
+    ] = False,
+    write: Annotated[
+        str | None,
+        typer.Option(
+            "--write",
+            help="Write policy for this run: patch (minimal diff) | "
+            "regenerate (documented rewrite).",
+            autocompletion=completion.complete_choices("patch", "regenerate"),
+        ),
+    ] = None,
+) -> None:
+    """Edit configuration interactively, with per-option help."""
+    from jailbee.config_edit.app import run_editor
+    from jailbee.config_edit.layers import read_layers, resolve
+    from jailbee.config_edit.save import WritePolicy, configured_policy, resolve_policy
+    from jailbee.config_edit.schema import global_specs, repo_specs
+    from jailbee.paths import repo_config_dir_name
+
+    write_policy: WritePolicy | None
+    if write is None:
+        write_policy = None
+    elif write == "patch":
+        write_policy = "patch"
+    elif write == "regenerate":
+        write_policy = "regenerate"
+    else:
+        error(f"--write must be one of: patch, regenerate. Got: {write!r}")
+        raise typer.Exit(2)
+
+    if not _is_full_screen_tty():
+        error("`jailbee config edit` needs a terminal. Use `jailbee config show` to read config.")
+        raise typer.Exit(1)
+
+    repo_path = _resolve_config_path_or_none(config)
+    if repo_path is None:
+        # No file here yet. Name the path one *would* be written to, so the
+        # editor opens on an empty layer and a save creates it — the same
+        # answer `jailbee config init` would give for this directory.
+        cwd = Path.cwd()
+        if not global_:
+            _refuse_synthesized_repo(cwd)
+        repo_path = cwd / repo_config_dir_name(cwd) / "config.yaml"
+    global_path = default_global_config_path()
+
+    layer: Literal["repo", "global"] = "global" if global_ else "repo"
+    specs = global_specs() if global_ else repo_specs()
+    try:
+        layer_set = read_layers(repo_path, global_path)
+    except ConfigError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    policy = resolve_policy(
+        layer,
+        flag=write_policy,
+        configured=configured_policy(global_path),
+    )
+    raise typer.Exit(
+        run_editor(
+            layer=layer,
+            layer_set=layer_set,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            policy=policy,
+        )
+    )
+
+
+def _offer_editor(*, global_layer: bool) -> None:
+    """Offer to open the editor on the file `config init` just wrote.
+
+    Only on a TTY: `jailbee config init` is scriptable, and a question on
+    stdin that nothing will answer would turn a working script into a hang or
+    a silent "no".
+    """
+    if not _is_tty():
+        return
+    if not default_confirm("Open the config editor now?"):
+        return
+    config_edit_cmd(global_=global_layer)
+
+
 @config_app.command("init")
 def config_init(
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing config.")] = False,
@@ -464,6 +603,7 @@ def config_init(
             error(str(e))
             raise typer.Exit(1) from e
         success(f"Wrote {path}")
+        _offer_editor(global_layer=True)
         return
 
     try:
@@ -479,6 +619,7 @@ def config_init(
             f"Hint: no {global_path} found. Run `jailbee config init --global` "
             f"to create one (carries personal mounts, IDE preference, etc.)."
         )
+    _offer_editor(global_layer=False)
 
 
 @app.command()

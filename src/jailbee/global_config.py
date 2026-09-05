@@ -121,6 +121,24 @@ class ScratchConfig(BaseModel):
     )
 
 
+class ConfigEditPolicy(BaseModel):
+    """How `jailbee config edit` writes the file it saves."""
+
+    model_config = ConfigDict(extra="forbid")
+    write_policy: Literal["auto", "patch", "regenerate"] = Field(
+        default="auto",
+        description=(
+            "How `jailbee config edit` writes a file it saves. `patch` touches only the "
+            "keys you changed and leaves comments, key order and formatting alone. "
+            "`regenerate` rewrites the whole file with jailbee's own generated comments, "
+            "which drops any note you wrote in it. `auto` picks per layer — `regenerate` "
+            "for this file, which jailbee owns and nobody reviews, and `patch` for a "
+            "repo's `.jailbee/config.yaml`, which is committed and read as a PR diff. "
+            "`jailbee config edit --write patch|regenerate` overrides this for one run."
+        ),
+    )
+
+
 class GlobalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # default_factory ensures DockerRegistryMirror's model_post_init re-runs
@@ -179,6 +197,14 @@ class GlobalConfig(BaseModel):
             "Defaults for a directory that has no `.jailbee/config.yaml`. Host-level "
             "only: a repo's own config file cannot set this — it would be an unknown "
             "top-level key there."
+        ),
+    )
+    config_edit: ConfigEditPolicy = Field(
+        default_factory=ConfigEditPolicy,
+        description=(
+            "Settings for `jailbee config edit` itself. Host-level only "
+            "(`common.py`'s `_HOST_LEVEL_KEYS`): how your own files get written is a "
+            "personal editing habit, so a repo's `.jailbee/config.yaml` cannot set it."
         ),
     )
 

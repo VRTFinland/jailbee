@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
     cardStyleChanged = Signal(str)  # noqa: N815 - Qt signal naming; payload: "compact" | "grid"
     columnsChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the enabled column set changed
     newContainerRequested = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: repo prefix, "" when nothing is selected
+    configEditRequested = Signal(str, bool)  # noqa: N815 - Qt signal naming convention (camelCase); payload: (repo prefix, edit the global layer)
 
     def __init__(
         self,
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
         self._build_card_style_menu(self._card_style)
         self._build_refresh_menu(interval, paused=paused)
         self._build_container_menu()
+        self._build_config_menu()
 
     def _build_view_menu(self, layout: str) -> None:
         menu = self.menuBar().addMenu("&View")
@@ -293,6 +295,24 @@ class MainWindow(QMainWindow):
         self.new_container_action.setShortcut(QKeySequence("Ctrl+N"))
         self.new_container_action.triggered.connect(
             lambda: self.newContainerRequested.emit(self._selected_prefix() or "")
+        )
+
+    def _build_config_menu(self) -> None:
+        """The second repo-scoped menu: editing config, not acting on a container.
+
+        Exposed as ``self.config_menu`` for the same reason the others are — a
+        submenu fetched through ``menuBar().actions()`` can look deleted once
+        the QAction wrapper it came from is collected.
+        """
+        menu = self.menuBar().addMenu("Confi&g")
+        self.config_menu = menu
+        self.edit_repo_config_action = menu.addAction("Edit &repo config…")
+        self.edit_repo_config_action.triggered.connect(
+            lambda: self.configEditRequested.emit(self._selected_prefix() or "", False)
+        )
+        self.edit_global_config_action = menu.addAction("Edit &global config…")
+        self.edit_global_config_action.triggered.connect(
+            lambda: self.configEditRequested.emit(self._selected_prefix() or "", True)
         )
 
     def _selected_name(self) -> str | None:

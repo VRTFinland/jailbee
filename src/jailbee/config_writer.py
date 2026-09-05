@@ -115,6 +115,40 @@ at 0600 has none, and no config file jailbee writes wants to be wider.
 """
 
 
+def write_text_atomic(path: Path, text: str, *, mode: int | None = None) -> None:
+    """Write `text` to `path` atomically, without ever widening its mode.
+
+    The content goes to a temporary file in the same directory, is fsynced,
+    given the target's mode, and only then renamed over it — so a crash leaves
+    either the old file or the new one, never a truncated mix, and never a file
+    readable by more people than it was a moment ago.
+
+    `mode` defaults to the target's own mode when it exists and to
+    `_DEFAULT_MODE` (0600) when it does not: jailbee's global config can carry
+    `github.api_tokens`, and `load_config` refuses to read those at a wider
+    mode. Creating the file world-readable and tightening it afterwards would
+    leave a window; creating it at 0600 has none.
+    """
+    if mode is None:
+        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else _DEFAULT_MODE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.chmod(mode)
+        tmp.replace(path)
+        _fsync_dir(path.parent)
+    except BaseException:
+        with suppress(OSError):
+            tmp.unlink()
+        raise
+
+
 def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
     """Apply `changes` to the YAML file at `path`. Returns whether it changed.
 
@@ -134,24 +168,7 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
     patched = patch_yaml(original, changes)
     if patched == original and path.exists():
         return False
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else _DEFAULT_MODE
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    os.close(fd)
-    tmp = Path(name)
-    try:
-        with open(tmp, "wb") as handle:
-            handle.write(patched.encode("utf-8"))
-            handle.flush()
-            os.fsync(handle.fileno())
-        tmp.chmod(mode)
-        tmp.replace(path)
-        _fsync_dir(path.parent)
-    except BaseException:
-        with suppress(OSError):
-            tmp.unlink()
-        raise
+    write_text_atomic(path, patched)
     return True
 
 
@@ -289,3 +306,41 @@ def _sub_model(annotation: object) -> type[BaseModel] | None:
     if isinstance(annotation, type) and issubclass(annotation, _BaseModel):
         return annotation
     return None
+
+
+def render_global_yaml(raw: dict[str, object], *, header: str = DOCUMENTED_HEADER) -> str:
+    """Render a whole `global.yaml` mapping with generated comments.
+
+    `global.yaml` is a two-model file: the keys in `_HOST_LEVEL_KEYS` are split
+    out by `_split_host_keys` at load time and validated against
+    `GlobalConfig`, while everything else overlays `Config`. Three keys are
+    declared on both models with different shapes, so rendering the whole file
+    against either model alone would document half of it wrongly. Two passes,
+    in the same order the file has always had them: the Config overlay, then
+    the host-level block.
+
+    `raw` must be the raw YAML mapping, never `model_dump()` output — see
+    `render_documented`, whose contract this inherits.
+
+    Either half may be empty. An empty overlay is skipped rather than rendered,
+    because `render_documented({}, Config)` emits `{}` as the document body and
+    appending the host block after that would produce *two* YAML documents in
+    one stream — a file no loader accepts. A host-only `global.yaml` is an
+    ordinary hand-written state: someone who ever only set
+    `claude_credentials:` or `docker_registry_mirror:` has one.
+    """
+    # Local imports: `jailbee.config` imports `ConfigError` from
+    # `global_config`, so pulling either in at module top would close a cycle
+    # through this module's own importers.
+    from jailbee.config import Config
+    from jailbee.config.common import _HOST_LEVEL_KEYS
+    from jailbee.global_config import GlobalConfig
+
+    host = {k: v for k, v in raw.items() if k in _HOST_LEVEL_KEYS}
+    overlay = {k: v for k, v in raw.items() if k not in _HOST_LEVEL_KEYS}
+    if not overlay and host:
+        return header + render_documented(host, GlobalConfig, header="")
+    text = render_documented(overlay, Config, header=header)
+    if host:
+        text += "\n" + render_documented(host, GlobalConfig, header="")
+    return text

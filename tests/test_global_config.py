@@ -330,3 +330,39 @@ def test_scratch_rejects_unknown_keys(tmp_path) -> None:
 
     with pytest.raises(ConfigError):
         load_global_config(p)
+
+
+def test_config_edit_is_host_level_and_defaults_to_auto(tmp_path):
+    """`config_edit` is routed to GlobalConfig, not into the Config overlay."""
+    from jailbee.config import _split_host_keys
+    from jailbee.global_config import validate_global_raw
+
+    raw = {"config_edit": {"write_policy": "patch"}, "gpg": {"enabled": True}}
+    host, overlay = _split_host_keys(raw)
+    assert "config_edit" in host
+    assert "config_edit" not in overlay
+
+    gcfg = validate_global_raw(raw, tmp_path / "global.yaml")
+    assert gcfg.config_edit.write_policy == "patch"
+    assert GlobalConfig().config_edit.write_policy == "auto"
+
+
+def test_config_edit_rejects_an_unknown_policy(tmp_path):
+    from jailbee.config import ConfigError
+    from jailbee.global_config import validate_global_raw
+
+    with pytest.raises(ConfigError):
+        validate_global_raw({"config_edit": {"write_policy": "clobber"}}, tmp_path / "g.yaml")
+
+
+def test_config_edit_is_rejected_in_a_repo_config(tmp_path):
+    """A repo config cannot dictate how the user's own files are written."""
+    from jailbee.config import ConfigError, load_config_from_layers
+
+    with pytest.raises(ConfigError):
+        load_config_from_layers(
+            {},
+            {"config_edit": {"write_policy": "patch"}},
+            tmp_path / "config.yaml",
+            origin=str(tmp_path),
+        )

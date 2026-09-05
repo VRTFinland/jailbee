@@ -155,6 +155,40 @@
 
 ### Added
 
+- **`jailbee config edit` — an interactive editor for both config layers.**
+  jailbee exposes 85 settings on the global layer and 77 on a repo config,
+  and until now there was no way to change one except by hand against a
+  1968-line reference. The editor generates its forms from the pydantic
+  models themselves, so every field appears in it with its own help text and
+  a new field cannot be forgotten; a closure test in CI
+  holds that property up. It shows where each value actually comes from
+  (`default` / `global` / `repo`), marks what you have staged and what saving
+  will do to it, and — because a repo-level list is *appended* to the global
+  one rather than replacing it — shows the global entries you would be adding
+  to. `/` searches names and descriptions across every section. `r` resets a
+  field by deleting the key, so it keeps following jailbee's own default
+  instead of freezing at today's value.
+
+  A save is validated by running the real config loader over the staged file
+  first, so the editor cannot write something the CLI would then reject, and
+  the previous contents are kept in a `.bak` sibling. The repo's
+  `.jailbee/config.yaml` is written with a minimal diff, since it is committed
+  and read as a PR diff; `~/.config/jailbee/global.yaml`, which jailbee owns,
+  is regenerated with comments taken from the schema. Set
+  `config_edit.write_policy` in the global config, or pass
+  `--write patch|regenerate`, to choose. A regenerate that would drop
+  hand-written comments always shows the diff and asks first.
+
+  Open it with `jailbee config edit` (`--global` for the user-level file),
+  with `e` / `E` in `jailbee dashboard`, or from the **Config** menu in the Qt
+  GUI. `jailbee config init` now offers to open it. Lists of structured
+  entries (`host_mounts`, `agents`, `autostart.on_create`/`autostart.on_start`,
+  …) and secrets (`github.api_tokens`) are shown read-only for now, each with
+  its own reason. A directory with no `.jailbee/config.yaml` is refused for
+  the repo layer rather than shown wrongly: its settings come from
+  `global.yaml`'s `scratch.config`, and saving a file here would stop that
+  layer being used at all — run `jailbee config init` there first. See
+  [`config_edit`](docs/config.md#config_edit).
 - **`jailbee claude group ls`** lists the credential groups on this host and
   what each one holds — the same rows and columns as `jailbee claude ls`,
   narrowed to rows that *are* a group (a parked login belongs to none, and an

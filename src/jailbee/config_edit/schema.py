@@ -29,9 +29,9 @@ from jailbee.global_config import GlobalConfig
 class FieldKind(StrEnum):
     """How the editor renders and edits one field.
 
-    Twelve kinds cover all 188 fields reachable from `Config` and
-    `GlobalConfig`. `OPAQUE` is the honest thirteenth: a field whose
-    schema cannot generate a form.
+    Twelve kinds cover every leaf `build_specs` produces — 77 of them under
+    `repo_specs()`, 85 under `global_specs()`. `OPAQUE` is the honest
+    thirteenth: a field whose schema cannot generate a form.
     """
 
     BOOL = "bool"
@@ -319,9 +319,9 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
 )
 """The 28 paths the default view shows; everything else is behind "show all".
 
-Curation lives here rather than as metadata on the models: 188 field
-definitions should not also carry a presentational concern, and the
-curated set is only reviewable when it is readable in one place.
+Curation lives here rather than as metadata on the models: a config model
+should not also carry a presentational concern, and the curated set is only
+reviewable when it is readable in one place.
 
 A path absent from this set is advanced. That is the safe default — the
 alternative silently rots as fields are added, and search (which ignores

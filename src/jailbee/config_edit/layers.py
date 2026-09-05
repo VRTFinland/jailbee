@@ -5,7 +5,11 @@ value"; the editor also has to answer "which file said so", because that
 is what every row's origin marker shows and what decides whether `r`
 deletes a key or does nothing (spec 3.3).
 
-This is the only module in `config_edit` that touches the filesystem.
+One of the package's two filesystem modules: this one *reads* — both raw
+layers, and, through `validate`, the whole config-loading subsystem over a
+staged one. `save` is the other, and the only one that writes. Everything
+else in `config_edit` is pure (`schema`, `state`, `values`, `render`) or the
+terminal driver (`app`).
 """
 
 from __future__ import annotations
@@ -169,7 +173,7 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
 
     Two further rules, both of which say "nothing is inherited":
 
-    * **Host-level paths never reach `deep_merge` at all.** The five keys
+    * **Host-level paths never reach `deep_merge` at all.** The keys
       in `_HOST_LEVEL_KEYS` are split off `global.yaml` into a separate
       `GlobalConfig` object, and `ls`/`dashboard` are then merged
       field-by-field by `Config._effective_columns`, which *replaces*.
@@ -225,6 +229,17 @@ def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict
     return out
 
 
+_PREFIX_PATH = ("container_prefix",)
+_PLACEHOLDER_PREFIX = "jailbee-config-edit"
+"""Stands in for the directory-derived `container_prefix` during a global save.
+
+Never written anywhere: it exists only so `_build_config_from_dict`'s fallback
+(`repo_root.name`, which need not be a legal prefix) cannot decide whether a
+change to `global.yaml` is valid. Matches the loader's own `[a-z0-9][a-z0-9-]*`
+by construction.
+"""
+
+
 def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
     """The error a save would produce, or `None` if the staged layer loads.
 
@@ -244,6 +259,16 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
     `autostart` step colliding with a repo one, for instance. The repo
     path used is whichever config the editor was opened against.
 
+    When that repo config does not exist, one half of the merged result is
+    not the user's config at all but the loader's own fallbacks, and one of
+    them can fail: `container_prefix` defaults to the *directory name*, so
+    `jailbee config edit --global` in a directory named `Tutkimus_A` would
+    refuse every global save with a message naming a file the user is not
+    editing and which does not exist. A placeholder prefix stands in for that
+    one derivation, and only when neither layer sets the key — so a genuinely
+    invalid `container_prefix:` staged into `global.yaml` is still caught,
+    and so is every cross-layer collision, which is what this check is for.
+
     A staged *global* layer gets a second pass, `validate_global_raw`,
     because the loader splits the `_HOST_LEVEL_KEYS` off and uses them for
     one thing only (`claude_credentials`); the rest of `global.yaml`'s
@@ -259,6 +284,10 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
         repo_raw = apply_changes(repo_raw, changes)
     else:
         global_raw = apply_changes(global_raw, changes)
+        if not layers.repo_path.exists() and not (
+            lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]
+        ):
+            repo_raw = {**repo_raw, "container_prefix": _PLACEHOLDER_PREFIX}
     try:
         load_config_from_layers(
             global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)

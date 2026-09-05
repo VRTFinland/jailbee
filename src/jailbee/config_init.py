@@ -265,23 +265,15 @@ def render_global_template() -> str:
     """Return the generated per-user global config.
 
     Generated rather than templated: each block's comments come from the
-    schema's own `description=` fields, so they cannot drift from the code
-    the way the previous hand-maintained template did.
-
-    Two `render_documented` passes are concatenated into one file: almost
-    every key in `global.yaml` overlays `Config` (gpg, ssh, jetbrains, ...),
-    but `claude_credentials` is host-level — read into `GlobalConfig`
-    instead, via `_split_host_keys` at load time — so it needs its own pass
-    against that model to get a real schema description rather than a raw,
-    uncommented value.
+    schema's own `description=` fields, so they cannot drift from the code the
+    way the previous hand-maintained template did. The two-model split the file
+    needs lives in `config_writer.render_global_yaml`, shared with the config
+    editor's `regenerate` write policy — one renderer, so a generated file and
+    a regenerated one cannot diverge.
     """
-    from jailbee.config import Config
-    from jailbee.config_writer import DOCUMENTED_HEADER, render_documented
-    from jailbee.global_config import GlobalConfig
+    from jailbee.config_writer import render_global_yaml
 
-    config_section = render_documented(GLOBAL_SEED, Config, header=DOCUMENTED_HEADER)
-    host_section = render_documented(GLOBAL_SEED_HOST, GlobalConfig, header="")
-    return config_section + "\n" + host_section
+    return render_global_yaml({**GLOBAL_SEED, **GLOBAL_SEED_HOST})
 
 
 def write_global_template(*, force: bool = False) -> Path:

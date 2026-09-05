@@ -172,7 +172,7 @@ def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
 def test_host_level_list_paths_inherit_nothing(tmp_path):
     """`ls`/`dashboard` never reach `deep_merge`, so nothing is appended.
 
-    `_split_host_keys` routes the five `_HOST_LEVEL_KEYS` out of the
+    `_split_host_keys` routes the `_HOST_LEVEL_KEYS` out of the
     Config overlay before the merge runs, and `Config._effective_columns`
     merges the two blocks field-by-field with `model_copy(update=...)` —
     a repo `hide` *replaces* the global one. Reporting the global entries
@@ -326,6 +326,80 @@ def test_validate_accepts_a_good_host_level_change(opened):
     got = opened()
 
     assert layers.validate(got, "global", [YamlChange(("ls", "hide"), ["ip"])]) is None
+
+
+def test_a_global_save_is_not_held_hostage_to_the_directory_name(tmp_path, monkeypatch, mocker):
+    """`config edit --global` in a directory with no repo config must work.
+
+    `validate` loads the repo config even for a global edit (the cross-layer
+    rules are the point), and with no file there the loader derives
+    `container_prefix` from the *directory name*. In a directory named
+    `Tutkimus_A` that derivation fails, and every global save was refused with
+    a message naming a file the user is neither editing nor has.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    from jailbee.global_config import default_global_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    global_path = default_global_config_path()
+    global_path.parent.mkdir(parents=True, exist_ok=True)
+    global_path.write_text("")
+    got = layers.read_layers(tmp_path / "Tutkimus_A" / ".jailbee" / "config.yaml", global_path)
+
+    assert layers.validate(got, "global", [YamlChange(("defaults", "cpu"), 8)]) is None
+
+
+def test_a_bad_container_prefix_in_the_global_layer_is_still_caught(tmp_path, monkeypatch, mocker):
+    """The placeholder stands in for the *derived* prefix, not for the key.
+
+    Substituting one unconditionally would let the editor write a
+    `container_prefix:` into `global.yaml` that no later command accepts.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    from jailbee.global_config import default_global_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    global_path = default_global_config_path()
+    global_path.parent.mkdir(parents=True, exist_ok=True)
+    global_path.write_text("")
+    got = layers.read_layers(tmp_path / "Tutkimus_A" / ".jailbee" / "config.yaml", global_path)
+
+    error = layers.validate(got, "global", [YamlChange(("container_prefix",), "Not A Prefix")])
+
+    assert error is not None
+    assert "container_prefix" in error
+
+
+def test_validate_still_catches_a_cross_layer_collision(tmp_path, monkeypatch, mocker):
+    """The repo half of the check is what the cross-layer rules live in.
+
+    A global `autostart.on_create` step whose name a repo step already uses is
+    only visible once both layers are merged — which is why `validate` loads
+    the repo config for a global edit at all.
+    """
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    from jailbee.global_config import default_global_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    global_path = default_global_config_path()
+    global_path.parent.mkdir(parents=True, exist_ok=True)
+    global_path.write_text("")
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True)
+    repo_path.write_text("autostart:\n  on_create:\n    - name: seed\n      run: ./seed.sh\n")
+    got = layers.read_layers(repo_path, global_path)
+
+    error = layers.validate(
+        got,
+        "global",
+        [YamlChange(("autostart", "on_create"), [{"name": "seed", "run": "./other.sh"}])],
+    )
+
+    assert error is not None
+    assert "duplicate autostart.on_create step name" in error
 
 
 def test_validate_leaves_the_in_memory_layers_untouched(opened):

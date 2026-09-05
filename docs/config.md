@@ -78,10 +78,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Four top-level keys are read from `~/.config/jailbee/global.yaml` into
+Six top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
-`docker_registry_mirror` (see above), `ls`, `dashboard` and
-`claude_credentials`. `ls`'s column block is merged field-by-field instead
+`docker_registry_mirror` (see above), `ls`, `dashboard`,
+`claude_credentials`, `scratch` and `config_edit`. `ls`'s column block is
+merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
 than let one replace the other. `dashboard` is deprecated and is never
@@ -89,7 +90,11 @@ merged this way — see
 [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
 `claude_credentials` is resolved to the single computed field
 `Config.claude_credentials_dir` instead of being merged at all — see
-[`claude_credentials`](#claude_credentials) below.
+[`claude_credentials`](#claude_credentials) below. `scratch` and
+`config_edit` describe this host rather than any one repo — what a directory
+with no config file gets, and how jailbee writes your files — so there is no
+repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
+[`config_edit`](#config_edit).
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
 `dashboard:` values it shows come from the repo file only. Use `jailbee config
@@ -1684,7 +1689,7 @@ Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 ### `claude_credentials`
 
 Lets several repos on this host share one Claude Code login. Host-level
-only, like `docker_registry_mirror`: setting `claude_credentials` or the
+only, like `scratch` and `config_edit`: setting `claude_credentials` or the
 computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is
 rejected at load time, because a repo config is typically committed and a
 group name is a property of this one machine, not the team.
@@ -1934,6 +1939,25 @@ offered.
 For anything that outlasts an afternoon, `jailbee config init` is still the
 answer: a committed, editable, per-repo config beats host-wide scratch
 defaults shared with every other directory on the machine.
+
+### `config_edit`
+
+Settings for `jailbee config edit` itself. Host-level only, like
+`claude_credentials` and `scratch`: how your own files get written is a
+personal editing habit, so a repo's `.jailbee/config.yaml` cannot set it.
+
+```yaml
+config_edit:
+  write_policy: auto      # auto (default) | patch | regenerate
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `write_policy` | `auto` | How a save writes the file. `patch` touches only the keys you changed and leaves comments, key order and formatting alone. `regenerate` rewrites the whole file with jailbee's own generated comments — which drops anything you wrote in it by hand. `auto` picks per layer: `regenerate` for this file, which jailbee owns and nobody reviews, and `patch` for a repo config, which is committed and read as a PR diff. |
+
+`jailbee config edit --write patch|regenerate` overrides the key for one run.
+A `regenerate` that would drop hand-written comment lines always shows the
+diff and asks first — that confirmation cannot be turned off.
 
 ## `--config / -c` override
 

@@ -197,7 +197,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """77 leaves under Config, 14 under GlobalConfig, as measured.
+    """77 leaves under Config, 15 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -205,13 +205,13 @@ def test_build_specs_covers_every_config_leaf():
     The plan's task-3 brief said 76 for `Config`. That count predates
     Task 2, which removed `container_prefix` from `COMPUTED_FIELDS` —
     turning it from an excluded computed attribute into an editable leaf
-    and adding exactly one to the count: 76 + 1 = 77. `GlobalConfig`'s 14
-    is unaffected, since `container_prefix` only ever lived on `Config`.
+    and adding exactly one to the count: 76 + 1 = 77. `GlobalConfig`'s 15
+    includes the `config_edit.write_policy` added in Task 1.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 77
-    assert len(build_specs(GlobalConfig)) == 14
+    assert len(build_specs(GlobalConfig)) == 15
 
 
 def test_a_default_factory_field_reports_its_real_default():
@@ -349,3 +349,13 @@ def test_an_uncurated_key_is_advanced():
     specs = {s.path: s for s in repo_specs()}
     assert specs[("ssh", "seed_from_host")].advanced is True
     assert specs[("jetbrains", "share_idea")].advanced is True
+
+
+def test_config_edit_is_editable_in_the_global_tree_only():
+    """The write policy is a global-layer setting, so only that tree offers it."""
+    from jailbee.config_edit.schema import global_specs, repo_specs
+
+    global_paths = {s.path for s in global_specs()}
+    repo_paths = {s.path for s in repo_specs()}
+    assert ("config_edit", "write_policy") in global_paths
+    assert ("config_edit", "write_policy") not in repo_paths
