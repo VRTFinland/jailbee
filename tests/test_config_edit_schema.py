@@ -193,9 +193,7 @@ def test_collections_of_models_stay_leaves():
     spec = _by_path(build_specs(Config), "host_mounts")
     assert spec.kind is FieldKind.MODEL_LIST
     assert spec.item_model is HostMount
-    assert not any(
-        s.path[:1] == ("host_mounts",) and len(s.path) > 1 for s in build_specs(Config)
-    )
+    assert not any(s.path[:1] == ("host_mounts",) and len(s.path) > 1 for s in build_specs(Config))
 
 
 def test_build_specs_covers_every_config_leaf():

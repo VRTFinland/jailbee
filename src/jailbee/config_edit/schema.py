@@ -250,9 +250,7 @@ def _walk(
             # and turns a future hang into a missing section.
             if found.item_model in stack:
                 continue
-            out.extend(
-                _walk(found.item_model, prefix=path, stack=(*stack, found.item_model))
-            )
+            out.extend(_walk(found.item_model, prefix=path, stack=(*stack, found.item_model)))
             continue
         out.append(
             FieldSpec(
