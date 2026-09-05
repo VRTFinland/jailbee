@@ -11,6 +11,8 @@ import pytest
 from jailbee.config_edit.schema import FieldKind, FieldSpec
 from jailbee.config_edit.values import (
     format_value,
+    list_to_text,
+    map_to_text,
     parse_list,
     parse_map,
     parse_value,
@@ -152,3 +154,43 @@ def test_parse_map_parses_booleans_for_a_bool_map():
     value, error = parse_map(spec, "npm = maybe\n")
     assert value is None
     assert "true or false" in error
+
+
+def test_list_to_text_renders_one_entry_per_line():
+    assert list_to_text(["a.example", "b.example"]) == "a.example\nb.example\n"
+    assert list_to_text([]) == ""
+
+
+def test_list_to_text_guards_a_non_list_value():
+    """`format_value`/`to_text` can hand this a `None` before the field is set."""
+    assert list_to_text(None) == ""
+    assert list_to_text("not a list") == ""
+
+
+def test_map_to_text_renders_each_value_branch():
+    text = map_to_text({"a": None, "b": True, "c": False, "d": "x"})
+    assert text == "a = null\nb = true\nc = false\nd = x\n"
+
+
+def test_map_to_text_guards_a_non_dict_value():
+    assert map_to_text(None) == ""
+    assert map_to_text("not a dict") == ""
+
+
+def test_list_to_text_round_trips_through_parse_list():
+    spec = _spec(FieldKind.STR_LIST)
+    value = ["a.example", "b.example"]
+    assert parse_list(spec, list_to_text(value)) == (value, None)
+
+
+def test_map_to_text_round_trips_through_parse_map_for_a_str_map():
+    """`str_map` values include a bare `None` — `claude_credentials.repos`."""
+    spec = _spec(FieldKind.STR_MAP)
+    value = {"a": "1", "b": None}
+    assert parse_map(spec, map_to_text(value)) == (value, None)
+
+
+def test_map_to_text_round_trips_through_parse_map_for_a_bool_map():
+    spec = _spec(FieldKind.BOOL_MAP, label="pooled_caches")
+    value = {"npm": True, "uv": False}
+    assert parse_map(spec, map_to_text(value)) == (value, None)
