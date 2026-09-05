@@ -421,7 +421,16 @@ def _write_acl(
     entries = _entries_from_pool(session, prefix, raw_entries)
 
     yaml_text = allowlist_acl_yaml(cfg, entries, mirror_endpoint=mirror_endpoint)
-    _apply_acl_with_nft_quirk(incus, acl_name(cfg), yaml_text)
+    name = acl_name(cfg)
+    # Create-if-missing, as `_refresh_container_extras` does for a
+    # container's own extra ACL: `incus network acl edit` fails outright
+    # against a name nobody created. `jailbee apply` creates the repo ACL up
+    # front, but the refresh timer runs with no apply in front of it — a repo
+    # whose ACL was deleted is repaired on the next tick instead of logging
+    # the same failure forever.
+    if not incus.network_acl_exists(name):
+        incus.network_acl_create(name)
+    _apply_acl_with_nft_quirk(incus, name, yaml_text)
 
 
 def _apply_acl_with_nft_quirk(incus: Incus, name: str, yaml_text: str) -> None:
