@@ -3241,6 +3241,50 @@ def test_create_container_reports_a_vanished_repo_root_instead_of_crashing(mocke
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
+def test_run_dispatches_e_and_shift_e_to_edit_config(mocker, tmp_path):
+    """Drive `e`/`E` through `run()`'s real dispatch (``elif key in
+    ("config-edit", "config-edit-global"): edit_config(...)``), not just
+    `parse_key`/the binding shape in isolation — a wrong key comparison or an
+    inverted ``global_layer`` would be caught by nothing else.
+
+    Asserts on the argv each keypress actually spawns (``--global`` present
+    or absent), not merely that ``edit_config`` was reached, so an inverted
+    ``global_layer`` fails this test rather than sailing through it.
+    """
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    rc = _drive_run(mocker, [b"e", b"E"], groups=[group])
+
+    assert rc == 0
+    argvs = [call.args[0] for call in run.call_args_list]
+    assert len(argvs) == 2
+    assert argvs[0][:3] == ["jailbee", "config", "edit"]
+    assert "--global" not in argvs[0]
+    assert "--global" in argvs[1]
+
+
+def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
+    """The identical failure as ``test_run_reports_a_vanished_repo_root_instead_
+    of_crashing`` and ``test_create_container_reports_a_vanished_repo_root_
+    instead_of_crashing``, reached through the config-edit keypress:
+    `edit_config`'s own ``subprocess.run(argv, cwd=repo.cwd())`` raises the
+    same uncaught `OSError` if the repo root disappeared between a refresh
+    and "e". Exercises `_report_vanished_repo`'s third call site rather than
+    assuming the fix generalizes.
+    """
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"e"], groups=[group])
+
+    assert rc == 0  # run() returned normally — the OSError did not propagate
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert any(n is not None and str(tmp_path) in n for n in notices)
+
+
 def test_parse_key_maps_n_to_the_new_container_token():
     assert dashboard.parse_key(b"n") == "new"
 

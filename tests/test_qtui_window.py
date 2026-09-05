@@ -613,10 +613,25 @@ def test_group_row_context_menu_offers_new_container(qtbot):
 def test_config_menu_emits_the_selected_prefix(qtbot):
     win = MainWindow(git_enabled=True, interval=3.0)
     qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    win.tree.setCurrentItem(win.tree.topLevelItem(0).child(0))
     received: list[tuple[str, bool]] = []
     win.configEditRequested.connect(lambda p, g: received.append((p, g)))
 
     win.edit_repo_config_action.trigger()
     win.edit_global_config_action.trigger()
 
-    assert [g for _p, g in received] == [False, True]
+    assert received == [("p", False), ("p", True)]
+
+
+def test_config_menu_emits_empty_string_without_a_selection(qtbot):
+    """The window reports what it knows; the controller owns the message."""
+    win = MainWindow(git_enabled=True, interval=3.0)
+    qtbot.addWidget(win)
+    received: list[tuple[str, bool]] = []
+    win.configEditRequested.connect(lambda p, g: received.append((p, g)))
+
+    win.edit_repo_config_action.trigger()
+    win.edit_global_config_action.trigger()
+
+    assert received == [("", False), ("", True)]
