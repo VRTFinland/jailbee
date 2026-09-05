@@ -52,6 +52,22 @@ ConfigOption = Annotated[
 
 
 def _resolve_config_path(path: Path | None) -> Path:
+    """The repo config file to load, raising when there is none.
+
+    INVARIANT — may only be called where `cfg.is_synthetic()` is known false.
+
+    `find_repo_config()` raises `ConfigNotFoundError` unconditionally in a
+    directory with no `.jailbee/config.yaml`, and since scratch containers
+    every command runs in such a directory: a call reached from one is not an
+    error message, it is a traceback. Either guard the call on
+    `not cfg.is_synthetic()` (as `config show --layer effective` does) or use
+    `_resolve_config_path_or_none` and handle `None` — which is what a
+    subprocess spawn wants anyway, since a worker with no `--config` resolves
+    the same synthesized config from its inherited cwd.
+
+    Grep `_resolve_config_path(` before adding a call site: the whole list is
+    short on purpose, and every entry on it carries the guard.
+    """
     if path is not None:
         return path
     return find_repo_config()
@@ -60,13 +76,17 @@ def _resolve_config_path(path: Path | None) -> Path:
 def _resolve_config_path_or_none(path: Path | None) -> Path | None:
     """`_resolve_config_path`, but None instead of raising when there is none.
 
-    Isolates the one `ConfigNotFoundError` case `_load_or_exit` (and `config
-    show`/`config validate`) treat as "synthesize a config" rather than "exit
-    1": no explicit `--config` and no `.jailbee/config.yaml` in the current
-    directory. An explicit `--config PATH` that does not exist is not this
-    case — `_resolve_config_path` returns it unchanged, so the caller's own
-    `ConfigError` handling still reports a typo'd path as an error, not an
-    invitation to synthesize.
+    Isolates the one `ConfigNotFoundError` case a command treats as
+    "synthesize a config" rather than "exit 1": no explicit `--config` and no
+    `.jailbee/config.yaml` in the current directory. An explicit `--config
+    PATH` that does not exist is not this case — `_resolve_config_path`
+    returns it unchanged, so the caller's own `ConfigError` handling still
+    reports a typo'd path as an error, not an invitation to synthesize.
+
+    This is what almost every caller wants. `_load_or_exit`, `config
+    show`/`validate`, `destroy`, `net egress export` and the three background
+    worker spawns all go through here; `_resolve_config_path` itself survives
+    only for the two sites that have already established there is a file.
     """
     from jailbee.config import ConfigNotFoundError
 
@@ -74,6 +94,22 @@ def _resolve_config_path_or_none(path: Path | None) -> Path | None:
         return _resolve_config_path(path)
     except ConfigNotFoundError:
         return None
+
+
+def _egress_config_source(cfg: "Config", config: Path | None) -> str:
+    """Where this config's `egress_allow:` key lives, for "edit it there".
+
+    A synthesized config has no repo file: the entry came from `global.yaml`'s
+    `scratch.config` block, so name that — labelled exactly as every other
+    synthesized source is (`SCRATCH_ORIGIN_SUFFIX`) — rather than a
+    `.jailbee/config.yaml` path that does not exist.
+    """
+    from jailbee.config import SCRATCH_ORIGIN_SUFFIX
+
+    if cfg.is_synthetic():
+        return f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}"
+    # `_resolve_config_path` invariant: guarded by `is_synthetic()` above.
+    return str(_resolve_config_path(config))
 
 
 def _now() -> datetime:
@@ -285,17 +321,26 @@ def config_show(
         return
 
     if layer == "repo":
-        from jailbee.config import SCRATCH_ORIGIN_SUFFIX, scratch_repo_layer
+        from jailbee.config import SCRATCH_ORIGIN_SUFFIX, synthesized_repo_layer
 
         path = _resolve_config_path_or_none(config)
         if path is None:
+            # `synthesized_repo_layer`, not `scratch_repo_layer`: the guarded
+            # entry point, so this diagnostic reports the same refusal the
+            # load path gives (`scratch.enabled: false`, `$HOME` and its
+            # ancestors, an un-sluggable directory name) instead of printing a
+            # layer no command in this directory would ever load.
+            #
+            # Built before the header is printed, so a refusal is not preceded
+            # by a line announcing a synthesis that did not happen.
+            try:
+                raw = synthesized_repo_layer(Path.cwd())
+            except ConfigError as e:
+                error_plain(str(e))
+                raise typer.Exit(1) from e
             gpath = default_global_config_path()
             info(f"# Repo config: none — synthesized from {gpath}{SCRATCH_ORIGIN_SUFFIX}")
-            gcfg = _load_global()
-            typer.echo(
-                yaml.safe_dump(scratch_repo_layer(Path.cwd(), gcfg.scratch), sort_keys=False),
-                nl=False,
-            )
+            typer.echo(yaml.safe_dump(raw, sort_keys=False), nl=False)
             return
         info(f"# Repo config: {path}")
         if not path.exists():
@@ -313,6 +358,8 @@ def config_show(
             f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX})"
         )
     else:
+        # `_resolve_config_path` invariant: the `is_synthetic()` branch above
+        # is what makes this call safe — there is a file here.
         info(f"# Effective config (merged from global + {_resolve_config_path(config)})")
     data = cfg.model_dump(mode="json")
 
@@ -488,8 +535,16 @@ def init(config: ConfigOption = None) -> None:
 
     install_systemd_units()
 
-    with Session(get_engine()) as session:
-        egress_pool.register_repo(session, cfg)
+    # `PrefixCollisionError` is possible here too: `jailbee init` loads a
+    # synthesized config in a directory that has none. Reported, not raised as
+    # a traceback — the profiles and ACL above are already written, so this is
+    # the one step that failed, not the command.
+    try:
+        with Session(get_engine()) as session:
+            egress_pool.register_repo(session, cfg)
+    except egress_pool.PrefixCollisionError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
 
     # Linger keeps the timer firing when no user session is open.
     # Inform but don't enforce — needs root.
@@ -977,6 +1032,23 @@ def new_cmd(
         error(_NOT_A_GIT_REPO_ERROR.format(repo_root=cfg.repo_root))
         raise typer.Exit(2)
 
+    # Pre-flight, not a late failure: `register_repo` enforces this rule for
+    # every command (`apply`, `init`, and the two calls further down), but
+    # reaching it there would mean refusing *after* a multi-minute scratch
+    # base-image build. Same read, so the two cannot disagree.
+    if cfg.is_synthetic():
+        from sqlmodel import Session
+
+        from jailbee.db import get_engine
+        from jailbee.egress_pool import PrefixCollisionError, check_prefix_collision
+
+        try:
+            with Session(get_engine()) as session:
+                check_prefix_collision(session, cfg)
+        except PrefixCollisionError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+
     _advise_upgrade(cfg)
     _advise_setup()
 
@@ -1402,6 +1474,10 @@ def new_cmd(
         job_file = log_dir / f"{container_name}-{stamp}.job.json"
         job_file.write_text(json.dumps(job))
 
+        # `--config` only when there is a file: a scratch directory has none,
+        # and the worker re-synthesizes the same config from the `cwd` below.
+        # Same shape as `dashboard.RepoTarget.flags()`.
+        worker_config_path = _resolve_config_path_or_none(config)
         worker_argv = [
             sys.executable,
             "-m",
@@ -1409,8 +1485,7 @@ def new_cmd(
             "_new-worker",
             "--job",
             str(job_file),
-            "--config",
-            str(_resolve_config_path(config)),
+            *(["--config", str(worker_config_path)] if worker_config_path is not None else []),
         ]
         # Deliberately not closed here: the handle is inherited by the
         # detached child as its stdout/stderr; the parent returns immediately
@@ -2418,7 +2493,7 @@ def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: 
 
 def _spawn_boot_worker(
     cfg: "Config",
-    config_path: Path,
+    config_path: Path | None,
     full_name: str,
     *,
     restart: bool,
@@ -2429,6 +2504,11 @@ def _spawn_boot_worker(
     Mirrors the `jailbee destroy --background` spawn: the worker inherits a
     log file as stdout/stderr and runs in its own session so it survives the
     parent shell exiting.
+
+    `config_path` is `None` in a scratch directory, where no config file
+    exists: `--config` is then omitted and the worker re-synthesizes the same
+    config from the `cwd` it is started in (always `cfg.repo_root`). Same
+    shape as `dashboard.RepoTarget.flags()`.
 
     Refuses while another job for this container is still live. Unlike a
     create or a destroy, a boot is not the last thing to happen to the
@@ -2464,8 +2544,7 @@ def _spawn_boot_worker(
         "_boot-worker",
         "--name",
         full_name,
-        "--config",
-        str(config_path),
+        *(["--config", str(config_path)] if config_path is not None else []),
     ]
     if restart:
         worker_argv.append("--restart")
@@ -2549,7 +2628,7 @@ def start(
     if run_in_background:
         _spawn_boot_worker(
             cfg,
-            _resolve_config_path(config),
+            _resolve_config_path_or_none(config),
             name,
             restart=False,
             no_autostart=no_autostart,
@@ -2627,7 +2706,7 @@ def restart(
     if run_in_background:
         _spawn_boot_worker(
             cfg,
-            _resolve_config_path(config),
+            _resolve_config_path_or_none(config),
             name,
             restart=True,
             no_autostart=no_autostart,
@@ -2664,12 +2743,14 @@ def _destroy_batch(cfg: "Config", incus: "IncusType", names: list[str]) -> None:
         raise typer.Exit(1)
 
 
-def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> None:
+def _spawn_destroy_worker(cfg: "Config", config_path: Path | None, full_name: str) -> None:
     """Spawn a detached `_destroy-worker` for one container and record its job row.
 
     Mirrors the `jailbee new --background` spawn: the worker inherits a log
     file as stdout/stderr and runs in its own session so it survives the
     parent shell exiting.
+
+    `config_path` is `None` in a scratch directory — see `_spawn_boot_worker`.
     """
     from datetime import datetime as _dt
 
@@ -2691,8 +2772,7 @@ def _spawn_destroy_worker(cfg: "Config", config_path: Path, full_name: str) -> N
         "--name",
         full_name,
         "--force",
-        "--config",
-        str(config_path),
+        *(["--config", str(config_path)] if config_path is not None else []),
     ]
     # Deliberately not closed here: the handle is inherited by the
     # detached child as its stdout/stderr; the parent returns immediately
@@ -2832,7 +2912,11 @@ def destroy(
     else:
         run_in_background = cfg.destroy.background
 
-    config_path = _resolve_config_path(config)
+    # `_or_none`: computed eagerly, before the background branch and before
+    # `Incus()`, so the raising sibling would traceback out of *every*
+    # `jailbee destroy` in a scratch directory — the one cleanup path the
+    # throwaway container has.
+    config_path = _resolve_config_path_or_none(config)
 
     incus = Incus()
 
@@ -5862,7 +5946,7 @@ def egress_rm_cmd(
                     error(
                         f"'{entry}' comes from your config, not from a repo "
                         f"override — overrides can only widen the allowlist.\n"
-                        f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                        f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
                     )
                 else:
                     error(f"'{entry}' is not a repo override.")
@@ -5877,7 +5961,7 @@ def egress_rm_cmd(
                 error(
                     f"'{entry}' comes from your config, not from an override "
                     f"on '{container}' — overrides can only widen the allowlist.\n"
-                    f"Edit {_resolve_config_path(config)} and run `jailbee apply`."
+                    f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
                 )
             else:
                 error(f"'{entry}' is not an override on '{container}'.")
@@ -6001,7 +6085,17 @@ def egress_export_cmd(
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
-    config_path = _resolve_config_path(config)
+    config_path = _resolve_config_path_or_none(config)
+    if config_path is None:
+        # Scratch directory: there is no `egress_allow:` key here to replace,
+        # and `global.yaml`'s `scratch.config` is host-wide — promoting a
+        # single directory's overrides into it would widen every other scratch
+        # container's allowlist too, so point at a real repo config instead.
+        error(
+            f"{cfg.repo_root} has no repo config to write `egress_allow` into.\n"
+            f"Run `jailbee config init` here first."
+        )
+        raise typer.Exit(1)
     if not config_path.is_file():
         error(f"No repo config at {config_path} — there is no key to replace.")
         raise typer.Exit(1)
