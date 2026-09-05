@@ -9,7 +9,7 @@
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
 | `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job |
 | `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
-| `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; navigate + act (Enter). The action menu carries the workflow commands too — `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git pull`, `git diff`, `job log` — each shown only when it would do something. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `Space` fold the repo group under the cursor, `F2`/`S` settings overlay (columns + folding), `h`/`?` help, `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal) |
+| `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; navigate + act (Enter). The action menu carries the workflow commands too — `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git pull`, `git diff`, `job log` — each shown only when it would do something. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `Space` fold the repo group under the cursor, `F2`/`S` settings overlay (columns + folding), `h`/`?` help, `e`/`E` edit the selected row's repo config (`E`: the global one), `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal) |
 | `jailbee shell <name>` | Interactive shell (lands in the in-container clone) |
 | `jailbee tmux <name>` | Attach to the autostart tmux session inside the container |
 | `jailbee exec <name> -- <cmd>` | Run a command in the container as the dev user (e.g. `jailbee exec smoke -- pnpm test`) |
@@ -56,6 +56,7 @@
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration. `show`'s effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
+| `jailbee config edit [--global] [--write patch\|regenerate]` | Interactive editor for either config layer, with each field's own help text, its origin (`default`/`global`/`repo`) and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Lists of structured entries (`host_mounts`, `agents`, `autostart` steps, …) and `github.api_tokens` are read-only for now |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
 
 ### `jailbee gui` / `jailbee dashboard --gui`
