@@ -29,6 +29,17 @@ from jailbee.config_edit.schema import repo_specs
 # collection/setup) measured under 0.1s across three full-file runs — 10s
 # leaves roughly a 100x margin, generous enough to absorb a slow CI box
 # without waiting minutes to notice a real hang.
+#
+# Default method ("signal", SIGALRM) rather than "thread": verified against
+# the worst case this file can produce — a mutation that leaves *no*
+# reachable key binding at all (`confirm` set forever, so `~confirming`
+# blocks `q` and the sole `y` binding is filtered to never match) — under a
+# bare `uv run pytest tests/test_config_edit_app.py -q`, no external
+# wrapper. It self-terminated at ~11s with the expected `pytest-timeout`
+# failure both as the single selected test and as part of the whole file
+# (task 9 report, "Fix round 2/5"), so there was nothing here for the
+# asyncio event loop to swallow. Left as "signal" rather than switched to
+# "thread" on that evidence — see the report before changing this back.
 pytestmark = pytest.mark.timeout(10)
 
 
