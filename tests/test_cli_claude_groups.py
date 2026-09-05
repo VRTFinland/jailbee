@@ -341,7 +341,7 @@ def holder_view_env(mocker, tmp_path, monkeypatch):
         {"name": "myrepo-a", "status": "Running", "profiles": [], "config": {}, "state": None},
     ]
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch("jailbee.claude_pool._registered_repos", return_value=[("myrepo", cfg.repo_root)])
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[("myrepo", cfg.repo_root)])
     return cfg
 
 

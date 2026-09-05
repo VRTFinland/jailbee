@@ -349,3 +349,84 @@ def test_claude_running_probe_uses_pgrep_x_not_f(mocker, tmp_path):
     assert "pgrep -u" in script
     assert " -x " in script
     assert " -f " not in script
+
+
+# --- Reading one `incus list` for the whole host ------------------------------
+
+
+def test_groups_by_prefix_from_reuses_prefetched_rows(monkeypatch, tmp_path):
+    """The host-wide listing resolves every group from one `incus list`; a
+    per-group call would cost one subprocess per group."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
+    assert claude_groups.groups_by_prefix_from(_gcfg(group="work"), rows, ["myrepo"]) == {
+        "myrepo": {"work", "personal"}
+    }
+
+
+def test_authoritative_prefixes_from_reuses_prefetched_rows(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("mixed-a"), _raw("mixed-b", "personal"), _raw("clean-a")]
+    assert claude_groups.authoritative_prefixes_from(
+        _gcfg(group="work"), rows, "work", ["mixed", "clean"]
+    ) == {"clean"}
+
+
+def test_container_groups_reports_the_repos_group_for_an_unlabelled_container(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a")]
+    assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "work")
+    ]
+
+
+def test_container_groups_reports_a_temporary_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a", "personal")]
+    assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "personal")
+    ]
+
+
+def test_container_groups_names_the_repo_of_an_ungrouped_container(monkeypatch, tmp_path):
+    """`None` is not one holder: a container in no group reads *its own repo's*
+    config home, so the prefix is part of the answer."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a", claude_groups.NO_GROUP)]
+    assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", None)
+    ]
+
+
+def test_container_groups_attributes_a_container_to_its_longest_prefix(monkeypatch, tmp_path):
+    """`app-web-x` belongs to `app-web`, not to `app`, when both are registered."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    gcfg = GlobalConfig.model_validate(
+        {"claude_credentials": {"repos": {"app": "one", "app-web": "two"}}}
+    )
+    rows = [_raw("app-web-x")]
+    assert claude_groups.container_groups(gcfg, rows, ["app", "app-web"]) == [
+        ("app-web-x", "app-web", "two")
+    ]
+
+
+def test_container_groups_ignores_a_container_of_an_unknown_repo(monkeypatch, tmp_path):
+    """Nothing on the host says which group an unregistered repo resolves to,
+    and guessing one would put a container under the wrong login."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("stranger-a"), _raw("myrepo-a")]
+    assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "work")
+    ]
+
+
+def test_container_groups_ignores_a_garbage_label(monkeypatch, tmp_path):
+    """A hand-edited label must never become a path component; the container
+    falls back to its repo's group, as `container_override` does."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a", "../../etc")]
+    assert claude_groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "work")
+    ]
