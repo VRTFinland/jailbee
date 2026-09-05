@@ -150,6 +150,43 @@ def test_regenerate_over_a_hand_commented_file_demands_confirmation(tmp_path):
     assert "# my own note" not in plan.new_text
 
 
+def test_dropped_comments_reports_a_duplicate_that_only_partly_survives():
+    """A hand-written comment repeated twice, one copy surviving: multiset math.
+
+    A set-based comparison ("is this text present anywhere in the new file?")
+    would see "# note" reappear once and call *both* old occurrences kept,
+    silently losing the fact that one of the two was actually dropped. The
+    multiset comparison must report exactly one dropped occurrence.
+    """
+    from jailbee.config_edit.save import _dropped_comments
+
+    old_text = "# note\ngpg:\n  enabled: false\n# note\nssh:\n  enabled: true\n"
+    new_text = "# note\ngpg:\n  enabled: true\nssh:\n  enabled: true\n"
+    assert _dropped_comments(old_text, new_text) == ("# note",)
+
+
+def test_regenerate_dropping_one_of_two_identical_comments_still_confirms(tmp_path, monkeypatch):
+    """Same scenario as above, exercised through `build_plan` end to end.
+
+    `render_layer` is monkeypatched so the "regenerated" text is exactly
+    controlled: one of the two duplicated hand comments survives, one does
+    not. `must_confirm` must still trip, and the dropped tuple must name the
+    lost copy.
+    """
+    import jailbee.config_edit.save as save_module
+
+    old_text = "# note\ngpg:\n  enabled: false\n# note\nssh:\n  enabled: true\n"
+    layers = _layers(tmp_path, global_text=old_text)
+    monkeypatch.setattr(
+        save_module, "render_layer", lambda raw, layer: "# note\ngpg:\n  enabled: true\n"
+    )
+    plan = build_plan(
+        layers, "global", (YamlChange(("gpg", "enabled"), True),), global_specs(), "regenerate"
+    )
+    assert plan.must_confirm is True
+    assert plan.dropped_comments == ("# note",)
+
+
 def test_regenerate_over_a_generated_file_needs_no_confirmation(tmp_path):
     """jailbee's own comments come back identical, so nothing is lost."""
     from jailbee.config_writer import render_global_yaml

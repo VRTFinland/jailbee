@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import difflib
 import stat
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -202,19 +203,37 @@ def build_plan(
 
 
 def _dropped_comments(old_text: str, new_text: str) -> tuple[str, ...]:
-    """Comment lines the regenerated file does not carry.
+    """Comment lines the regenerated file does not carry, counting duplicates.
 
     A regenerate keeps the keys and re-derives every comment from the schema,
     so jailbee's own comments come back byte-identical and drop out of this
     comparison — what is left is exactly what a human wrote in the file. That
     is the set worth putting in front of someone before it disappears.
+
+    Compared as a multiset (`Counter`), not a set: two hand-written comments
+    that happen to strip to the same text — a repeated one-line divider, the
+    same short note written twice — are two lines, and only one of them
+    reappears when just one survives regeneration. A plain set comparison
+    would see that surviving text as "kept" and silently clear the other
+    occurrence too, which is exactly the case spec 2.5's confirmation exists
+    to catch. Returned lines keep old_text's order of first appearance, since
+    this order is what the confirmation screen shows.
     """
-    kept = {line.strip() for line in new_text.splitlines() if line.strip().startswith("#")}
-    return tuple(
-        line.strip()
-        for line in old_text.splitlines()
-        if line.strip().startswith("#") and line.strip() not in kept
+    old_lines = [line.strip() for line in old_text.splitlines() if line.strip().startswith("#")]
+    new_counts = Counter(
+        line.strip() for line in new_text.splitlines() if line.strip().startswith("#")
     )
+    old_counts = Counter(old_lines)
+    # Every comment text present in both keeps up to min(old, new) copies as
+    # "kept"; anything beyond that count, per distinct text, is dropped.
+    kept_budget = {text: min(count, new_counts[text]) for text, count in old_counts.items()}
+    dropped: list[str] = []
+    for line in old_lines:
+        if kept_budget[line] > 0:
+            kept_budget[line] -= 1
+        else:
+            dropped.append(line)
+    return tuple(dropped)
 
 
 def commit(plan: SavePlan) -> Path | None:
@@ -231,7 +250,10 @@ def commit(plan: SavePlan) -> Path | None:
     Nothing is validated here — `layers.validate` has already run against the
     staged mapping by the time a plan is committed (spec 3.5 step 2), which is
     what makes it impossible for the editor to write a file the CLI would
-    reject.
+    reject. This is a caller contract, not something this function checks or
+    enforces: until the CLI wiring (Task 9) actually sequences validate then
+    commit, nothing here stops `commit` from being called on an unvalidated
+    plan.
     """
     backup: Path | None = None
     if plan.path.exists():
