@@ -202,9 +202,7 @@ def opened(tmp_path, monkeypatch, mocker):
         global_path = default_global_config_path()
         global_path.parent.mkdir(parents=True, exist_ok=True)
         global_path.write_text(global_text)
-        return layers.read_layers(
-            tmp_path / "repo" / ".jailbee" / "config.yaml", global_path
-        )
+        return layers.read_layers(tmp_path / "repo" / ".jailbee" / "config.yaml", global_path)
 
     return _open
 

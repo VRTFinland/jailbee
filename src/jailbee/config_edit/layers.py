@@ -182,9 +182,7 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
     return tuple(value)
 
 
-def apply_changes(
-    raw: dict[str, object], changes: Sequence[YamlChange]
-) -> dict[str, object]:
+def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict[str, object]:
     """`raw` with `changes` applied, as a new mapping.
 
     The in-memory twin of `config_writer._apply`, for the dry run: the
@@ -209,9 +207,7 @@ def apply_changes(
     return out
 
 
-def validate(
-    layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]
-) -> str | None:
+def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
     """The error a save would produce, or `None` if the staged layer loads.
 
     Runs the *real* loader over the staged mapping (spec 3.5 step 2), so
