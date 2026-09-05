@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Literal, TypeGuard, Union, get_args, get_origin
 
 from pydantic import BaseModel, SecretStr
+from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 
 
 class FieldKind(StrEnum):
@@ -178,3 +180,91 @@ def classify(annotation: object) -> Classified:
     if ann is str:
         return Classified(FieldKind.STR)
     raise TypeError(f"config_edit.schema cannot classify annotation: {annotation!r}")
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    """One editable leaf of the config tree.
+
+    `path` is the YAML key path, which is also the identity used by
+    staged changes (`config_writer.YamlChange.path`) and by
+    `BASIC_FIELDS`. `default` is the schema default, shown in the help
+    pane so the user can see what resetting the field gives back.
+    """
+
+    path: tuple[str, ...]
+    label: str
+    kind: FieldKind
+    description: str
+    default: object
+    choices: tuple[object, ...] = ()
+    item_model: type[BaseModel] | None = None
+    optional: bool = False
+    secret: bool = False
+    advanced: bool = True
+
+
+def _default_of(info: FieldInfo) -> object:
+    """The field's default, with `default_factory` called.
+
+    A `default_factory` field reports `PydanticUndefined` as its
+    `default`, which would render as the string "PydanticUndefined" in
+    the help pane. Calling the factory gives the real empty value.
+    """
+    if info.default_factory is not None:
+        # `default_factory` may take the already-validated data as its one
+        # argument; none of jailbee's do, so the no-arg call is correct here.
+        return info.default_factory()  # type: ignore[call-arg]  # no validated-data factories in jailbee
+    if info.default is PydanticUndefined:
+        return None
+    return info.default
+
+
+def build_specs(model: type[BaseModel]) -> tuple[FieldSpec, ...]:
+    """Every editable leaf reachable from `model`, in declaration order.
+
+    A `SUBMODEL` field is recursed into rather than emitted: `gpg` is a
+    section header the UI derives, `gpg.enabled` is the editable thing. A
+    *collection* of models (`host_mounts`, `agents`) stays a leaf — there
+    is no single `host_mounts.host` to edit — and carries `item_model` for
+    the drill-down screen to render.
+    """
+    return tuple(_walk(model, prefix=(), stack=(model,)))
+
+
+def _walk(
+    model: type[BaseModel],
+    *,
+    prefix: tuple[str, ...],
+    stack: tuple[type[BaseModel], ...],
+) -> list[FieldSpec]:
+    out: list[FieldSpec] = []
+    for name, info in model.model_fields.items():
+        if (model.__name__, name) in COMPUTED_FIELDS:
+            continue
+        found = classify(info.annotation)
+        path = (*prefix, name)
+        if found.kind is FieldKind.SUBMODEL and found.item_model is not None:
+            # `stack` guards a self-referential model from recursing
+            # forever. None exists today; the guard costs one comparison
+            # and turns a future hang into a missing section.
+            if found.item_model in stack:
+                continue
+            out.extend(
+                _walk(found.item_model, prefix=path, stack=(*stack, found.item_model))
+            )
+            continue
+        out.append(
+            FieldSpec(
+                path=path,
+                label=name,
+                kind=found.kind,
+                description=(info.description or "").strip(),
+                default=_default_of(info),
+                choices=found.choices,
+                item_model=found.item_model,
+                optional=found.optional,
+                secret=found.secret,
+            )
+        )
+    return out

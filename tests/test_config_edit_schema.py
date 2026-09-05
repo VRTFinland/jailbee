@@ -136,3 +136,96 @@ def test_computed_fields_are_the_four_that_have_no_yaml_key():
             ("Config", "claude_credentials_dir"),
         }
     )
+
+
+def _by_path(specs, dotted):
+    wanted = tuple(dotted.split("."))
+    matches = [s for s in specs if s.path == wanted]
+    assert matches, f"no spec for {dotted}"
+    return matches[0]
+
+
+def test_build_specs_returns_leaves_with_dotted_paths():
+    from jailbee.config_edit.schema import build_specs
+
+    specs = build_specs(Config)
+    paths = {s.path for s in specs}
+    assert ("gpg", "enabled") in paths
+    assert ("gpg",) not in paths, "a SUBMODEL is recursed into, not emitted"
+    assert ("terminal", "kitty", "enabled") in paths, "recursion is not depth-limited"
+
+
+def test_build_specs_carries_label_description_and_default():
+    from jailbee.config_edit.schema import build_specs
+
+    spec = _by_path(build_specs(Config), "jetbrains.ide")
+    assert spec.label == "ide"
+    assert spec.kind is FieldKind.CHOICE
+    assert "idea" in spec.choices
+    assert spec.default == "idea"
+    assert spec.description.strip()
+
+
+def test_build_specs_omits_computed_fields():
+    from jailbee.config_edit.schema import build_specs
+
+    paths = {s.path for s in build_specs(Config)}
+    for computed in (
+        "repo_root",
+        "default_branch",
+        "upstream_remote",
+        "claude_credentials_dir",
+    ):
+        assert (computed,) not in paths
+    assert ("container_prefix",) in paths
+
+
+def test_collections_of_models_stay_leaves():
+    """`host_mounts` is one row list, not six flattened HostMount fields.
+
+    Flattening would produce `host_mounts.host` — a path that means
+    nothing, because there are N mounts. The drill-down screen renders
+    `item_model` instead.
+    """
+    from jailbee.config.models_host import HostMount
+    from jailbee.config_edit.schema import build_specs
+
+    spec = _by_path(build_specs(Config), "host_mounts")
+    assert spec.kind is FieldKind.MODEL_LIST
+    assert spec.item_model is HostMount
+    assert not any(
+        s.path[:1] == ("host_mounts",) and len(s.path) > 1 for s in build_specs(Config)
+    )
+
+
+def test_build_specs_covers_every_config_leaf():
+    """77 leaves under Config, 14 under GlobalConfig, as measured.
+
+    A count, not a list: it fails loudly when a field is added or a
+    recursion rule changes, and the reviewer then decides which.
+
+    The plan's task-3 brief said 76 for `Config`; re-measuring against the
+    actual schema on this branch gives 77 (see task-3-report.md for the
+    full per-model breakdown and the two independent recounts that agree
+    with the code). `GlobalConfig`'s 14 matches the brief exactly.
+    """
+    from jailbee.config_edit.schema import build_specs
+
+    assert len(build_specs(Config)) == 77
+    assert len(build_specs(GlobalConfig)) == 14
+
+
+def test_a_default_factory_field_reports_its_real_default():
+    """`shared_caches` and `pooled_caches` use default_factory.
+
+    Read as `FieldInfo.default` those are `PydanticUndefined`, which the
+    help pane would render as the literal string "PydanticUndefined". The
+    factory has to be called.
+    """
+    from jailbee.config_edit.schema import build_specs
+
+    specs = build_specs(Config)
+    caches = _by_path(specs, "shared_caches").default
+    assert isinstance(caches, list) and caches, "the default set of shared caches"
+    assert _by_path(specs, "pooled_caches").default == {}
+    assert _by_path(specs, "egress_allow").default == []
