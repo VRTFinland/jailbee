@@ -27,7 +27,6 @@ from jailbee.config_edit.state import (
     UNSET,
     changes,
     current,
-    effective,
     sections,
     visible_specs,
 )
@@ -58,7 +57,6 @@ EDITOR_STYLE = Style(
         ("cursor", "bold"),
         ("section-open", "bold"),
         ("staged", "ansiyellow bold"),
-        ("origin", "ansibrightblack"),
         ("disabled", "ansibrightblack"),
         ("dim", "ansibrightblack"),
         ("error", "ansired bold"),
@@ -139,21 +137,24 @@ def title_bar(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
 def section_pane(state: EditorState) -> Pane:
     """Top-level keys, with the open one marked and the cursor on its row.
 
-    Rows carry no inline glyph — the cursor row and the open section are
-    told apart by style class alone (`class:cursor`, `class:section-open`),
-    so the visible text is the bare name plus a fixed indent on every row.
-    An inline marker such as "▸ " would read back through `.split()` as a
-    token of its own and desynchronize the plain-text name list from what
-    the section list actually shows.
+    Each row carries an inline glyph — "▸ " on the cursor row while the
+    section list has focus, "· " on the currently open section, "  "
+    otherwise — matching the design's layout mockup (`▸ jetbrains` in the
+    sections pane) and `field_pane`'s own `▸`/`●` markers. The two panes'
+    visual vocabulary has to agree; a glyph-free section list next to a
+    glyph-carrying field list would read as two different UIs stitched
+    together. The style classes (`class:cursor`, `class:section-open`)
+    still carry the highlight; the glyph is what makes the state legible
+    even where no styling reaches (a plain-text terminal, a copy-paste).
     """
     names = sections(state)
     focused = state.section is None and not state.query
     fragments: StyleAndTextTuples = []
     for i, name in enumerate(names):
         if focused and i == state.index:
-            fragments.append(("class:cursor", f"  {name}\n"))
+            fragments.append(("class:cursor", f"▸ {name}\n"))
         elif name == state.section:
-            fragments.append(("class:section-open", f"  {name}\n"))
+            fragments.append(("class:section-open", f"· {name}\n"))
         else:
             fragments.append(("", f"  {name}\n"))
     if focused:
@@ -185,7 +186,8 @@ def field_pane(state: EditorState, layer_set: LayerSet) -> Pane:
     for i, spec in enumerate(rows):
         cursor = "▸" if i == state.index else " "
         mark = "●" if spec.path in pending else " "
-        value = format_value(spec, effective(state, spec.path))
+        origin = state.origins.get(spec.path)
+        value = format_value(spec, origin.value if origin is not None else spec.default)
         suffix = _staged_suffix(state, spec) if spec.path in pending else ""
         line = (
             f"{cursor}{mark} {_row_name(state, spec):<{width}}  "

@@ -69,7 +69,9 @@ def _state(layer="repo", origins=None, **kwargs):
 
 def test_section_pane_lists_every_top_level_key_once():
     pane = section_pane(_state())
-    assert _text(pane.fragments).split() == ["gpg", "ssh", "egress_allow", "host_mounts", "github"]
+    tokens = _text(pane.fragments).split()
+    names = [tok for tok in tokens if tok not in {"▸", "·"}]
+    assert names == ["gpg", "ssh", "egress_allow", "host_mounts", "github"]
     assert pane.cursor_row == 0
 
 
@@ -96,8 +98,15 @@ def test_a_staged_edit_is_marked_and_says_what_will_happen(tmp_path):
     origins[("gpg", "enabled")] = Origin("repo", False)
     state = st.stage(_state(section="gpg", origins=origins), ("gpg", "enabled"), True)
     text = _text(field_pane(state, layers).fragments)
-    assert "→ true" in text
-    assert "(repo)" in text  # the origin still describes the file, not the edit
+    before, arrow, after = text.partition("→")
+    assert arrow, "no staged edit was marked at all"
+    # The value column must still show what is saved (false), not what the
+    # edit will make it (true) — the arrow is what carries the pending
+    # change, not the main column. A regression to `effective()` would show
+    # "true" on both sides of the arrow.
+    assert "false" in before
+    assert "true" in after
+    assert "(repo)" in before  # the origin still describes the file, not the edit
 
 
 def test_a_staged_reset_says_reset_rather_than_the_old_value(tmp_path):
