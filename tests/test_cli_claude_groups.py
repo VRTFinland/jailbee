@@ -39,12 +39,19 @@ def group_env(mocker, tmp_path, monkeypatch):
     return cfg, incus
 
 
-def test_status_names_the_repo_group_and_the_deviating_container(group_env):
+def test_bare_group_is_a_command_group_not_a_status_command(group_env):
+    """`jailbee claude ls` states which holder this repo reads, `jailbee ls`'s
+    CLAUDE column the per-container labels, and `jailbee doctor` the overrides
+    that only repeat the repo — so a fourth, partial view here was just one
+    more place to disagree with them."""
     result = runner.invoke(app, ["claude", "group"])
-    assert result.exit_code == 0
-    assert "work" in result.output
-    assert "myrepo-b" in result.output
-    assert "personal" in result.output
+
+    assert "create" in result.output
+    assert "rm" in result.output
+    assert "Usage" in result.output
+    # The facts the old status command printed are not printed here any more.
+    assert "Containers with a temporary override" not in result.output
+    assert "myrepo-b" not in result.output
 
 
 def test_use_applies_the_override(group_env, mocker):
@@ -440,21 +447,6 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     assert json.loads(stored.read_text())["claudeAiOauth"]["refreshToken"] == "rt-personal"
 
 
-def test_status_points_at_claude_ls_for_the_host_wide_picture(group_env):
-    """A bare list of group names was the second place claiming to describe the
-    host's groups, and it could not say which account any of them held.
-    `jailbee claude ls` answers that, so status names the command instead."""
-    from jailbee import claude_groups
-
-    claude_groups.group_dir("personal").mkdir(parents=True)
-
-    result = runner.invoke(app, ["claude", "group"])
-
-    assert result.exit_code == 0, result.output
-    assert "jailbee claude ls" in result.output
-    assert "Credential groups on this host" not in result.output
-
-
 # --- An override that would only repeat the repo's group ----------------------
 
 
@@ -614,22 +606,222 @@ def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mock
     clearer.assert_called_once_with(incus, "myrepo-b")
 
 
-def test_status_reports_an_override_that_only_repeats_the_repo(group_env, mocker):
-    """Pre-existing leftovers are not cleaned by anything the user has not run,
-    so the one command that describes this repo's overrides has to name them."""
-    _, incus = group_env
-    incus.list_containers.return_value = [
-        {
-            "name": "myrepo-a",
-            "status": "Running",
-            "profiles": [],
-            "config": {"user.jailbee.claude_group": "work"},
-            "state": None,
-        }
-    ]
+# --- Creating and removing a credential group --------------------------------
 
-    result = runner.invoke(app, ["claude", "group"])
+
+def test_create_makes_the_directory_0700(group_env):
+    import stat
+
+    from jailbee import claude_groups
+
+    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
 
     assert result.exit_code == 0, result.output
-    assert "myrepo-a" in result.output
-    assert "reset" in result.output
+    created = claude_groups.group_dir("fresh")
+    assert created.is_dir()
+    assert stat.S_IMODE(created.stat().st_mode) == 0o700
+
+
+def test_create_names_what_to_do_with_the_new_group(group_env):
+    """An empty group does nothing on its own, and the three ways to put it to
+    use are not guessable from `--help` alone."""
+    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
+
+    assert "group set" in result.output
+    assert "claude use -g" in result.output
+
+
+def test_create_is_idempotent(group_env):
+    from jailbee import claude_groups
+
+    claude_groups.group_dir("fresh").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
+
+    assert result.exit_code == 0, result.output
+    assert "already" in result.output
+
+
+@pytest.mark.parametrize("bad", ["none", "Fresh", "_fresh", "../etc"])
+def test_create_refuses_a_name_it_could_not_address(group_env, bad):
+    """`none` is the CLI's word for "no group", and the rest are outside the
+    grammar that makes a group name safe as a path component."""
+    result = runner.invoke(app, ["claude", "group", "create", bad])
+
+    assert result.exit_code == 2
+    # The refusal has to be *this* command's, not typer's "no such command":
+    # the latter would make this test pass before the command existed.
+    assert bad in result.output
+    assert "No such command" not in result.output
+
+
+def test_rm_removes_an_unused_empty_group(group_env):
+    from jailbee import claude_groups
+
+    claude_groups.group_dir("demo").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+
+    assert result.exit_code == 0, result.output
+    assert not claude_groups.group_dir("demo").exists()
+
+
+def test_rm_of_a_group_that_does_not_exist_is_not_an_error(group_env):
+    """The end state the caller asked for already holds."""
+    result = runner.invoke(app, ["claude", "group", "rm", "gone"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_rm_refuses_while_a_repo_resolves_to_the_group(holder_view_env, mocker):
+    """`jailbee apply` would recreate the directory, and until it ran those
+    repos' containers would mount an empty one.
+
+    The group is reached through a `repos:` entry rather than the host
+    default, so it is the *member* refusal being tested and not the
+    host-default one, which fires first and says something else.
+    """
+    from jailbee import claude_groups
+    from jailbee.global_config import GlobalConfig
+
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig.model_validate(
+            {"claude_credentials": {"repos": {"myrepo": "work"}}}
+        ),
+    )
+    claude_groups.group_dir("work").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "rm", "work"])
+
+    assert result.exit_code == 2
+    assert "myrepo" in result.output
+    assert claude_groups.group_dir("work").exists()
+
+
+def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
+    """The repo check reads the registry; an empty one must not make the host's
+    own default look unused."""
+    from jailbee import claude_groups
+    from jailbee.global_config import GlobalConfig
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "demo"}}),
+    )
+    claude_groups.group_dir("demo").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+
+    assert result.exit_code == 2
+    assert "global.yaml" in result.output
+    assert claude_groups.group_dir("demo").exists()
+
+
+def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mocker):
+    """`myrepo-b` reads `personal` through its own label, and removing the
+    directory under it would leave it mounting nothing."""
+    from jailbee import claude_groups
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    claude_groups.group_dir("personal").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "rm", "personal"])
+
+    assert result.exit_code == 2
+    assert "myrepo-b" in result.output
+    assert "group reset" in result.output
+    assert claude_groups.group_dir("personal").exists()
+
+
+def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
+    from jailbee import claude_groups, claude_pool
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    holder = claude_groups.group_dir("demo")
+    holder.mkdir(parents=True)
+    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
+    parked = claude_pool.PoolChange(
+        parked_as="demo@corp.com",
+        activated=None,
+        updated=[],
+        not_updated=[],
+        live_sessions=[],
+    )
+    # The real `park` empties the holder, which is what lets the `rmdir`
+    # below succeed — a mock that only returned would leave the credential
+    # in place and hide a broken order of operations.
+    park = mocker.patch(
+        "jailbee.claude_pool.park",
+        side_effect=lambda *a, **k: (
+            (holder / claude_pool.CREDENTIAL_FILE).unlink(),
+            parked,
+        )[1],
+    )
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    park.assert_called_once()
+    # The holder view, not this repo's own config: parking through the caller's
+    # holder would store the wrong group's login.
+    assert park.call_args.args[0].claude_credentials_dir == holder
+    assert "demo@corp.com" in result.output
+    assert not holder.exists()
+
+
+def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, mocker):
+    from jailbee import claude_groups, claude_pool
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    # Without this the command refuses for want of a TTY, and the test would
+    # pass without ever reaching the prompt it is about.
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    holder = claude_groups.group_dir("demo")
+    holder.mkdir(parents=True)
+    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
+    park = mocker.patch("jailbee.claude_pool.park")
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"], input="n\n")
+
+    assert result.exit_code != 0
+    park.assert_not_called()
+    assert (holder / claude_pool.CREDENTIAL_FILE).exists()
+
+
+def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
+    """Parking is not destructive, but it does move a login out of a holder a
+    script may still be pointing at — so it stays an explicit request."""
+    from jailbee import claude_groups, claude_pool
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    holder = claude_groups.group_dir("demo")
+    holder.mkdir(parents=True)
+    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
+    park = mocker.patch("jailbee.claude_pool.park")
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+
+    assert result.exit_code == 2
+    assert "--yes" in result.output
+    park.assert_not_called()
+
+
+def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
+    """`rmdir`, never `rm -rf`: whatever else is in there is someone's, and the
+    command says what stopped it instead of removing it."""
+    from jailbee import claude_groups
+
+    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    holder = claude_groups.group_dir("demo")
+    holder.mkdir(parents=True)
+    (holder / "notes.txt").write_text("mine")
+
+    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+
+    assert result.exit_code == 2
+    assert "notes.txt" in result.output
+    assert (holder / "notes.txt").exists()

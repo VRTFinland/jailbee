@@ -364,6 +364,41 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
+def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckResult]:
+    """Report containers whose group override only repeats the repo's group.
+
+    Silent when there are none — the rule every optional check here follows.
+    Reported as a failure when there are, because it is state that changes
+    behaviour later rather than now: the override outranks the profile, so
+    the next `jailbee claude group set` would leave exactly these containers
+    behind on the group the repo just left.
+
+    `jailbee claude group use`/`set`/`unset` clear such an override as they
+    go, so what this finds is either a leftover from before that rule existed
+    or one written by hand. Degrades to silence when the daemon cannot be
+    reached, as `_check_claude_pool` does: a discoverability nicety must not
+    turn an unreachable Incus into a failed check.
+    """
+    from jailbee import claude_groups
+
+    try:
+        names = claude_groups.redundant_overrides(cfg, incus)
+    except Exception:  # not a diagnosis; see _check_claude_pool
+        return []
+    if not names:
+        return []
+    return [
+        CheckResult(
+            "claude group overrides",
+            False,
+            f"{', '.join(names)} carry a credential-group override that only "
+            "repeats this repo's group, and it would outrank the next `jailbee "
+            "claude group set` — drop one with `jailbee claude group reset "
+            "<container>`.",
+        )
+    ]
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -425,6 +460,11 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
     results.extend(_check_claude_pool(cfg, incus, gcfg))
+    if incus_available:
+        # Behind the gate, unlike its neighbours: this one always reads
+        # `incus list`, and a host with no `incus` binary must see no Incus
+        # call at all rather than one that fails quietly.
+        results.extend(_check_redundant_claude_overrides(cfg, incus))
 
     # 2c. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():

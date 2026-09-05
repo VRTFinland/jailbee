@@ -8390,9 +8390,13 @@ def claude_rm_cmd(
 
 group_app = typer.Typer(
     name="group",
-    help="Which Claude credential group a repo — or one container — uses.",
-    no_args_is_help=False,
-    invoke_without_command=True,
+    help="Create, remove and assign Claude credential groups.",
+    # A pure command group: the status view it used to print with no
+    # subcommand is `jailbee claude ls` (which holder each login is live in),
+    # `jailbee ls`'s CLAUDE column (per-container labels) and `jailbee doctor`
+    # (overrides that only repeat the repo). A fourth, partial view here was
+    # one more place for the four to disagree.
+    no_args_is_help=True,
 )
 claude_app.add_typer(group_app)
 
@@ -8582,6 +8586,187 @@ def _write_repo_group(config: Path | None, value: object) -> None:
         [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
     )
     _reapply_binds_profile(config)
+
+
+@group_app.command("create")
+def claude_group_create_cmd(
+    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+) -> None:
+    """Create an empty credential group, before anything is assigned to it.
+
+    Nothing else has to exist first: `set`, `use` and `claude use -g` all
+    create the directory on demand. This is for the case where the group
+    wants to exist before any of them runs.
+    """
+    from jailbee import claude_groups
+    from jailbee.paths import display_path
+
+    try:
+        group = claude_groups.validate_group_name(group)
+    except claude_groups.GroupError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    existed = claude_groups.group_dir(group).is_dir()
+    try:
+        created = claude_groups.ensure_group_dir(group)
+    except OSError as e:
+        error(f"could not create the group directory: {e}")
+        raise typer.Exit(2) from e
+
+    if existed:
+        info(f"Group `{group}` already exists → {display_path(created)}")
+    else:
+        success(f"Created group `{group}` → {display_path(created)}")
+    info(
+        f"It holds no login yet. `jailbee claude group set {group}` moves this repo "
+        f"into it, `jailbee claude group use {group} <container>` moves one "
+        f"container, and `jailbee claude use -g {group} <account>` activates a "
+        "stored login into it."
+    )
+
+
+@group_app.command("rm")
+def claude_group_rm_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Credential group to remove.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Remove a credential group that nothing uses.
+
+    Refuses while any repo resolves to the group, while it is the host's
+    default, or while any container has been moved into it: removing the
+    directory under any of those leaves them mounting nothing, and the next
+    `jailbee apply` would recreate it anyway.
+
+    A login the group still holds is **parked**, never deleted — it lands in
+    the host-wide store and can be activated into any other group.
+    `jailbee claude rm` remains the only command that destroys a credential.
+    """
+    from jailbee import claude_groups, claude_pool
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+    from jailbee.incus import Incus, IncusError
+    from jailbee.paths import display_path
+
+    cfg, gcfg = _claude_ctx(config)
+    try:
+        group = claude_groups.validate_group_name(group)
+    except claude_groups.GroupError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+    # The host default first: it is the one blocker the registry cannot
+    # speak for, since a host with no registered repo still resolves every
+    # repo to it.
+    if gcfg.claude_credentials.group == group:
+        error(
+            f"`{group}` is this host's default credential group. Change or remove "
+            "`claude_credentials.group` in ~/.config/jailbee/global.yaml first — "
+            "otherwise every repo without an entry of its own still resolves here."
+        )
+        raise typer.Exit(2)
+
+    members = claude_pool.group_member_prefixes(gcfg, group)
+    if members:
+        error(
+            f"`{group}` is the credential group of: {', '.join(members)}. "
+            "Move them off it first (`jailbee claude group set <other>` or "
+            "`jailbee claude group unset` in each), or the next `jailbee apply` "
+            "recreates the directory and until then their containers mount an "
+            "empty one."
+        )
+        raise typer.Exit(2)
+
+    try:
+        rows = Incus().list_containers()
+    except (IncusError, OSError) as e:
+        # Fail closed: a container moved into this group reads it through a
+        # label, and that is exactly what cannot be checked right now.
+        # No `--force` past this: a container moved into the group keeps its
+        # label while the daemon is down and would come back reading a
+        # directory that is gone.
+        error(
+            f"cannot tell whether a container still uses `{group}` — listing them "
+            f"failed. Retry once `incus list` works.\n{e}"
+        )
+        raise typer.Exit(2) from e
+    # The label is the whole truth for an override, so this needs no prefix
+    # knowledge — and catches a container of a repo the registry never saw.
+    labelled = sorted(
+        str(row.get("name", ""))
+        for row in rows
+        if (row.get("config") or {}).get(claude_groups.GROUP_LABEL) == group
+    )
+    if labelled:
+        error(
+            f"These containers are in `{group}` for their own lifetime: "
+            f"{', '.join(labelled)}. Move each off it with `jailbee claude group "
+            "reset <container>` (or destroy it) first."
+        )
+        raise typer.Exit(2)
+
+    holder = claude_groups.group_dir(group)
+    if not holder.exists():
+        info(f"No group `{group}` on this host — nothing to remove.")
+        return
+
+    if claude_pool.credential_in(holder).exists():
+        account = claude_pool.note_account_at(holder)
+        named = "an unidentified login" if account is None else f"`{account.identity.email}`"
+        if not yes:
+            if not _is_tty():
+                error(
+                    f"`{group}` still holds {named}. Re-run with --yes to park it "
+                    "into the host-wide store and remove the group."
+                )
+                raise typer.Exit(2)
+            info(f"Group `{group}` holds {named}.")
+            if not typer.confirm("Park it into the host-wide store and remove the group?"):
+                raise typer.Abort()
+        # Exactly the path `claude park -g` takes: a holder view, because this
+        # repo is not a member of the group being emptied and its own config
+        # home describes a different login.
+        view = _holder_view(cfg, group)
+        try:
+            change = claude_pool.park(view, gcfg, authoritative=_claude_authoritative(view, gcfg))
+        except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+        if change.parked_as is not None:
+            success(f"Parked `{change.parked_as}` — activate it anywhere with `jailbee claude use`")
+            _report_side_effects(
+                change,
+                session_note=(
+                    "That holder is now empty and about to be removed, so the session "
+                    "has no login: run `jailbee claude use` in a container of its new "
+                    "group."
+                ),
+            )
+
+    try:
+        holder.rmdir()
+    except OSError as e:
+        # `rmdir`, never a recursive delete: whatever else is in there is
+        # someone's, and naming it is more use than removing it.
+        try:
+            leftover = ", ".join(sorted(p.name for p in holder.iterdir())) or str(e)
+        except OSError:
+            leftover = str(e)
+        error(
+            f"could not remove {display_path(holder)} — it still holds: {leftover}. "
+            "jailbee removes a group directory only when it is empty."
+        )
+        raise typer.Exit(2) from e
+    success(f"Removed group `{group}`")
 
 
 @group_app.command("set")
@@ -8804,52 +8989,6 @@ def claude_group_reset_cmd(
     claude_groups.clear_container_group(incus, name)
     repo = claude_groups.repo_group(cfg)
     _report_group_change(cfg, name, before=before, after=repo, redundant=True)
-
-
-@group_app.callback(invoke_without_command=True)
-def claude_group_status(ctx: typer.Context, config: ConfigOption = None) -> None:
-    """Show this repo's credential group, and any container that deviates."""
-    if ctx.invoked_subcommand is not None:
-        return
-    from jailbee import claude_groups
-    from jailbee.incus import Incus
-    from jailbee.paths import display_path
-
-    cfg = _load_or_exit(config)
-    incus = Incus()
-    repo = claude_groups.repo_group(cfg)
-    if repo is None:
-        info(f"{cfg.container_prefix}: no credential group — this repo keeps its own login.")
-    else:
-        group_path = display_path(claude_groups.group_dir(repo))
-        info(f"{cfg.container_prefix}: group `{repo}` → {group_path}")
-
-    deviating = claude_groups.deviating_containers(cfg, incus)
-    if deviating:
-        info("Containers with a temporary override:")
-        for name, group in deviating:
-            info(f"  {name} → {'no group' if group is None else f'group `{group}`'}")
-    else:
-        info("No container overrides. Every container follows the repo.")
-
-    # Nothing cleans these up on its own — only a `group use`/`set`/`unset`
-    # the user runs — so the one command that describes this repo's overrides
-    # has to name the ones that are pure leftovers. They read as "following
-    # the repo" everywhere, right up to the next `group set`, which they would
-    # then outrank.
-    redundant = claude_groups.redundant_overrides(cfg, incus)
-    if redundant:
-        info(
-            f"Overrides that only repeat this repo's setting: {', '.join(redundant)}. "
-            "They would outrank the next `jailbee claude group set` — drop one with "
-            "`jailbee claude group reset <container>`."
-        )
-
-    # This command stays repo-scoped. A bare list of the host's group names
-    # used to follow, and it was the second place claiming to describe them
-    # while unable to say which account any of them held — the two could only
-    # disagree. `claude ls` owns the host-wide picture.
-    info("For every group on this host and the account each holds: `jailbee claude ls`.")
 
 
 pool_app = typer.Typer(
