@@ -135,7 +135,11 @@ def test_parse_map_spells_null_explicitly():
 
 def test_parse_map_reports_the_offending_line():
     spec = _spec(FieldKind.STR_MAP)
-    for text, needle in (("nope\n", "key = value"), ("a=1\na=2\n", "duplicate"), (" = 1\n", "empty")):
+    for text, needle in (
+        ("nope\n", "key = value"),
+        ("a=1\na=2\n", "duplicate"),
+        (" = 1\n", "empty"),
+    ):
         value, error = parse_map(spec, text)
         assert value is None
         assert needle in error
