@@ -83,7 +83,7 @@ use `jailbee git retarget`.
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
-| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation. See `jailbee claude group` below. |
+| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `claude group set`. See `jailbee claude group` below. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
 | `--no-autostart` | Skip the repo's autostart steps — fastest, least-risk way to get a container. Also skips reading the target branch's autostart config (see below): nothing runs, so there is nothing to diff or confirm. Enabled agents are still installed (that is infrastructure, not a user step), so `jailbee tmux` on such a container finds a session holding an `install-<agent>` window — but not the agent's own launch window. |
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
@@ -896,9 +896,12 @@ so this cannot be undone except by logging in again.
 
 Show this repo's permanent credential group (or "no credential group" if it
 keeps its own login), and list any of its containers currently overriding
-that group for their own lifetime. Repo-scoped on purpose: the host-wide
-picture — every group and the account each holds — is `jailbee claude ls`,
-which this command points at rather than printing a second list of its own.
+that group for their own lifetime. It also names any override that only
+*repeats* this repo's group: nothing clears those but the commands below, and
+until then they would outrank the next `claude group set`. Repo-scoped on
+purpose: the host-wide picture — every group and the account each holds — is
+`jailbee claude ls`, which this command points at rather than printing a
+second list of its own.
 
 ### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
 
@@ -906,7 +909,12 @@ Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
 (`none` keeps this repo on its own login instead of sharing); `unset`
 removes the entry so the host's default group applies again. Every
 container of the repo follows the change except one with its own `use`
-override. Refuses while Claude is running in any of the repo's containers
+override — and an override the change has made **redundant** (it names the
+group the repo now uses) is dropped, so that container really does follow the
+repo again instead of being pinned to a value that would outrank the next
+change. The overrides are cleared after the binds profile is re-rendered:
+the container's own device is what mounts its credential until the profile
+carries the same one. Refuses while Claude is running in any of the repo's containers
 unless `--force` is passed, because a live session can overwrite the
 target group's login on its next token refresh. Restart Claude in the
 containers afterwards to pick up the new login.
@@ -921,6 +929,13 @@ inherits the repo's group again; destroying the container also drops it.
 Omit `<container>` to pick from this repo's containers. Same `--force`
 gate and same "restart Claude to pick up the new login" caveat as
 `set`/`unset`.
+
+**Naming the repo's own group is a `reset`.** `use` then clears the override
+rather than writing one that repeats the repo — such a label outranks the
+profile and would keep the container behind at the next `claude group set`.
+Both commands also leave the repo's recorded account alone when the
+container's *effective* group did not change: invalidating it there would
+throw away a name nothing can supply again until a container runs Claude.
 
 ## GUI
 

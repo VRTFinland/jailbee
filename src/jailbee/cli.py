@@ -8503,6 +8503,48 @@ def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: 
     raise typer.Exit(2)
 
 
+def _group_after_write(cfg: "Config") -> str | None:
+    """The repo's credential group as the file just written resolves it.
+
+    Read back from `_global_config_path_for_write` rather than from a
+    reloaded `Config`: it is the same file `_write_repo_group` patched, it
+    answers for `set`, `set none` and `unset` alike, and it does not depend
+    on `load_config` finding the same global config this command wrote.
+    """
+    from jailbee.global_config import load_global_config
+
+    gcfg, _ = load_global_config(_global_config_path_for_write())
+    resolved = gcfg.claude_credentials.dir_for(cfg.container_prefix)
+    return None if resolved is None else resolved.name
+
+
+def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:
+    """Clear container overrides that now only repeat the repo's group.
+
+    Called **after** the binds profile has been re-rendered: the container's
+    instance-local device is what mounts its credential until the profile
+    carries the same one, so clearing first would leave it with none in
+    between.
+
+    Left in place, such an override is not merely untidy — it outranks the
+    profile, so the *next* change to the repo's group would silently leave
+    that one container behind (`claude_groups.override_is_redundant`).
+    """
+    from jailbee import claude_groups
+
+    view = cfg.model_copy(
+        update={"claude_credentials_dir": None if group is None else claude_groups.group_dir(group)}
+    )
+    names = claude_groups.redundant_overrides(view, incus)
+    for name in names:
+        claude_groups.clear_container_group(incus, name)
+    if names:
+        info(
+            f"Dropped the now-redundant override on: {', '.join(names)} — "
+            "they follow this repo again."
+        )
+
+
 def _global_config_path_for_write() -> Path:
     """Where `jailbee claude group set` writes. A seam for tests."""
     from jailbee.global_config import default_global_config_path
@@ -8597,6 +8639,7 @@ def claude_group_set_cmd(
 
     where = "no credential group" if value is None else f"group `{value}`"
     success(f"This repo now uses {where}.")
+    _drop_redundant_overrides(cfg, incus, _group_after_write(cfg))
     info("Restart Claude in this repo's containers to pick up the new login.")
 
 
@@ -8612,7 +8655,7 @@ def claude_group_unset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
-    from jailbee import claude_groups, claude_pool, config_writer
+    from jailbee import claude_pool, config_writer
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -8632,9 +8675,10 @@ def claude_group_unset_cmd(
     # for the wrong account — see the spec's §7.2.
     claude_pool.invalidate_identity(claude_pool.config_home(cfg))
 
-    repo = claude_groups.repo_group(cfg)
+    repo = _group_after_write(cfg)
     where = "no credential group" if repo is None else f"group `{repo}`"
     success(f"Entry removed. This repo now follows the host default: {where}.")
+    _drop_redundant_overrides(cfg, incus, repo)
 
 
 @group_app.command("use")
@@ -8664,10 +8708,14 @@ def claude_group_use_cmd(
     container. `jailbee claude group reset` puts the container back on the
     repo's group; destroying the container drops the override with it.
 
+    Naming the repo's *own* group drops the override instead of writing
+    one — an override that repeats the repo would outrank a later
+    `jailbee claude group set` and leave this container behind.
+
     Claude must be restarted in that container afterwards to pick up the
     new login — this command never kills a session.
     """
-    from jailbee import claude_groups, claude_pool
+    from jailbee import claude_groups
 
     cfg = _load_or_exit(config)
     target: str | None
@@ -8683,19 +8731,49 @@ def claude_group_use_cmd(
     name = _resolve_group_container(cfg, incus, container)
     _refuse_if_claude_running(cfg, incus, name, force)
 
+    before = claude_groups.effective_group(cfg, incus, name)
+    redundant = claude_groups.override_is_redundant(cfg, target)
     try:
-        claude_groups.set_container_group(cfg, incus, name, target)
+        if redundant:
+            claude_groups.clear_container_group(incus, name)
+        else:
+            claude_groups.set_container_group(cfg, incus, name, target)
     except (claude_groups.GroupError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
-    # The repo's `oauthAccount` now describes an account this container may
-    # no longer use. Left in place it would make the repo look authoritative
-    # for the wrong account — see the spec's §7.2.
-    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+    _report_group_change(cfg, name, before=before, after=target, redundant=redundant)
 
-    where = "no credential group" if target is None else f"group `{target}`"
-    success(f"{name} now uses {where}.")
+
+def _report_group_change(
+    cfg: "Config",
+    container: str,
+    *,
+    before: str | None,
+    after: str | None,
+    redundant: bool,
+) -> None:
+    """Report one container's group change, and invalidate only if it moved.
+
+    `claude_pool.invalidate_identity` exists because the repo's
+    `oauthAccount` would otherwise name an account this container no longer
+    reads (§7.2). When the container's *effective* group did not change —
+    dropping an override that only repeated the repo, or naming the group it
+    already inherited — the account did not change either, and invalidating
+    would throw away a name nothing else can supply until a container runs
+    Claude again.
+    """
+    from jailbee import claude_pool
+
+    where = "no credential group" if after is None else f"group `{after}`"
+    if redundant:
+        success(f"{container} follows this repo: {where} — no override needed.")
+    else:
+        success(f"{container} now uses {where}.")
+    if before == after:
+        info("Nothing else changed: that is the group it was already reading.")
+        return
+    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
     info("Restart Claude in that container to pick up the new login.")
 
 
@@ -8714,7 +8792,7 @@ def claude_group_reset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Drop a container's override so it inherits the repo's group again."""
-    from jailbee import claude_groups, claude_pool
+    from jailbee import claude_groups
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -8722,13 +8800,10 @@ def claude_group_reset_cmd(
     name = _resolve_group_container(cfg, incus, container)
     _refuse_if_claude_running(cfg, incus, name, force)
 
+    before = claude_groups.effective_group(cfg, incus, name)
     claude_groups.clear_container_group(incus, name)
-    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
-
     repo = claude_groups.repo_group(cfg)
-    where = "no credential group" if repo is None else f"group `{repo}`"
-    success(f"{name} now inherits the repo's setting: {where}.")
-    info("Restart Claude in that container to pick up the change.")
+    _report_group_change(cfg, name, before=before, after=repo, redundant=True)
 
 
 @group_app.callback(invoke_without_command=True)
@@ -8756,6 +8831,19 @@ def claude_group_status(ctx: typer.Context, config: ConfigOption = None) -> None
             info(f"  {name} → {'no group' if group is None else f'group `{group}`'}")
     else:
         info("No container overrides. Every container follows the repo.")
+
+    # Nothing cleans these up on its own — only a `group use`/`set`/`unset`
+    # the user runs — so the one command that describes this repo's overrides
+    # has to name the ones that are pure leftovers. They read as "following
+    # the repo" everywhere, right up to the next `group set`, which they would
+    # then outrank.
+    redundant = claude_groups.redundant_overrides(cfg, incus)
+    if redundant:
+        info(
+            f"Overrides that only repeat this repo's setting: {', '.join(redundant)}. "
+            "They would outrank the next `jailbee claude group set` — drop one with "
+            "`jailbee claude group reset <container>`."
+        )
 
     # This command stays repo-scoped. A bare list of the host's group names
     # used to follow, and it was the second place claiming to describe them

@@ -16,7 +16,7 @@ def group_env(mocker, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     from tests.conftest import make_cfg
 
-    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
     from jailbee import claude_groups
 
     cfg = cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
@@ -32,6 +32,9 @@ def group_env(mocker, tmp_path, monkeypatch):
             "state": None,
         },
     ]
+    # No label unless a test says otherwise: `container_override` feeds this
+    # straight into a regex, and a bare MagicMock raises there.
+    incus.config_get.return_value = None
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     return cfg, incus
 
@@ -450,3 +453,183 @@ def test_status_points_at_claude_ls_for_the_host_wide_picture(group_env):
     assert result.exit_code == 0, result.output
     assert "jailbee claude ls" in result.output
     assert "Credential groups on this host" not in result.output
+
+
+# --- An override that would only repeat the repo's group ----------------------
+
+
+def _labels(mocker, **labels: str):
+    """Point `container_override`'s `config_get` at a per-container label."""
+    from jailbee import claude_groups
+
+    def fake(container: str, key: str) -> str | None:
+        assert key == claude_groups.GROUP_LABEL
+        return labels.get(container)
+
+    return fake
+
+
+def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker):
+    """Moving a container back onto the repo's own group must leave no override
+    behind: the label outranks the profile, so the container would otherwise
+    stay on `work` the next time the repo's group changed."""
+    _, incus = group_env
+    incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+
+    assert result.exit_code == 0, result.output
+    clearer.assert_called_once_with(incus, "myrepo-b")
+    setter.assert_not_called()
+
+
+def test_use_of_the_repos_own_group_says_no_override_was_written(group_env, mocker):
+    _, incus = group_env
+    incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.claude_groups.clear_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+
+    assert "override" in result.output
+    assert "work" in result.output
+
+
+def test_use_of_the_repos_own_group_keeps_the_account_when_nothing_changes(group_env, mocker):
+    """A container that already inherits `work` does not change holder, so
+    invalidating the repo's `oauthAccount` would throw away a valid name for
+    nothing — the repo then cannot name its login until a container runs
+    Claude again."""
+    _, incus = group_env
+    incus.config_get.side_effect = _labels(mocker)  # no labels: everything inherits
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.claude_groups.clear_container_group")
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-a"])
+
+    assert result.exit_code == 0, result.output
+    invalidate.assert_not_called()
+
+
+def test_use_of_the_repos_own_group_invalidates_when_the_holder_changes(group_env, mocker):
+    """The other half: `myrepo-b` really moves from `personal` to `work`, so
+    the recorded account does go stale."""
+    _, incus = group_env
+    incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.claude_groups.clear_container_group")
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+
+    runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+
+    invalidate.assert_called_once()
+
+
+def test_reset_keeps_the_account_when_the_override_was_redundant(group_env, mocker):
+    _, incus = group_env
+    incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "work"})
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.claude_groups.clear_container_group")
+    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+
+    result = runner.invoke(app, ["claude", "group", "reset", "myrepo-b"])
+
+    assert result.exit_code == 0, result.output
+    invalidate.assert_not_called()
+
+
+def test_set_drops_an_override_the_change_made_redundant(group_env, mocker, tmp_path):
+    """Y→X while a container is overridden to X: that container's override is
+    now leftover state, and the whole point of `set` is that every container
+    of the repo follows it."""
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+
+    assert result.exit_code == 0, result.output
+    _, incus = group_env
+    clearer.assert_called_once_with(incus, "myrepo-b")
+    assert "myrepo-b" in result.output
+
+
+def test_set_keeps_an_override_that_still_deviates(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "set", "third"])
+
+    assert result.exit_code == 0, result.output
+    clearer.assert_not_called()
+
+
+def test_set_re_renders_the_profile_before_dropping_an_override(group_env, mocker, tmp_path):
+    """Order matters: the local device is what mounts the credential until the
+    profile carries the new one, so clearing first leaves the container
+    without a credential in between."""
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    order: list[str] = []
+    mocker.patch(
+        "jailbee.cli._reapply_binds_profile", side_effect=lambda *a, **k: order.append("profile")
+    )
+    mocker.patch(
+        "jailbee.claude_groups.clear_container_group",
+        side_effect=lambda *a, **k: order.append("clear"),
+    )
+
+    runner.invoke(app, ["claude", "group", "set", "personal"])
+
+    assert order == ["profile", "clear"]
+
+
+def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mocker, tmp_path):
+    """After the entry is gone the repo follows the host default `personal`,
+    which is exactly what `myrepo-b` was overridden to."""
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: personal\n  repos:\n    myrepo: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "unset"])
+
+    assert result.exit_code == 0, result.output
+    _, incus = group_env
+    clearer.assert_called_once_with(incus, "myrepo-b")
+
+
+def test_status_reports_an_override_that_only_repeats_the_repo(group_env, mocker):
+    """Pre-existing leftovers are not cleaned by anything the user has not run,
+    so the one command that describes this repo's overrides has to name them."""
+    _, incus = group_env
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": [],
+            "config": {"user.jailbee.claude_group": "work"},
+            "state": None,
+        }
+    ]
+
+    result = runner.invoke(app, ["claude", "group"])
+
+    assert result.exit_code == 0, result.output
+    assert "myrepo-a" in result.output
+    assert "reset" in result.output

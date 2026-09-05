@@ -1020,12 +1020,13 @@ def new_container(
     if opts.claude_group is not None:
         from jailbee import claude_groups
 
-        claude_groups.set_container_group(
-            cfg,
-            incus,
-            name,
-            None if opts.claude_group == claude_groups.NO_GROUP else opts.claude_group,
-        )
+        wanted = None if opts.claude_group == claude_groups.NO_GROUP else opts.claude_group
+        # An override naming the group this repo already resolves to is not a
+        # preference but leftover state: it outranks the profile, so the next
+        # `jailbee claude group set` would leave this one container behind on
+        # the old group. See `claude_groups.override_is_redundant`.
+        if not claude_groups.override_is_redundant(cfg, wanted):
+            claude_groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
 

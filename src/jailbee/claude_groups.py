@@ -257,6 +257,47 @@ def set_container_group(
     incus.config_set(container, GROUP_LABEL, group)
 
 
+def override_is_redundant(cfg: Config, group: str | None) -> bool:
+    """Whether an override naming `group` only repeats the repo's own setting.
+
+    Such an override is not a preference but leftover state, and leaving it
+    in place is not harmless: the label outranks the profile, so the *next*
+    change to the repo's group would silently leave that one container
+    behind on the old one.
+
+    A named group is redundant only when the profile really carries the same
+    device. With ``claude.enabled: false`` it carries none
+    (`_profile_has_creds_device`), so the label is the only thing mounting
+    the credential and dropping it would change what the container reads.
+    ``None`` — the explicit "no group" override — is redundant whenever the
+    repo shares no group either: neither side then mounts anything, and the
+    env key the label writes names the config home Claude Code defaults to.
+    """
+    if group != repo_group(cfg):
+        return False
+    return group is None or _profile_has_creds_device(cfg)
+
+
+def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
+    """This repo's containers whose override only repeats the repo's group.
+
+    The counterpart of `deviating_containers`, read from the same payload: a
+    container is in exactly one of the two lists, or in neither because it
+    carries no usable label at all.
+    """
+    out: list[str] = []
+    for row in incus.list_containers():
+        name = str(row.get("name", ""))
+        if not name.startswith(f"{cfg.container_prefix}-"):
+            continue
+        label = _label_group(row.get("config") or {})
+        if label is INHERIT:
+            continue
+        if override_is_redundant(cfg, label):  # type: ignore[arg-type] # narrowed by sentinel
+            out.append(name)
+    return sorted(out)
+
+
 def clear_container_group(incus: Incus, container: str) -> None:
     """Drop the override so the container inherits the repo's group again."""
     from jailbee.profiles import CLAUDE_CREDS_DEVICE
