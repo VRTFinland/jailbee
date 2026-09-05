@@ -131,9 +131,7 @@ def test_a_group_row_falls_back_to_an_authoritative_member(tmp_path: Path, mocke
     assert row.account == "work@corp.com"
 
 
-def test_a_group_row_is_unidentified_when_nothing_names_the_login(
-    tmp_path: Path, mocker
-) -> None:
+def test_a_group_row_is_unidentified_when_nothing_names_the_login(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path, group="work")
     _login_in(claude_groups.group_dir("work"), "rt-work")
 
@@ -180,9 +178,7 @@ def test_a_group_named_only_by_a_container_label_is_a_row(tmp_path: Path, mocker
     showing, not one to hide."""
     cfg = _cfg(tmp_path)
 
-    overview = claude_overview.build(
-        cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")])
-    )
+    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")]))
 
     row = _row(overview, "vanished")
     assert row is not None

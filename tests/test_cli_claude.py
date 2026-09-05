@@ -305,9 +305,7 @@ def test_ls_explains_the_parked_scope_only_when_filtered(repo, mocker):
     """Unfiltered, every row names its own group and the mixing is visible. Under
     `-g` the parked rows sit beside one group again, which is what made a user
     ask why an account had appeared in a group they never touched."""
-    overview = _overview(
-        _row("staff@corp.com", group="staff"), _row("old@corp.com", live=False)
-    )
+    overview = _overview(_row("staff@corp.com", group="staff"), _row("old@corp.com", live=False))
     _built(mocker, overview)
 
     plain = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
@@ -404,9 +402,7 @@ def test_ls_json_stays_a_clean_payload(repo, mocker):
 def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
     """`registered_repos`, the credential reads and the store glob all raise
     `OSError`, and a traceback is not a diagnosis."""
-    mocker.patch(
-        "jailbee.claude_overview.build", side_effect=OSError("permission denied: _parked")
-    )
+    mocker.patch("jailbee.claude_overview.build", side_effect=OSError("permission denied: _parked"))
 
     result = runner.invoke(app, ["claude", "ls"])
 

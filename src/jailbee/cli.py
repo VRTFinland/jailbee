@@ -8192,8 +8192,10 @@ def claude_ls_cmd(
         f"This repo ({cfg.container_prefix}) → {where} "
         f"· {display_path(claude_pool.holder_dir(cfg))}"
     )
-    if group is not None and not ungrouped_only and not any(
-        r.group == group for r in overview.rows
+    if (
+        group is not None
+        and not ungrouped_only
+        and not any(r.group == group for r in overview.rows)
     ):
         info(
             f"Nothing on this host uses group `{group}`: no repo resolves to it, "
