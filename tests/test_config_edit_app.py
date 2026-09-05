@@ -218,3 +218,62 @@ def test_the_editor_survives_a_missing_repo_config(tmp_path):
             == 0
         )
     assert not repo.exists()
+
+
+def test_a_toggle_that_is_not_saved_leaves_the_file_alone(rendered, tmp_path):
+    """Space stages `gpg.enabled`'s flip — drawn as a `-> true` suffix on its
+    row — but nothing reaches the file without Ctrl-S; saving is task 9, so
+    only the staging half of "toggle" is testable here.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "gpg")
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    before = repo.read_text()
+    text = rendered(f"{'j' * idx}\r q")
+    assert "→ true" in text
+    assert repo.read_text() == before
+
+
+def test_enter_opens_a_prompt_and_escape_cancels_it(rendered, tmp_path):
+    """Enter opens `container_prefix`'s section (first Enter), then the modal
+    editor on the field itself (second Enter — a bool field never gets here
+    since Enter toggles it directly instead of opening a prompt). Typed text
+    stages once committed (Enter again, since it is not a multiline field) —
+    visible as a `-> x` marker. Escape throws the same typed text away
+    instead of staging it. Neither run saves: that happens only via the
+    browsing-mode Ctrl-S task 9 adds.
+    """
+    specs = repo_specs()
+    idx = _index_of_section(specs, "container_prefix")
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    before = repo.read_text()
+
+    committed = rendered(f"{'j' * idx}\r\rx\rq")
+    assert "→ x" in committed
+
+    cancelled = rendered(f"{'j' * idx}\r\rx\x1bq")
+    assert "→ x" not in cancelled
+    assert "●" not in cancelled
+
+    assert repo.read_text() == before
+
+
+def test_search_finds_a_field_in_another_section(rendered):
+    """`/` reaches `ssh.enabled` directly from the section list, with no
+    section ever entered by hand — proving the search binding itself works,
+    not just that Enter can open a field once already inside a section.
+    """
+    text = rendered("/ssh.enabled\rq")
+    assert "ssh.enabled" in text
+
+
+def test_a_field_that_cannot_be_edited_here_says_so(rendered, tmp_path):
+    """`github` is banned from a repo config; the row explains rather than
+    acts. Search for it, Enter on the first hit, quit. No crash, no write.
+    """
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    before = repo.read_text()
+    text = rendered("/github\r\rq")
+    assert "is host-local and is rejected in a repo config" in text
+    assert "●" not in text
+    assert repo.read_text() == before
