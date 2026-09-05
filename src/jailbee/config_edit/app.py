@@ -158,9 +158,7 @@ def _build_application(
                     HSplit(
                         [
                             Window(
-                                FormattedTextControl(
-                                    fields_pane, get_cursor_position=fields_cursor
-                                )
+                                FormattedTextControl(fields_pane, get_cursor_position=fields_cursor)
                             ),
                             Window(char="─", height=1),
                             Window(

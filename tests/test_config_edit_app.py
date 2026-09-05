@@ -62,7 +62,7 @@ def test_ctrl_c_quits(editor):
 
 def test_navigation_does_not_crash(editor):
     # down, down, up, enter a section, escape, show-all, quit
-    assert editor("jjk\r\x1b" "a" "q") == 0
+    assert editor("jjk\r\x1baq") == 0
 
 
 def test_the_editor_survives_a_missing_repo_config(tmp_path):
