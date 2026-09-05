@@ -673,8 +673,7 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
     repo that was never registered, or whose rows were wiped, still reads the
     holder its own config resolves to.
     """
-    from jailbee.config import load_config
-    from jailbee.paths import repo_config_path
+    from jailbee.config import load_repo_config
 
     me = Member(cfg.container_prefix, config_home(cfg))
     if cfg.claude_credentials_dir is None:
@@ -687,12 +686,22 @@ def members(cfg: Config, gcfg: GlobalConfig) -> tuple[list[Member], list[str]]:
     for prefix, repo_root in _registered_repos():
         if prefix == cfg.container_prefix or not _resolves_to(gcfg, prefix, group):
             continue
-        path = repo_config_path(repo_root)
-        if path is None:
+        if not repo_root.is_dir():
+            # A registration whose directory is gone stays unreachable, as it
+            # was when "no config file" was the test: the synthesizing loader
+            # would happily build a config for a path that does not exist and
+            # report a member whose real `shared_dir` nobody can know.
             unreachable.append(prefix)
             continue
         try:
-            other = load_config(path)
+            # `load_repo_config`, not `load_config(repo_config_path(...))`:
+            # a registered scratch repo has no config file, and treating
+            # "no file" as unreachable would report a perfectly readable
+            # member as unreachable in `jailbee claude ls`. The loader
+            # synthesizes it instead, and still raises (into the `except`
+            # below, as before) when the directory is gone or
+            # `scratch.enabled` is false — the cases "unreachable" is for.
+            other = load_repo_config(repo_root)
         except Exception:  # ConfigError, OSError, YAML/Pydantic — all mean "unreadable"
             unreachable.append(prefix)
             continue

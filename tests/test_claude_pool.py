@@ -439,6 +439,46 @@ def test_members_names_a_repo_whose_config_will_not_load(tmp_path: Path, mocker)
     assert unreachable == ["broken", "gone"]
 
 
+def test_members_include_a_registered_scratch_repo(tmp_path: Path, mocker) -> None:
+    """M2: a registered directory with no config file is a *scratch* repo, not
+    an unreachable one. `repo_config_path(...) is None` was the test, so
+    `jb claude ls` reported every scratch member as unreachable — and the
+    holder's `oauthAccount` write skipped a repo it could read perfectly."""
+    from jailbee.paths import xdg_data_home
+
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="work")
+    scratch = tmp_path / "tutkimus"
+    scratch.mkdir()  # a real directory, deliberately without .jailbee/
+    _register("tutkimus", scratch)
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    found, unreachable = claude_pool.members(cfg, gcfg)
+
+    assert unreachable == []
+    assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, "tutkimus"])
+    # The member's config home comes from the *synthesized* config, so it is
+    # the default shared dir for that prefix — proof the loader ran rather
+    # than the prefix merely being echoed back.
+    member = next(m for m in found if m.container_prefix == "tutkimus")
+    assert member.config_home == xdg_data_home() / "jailbee" / "shared" / "tutkimus" / "claude"
+
+
+def test_members_still_names_a_registered_directory_that_is_gone(tmp_path: Path, mocker) -> None:
+    """The synthesizing loader would happily build a config for a path that
+    does not exist, reporting a member whose real `shared_dir` nobody can
+    know. A vanished registration stays unreachable, as it was."""
+    _no_git(mocker)
+    cfg = _cfg(tmp_path, group="work")
+    _register("vanished", tmp_path / "vanished")  # never created
+    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+
+    found, unreachable = claude_pool.members(cfg, gcfg)
+
+    assert unreachable == ["vanished"]
+    assert [m.container_prefix for m in found] == [cfg.container_prefix]
+
+
 def test_live_identity_prefers_the_calling_repo(tmp_path: Path) -> None:
     mine = tmp_path / "mine" / "claude"
     theirs = tmp_path / "theirs" / "claude"

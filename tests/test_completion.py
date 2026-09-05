@@ -7,6 +7,7 @@ returns [] when anything at all goes wrong.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -63,26 +64,62 @@ def test_uses_the_fast_bounded_query(completion_repo):
     )
 
 
-def test_returns_empty_outside_a_repo(tmp_path, mocker):
-    """No .gie/config.yaml in the cwd: nothing to complete, nothing to report."""
+def test_returns_empty_when_no_config_can_be_loaded(tmp_path, mocker):
+    """No config file *and* `scratch.enabled: false`: nothing to complete.
+
+    "Outside a repo" is no longer the empty case on its own — a directory with
+    no config file gets a synthesized one (see
+    `test_completes_in_a_scratch_directory`). What is still empty is a loader
+    that refuses, which `ConfigNotFoundError` is.
+    """
     from jailbee.config import ConfigNotFoundError
 
     mocker.patch(
-        "jailbee.paths.find_repo_config",
+        "jailbee.config.load_repo_config",
         side_effect=ConfigNotFoundError("no config"),
     )
     assert completion.complete_container(_ctx(), "") == []
+
+
+def test_completes_in_a_scratch_directory(tmp_path, mocker, monkeypatch):
+    """A directory with no config file still completes its containers.
+
+    The file-backed loader raised `ConfigNotFoundError` here, so tab-completion
+    silently offered nothing in exactly the directories the scratch feature
+    exists for. Asserts the *names*, not merely a non-empty list, and that the
+    loader was handed the cwd.
+    """
+    from tests.conftest import make_config
+
+    repo_root = tmp_path / "tutkimus"
+    repo_root.mkdir()
+    cfg = make_config(repo_root)
+    assert cfg.container_prefix == "tutkimus"
+    cfg._synthetic = True
+
+    seen: list[object] = []
+
+    def _fake(root: object) -> Any:
+        seen.append(root)
+        return cfg
+
+    mocker.patch("jailbee.config.load_repo_config", _fake)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _raw_container("tutkimus-feat-foo", "tutkimus-base", "tutkimus-net-strict"),
+    ]
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    monkeypatch.chdir(repo_root)
+
+    assert completion.complete_container(_ctx(), "") == ["feat-foo"]
+    assert [Path(p).resolve() for p in seen] == [repo_root.resolve()]
 
 
 def test_returns_empty_on_invalid_config(tmp_path, mocker):
     from jailbee.config import ConfigError
 
     mocker.patch(
-        "jailbee.paths.find_repo_config",
-        return_value=tmp_path / ".gie" / "config.yaml",
-    )
-    mocker.patch(
-        "jailbee.config.load_config",
+        "jailbee.config.load_repo_config",
         side_effect=ConfigError("bad yaml"),
     )
     assert completion.complete_container(_ctx(), "") == []
@@ -96,11 +133,7 @@ def test_returns_empty_on_undecodable_config(tmp_path, mocker):
     the completer.
     """
     mocker.patch(
-        "jailbee.paths.find_repo_config",
-        return_value=tmp_path / ".gie" / "config.yaml",
-    )
-    mocker.patch(
-        "jailbee.config.load_config",
+        "jailbee.config.load_repo_config",
         side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
     )
     assert completion.complete_container(_ctx(), "") == []
@@ -150,11 +183,11 @@ def test_complete_branch_empty_when_git_fails(completion_repo, mocker):
     assert completion.complete_branch(_ctx(), "") == []
 
 
-def test_complete_branch_empty_outside_a_repo(mocker):
+def test_complete_branch_empty_when_no_config_can_be_loaded(mocker):
     from jailbee.config import ConfigNotFoundError
 
     mocker.patch(
-        "jailbee.paths.find_repo_config",
+        "jailbee.config.load_repo_config",
         side_effect=ConfigNotFoundError("no config"),
     )
     assert completion.complete_branch(_ctx(), "") == []
@@ -187,11 +220,11 @@ def test_complete_pool_names_filters_by_what_was_typed(completion_repo, mocker):
     assert completion.complete_pool_names(_ctx(), "") == ["gradle", "chrome-profile"]
 
 
-def test_complete_pool_names_empty_outside_a_repo(mocker):
+def test_complete_pool_names_empty_when_no_config_can_be_loaded(mocker):
     from jailbee.config import ConfigNotFoundError
 
     mocker.patch(
-        "jailbee.paths.find_repo_config",
+        "jailbee.config.load_repo_config",
         side_effect=ConfigNotFoundError("no config"),
     )
     assert completion.complete_pool_names(_ctx(), "") == []
