@@ -1300,9 +1300,7 @@ def test_on_new_container_reports_a_missing_terminal(mocker):
 
 def test_on_config_edit_launches_the_tui_in_a_terminal(mocker, tmp_path):
     popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
-    mocker.patch(
-        "jailbee.qtui.app.resolve_launch", side_effect=lambda action, _t: action.argv
-    )
+    mocker.patch("jailbee.qtui.app.resolve_launch", side_effect=lambda action, _t: action.argv)
     controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
     controller.on_groups(
         [RepoGroup(prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[])]
