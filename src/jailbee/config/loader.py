@@ -450,8 +450,12 @@ def scratch_repo_layer(repo_root: Path, scratch: ScratchConfig) -> dict[str, obj
     scratch directory its own image. The user's `scratch.config` merges on top
     with the usual `deep_merge` rules, so both remain overridable.
 
-    Public because `jailbee config show --layer repo` prints it: that layer is
-    the honest answer to "what is this directory's repo config".
+    The unguarded builder: it neither consults `scratch.enabled` nor refuses a
+    root directory, because it takes the `ScratchConfig` as an argument and has
+    no view of either. Callers outside this module want
+    `synthesized_repo_layer`, which applies both guards — printing a layer that
+    no command in that directory would ever load is worse than printing
+    nothing.
     """
     prefix = slugify_prefix(repo_root.name)
     if not prefix:
@@ -468,11 +472,16 @@ def scratch_repo_layer(repo_root: Path, scratch: ScratchConfig) -> dict[str, obj
 
 
 def _refuse_scratch_root(repo_root: Path) -> None:
-    """Refuse `$HOME` and the filesystem root.
+    """Refuse `$HOME`, the filesystem root, and anything in between.
 
-    Both are a mistaken `cd`, never a research directory, and the cost of
-    being wrong is a container bind-mounting the user's whole home. Every
-    other directory is allowed.
+    All are a mistaken `cd`, never a research directory, and the cost of
+    being wrong is a container bind-mounting the user's whole home. Refusing
+    `$HOME` alone was not enough: `/home` (or `/Users`, or any other ancestor
+    of it) is strictly worse — it holds *every* user's home — yet slipped
+    through an equality test. Hence the ancestor predicate, which subsumes the
+    filesystem root as well; the root keeps its own message only because the
+    remedy differs. Every directory that is not an ancestor of `$HOME` is
+    allowed.
     """
     resolved = repo_root.resolve()
     if resolved == Path(resolved.anchor):
@@ -481,19 +490,32 @@ def _refuse_scratch_root(repo_root: Path) -> None:
             f"the filesystem root. `cd` into a project directory first."
         )
     try:
-        home = Path.home().resolve()
+        home: Path | None = Path.home().resolve()
     except RuntimeError:  # home directory not resolvable; nothing to compare against
-        return
-    if resolved == home:
+        home = None
+    if home is not None and home.is_relative_to(resolved):
+        what = (
+            "your home directory"
+            if resolved == home
+            else f"an ancestor of your home directory ({home})"
+        )
         raise ConfigError(
             f"Refusing to create a jailbee environment for {resolved} — that is "
-            f"your home directory. `cd` into a project directory, or run "
+            f"{what}. `cd` into a project directory, or run "
             f"`jailbee config init` there if you really mean it."
         )
 
 
-def _synthesize_repo_config(repo_root: Path) -> Config:
-    """Build `repo_root`'s config from `global.yaml`'s `scratch:` block.
+def synthesized_repo_layer(repo_root: Path) -> dict[str, object]:
+    """The repo layer `repo_root` gets when it has no config file — guarded.
+
+    The single gate in front of `scratch_repo_layer`: it reads `global.yaml`
+    itself, so it can refuse when `scratch.enabled` is false
+    (`ConfigNotFoundError`) or when the directory is `$HOME` or an ancestor of
+    it (`ConfigError`). Both the load path (`_synthesize_repo_config`) and the
+    diagnostic path (`jailbee config show --layer repo`) go through here, which
+    is what keeps them from disagreeing: the layer that is printed is exactly
+    the layer that would be loaded, or neither happens.
 
     Local import: `global_config` imports from this module, so importing it at
     module level would form a cycle (see `_load_config_from_repo_raw`).
@@ -508,10 +530,22 @@ def _synthesize_repo_config(repo_root: Path) -> Config:
             f"false in {gpath}.\nRun `jailbee config init` to create one."
         )
     _refuse_scratch_root(repo_root)
+    return scratch_repo_layer(repo_root, gcfg.scratch)
+
+
+def _synthesize_repo_config(repo_root: Path) -> Config:
+    """Build `repo_root`'s config from `global.yaml`'s `scratch:` block.
+
+    Local import: `global_config` imports from this module, so importing it at
+    module level would form a cycle (see `_load_config_from_repo_raw`).
+    """
+    from jailbee.global_config import default_global_config_path
+
+    raw = synthesized_repo_layer(repo_root)
     cfg = _load_config_from_repo_raw(
-        scratch_repo_layer(repo_root, gcfg.scratch),
+        raw,
         repo_root / REPO_CONFIG_DIRS[0] / "config.yaml",
-        origin=f"{gpath}{SCRATCH_ORIGIN_SUFFIX}",
+        origin=f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}",
     )
     cfg._synthetic = True
     return cfg

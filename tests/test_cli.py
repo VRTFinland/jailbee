@@ -8723,6 +8723,71 @@ def test_config_show_layer_repo_prints_the_synthesized_layer(tmp_path, monkeypat
     assert "jailbee-scratch-base" in result.output
 
 
+def test_config_show_layer_repo_respects_scratch_disabled(tmp_path, monkeypatch, mocker):
+    """M1: `--layer repo` called `scratch_repo_layer` directly, skipping
+    `_synthesize_repo_config`'s `scratch.enabled` check — so it printed a
+    synthesized layer under a "synthesized from …" header while `config
+    validate` in the same directory correctly errored. A diagnostic must not
+    describe a config no command there would ever load."""
+    _scratch_cwd(
+        tmp_path,
+        monkeypatch,
+        mocker,
+        global_yaml="scratch:\n  enabled: false\n",
+    )
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "scratch.enabled" in result.output
+    # The header must not have been printed ahead of the refusal, and neither
+    # must the layer it announced.
+    assert "synthesized from" not in result.output
+    assert "jailbee-scratch-base" not in result.output
+
+
+def test_config_show_layer_repo_refuses_an_ancestor_of_home(tmp_path, monkeypatch, mocker):
+    """The other guard `--layer repo` skipped: `_refuse_scratch_root`. Same
+    reasoning — `jb new` here is refused, so describing the directory's config
+    as if it were usable is a lie."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    home = tmp_path / "home" / "someone"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home.parent)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "ancestor of your home directory" in " ".join(result.output.split())
+    assert "synthesized from" not in result.output
+
+
+def test_config_show_layer_repo_reports_an_unusable_directory_name(tmp_path, monkeypatch, mocker):
+    """The third escape M1 names: a `ConfigError` from an empty slug used to
+    propagate out of the command uncaught."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    weird = tmp_path / "..."
+    weird.mkdir()
+    monkeypatch.chdir(weird)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "repo"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "jailbee config init" in " ".join(result.output.split())
+
+
 def test_config_show_default_layer_in_a_scratch_directory(tmp_path, monkeypatch, mocker):
     """The default (`effective`) layer must also survive a scratch directory.
 

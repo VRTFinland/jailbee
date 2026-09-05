@@ -4296,6 +4296,64 @@ def test_filesystem_root_is_refused(tmp_path, monkeypatch, mocker):
     assert "filesystem root" in str(exc.value)
 
 
+def test_the_parent_of_home_is_refused(tmp_path, monkeypatch, mocker, private_home):
+    """`$HOME` was refused by equality, so `/home` — which holds *every*
+    user's home, and would bind-mount all of them into a container — was
+    allowed. One level up from the refused case cannot be less dangerous than
+    the refused case."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(private_home.parent)
+
+    message = str(exc.value)
+    assert "Refusing" in message
+    assert str(private_home) in message
+    # Must be `_refuse_scratch_root` that rejects it, not the empty-slug or a
+    # schema error further down: the parent of a pytest tmp home has a
+    # perfectly sluggable name.
+    assert "ancestor of your home directory" in message
+
+
+def test_a_distant_ancestor_of_home_is_refused(tmp_path, monkeypatch, mocker, private_home):
+    """Not just the immediate parent: any ancestor. A grandparent holds the
+    home directory just as surely."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    from jailbee.config import ConfigError, load_repo_config
+
+    with pytest.raises(ConfigError) as exc:
+        load_repo_config(private_home.parent.parent)
+
+    assert "ancestor of your home directory" in str(exc.value)
+
+
+def test_a_sibling_of_home_is_still_allowed(tmp_path, monkeypatch, mocker, private_home):
+    """The predicate must be "ancestor of $HOME", not "shares a prefix with
+    it": a project directory next to the home directory is ordinary."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    sibling = private_home.parent / "projects"
+    (sibling / ".git").mkdir(parents=True)
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(sibling).container_prefix == "projects"
+
+
+def test_a_directory_inside_home_is_still_allowed(tmp_path, monkeypatch, mocker, private_home):
+    """The other direction of the same predicate: `$HOME/src/app` is *below*
+    home, not an ancestor of it, and is the normal case."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    inside = private_home / "src" / "app"
+    (inside / ".git").mkdir(parents=True)
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(inside).container_prefix == "app"
+
+
 def test_unusable_directory_name_is_reported(tmp_path, monkeypatch, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     _write_global(tmp_path, monkeypatch)

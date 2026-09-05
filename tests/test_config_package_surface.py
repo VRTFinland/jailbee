@@ -77,6 +77,7 @@ EXPECTED_SURFACE = frozenset(
         "sanitize_column_blocks",
         "scratch_repo_layer",
         "slugify_prefix",
+        "synthesized_repo_layer",
         "validate_column_blocks",
     }
 )

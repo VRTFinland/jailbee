@@ -32,6 +32,7 @@ from jailbee.config.loader import (
     load_repo_config_unsanitized,
     resolve_agents_raw,
     scratch_repo_layer,
+    synthesized_repo_layer,
 )
 from jailbee.config.models_agents import (
     AgentConfig,
@@ -165,5 +166,6 @@ __all__ = [
     "sanitize_column_blocks",
     "scratch_repo_layer",
     "slugify_prefix",
+    "synthesized_repo_layer",
     "validate_column_blocks",
 ]
