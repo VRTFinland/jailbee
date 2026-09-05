@@ -449,6 +449,9 @@ jailbee claude ls                  # every login on the host, and where each is 
 jailbee claude use me@work.com     # switch this holder to a stored login
 jailbee claude park                # store the current one; next `claude` asks /login
 jailbee claude rm old@work.com     # delete a stored login for good
+
+jailbee claude group create staff  # an empty credential group, before anything uses it
+jailbee claude group rm staff      # remove one nothing uses (parks any login it holds)
 ```
 
 Four things worth knowing:

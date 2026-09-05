@@ -894,14 +894,44 @@ so this cannot be undone except by logging in again.
 
 ### `jailbee claude group`
 
-Show this repo's permanent credential group (or "no credential group" if it
-keeps its own login), and list any of its containers currently overriding
-that group for their own lifetime. It also names any override that only
-*repeats* this repo's group: nothing clears those but the commands below, and
-until then they would outrank the next `claude group set`. Repo-scoped on
-purpose: the host-wide picture — every group and the account each holds — is
-`jailbee claude ls`, which this command points at rather than printing a
-second list of its own.
+A command group, not a command: bare `jailbee claude group` prints its help.
+The three views it used to print live where each belongs — which holder this
+repo reads is `jailbee claude ls`, per-container labels are `jailbee ls`'s
+`CLAUDE` column, and an override that only *repeats* this repo's group is
+reported by `jailbee doctor` (nothing clears those but the commands below,
+and until then they would outrank the next `claude group set`).
+
+### `jailbee claude group create <name>`
+
+Create an empty credential group. Nothing has to exist first — `set`, `use`
+and `claude use -g` all create the directory on demand — so this is for the
+case where the group should exist before any of them runs. Idempotent: an
+existing group is reported, not an error. The group shows up in `jailbee
+claude ls` as `empty` / `unused` until something is assigned to it.
+
+### `jailbee claude group rm <name> [--yes]`
+
+Remove a credential group nothing uses. There is no `--force`: it refuses
+while
+
+- **a repo resolves to it** — naming those repos. The next `jailbee apply`
+  would recreate the directory, and until it ran their containers would
+  mount an empty one;
+- **it is the host's default** (`claude_credentials.group`) — checked
+  separately, because a host with no registered repo still resolves every
+  repo to it;
+- **a container has been moved into it** — naming those containers. Read from
+  the label, so a container of a repo the registry never saw counts too. When
+  the containers cannot be listed at all, the command refuses rather than
+  guessing: a stopped container keeps its label and would come back reading a
+  directory that is gone.
+
+A login the group still holds is **parked**, never deleted: `--yes` (or a
+confirmation on a TTY) moves it into the host-wide store, where `jailbee
+claude ls` lists it as `parked` and `claude use` can activate it into any
+other group. `jailbee claude rm` remains the only command that destroys a
+credential. The directory itself is removed with `rmdir`, never recursively —
+anything else left in it is named instead of deleted.
 
 ### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
 
