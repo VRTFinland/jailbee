@@ -143,3 +143,60 @@ def test_a_plan_over_a_missing_file_starts_from_nothing(tmp_path):
 def test_render_layer_uses_the_two_pass_renderer_for_global(tmp_path):
     text = render_layer({"gpg": {"enabled": True}, "scratch": {"enabled": True}}, "global")
     assert text.index("gpg:") < text.index("scratch:")
+
+
+def test_commit_writes_the_file_and_keeps_a_backup(tmp_path):
+    from jailbee.config_edit.save import commit
+
+    layers = _layers(tmp_path, repo_text="gpg:\n  enabled: false\n")
+    plan = build_plan(
+        layers, "repo", (YamlChange(("gpg", "enabled"), True),), repo_specs(), "patch"
+    )
+    backup = commit(plan)
+
+    assert plan.path.read_text() == plan.new_text
+    assert backup is not None
+    assert backup.name == "config.yaml.bak"
+    assert backup.read_text() == "gpg:\n  enabled: false\n"
+
+
+def test_commit_of_a_new_file_leaves_no_backup(tmp_path):
+    from jailbee.config_edit.save import commit
+
+    layers = _layers(tmp_path)
+    plan = build_plan(
+        layers, "repo", (YamlChange(("container_prefix",), "demo"),), repo_specs(), "patch"
+    )
+    assert commit(plan) is None
+    assert plan.path.exists()
+    assert not (plan.path.parent / "config.yaml.bak").exists()
+
+
+def test_commit_never_widens_the_mode_of_a_token_bearing_file(tmp_path):
+    import stat
+
+    from jailbee.config_edit.save import commit
+
+    layers = _layers(tmp_path, global_text="github:\n  enabled: false\n")
+    layers.global_path.chmod(0o600)
+    plan = build_plan(
+        layers, "global", (YamlChange(("github", "enabled"), True),), global_specs(), "patch"
+    )
+    backup = commit(plan)
+
+    assert stat.S_IMODE(plan.path.stat().st_mode) == 0o600
+    assert backup is not None
+    assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+
+
+def test_commit_creates_a_missing_config_directory(tmp_path):
+    from jailbee.config_edit.save import commit
+
+    repo = tmp_path / "fresh" / ".jailbee" / "config.yaml"
+    glob = tmp_path / "global.yaml"
+    layers = read_layers(repo, glob)
+    plan = build_plan(
+        layers, "repo", (YamlChange(("container_prefix",), "fresh"),), repo_specs(), "patch"
+    )
+    commit(plan)
+    assert repo.read_text().startswith("container_prefix:")

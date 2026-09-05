@@ -12,11 +12,17 @@ diff story is testable without a terminal or a real config file.
 from __future__ import annotations
 
 import difflib
+import stat
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.config_edit.layers import LayerName, apply_changes, lookup, raw_for
-from jailbee.config_writer import patch_yaml, render_documented, render_global_yaml
+from jailbee.config_writer import (
+    patch_yaml,
+    render_documented,
+    render_global_yaml,
+    write_text_atomic,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -209,3 +215,28 @@ def _dropped_comments(old_text: str, new_text: str) -> tuple[str, ...]:
         for line in old_text.splitlines()
         if line.strip().startswith("#") and line.strip() not in kept
     )
+
+
+def commit(plan: SavePlan) -> Path | None:
+    """Write `plan`, keeping the previous contents in a `.bak` sibling.
+
+    Returns the backup path, or `None` when there was no file to back up.
+
+    The backup inherits the original's mode rather than the module default:
+    `global.yaml` can carry `github.api_tokens`, and a backup of a 0600 file
+    that lands at 0644 leaks exactly what the original's mode exists to
+    protect. Both writes are atomic (`write_text_atomic`), so an interrupted
+    save leaves the old file intact rather than a truncated one.
+
+    Nothing is validated here — `layers.validate` has already run against the
+    staged mapping by the time a plan is committed (spec 3.5 step 2), which is
+    what makes it impossible for the editor to write a file the CLI would
+    reject.
+    """
+    backup: Path | None = None
+    if plan.path.exists():
+        mode = stat.S_IMODE(plan.path.stat().st_mode)
+        backup = plan.path.with_name(plan.path.name + ".bak")
+        write_text_atomic(backup, plan.old_text, mode=mode)
+    write_text_atomic(plan.path, plan.new_text)
+    return backup
