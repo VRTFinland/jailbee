@@ -3269,3 +3269,35 @@ def test_new_binding_appears_in_the_help_overlay(tmp_path):
         )
     )
     assert "create a container" in out
+
+
+def test_e_and_shift_e_are_bound_and_documented():
+    from jailbee.dashboard import KEY_BINDINGS, parse_key
+
+    assert parse_key(b"e") == "config-edit"
+    assert parse_key(b"E") == "config-edit-global"
+    tokens = {b.token for b in KEY_BINDINGS}
+    assert {"config-edit", "config-edit-global"} <= tokens
+    # The pair documents itself once, the way up/down does.
+    hints = [b.hint for b in KEY_BINDINGS if b.token.startswith("config-edit")]
+    assert hints.count("") == 1
+
+
+def test_config_edit_reject_note_names_configuring_not_creating():
+    from jailbee.dashboard import config_edit_reject_note_for_prefix
+
+    assert config_edit_reject_note_for_prefix([], "") == "Select a repo or a container first"
+    group = dashboard.RepoGroup(prefix="orphan", repo_root=None, config_path=None, containers=[])
+    note = config_edit_reject_note_for_prefix([group], "orphan")
+    assert note is not None
+    assert "config" in note
+    assert "create" not in note
+
+
+def test_config_edit_reject_note_accepts_a_real_repo(tmp_path):
+    from jailbee.dashboard import config_edit_reject_note_for_prefix
+
+    group = dashboard.RepoGroup(
+        prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[]
+    )
+    assert config_edit_reject_note_for_prefix([group], "demo") is None

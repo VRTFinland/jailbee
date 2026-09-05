@@ -817,6 +817,17 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     # `quick_verb`/`actions_for_container` (those gate on a container's state).
     # `run`'s dispatch handles it directly, with its own guard.
     KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions", brief="new"),
+    # Repo-scoped like `new`: no `verb`, so neither reaches `quick_verb` — the
+    # config being edited belongs to the repo, not to the highlighted container.
+    KeyBinding(
+        "config-edit",
+        (b"e",),
+        "e / E",
+        "edit this repo's config (E: the global one)",
+        "Actions",
+        brief="config",
+    ),
+    KeyBinding("config-edit-global", (b"E",), "", "", "Actions"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding(
         "settings",
@@ -1292,6 +1303,22 @@ def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -
     if RepoTarget.of(group) is not None:
         return None
     return f"'{group.prefix}' has no repo directory — nothing to create against"
+
+
+def config_edit_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -> str | None:
+    """Why the config editor cannot be opened for ``prefix``, or None when it can.
+
+    The config-editing twin of :func:`new_container_reject_note_for_prefix`:
+    the same "is this a real repo" test (:meth:`RepoTarget.of`), but its own
+    sentence, so a refusal names configuring rather than creating. Shared by
+    both front-ends, so the wording is authored once.
+    """
+    group = next((g for g in groups if g.prefix == prefix), None) if prefix else None
+    if group is None:
+        return "Select a repo or a container first"
+    if RepoTarget.of(group) is not None:
+        return None
+    return f"'{group.prefix}' has no repo directory — no config to edit"
 
 
 def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> str | None:
@@ -1819,6 +1846,39 @@ def run(
                     set_notice(f"'jailbee new' exited {rc}")
                 force.set()  # the new container should appear on the next frame
 
+            def edit_config(*, global_layer: bool) -> None:
+                """Hand the terminal to `jailbee config edit` for the selected repo.
+
+                A foreground dispatch, not a detached spawn: it is a full-screen
+                TUI and needs the real terminal, exactly like `shell` and `tmux`.
+
+                The global layer needs a repo too — `config_edit.layers.validate`
+                loads the repo config even for a global-layer edit, because a
+                global change only means anything through its effect on some
+                repo's merged config.
+                """
+                prefix = fold_target(groups, selected) or ""
+                note = config_edit_reject_note_for_prefix(groups, prefix)
+                if note is not None:
+                    set_notice(note)
+                    return
+                group = next(g for g in groups if g.prefix == prefix)
+                repo = RepoTarget.of(group)
+                assert repo is not None  # the note rejects a rootless group
+                argv = ["jailbee", "config", "edit", *repo.flags()]
+                if global_layer:
+                    argv.append("--global")
+                try:
+                    rc = foreground(
+                        lambda: subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
+                    )
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
+                if rc != 0:
+                    set_notice(f"'jailbee config edit' exited {rc}")
+                force.set()  # config may have changed under every row
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
@@ -1941,6 +2001,8 @@ def run(
                         set_notice(quick_reject_note(groups, container, key))
                 elif key == "new":
                     create_container()
+                elif key in ("config-edit", "config-edit-global"):
+                    edit_config(global_layer=key == "config-edit-global")
                 elif key == "refresh":
                     force.set()
     except KeyboardInterrupt:
