@@ -8,6 +8,7 @@ import itertools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from rich.console import Console, RenderableType
 
 from jailbee import dashboard
@@ -32,6 +33,14 @@ def test_nothing_to_show_message_still_offers_a_way_out():
     whichever of the causes fired."""
     assert "jailbee config init" in dashboard.NOTHING_TO_SHOW
     assert "registered repo" in dashboard.NOTHING_TO_SHOW
+
+
+def test_nothing_to_show_message_also_points_at_config_validate():
+    """One of the causes is a config file that exists but will not parse —
+    `jailbee config init` is the wrong remedy for that (it errors rather than
+    overwriting), so the message must also point at `jailbee config validate`.
+    """
+    assert "jailbee config validate" in dashboard.NOTHING_TO_SHOW
 
 
 def test_collect_repo_roots_puts_cwd_first_and_dedupes(mocker):
@@ -428,7 +437,7 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
     assert [g.prefix for g in groups] == ["alpha"]
 
 
-def test_view_only_note_explains_a_config_less_group():
+def test_view_only_note_explains_an_orphan_group():
     groups = [dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
     note = dashboard.view_only_note(groups, "gamma-x")
     assert note is not None
@@ -1073,12 +1082,18 @@ def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_pat
     mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
     popen = mocker.patch.object(dashboard.subprocess, "Popen")
     popen.return_value.wait.return_value = 0
+    # Patching `Popen` alone is process-wide and takes `subprocess.run` with
+    # it too — mocked here (as the sibling non-scratch test already does) so
+    # a regression that reaches the plain `run` fallback fails with a
+    # readable assertion instead of a `TypeError` from the real subprocess API.
+    run = mocker.patch.object(dashboard.subprocess, "run")
 
     dashboard._dispatch_action(dashboard.RepoTarget(tmp_path, None), "git diff", "alpha-x")
 
     producer = popen.call_args_list[0]
     assert producer.args[0] == ["jailbee", "git", "diff", "alpha-x", "--color"]
     assert producer.kwargs["cwd"] == tmp_path
+    run.assert_not_called()  # the paged path replaces the plain run entirely
 
 
 def test_dispatch_style_classifies_every_menu_verb():
@@ -1228,6 +1243,40 @@ def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp
     producer.kill.assert_called_once_with()
     run.assert_called_once()
     wait.assert_called_once_with()
+
+
+def test_dispatch_action_does_not_mistake_a_vanished_repo_for_a_missing_pager(mocker, tmp_path):
+    """The producer itself can fail to start too — most notably when the
+    repo's directory has disappeared out from under the dispatch. That must
+    not be logged (or handled) as "pager failed": it has to surface as a bare
+    `OSError` so the caller (`run`'s `dispatch`) can tell the two apart and
+    report the real cause. Before the fix, this was swallowed by the same
+    `except OSError` that exists for a missing pager and then fell through to
+    the plain `subprocess.run` fallback — which would raise the identical
+    `OSError` uncaught, taking the whole TUI down.
+    """
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.side_effect = OSError("no such directory")
+    run = mocker.patch.object(dashboard.subprocess, "run")
+
+    with pytest.raises(OSError):
+        dashboard._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
+
+    run.assert_not_called()  # must not fall back to a doomed retry
+
+
+def test_dispatch_falls_back_to_a_pager_unavailable_when_the_pager_itself_fails(mocker, tmp_path):
+    """Sanity check alongside the test above: the pager-missing case is still
+    a `_PagerUnavailableError` (an `OSError` subclass), and `_run_paged` raising it
+    is what the call site's `except _PagerUnavailableError` actually catches."""
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    producer = mocker.MagicMock()
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    popen.side_effect = [producer, OSError("no less")]
+
+    with pytest.raises(dashboard._PagerUnavailableError):
+        dashboard._run_paged(["jailbee", "git", "diff"], ["less", "-R"], tmp_path)
 
 
 def test_actions_for_container_matches_menu_actions():
@@ -3021,22 +3070,25 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _drive_run(mocker, key_sequence: list[bytes]) -> int:
+def _drive_run(
+    mocker, key_sequence: list[bytes], groups: list[dashboard.RepoGroup] | None = None
+) -> int:
     """Run the real ``dashboard.run()`` key loop with a fake terminal.
 
     Feeds ``key_sequence`` one key per main-loop iteration (``os.read`` is
     mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
     always terminates even if a test's own key list doesn't. Everything
     that would touch a real terminal, the state DB, or Incus is mocked;
-    ``gather_live`` returns no containers, so these tests exercise overlay
-    and persistence behaviour without depending on the background
-    refresher thread ever publishing a snapshot before the key loop reads
-    it (a real race the tests must not depend on winning).
+    ``gather_live`` returns ``groups`` (empty by default), so most tests
+    exercise overlay and persistence behaviour without depending on the
+    background refresher thread ever publishing a snapshot before the key
+    loop reads it (a real race the tests must not depend on winning). A test
+    that needs a real, dispatchable container passes its own ``groups``.
     """
     mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
-    mocker.patch.object(dashboard, "gather_live", return_value=[])
+    mocker.patch.object(dashboard, "gather_live", return_value=groups or [])
 
     mock_stdin = mocker.Mock()
     mock_stdin.isatty.return_value = True
@@ -3137,6 +3189,29 @@ def test_run_dispatches_n_to_create_container(mocker):
     assert rc == 0
     notices = [call.kwargs.get("notice") for call in render.call_args_list]
     assert "Select a repo or a container first" in notices
+
+
+def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
+    """Task 10b's dispatch runs the child with ``cwd=<repo root>``. If that
+    directory disappears between a refresh and this keypress,
+    ``subprocess.run`` raises rather than exiting non-zero, and — before this
+    fix — nothing in `run`'s key loop caught it: the whole TUI went down with
+    a traceback. Drives the real `dispatch` closure (not just
+    `_dispatch_action` in isolation) so a regression in the `try/except`
+    wrapped around it is what this test actually exercises.
+    """
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    # "j" moves the highlight off the repo header onto the container row;
+    # "t" (tmux) is offered for a Running container and dispatches through
+    # `run`'s real `dispatch`, not `create_container`'s separate path.
+    rc = _drive_run(mocker, [b"j", b"t"], groups=[group])
+
+    assert rc == 0  # run() returned normally — the OSError did not propagate
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
 def test_parse_key_maps_n_to_the_new_container_token():

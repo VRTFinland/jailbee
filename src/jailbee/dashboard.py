@@ -77,8 +77,8 @@ FieldSpecCI = table_format.FieldSpec[ContainerInfo]
 
 NOTHING_TO_SHOW = (
     "No repos registered, and no jailbee config could be loaded for the current "
-    "directory. Run `jailbee config init` here, or start the dashboard from a "
-    "registered repo."
+    "directory. Run `jailbee config init` here, `jailbee config validate` if a "
+    "config file already exists, or start the dashboard from a registered repo."
 )
 """Launch-time guard message shared by the TUI, the Qt window and `cli`.
 
@@ -1301,7 +1301,7 @@ def new_container_reject_note(groups: list[RepoGroup], selected: Row | None) -> 
     nothing is indistinguishable from a broken one, so every refusal has a
     sentence naming its own cause. Delegates to
     :func:`new_container_reject_note_for_prefix` once a ``Row`` has been
-    resolved to a prefix, so the "has no jailbee config" sentence is phrased
+    resolved to a prefix, so the "has no repo directory" sentence is phrased
     in exactly one place.
     """
     if new_container_target(groups, selected) is not None:
@@ -1432,6 +1432,18 @@ def _wait_for_return() -> None:
         pass
 
 
+class _PagerUnavailableError(OSError):
+    """The pager process itself could not be started.
+
+    Raised only from the viewer ``Popen`` below — never from the producer's —
+    so a caller catching this specifically (rather than bare ``OSError``) can
+    tell "the pager is missing" apart from "the producer couldn't even start"
+    (e.g. its ``cwd`` has vanished) and fall back to the unpaged path only for
+    the former. A bare ``OSError`` out of this function is always the
+    producer's.
+    """
+
+
 def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     """Pipe ``argv``'s stdout into ``pager``; return the command's exit code.
 
@@ -1443,6 +1455,11 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     ``cwd`` applies to the producer only — it is how a repo with no config file
     is addressed at all (see :class:`RepoTarget`). The pager is a plain viewer
     on a pipe and has no repo of its own.
+
+    Raises a bare ``OSError`` (uncaught here) if the producer itself cannot be
+    started — most notably a ``cwd`` that has disappeared out from under a
+    dispatch — and :class:`_PagerUnavailableError` if the pager cannot be started,
+    so callers do not conflate the two.
     """
     producer = subprocess.Popen(argv, stdout=subprocess.PIPE, cwd=cwd)
     out = producer.stdout
@@ -1450,13 +1467,13 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
         return producer.wait()
     try:
         viewer = subprocess.Popen(pager, stdin=out)
-    except OSError:
+    except OSError as exc:
         # The pager vanished between which() and exec. Nothing will ever read
         # the pipe, so kill the producer rather than leaving it blocked on a
         # full one, and let the caller fall back to the unpaged path.
         producer.kill()
         producer.wait()
-        raise
+        raise _PagerUnavailableError(str(exc)) from exc
     finally:
         # The viewer owns the read end now. Keeping this copy open would stop
         # the pager ever seeing EOF, so it would hang on a finished command.
@@ -1486,6 +1503,12 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
     otherwise turn colour off), a keypress pause for the other printing verbs,
     and nothing at all for the rest. A missing or unstartable pager degrades to
     the pause rather than losing the output.
+
+    Raises ``OSError`` (uncaught here) if ``target.cwd()`` has disappeared out
+    from under the dispatch — the caller (:func:`run`'s ``dispatch``) turns
+    that into a notice naming the directory rather than letting it take the
+    whole TUI down. That is deliberately *not* caught as "pager failed": see
+    :class:`_PagerUnavailableError`.
     """
     argv = ["jailbee", *verb.split(), name, *target.flags()]
     if verb in ATTACH_VERBS:
@@ -1496,7 +1519,7 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
         if pager is not None:
             try:
                 return _run_paged([*argv, "--color"], pager, target.cwd())
-            except OSError as exc:
+            except _PagerUnavailableError as exc:
                 log.debug("pager %s failed: %s", pager, exc)
     rc = subprocess.run(argv, check=False, cwd=target.cwd()).returncode
     if style != "plain":
@@ -1714,7 +1737,16 @@ def run(
                 repo = RepoTarget.of(group)
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
-                rc = foreground(lambda: _dispatch_action(repo, verb, target))
+                try:
+                    rc = foreground(lambda: _dispatch_action(repo, verb, target))
+                except OSError:
+                    # The repo root vanished between a refresh and this
+                    # keypress — `subprocess`/`Popen` raise, not exit
+                    # non-zero, for a missing `cwd`. Previously uncaught,
+                    # this took the whole TUI down.
+                    set_notice(f"'{repo.repo_root}' no longer exists")
+                    force.set()
+                    return
                 if rc != 0:
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
                 force.set()  # an action likely changed state — refresh ASAP
