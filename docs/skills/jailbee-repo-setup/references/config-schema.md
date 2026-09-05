@@ -4,7 +4,7 @@ Distilled from `docs/config.md` of the JailBee repo. Read this when SKILL.md doe
 
 ## File locations
 
-- Per-repo: `<repo>/.jailbee/config.yaml` (required for `jailbee` to work in that repo)
+- Per-repo: `<repo>/.jailbee/config.yaml` (required for a repo you configure with this skill; a directory with no such file still works via the host's `scratch:` block — out of this skill's scope, see the jailbee-usage skill)
 - Global: `~/.config/jailbee/global.yaml` (optional, user-level, applies to every repo)
 
 Both files are deep-merged at load time. Repo wins on scalars, repo list appends to global list (`[]` resets), dicts merge recursively per key.

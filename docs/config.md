@@ -2,7 +2,11 @@
 
 `jailbee` reads two configuration files:
 
-1. **Per-repo:** `<repo>/.jailbee/config.yaml` — required.
+1. **Per-repo:** `<repo>/.jailbee/config.yaml` — required for a repo you work
+   in regularly. A directory with no such file still works, though: unless
+   `scratch.enabled: false`, `jailbee` synthesizes a repo layer from
+   `global.yaml`'s [`scratch`](#scratch) block instead. See that section for
+   what changes.
 2. **Global:** `~/.config/jailbee/global.yaml` — optional, host-level only.
 
 Run `jailbee config init` in a repo to generate a per-repo template.
@@ -1807,6 +1811,84 @@ group no repo resolves to has no record to read, and `jailbee claude park`
 stores it as `unknown-<timestamp>` — a working login whose account name is
 missing, recoverable by activating it, running `claude` once in a container of
 that holder, and parking it again.
+
+### `scratch`
+
+Lets `jailbee new` (and every other command) work in a directory that has no
+`<repo>/.jailbee/config.yaml` — a repo you're only poking at for an
+afternoon, or a folder that isn't a repo config's business at all. Host-level
+only, like `claude_credentials`: `scratch` cannot be set in a repo's own
+`.jailbee/config.yaml` — it would be an unknown top-level key there.
+
+```yaml
+scratch:
+  enabled: true                      # false -> today's ConfigNotFoundError everywhere
+  config:                            # a .jailbee/config.yaml document, same schema
+    defaults:
+      memory: 8GiB
+      network: loose
+    golden:
+      stacks: {python: true}
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` | Whether a directory with no config file gets one synthesized. `false` restores the pre-feature behaviour everywhere: `ConfigNotFoundError`, and the `jailbee config init` advice. |
+| `config` | map | `{}` | A repo-config document, same schema as `.jailbee/config.yaml`. Validated by the real `Config` schema at synthesis time — there's no separate, parallel schema for it to drift from. |
+
+A synthesized config is layered exactly like a real one, outermost last:
+
+| Layer | Source | Applies to |
+|---|---|---|
+| 1 | jailbee's built-in field defaults | every repo |
+| 2 | `global.yaml`'s config layer (`gpg`, `ssh`, `agents.claude`, `host_mounts`, …) | every repo, already today |
+| 3 | `global.yaml` → `scratch.config` | synthesized configs only |
+
+Layer 2 is not new here — it is the same set of keys [Recommended
+placement](#recommended-placement) already lists as living in `global.yaml`,
+and it already applies to every configured repo on the host. A scratch
+directory that ignored it would be strictly less useful than the same
+directory with an empty `.jailbee/config.yaml`. Layer 3 merges with the same
+`deep_merge()` rules as a real repo config — see [Merge rules](#merge-rules).
+
+Two fields are set by the synthesized layer itself, before `scratch.config`
+merges on top:
+
+- **`container_prefix`** — slugified from the directory name (lowercase,
+  runs of non-`[a-z0-9]` characters collapsed to one `-`, leading/trailing
+  `-` trimmed), since a directory name routinely breaks the
+  `[a-z0-9][a-z0-9-]*` regex (`Tutkimus_A`, `my project`) and there is no
+  file to tell the user to edit. If the slug comes out empty (nothing but
+  punctuation survives), synthesis fails naming the directory and pointing
+  at `jailbee config init`, where `container_prefix:` can be set explicitly.
+- **`golden.alias`** — pinned to `jailbee-scratch-base`, so every scratch
+  directory on the host shares one golden image instead of building its own.
+  Because the alias is shared, the image's *content* comes only from
+  `global.yaml` (layers 2 and 3) — no per-directory input reaches it, which
+  is what makes one shared image sound rather than merely convenient.
+
+`scratch.config.container_prefix` still wins if set, since layer 3 merges
+normally over the derived default — but setting it makes **every** scratch
+directory on the host share that one prefix, hence the same profiles, the
+same container names, and one registry row between them. Usually you don't
+want that; it's here for the case you do.
+
+**Refused directories.** Synthesis refuses `$HOME` and the filesystem root
+(`/`) outright — both are always a mistaken `cd`, never a research
+directory, and the cost of being wrong is a container bind-mounting the
+user's whole home.
+
+**A limitation this shares with configured repos.** Two same-named scratch
+directories under different parents (`~/a/tutkimus`, `~/b/tutkimus`) slugify
+to the same `container_prefix`, and so share profiles, container names, and
+one `RegisteredRepo` row — the second one registered is read as the first
+having moved. This is exactly today's behaviour for two clones of one repo
+sharing a `container_prefix`; scratch directories don't get a different
+identity rule to solve a problem configured repos already live with.
+
+For anything that outlasts an afternoon, `jailbee config init` is still the
+answer: a committed, editable, per-repo config beats host-wide scratch
+defaults shared with every other directory on the machine.
 
 ## `--config / -c` override
 

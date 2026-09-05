@@ -5,6 +5,19 @@ give each git branch its own isolated, full-stack development environment.
 This is a short overview of how the pieces fit together; see the code under
 `src/jailbee/` for the authoritative behaviour.
 
+## Where a container's config comes from
+
+A container's `Config` normally comes from `<repo>/.jailbee/config.yaml`,
+loaded once per command. A directory with no such file still works: unless
+`scratch.enabled: false` in `~/.config/jailbee/global.yaml`, `jailbee.config`
+synthesizes one from that file's `scratch:` block instead, run through the
+same validation pipeline and layered over the same built-in defaults and
+global-config overlay every repo already gets (see
+[`scratch`](config.md#scratch)). Everything downstream of the loader — every
+module below — takes the resulting `Config` object and never asks which case
+produced it. Either way the object stays read-only once loaded: no module
+mutates it in place.
+
 ## Golden image
 
 `jailbee base build` provisions one Incus image (alias `<container_prefix>-base`)

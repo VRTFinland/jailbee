@@ -19,7 +19,10 @@ fix is `git mv .gie .jailbee`.
 This skill is for **using** an already-configured repo (one that has
 `.jailbee/config.yaml` and where `jailbee init` + `jailbee base build` have already run). If
 the repo isn't set up yet, or you need to change `.jailbee/config.yaml`, use the
-**jailbee-repo-setup** skill instead.
+**jailbee-repo-setup** skill instead — unless the user just wants a quick,
+throwaway container with no committed config at all, in which case `jailbee
+new` already works as-is: see [Working without a repo config](#working-without-a-repo-config-scratch-directories)
+below.
 
 Goal: answer almost any "how do I do X with JailBee" question and run the right
 command without falling back to `jailbee --help` for every step. The full flag-level
@@ -158,6 +161,43 @@ to tmux / a shell once it's up; forces foreground).
 Submodules come along automatically (offline) and round-trip through pull/push;
 the host repo's submodules must be initialised first or `jailbee new` hard-fails with
 the fix.
+
+## Working without a repo config (scratch directories)
+
+`jailbee new` (and every other command) works in a directory with **no**
+`.jailbee/config.yaml` — no `jailbee config init` or `jailbee init` needed
+first. Unless the host's `global.yaml` sets `scratch.enabled: false`,
+JailBee synthesizes a config from that file's `scratch:` block, creates the
+directory's Incus profiles on the fly, and registers it exactly like a
+configured repo. `container_prefix` is still derived per-directory
+(slugified from the directory name), but the golden image is pinned to one
+alias — `jailbee-scratch-base` — shared by every scratch directory on the
+host, so it's built once, not once per directory.
+
+Three things to know before running `jailbee new` in a directory you haven't
+seen configured before:
+
+- **The first scratch directory on a host may prompt to build the shared
+  image.** If `jailbee-scratch-base` doesn't exist yet, `jailbee new` asks
+  to build it (a few minutes, one time); off a TTY it errors instead, naming
+  `jailbee base build` to run manually. Every later scratch directory finds
+  the image already there and skips straight to creating the container.
+- **A non-git directory needs `--mount`.** Clone mode has nothing to clone
+  from outside a git repo, so `jailbee new work` in a plain folder fails
+  with a pointer at `jailbee new --mount work` — mount mode bind-mounts the
+  directory into the container instead.
+- **It prints a one-line notice** naming where the values came from
+  (`global.yaml (scratch.config)`) and which base image is in use, so it's
+  never a silent surprise which config a container actually got.
+
+`jailbee config show` / `jailbee config validate` both work here too, and
+report the same synthesized source instead of erroring on the missing file.
+For work that outlives an afternoon, point the user at `jailbee config
+init` (the **jailbee-repo-setup** skill) instead of leaving it on scratch
+defaults shared with every other directory on the host — see
+[`scratch`](../../config.md#scratch) for the full config block and its
+limitations (two same-named scratch directories under different parents
+share one prefix, exactly like two clones of one repo do).
 
 ## The git bridge — moving commits host ↔ container
 
