@@ -195,10 +195,12 @@ def _build_config_from_dict(
     """Validate a raw merged dict and populate computed Config fields.
 
     Used by load_config to build the final Config from a (possibly merged)
-    raw dict. Computed fields (repo_root, default_branch, container_prefix,
-    shared_dir, golden.alias) are set after Pydantic validation. Cross-field
-    invariants (prefix regex, reserved env keys, shared_caches uniqueness,
-    autostart step-name uniqueness) are checked here as well.
+    raw dict. Computed fields (repo_root, default_branch, upstream_remote,
+    claude_credentials_dir, shared_dir, golden.alias) are set after Pydantic
+    validation. container_prefix is conditionally derived: when left empty,
+    it defaults to repo_root.name. Cross-field invariants (prefix regex,
+    reserved env keys, shared_caches uniqueness, autostart step-name
+    uniqueness) are checked here as well.
 
     `origin` labels the source in error messages when it is not the file at
     `config_path` — a config layer synthesized from `global.yaml`'s

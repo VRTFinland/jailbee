@@ -5,10 +5,13 @@ Most blocks are optional with sensible defaults; an empty `{}` config is
 valid and produces a fully-defaulted Config.
 
 `Config` carries four computed (non-YAML) attributes set at load time:
-  * repo_root        — directory containing `.jailbee/`
-  * upstream_remote  — auto-detected via `git.detect_upstream_remote`
-  * default_branch   — `refs/remotes/<upstream_remote>/HEAD`
-  * container_prefix — repo_root.name (used for container naming)
+  * repo_root             — directory containing `.jailbee/`
+  * default_branch        — `refs/remotes/<upstream_remote>/HEAD`
+  * upstream_remote       — auto-detected via `git.detect_upstream_remote`
+  * claude_credentials_dir — derived from host-level `claude_credentials` block
+
+`container_prefix` is a real YAML key (documented, hand-edited) whose
+*fallback* is computed: `repo_root.name` when left empty.
 """
 
 from __future__ import annotations

@@ -1,10 +1,13 @@
 """The `Config` model: per-repo configuration, validated and merged.
 
 `Config` carries four computed (non-YAML) attributes set at load time:
-  * repo_root        — directory containing `.jailbee/`
-  * upstream_remote  — auto-detected via `git.detect_upstream_remote`
-  * default_branch   — `refs/remotes/<upstream_remote>/HEAD`
-  * container_prefix — repo_root.name (used for container naming)
+  * repo_root             — directory containing `.jailbee/`
+  * default_branch        — `refs/remotes/<upstream_remote>/HEAD`
+  * upstream_remote       — auto-detected via `git.detect_upstream_remote`
+  * claude_credentials_dir — derived from host-level `claude_credentials` block
+
+`container_prefix` is a real YAML key (documented, hand-edited) whose
+*fallback* is computed: `repo_root.name` when left empty.
 """
 
 from __future__ import annotations
@@ -104,7 +107,7 @@ class Config(BaseModel):
         ),
     )
     # Computed on the load path from the host-level `claude_credentials`
-    # block, like repo_root / default_branch / container_prefix. Never a YAML
+    # block, like repo_root / default_branch / upstream_remote. Never a YAML
     # key on either layer: `load_config_from_text` refuses both this name and
     # `claude_credentials` in a repo config. None = this repo keeps its own
     # credential inside its config home.
@@ -497,7 +500,7 @@ class Config(BaseModel):
 
         Kept so `pr_ai`, `claude_skills`, `doctor`, `apply` and `cli` can go on
         reading `cfg.claude.*`. Precedent: `repo_root`, `default_branch` and
-        `container_prefix` are also derived rather than YAML keys.
+        `upstream_remote` are also computed rather than YAML keys.
 
         Read-only on purpose. `model_copy(update={"claude": ...})` cannot work
         here — a property shadows the instance dict that update writes — so
