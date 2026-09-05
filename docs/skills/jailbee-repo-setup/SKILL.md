@@ -21,7 +21,10 @@ work will outlive the session, the repo needs a non-default stack
 (`golden.stacks`, `extra_apt_packages`) or autostart steps, it needs
 `egress_allow` entries beyond what `scratch.config` gives every directory on
 the host, or the config is meant to be committed and shared with a team —
-`scratch.config` is host-local and never reaches git.
+`scratch.config` is host-local and never reaches git. One more trigger is not
+a choice: if `jailbee new` refuses because the directory name slugifies to a
+`container_prefix` a configured repo already owns, run this skill and set
+`container_prefix:` explicitly.
 
 `gie` is the pre-1.0 name of this tool. The `gie` command was **removed in
 1.1.0** and no longer exists — always use `jailbee` in every command you write

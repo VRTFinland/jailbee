@@ -177,7 +177,7 @@ configured repo. `container_prefix` is still derived per-directory
 alias — `jailbee-scratch-base` — shared by every scratch directory on the
 host, so it's built once, not once per directory.
 
-Three things to know before running `jailbee new` in a directory you haven't
+Four things to know before running `jailbee new` in a directory you haven't
 seen configured before:
 
 - **The first scratch directory on a host may prompt to build the shared
@@ -192,9 +192,22 @@ seen configured before:
 - **It prints a one-line notice** naming where the values came from
   (`global.yaml (scratch.config)`) and which base image is in use, so it's
   never a silent surprise which config a container actually got.
+- **A name clash with a *configured* repo is refused.** If the directory
+  name slugifies to a `container_prefix` a repo with a real
+  `.jailbee/config.yaml` already owns, `jailbee new` refuses and names both
+  directories — taking that registration over would silently re-render the
+  configured repo's egress allowlist from scratch defaults. The fix is
+  `jailbee config init` here with an explicit `container_prefix:`, or a
+  rename. Two *scratch* directories with the same name still share a prefix
+  (see below).
 
 `jailbee config show` / `jailbee config validate` both work here too, and
 report the same synthesized source instead of erroring on the missing file.
+The one command that still needs a real config file is `jailbee net egress
+export`: it prints a replacement for the repo config's `egress_allow:` key,
+and there is none here to replace. Refused directories: `/`, `$HOME`, and any
+ancestor of `$HOME` (`/home`, `/Users`).
+
 For work that outlives an afternoon, point the user at `jailbee config
 init` (the **jailbee-repo-setup** skill) instead of leaving it on scratch
 defaults shared with every other directory on the host — see

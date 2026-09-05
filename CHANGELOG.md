@@ -169,8 +169,12 @@
   Incus profiles, created on first use, but shares one golden image across
   the whole host — alias `jailbee-scratch-base`, built once and offered
   interactively the first time it's missing. A non-git directory needs
-  `jailbee new --mount <name>`; `$HOME` and the filesystem root are refused
-  outright. `jailbee config validate`/`show` report the synthesized source as
+  `jailbee new --mount <name>`; the filesystem root, `$HOME` and any ancestor
+  of `$HOME` (`/home`, `/Users`) are refused outright, and a scratch directory
+  whose derived prefix collides with a *configured* repo's is refused rather
+  than taking its registration over. `jailbee net egress export` is the one
+  command that still needs a real config file — there is no `egress_allow:`
+  key to replace. `jailbee config validate`/`show` report the synthesized source as
   `global.yaml (scratch.config)` instead of dying on the missing file — the
   former also no longer prints an unhandled traceback in a config-less
   directory, which it did before this change. The registry's

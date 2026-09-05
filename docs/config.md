@@ -1873,18 +1873,35 @@ directory on the host share that one prefix, hence the same profiles, the
 same container names, and one registry row between them. Usually you don't
 want that; it's here for the case you do.
 
-**Refused directories.** Synthesis refuses `$HOME` and the filesystem root
-(`/`) outright — both are always a mistaken `cd`, never a research
-directory, and the cost of being wrong is a container bind-mounting the
-user's whole home.
+**Refused directories.** Synthesis refuses the filesystem root (`/`), `$HOME`,
+and **any ancestor of `$HOME`** — `/home`, `/Users`, and so on. All are always
+a mistaken `cd`, never a research directory, and the cost of being wrong is a
+container bind-mounting the user's whole home (or, one level up, everyone's).
 
-**A limitation this shares with configured repos.** Two same-named scratch
+**A limitation this shares with configured repos.** Two same-named *scratch*
 directories under different parents (`~/a/tutkimus`, `~/b/tutkimus`) slugify
 to the same `container_prefix`, and so share profiles, container names, and
 one `RegisteredRepo` row — the second one registered is read as the first
 having moved. This is exactly today's behaviour for two clones of one repo
 sharing a `container_prefix`; scratch directories don't get a different
 identity rule to solve a problem configured repos already live with.
+
+**But a scratch directory never displaces a configured repo.** If the derived
+prefix already belongs to a directory that *has* a `.jailbee/config.yaml`
+(`~/Downloads/myapp` against a configured `~/src/myapp`), `jailbee new` and
+`jailbee apply` refuse in the scratch directory, naming both paths. Taking the
+registration over would repoint the refresh timer at the scratch directory and
+silently re-render the configured repo's egress allowlist from scratch
+defaults — and unlike the scratch-vs-scratch case, that repo's owner made no
+choice at all. Run `jailbee config init` in the scratch directory and set an
+explicit `container_prefix:`, or rename the directory.
+
+**One command genuinely needs a file.** `jailbee net egress export` prints a
+replacement for the repo config's `egress_allow:` key, and there is no such
+key here to replace; it says so and points at `jailbee config init`. Promoting
+a single directory's overrides into `global.yaml`'s `scratch.config` would
+widen every other scratch container's allowlist on the host, so it is not
+offered.
 
 For anything that outlasts an afternoon, `jailbee config init` is still the
 answer: a committed, editable, per-repo config beats host-wide scratch
