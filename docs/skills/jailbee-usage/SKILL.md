@@ -445,7 +445,7 @@ a group, otherwise the repo's own config home. One holder has at most one live
 login; every other stored login sits parked in a host-wide store.
 
 ```bash
-jailbee claude ls                  # what is stored, and which one is live here
+jailbee claude ls                  # every login on the host, and where each is live
 jailbee claude use me@work.com     # switch this holder to a stored login
 jailbee claude park                # store the current one; next `claude` asks /login
 jailbee claude rm old@work.com     # delete a stored login for good
@@ -454,7 +454,10 @@ jailbee claude rm old@work.com     # delete a stored login for good
 Four things worth knowing:
 
 - **A switch is holder-wide.** In a credential group, every member repo moves
-  with it. `jailbee claude ls` names the repos that share the holder.
+  with it. `jailbee claude ls` is host-wide: one row per login, with the group
+  it is live in, the repos sharing that holder, and the containers reading it —
+  including a container moved by `jailbee claude group use`, which is the only
+  evidence a group no repo resolves to is in use.
 - **No restart.** Claude Code re-reads the credential when the file's mtime
   changes, so a session that is open right now picks the new account up on its
   next turn. The account shown by `/status` can lag until the session restarts;

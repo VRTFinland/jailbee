@@ -53,6 +53,37 @@
 
 ### Changed
 
+- **`jailbee claude ls` now lists every login on the host and which holder
+  each one is live in.** It was a *holder* view: one `live` row — the
+  calling repo's — above the host-wide parked store. Which account a
+  credential group held was answerable only by naming that group with `-g`,
+  a group nothing but one container's temporary override used was not
+  discoverable at all, and a group created and never filled looked
+  identical to one that did not exist. The table now carries a `GROUP`
+  column and a row per login file: every credential group with the account
+  it holds (`empty` when it holds none), every repo keeping its own login,
+  and every parked login. A new `USED BY` column names the repos resolving
+  to each holder and its containers — container *names* where no repo
+  resolves to the holder, which is exactly the `jailbee claude group use`
+  case and the only evidence such a group is in use. The row this repo
+  reads is bold and named under the table. An unreachable Incus daemon
+  degrades the container column to `containers ?` instead of failing the
+  listing, which it used to do.
+  - `-g/--group` on `ls` now **filters** the host-wide table (keeping the
+    parked rows) rather than pointing the command at another holder; on
+    `use`, `park` and `rm` it keeps its old meaning. Nothing needs `-g` to
+    *see* a group any more. `-g none` filters to the holders that share no
+    group, the same word the writing commands use for that.
+  - `-o json` gains `group`, `repos` and `containers`, and now emits one
+    row per holder rather than one live row: a script that assumed a single
+    `state: live` row, or that identified a row by `account` alone, needs
+    updating — two holders can be logged into the same account, so the pair
+    `group` + `account` is what identifies a row. `--fields` accepts
+    `group`, `account`, `org`, `state`, `used_by`, `repos`, `containers`.
+  - `jailbee claude group` no longer prints its own list of the host's group
+    names. It was a second place claiming to describe them and could not say
+    which account any of them held; it now points at `jailbee claude ls`.
+
 - **`~/.config/jailbee/global.yaml` is now generated from the schema
   instead of templated.** The ~230-line hand-maintained template
   (`config_init._GLOBAL_TEMPLATE`) was a third independent copy of facts
