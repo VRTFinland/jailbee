@@ -1298,9 +1298,51 @@ def test_on_new_container_reports_a_missing_terminal(mocker):
     popen.assert_not_called()
 
 
+def test_on_config_edit_launches_the_tui_in_a_terminal(mocker, tmp_path):
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    mocker.patch(
+        "jailbee.qtui.app.resolve_launch", side_effect=lambda action, _t: action.argv
+    )
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(
+        [RepoGroup(prefix="demo", repo_root=str(tmp_path), config_path=None, containers=[])]
+    )
+
+    controller.on_config_edit("demo", False)
+
+    argv = popen.call_args.args[0]
+    assert argv[:3] == ["jailbee", "config", "edit"]
+    assert "--global" not in argv
+
+    controller.on_config_edit("demo", True)
+    assert "--global" in popen.call_args.args[0]
+
+
+def test_on_config_edit_refuses_an_orphan_group(mocker):
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+    warning = mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    controller = qapp.AppController(mocker.Mock(), mocker.Mock(), interval=3.0)
+    controller.on_groups(
+        [RepoGroup(prefix="orphan", repo_root=None, config_path=None, containers=[])]
+    )
+
+    controller.on_config_edit("orphan", False)
+
+    popen.assert_not_called()
+    warning.assert_called_once()
+
+
 def test_run_wires_new_container_signal(mocker):
     """A signal nobody connected is a dead menu item."""
     window = mocker.Mock()
     controller = mocker.Mock()
     qapp._wire(window, mocker.Mock(), controller)
     window.newContainerRequested.connect.assert_called_once_with(controller.on_new_container)
+
+
+def test_run_wires_config_edit_signal(mocker):
+    """Mirrors `test_run_wires_new_container_signal` for the new Config menu."""
+    window = mocker.Mock()
+    controller = mocker.Mock()
+    qapp._wire(window, mocker.Mock(), controller)
+    window.configEditRequested.connect.assert_called_once_with(controller.on_config_edit)

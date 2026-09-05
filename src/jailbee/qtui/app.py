@@ -22,6 +22,7 @@ from jailbee.dashboard import (
     NOTHING_TO_SHOW,
     RepoTarget,
     collect_repo_roots,
+    config_edit_reject_note_for_prefix,
     new_container_argv,
     new_container_base_default,
     new_container_reject_note_for_prefix,
@@ -475,6 +476,42 @@ class AppController(QObject):
             return
         self._worker.force()
 
+    @Slot(str, bool)
+    def on_config_edit(self, prefix: str, global_layer: bool) -> None:
+        """Open `jailbee config edit` for `prefix` in a real terminal window.
+
+        A terminal, not a detached `Popen` or an output window: the editor is a
+        full-screen TUI and needs a TTY, exactly like `shell` and `tmux`. The
+        GUI grows no form of its own (spec 5.2/9) — the machinery to hand a
+        terminal to a jailbee command already exists, so the whole Qt entry
+        point is this method.
+        """
+        note = config_edit_reject_note_for_prefix(self._latest, prefix)
+        if note is not None:
+            QMessageBox.warning(self._window, "No repo selected", note)
+            return
+        group = next((g for g in self._latest if g.prefix == prefix), None)
+        # `note` being None guarantees a matching group with a repo root; mypy
+        # --strict does not narrow that through the helper call.
+        assert group is not None
+        target = RepoTarget.of(group)
+        assert target is not None
+        argv = ["jailbee", "config", "edit", *target.flags()]
+        if global_layer:
+            argv.append("--global")
+        action = ActionCommand(argv=argv, launch="terminal", confirm=False, cwd=target.cwd())
+        try:
+            launch_argv = resolve_launch(action, detect_terminal(env=_env(), which=shutil.which))
+        except TerminalNotFoundError as exc:
+            QMessageBox.warning(self._window, "No terminal", str(exc))
+            return
+        try:
+            subprocess.Popen(launch_argv, start_new_session=True, cwd=action.cwd)
+        except OSError as exc:
+            QMessageBox.warning(self._window, "Launch failed", str(exc))
+            return
+        self._worker.force()  # the config may have changed under every card
+
     def _open_output(self, argv: list[str], title: str, cwd: Path) -> None:
         """Show a command's output in its own window.
 
@@ -515,6 +552,7 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
     worker.failed.connect(controller.on_failed)
     window.actionRequested.connect(controller.on_action)
     window.newContainerRequested.connect(controller.on_new_container)
+    window.configEditRequested.connect(controller.on_config_edit)
     window.refreshRequested.connect(controller.on_refresh_requested)
     window.intervalChanged.connect(controller.on_interval_changed)
     window.autoRefreshDisabled.connect(controller.on_auto_refresh_disabled)
