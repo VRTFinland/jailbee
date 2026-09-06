@@ -123,6 +123,41 @@ def test_probe_treats_any_non_present_output_as_missing(tmp_path, mocker):
     assert probe(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"])) == "missing"
 
 
+def test_probe_uses_the_resolver_when_the_spec_has_one(tmp_path, mocker):
+    # The JetBrains IDE spec's `command` is a display placeholder ("idea"),
+    # never a real container path — the Toolbox launcher lives under
+    # /opt/jetbrains-toolbox/apps/<id>/bin/, never on PATH. A probe that fell
+    # through to the `command -v`/`test -x` shell check here would always
+    # answer "missing" for a working install; asserting `incus.exec` was
+    # never called pins that the resolver path is what actually ran, not
+    # merely that the return value happens to match.
+    from jailbee.apps import AppSpec, probe
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    exec_mock = mocker.patch.object(Incus, "exec")
+    resolver = mocker.Mock(return_value=["/opt/jetbrains-toolbox/apps/a/bin/idea"])
+    spec = AppSpec(name="ide", command=["idea"], resolve_command=resolver)
+    assert probe(cfg, Incus(), "c1", spec) == "present"
+    resolver.assert_called_once_with(mocker.ANY, "c1")
+    assert not exec_mock.called
+
+
+def test_probe_treats_a_resolver_value_error_as_missing(tmp_path, mocker):
+    # resolve_launcher raises ValueError when no matching launcher is found
+    # inside the container (see ide.py). That must read as "missing", not
+    # escape probe as an uncaught exception and take down `jailbee apps ls`.
+    from jailbee.apps import AppSpec, probe
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    exec_mock = mocker.patch.object(Incus, "exec")
+    resolver = mocker.Mock(side_effect=ValueError("no launcher found"))
+    spec = AppSpec(name="ide", command=["idea"], resolve_command=resolver)
+    assert probe(cfg, Incus(), "c1", spec) == "missing"
+    assert not exec_mock.called
+
+
 def test_probe_runs_as_the_container_user_not_root(tmp_path, mocker):
     # profiles.py maps only the dev user's uid/gid identically between host
     # and container (raw.idmap: uid <uid> <uid>). Container root is an

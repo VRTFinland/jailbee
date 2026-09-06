@@ -8017,7 +8017,7 @@ def apps_ls_cmd(
             json=lambda s: s.top_level,
         ),
     ]
-    if status:
+    if name is not None:
         all_fields.append(
             table_format.FieldSpec(
                 name="status",

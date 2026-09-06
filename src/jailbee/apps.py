@@ -132,7 +132,27 @@ def probe(
     Incus daemon still surfaces as whatever `incus.exec` itself raises,
     and that is deliberately not swallowed here — turning "the daemon is
     down" into a cheerful "missing" would hide a real failure.
+
+    A spec with `resolve_command` set (currently only the JetBrains IDE
+    entry) never reaches the `command -v`/`test -x` check below: `command`
+    on such a spec is a display placeholder (`ide.builtin_specs` sets it to
+    the bare launcher name, e.g. `"idea"`), not a real container path — the
+    Toolbox installs launchers under
+    `/opt/jetbrains-toolbox/apps/<app-id>/bin/`, never on `PATH`, so the
+    shell check would always answer "missing" for a working install. Run
+    the resolver instead and treat its `ValueError` (raised by
+    `resolve_launcher` when nothing matches) as "missing" — the same
+    "answer on stdout, not on a raised failure" contract as the shell
+    check, just enforced in Python instead of by the script's own always-0
+    exit.
     """
+    if spec.resolve_command is not None:
+        try:
+            spec.resolve_command(incus, container)
+        except ValueError:
+            return "missing"
+        return "present"
+
     import shlex as _shlex
 
     binary = _shlex.quote(spec.command[0])
