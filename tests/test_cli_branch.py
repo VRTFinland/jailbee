@@ -148,11 +148,13 @@ def test_submodules_only_with_container_is_a_usage_error(mocker, tmp_path):
 def test_alias_rejects_the_same_combination(mocker, tmp_path):
     _cfg(mocker, tmp_path)
     inside = mocker.patch("jailbee.sync.checkout_submodules_in_container")
+    resolve = mocker.patch("jailbee.cli._resolve_existing")
 
     result = runner.invoke(app, ["submodule", "checkout", "feat-foo", "--submodules-only"])
 
     assert result.exit_code == 2, result.output
     inside.assert_not_called()
+    resolve.assert_not_called()  # rejected before anything is resolved
 
 
 def test_alias_container_form_with_branch_override(mocker, tmp_path):
