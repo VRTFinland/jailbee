@@ -795,6 +795,19 @@ def test_render_submodule_pr_plan_says_ready_when_not_draft():
     assert "ready for review" in tui.render_submodule_pr_plan(_plan(draft=False))
 
 
+def test_render_submodule_pr_plan_omits_state_when_draft_is_unchanged():
+    """draft=None means the update path leaves the PR's draft state alone —
+    the action line must not claim either state."""
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(action="update", draft=None))
+
+    assert "draft" not in text.lower()
+    assert "ready for review" not in text
+    assert "update the existing PR" in text
+
+
 def test_render_submodule_pr_plan_handles_a_detached_submodule():
     from jailbee import tui
     from tests.test_submodule_pr import _plan

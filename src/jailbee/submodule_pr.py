@@ -227,6 +227,10 @@ class SubmodulePrPlan:
     `main`/`origin`) and violate the FIX 2 ordering invariant that nothing
     reads the host sub-repo before the transport. The renderer says so rather
     than showing a guess.
+
+    `draft` is `None` to mean the PR's draft state is left as it is — only
+    reachable on the update path, where `pr_flow.apply_pr_updates` does
+    nothing to the draft/ready state unless `--ready`/`--draft` was given.
     """
 
     container_short: str
@@ -237,7 +241,7 @@ class SubmodulePrPlan:
     action: Literal["create", "update"]
     base: str | None
     remote: str | None
-    draft: bool
+    draft: bool | None
     notes: tuple[str, ...]
 
 

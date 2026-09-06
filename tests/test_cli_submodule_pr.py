@@ -705,6 +705,29 @@ def test_on_a_tty_the_picker_runs_for_a_single_candidate(mocker, tmp_path):
     pick.assert_called_once()
 
 
+def test_picking_a_zero_commit_submodule_proceeds_to_transport_and_publish(mocker, tmp_path):
+    """The picker's headline case: it offers a submodule with nothing ahead
+    of its base (`test_on_a_tty_the_picker_is_offered_every_candidate_ordered`
+    already proves that), and picking it must not stop the run. `select_target`
+    accepts an explicit path regardless of commit count, so the run proceeds
+    all the way to transport and publish (a real `gh` would reject the PR
+    with "No commits between …", but `create_pr` is mocked here)."""
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/idle", commits=0)])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/idle")
+    mocker.patch("typer.confirm", return_value=True)
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "0 commits" in result.output
+    assert "no commits ahead of its base" in result.output
+    transport.assert_called_once()
+    assert "#123" in result.output  # _happy's create_pr ran — publish was reached
+
+
 def test_on_a_tty_the_picker_is_offered_every_candidate_ordered(mocker, tmp_path):
     _setup(
         mocker,
@@ -716,8 +739,9 @@ def test_on_a_tty_the_picker_is_offered_every_candidate_ordered(mocker, tmp_path
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/b")
     mocker.patch("typer.confirm", return_value=True)
 
-    runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr"])
 
+    assert result.exit_code == 0, result.output
     offered = [c.path for c in pick.call_args[0][0]]
     assert offered == ["lib/b", "lib/a"]  # ahead first, then the rest
 
@@ -788,8 +812,9 @@ def test_the_container_picker_runs_when_no_name_is_given(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr"])
 
+    assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["always_prompt"] is True
 
 
@@ -803,8 +828,9 @@ def test_an_explicit_container_name_does_not_prompt(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
 
+    assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["always_prompt"] is False
 
 
@@ -824,8 +850,9 @@ def test_open_only_does_not_prompt_for_a_container(mocker, tmp_path):
     )
     mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    runner.invoke(app, ["submodule", "pr", "--open"])
+    result = runner.invoke(app, ["submodule", "pr", "--open"])
 
+    assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["always_prompt"] is False
 
 
@@ -875,3 +902,34 @@ def test_the_plan_says_update_when_binding_to_a_numbered_pr(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     assert "update the existing PR" in result.output
     assert "create a PR" not in result.output
+
+
+def test_the_plan_does_not_claim_a_draft_change_on_the_update_path(mocker, tmp_path):
+    """I1: on the update path, `apply_pr_updates` only touches draft/ready
+    state when `--ready`/`--draft` is given. With neither flag, the plan
+    block must not claim it will turn a ready-for-review PR into a draft (or
+    vice versa) — it does nothing to that state at all."""
+    from jailbee.pr_flow import PrRecord
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(
+        mocker,
+        tmp_path,
+        candidates=[_candidate("lib/a")],
+        state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="user/x", forced=False),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "update the existing PR" in result.output
+    assert "draft" not in result.output.lower()
+    assert "ready for review" not in result.output

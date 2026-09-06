@@ -5861,8 +5861,16 @@ def submodule_pr_cmd(
         notes.append("the superproject's gitlink does not yet point at these commits")
     if target.commits is None:
         notes.append("the commit count could not be resolved (no base anchor)")
+    if target.commits == 0:
+        notes.append("this submodule has no commits ahead of its base")
 
     if not yes:
+        # `--pr N` binds to an existing PR *below*, after this confirmation,
+        # so without it here the line the user approves would promise a new
+        # PR and then update one.
+        plan_action: Literal["create", "update"] = (
+            "update" if (record.author or record.head or pr_number is not None) else "create"
+        )
         _confirm_submodule_pr_plan(
             submodule_pr.SubmodulePrPlan(
                 container_short=short,
@@ -5870,17 +5878,14 @@ def submodule_pr_cmd(
                 subpath=subpath,
                 source_branch=source_branch,
                 commits=target.commits,
-                # `--pr N` binds to an existing PR *below*, after this
-                # confirmation, so without it here the line the user approves
-                # would promise a new PR and then update one.
-                action=(
-                    "update"
-                    if (record.author or record.head or pr_number is not None)
-                    else "create"
-                ),
+                action=plan_action,
                 base=plan_base,
                 remote=plan_remote,
-                draft=ready is not True,
+                # Create path: a new PR is a draft unless --ready. Update
+                # path: apply_pr_updates only touches draft state when
+                # --ready/--draft was given, so `ready` itself (None included)
+                # is the true outcome — anything else would misreport.
+                draft=(ready is not True) if plan_action == "create" else ready,
                 notes=tuple(notes),
             )
         )

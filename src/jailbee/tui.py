@@ -823,7 +823,11 @@ def render_submodule_pr_plan(plan: SubmodulePrPlan) -> str:
     source = plan.source_branch or "(detached)"
     count = "?" if plan.commits is None else str(plan.commits)
     action = "create a PR" if plan.action == "create" else "update the existing PR"
-    state = "draft" if plan.draft else "ready for review"
+    if plan.draft is None:
+        action_line = action
+    else:
+        state = "draft" if plan.draft else "ready for review"
+        action_line = f"{action} ({state})"
     lines = [
         "Submodule PR  container ──▶ GitHub",
         f"  container : {plan.container_short}  ({plan.container_full})",
@@ -831,7 +835,7 @@ def render_submodule_pr_plan(plan: SubmodulePrPlan) -> str:
         f"  source    : {source}  ({count} commits ahead of base)",
         f"  base      : {plan.base or _UNRESOLVED_SUB_FIELD}",
         f"  remote    : {plan.remote or _UNRESOLVED_SUB_FIELD}",
-        f"  action    : {action} ({state})",
+        f"  action    : {action_line}",
     ]
     lines.extend(f"  ⚠ {note}" for note in plan.notes)
     return "\n".join(lines)
