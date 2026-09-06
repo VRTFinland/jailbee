@@ -86,9 +86,16 @@ class _Prompt:
     spec: FieldSpec | None
     area: TextArea
     multiline: bool
+    map_key_for: FieldSpec | None = None
+    """Set by `new_entry_here` for a `MODEL_MAP`: this prompt names the new
+    entry's key rather than editing a field. `spec` is `None` here too (there
+    is no field yet to attach to), so `commit_prompt` must tell the two
+    `spec is None` prompts apart by checking this first."""
 
     @property
     def label(self) -> str:
+        if self.map_key_for is not None:
+            return f"New {self.map_key_for.label} entry — name it, Enter to create"
         if self.spec is None:
             return "Search — Enter to apply, Esc to cancel"
         verb = "Ctrl-S to commit" if self.multiline else "Enter to commit"
@@ -203,6 +210,64 @@ class Editor:
             self.new_entry = None
             return st.delete_entry(self.state, view.collection, view.entry_path[-1])
         return st.discard_under(self.state, view.entry_path)
+
+    # -- collection editing ----------------------------------------------
+
+    def _open_collection(self) -> FieldSpec | None:
+        """The collection under the cursor, or `None` with a notice if there is none."""
+        view = st.screen(self.state)
+        if view.kind != "collection" or view.collection is None:
+            self.notice("That key is not a collection — open one to add or remove entries.")
+            return None
+        return view.collection
+
+    def new_entry_here(self) -> None:
+        """`n`: append an entry and open it. A map is asked for its key first."""
+        spec = self._open_collection()
+        if spec is None:
+            return
+        if spec.kind is FieldKind.MODEL_MAP:
+            self._open_prompt(None, "", multiline=False)
+            if self.prompt is not None:
+                self.prompt.map_key_for = spec
+            return
+        self.state, crumb = st.add_entry(self.state, spec)
+        self.new_entry = (*self.state.trail, crumb)
+        self.state = st.enter_crumb(self.state, crumb)
+
+    def delete_entry_here(self) -> None:
+        """`x`: remove the entry under the cursor. `x`, not `d`: `d` is the diff.
+
+        Only reachable from the collection screen (`_open_collection`'s
+        guard), which means the trail never extends into an entry here — so
+        this can never delete the entry the trail itself stands in. That
+        matters because `delete_entry` deliberately does not move the trail,
+        and `stage` raises on a path whose index no longer exists; the guard
+        is what keeps that pairing unreachable rather than a coincidence.
+        """
+        spec = self._open_collection()
+        if spec is None:
+            return
+        crumbs = st.entries(self.state, spec)
+        if not crumbs:
+            self.notice("Nothing to delete here.")
+            return
+        self.state = st.delete_entry(self.state, spec, crumbs[self.state.index])
+        self.state = st.move(self.state, 0)  # re-clamp: the list just got shorter
+
+    def move_entry_here(self, delta: int) -> None:
+        """`J`/`K`: swap the entry under the cursor with its neighbour."""
+        spec = self._open_collection()
+        if spec is None:
+            return
+        if spec.kind is FieldKind.MODEL_MAP:
+            self.notice("A mapping has no order to change.")
+            return
+        before_state = self.state
+        before = self.state.index
+        self.state = st.move_entry(self.state, spec, before, delta)
+        if self.state is not before_state:
+            self.state = st.move(self.state, delta)
 
     # -- editing --------------------------------------------------------
 
@@ -319,6 +384,23 @@ class Editor:
         if prompt is None:
             return
         text = prompt.area.text
+        # Checked before `prompt.spec is None` below: a map-key prompt also has
+        # `spec is None` (there is no field yet to attach to), and the search
+        # branch would otherwise read the typed key name as a search query and
+        # create nothing.
+        if prompt.map_key_for is not None:
+            key = text.strip()
+            if not key:
+                self.notice("A name is required.", style="class:error")
+                return
+            if key in st.entries(self.state, prompt.map_key_for):
+                self.notice(f"`{key}` already exists.", style="class:error")
+                return
+            self.state, crumb = st.add_entry(self.state, prompt.map_key_for, key)
+            self.new_entry = (*self.state.trail, crumb)
+            self.state = st.enter_crumb(self.state, crumb)
+            self.prompt = None
+            return
         if prompt.spec is None:
             self.state = st.set_query(self.state, text.strip())
             self.prompt = None
@@ -677,6 +759,10 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     kb.add("c-s", filter=browsing & ~confirming)(_act(editor.save))
     kb.add("s", filter=browsing & ~confirming)(_act(editor.save))
     kb.add("d", filter=browsing & ~confirming)(_act(editor.show_diff))
+    kb.add("n", filter=browsing & ~confirming)(_act_focus(editor.new_entry_here))
+    kb.add("x", filter=browsing & ~confirming)(_act(editor.delete_entry_here))
+    kb.add("J", filter=browsing & ~confirming)(_act(lambda: editor.move_entry_here(1)))
+    kb.add("K", filter=browsing & ~confirming)(_act(lambda: editor.move_entry_here(-1)))
 
     @kb.add("enter", filter=editing & Condition(lambda: not _multiline(editor)))
     @kb.add("c-s", filter=editing)

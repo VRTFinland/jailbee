@@ -152,7 +152,7 @@ def rendered(tmp_path):
         yield run
 
 
-def _editor(tmp_path, *, repo=None, layer="repo", policy="patch"):
+def _editor(tmp_path, *, repo=None, global_=None, layer="repo", policy="patch"):
     """Build an `Editor` directly, bypassing `run_editor`'s `Application`.
 
     `Editor` is a plain dataclass, so tests that want to call its methods one
@@ -162,7 +162,10 @@ def _editor(tmp_path, *, repo=None, layer="repo", policy="patch"):
 
     `repo` is written out as `.jailbee/config.yaml` before the layers are
     read, so the real schema (`repo_specs()`) resolves origins against it
-    exactly the way `run_editor` would.
+    exactly the way `run_editor` would. `global_` is the same for
+    `global.yaml`, defaulting to empty — needed by any test that checks how a
+    repo-layer collection interacts with entries inherited from the global
+    layer (`inherited_entries`, spec's append-not-replace rule for lists).
     """
     import yaml
 
@@ -172,7 +175,7 @@ def _editor(tmp_path, *, repo=None, layer="repo", policy="patch"):
     repo_path.parent.mkdir(parents=True, exist_ok=True)
     repo_path.write_text(yaml.safe_dump(repo or {}, sort_keys=False))
     global_path = tmp_path / "global.yaml"
-    global_path.write_text("")
+    global_path.write_text(yaml.safe_dump(global_ or {}, sort_keys=False))
 
     layer_set = read_layers(repo_path, global_path)
     specs = repo_specs()
@@ -911,3 +914,209 @@ def test_resetting_a_collection_discards_pending_edits_inside_it_and_says_so(tmp
 
     assert "Discarded pending edits inside host_mounts" in editor.message
     assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+
+def test_n_adds_an_entry_and_opens_its_form(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": []})
+    _descend(editor, "host_mounts")
+
+    editor.new_entry_here()
+
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.state.trail == ("host_mounts", 0)
+    assert editor.new_entry == ("host_mounts", 0)
+
+
+def test_n_on_a_map_asks_for_the_key_first(tmp_path):
+    editor = _editor(tmp_path, repo={"agents": {}})
+    _descend(editor, "agents")
+
+    editor.new_entry_here()
+
+    assert editor.prompt is not None
+    assert st.screen(editor.state).kind == "collection"  # not yet created
+    editor.prompt.area.text = "codex"
+    editor.commit_prompt()
+    assert editor.state.trail == ("agents", "codex")
+
+
+def test_n_leaves_an_invalid_new_entry_removed_not_merely_discarded(tmp_path):
+    """`n` then an invalid entry then two `Esc`: the entry `n` created this
+    session must be removed outright, not merely have its (nonexistent)
+    staged edits dropped and the entry left half-made. Until this task wired
+    `n`, `new_entry` was always `None` and `_discard_entry`'s "remove it"
+    branch had never run.
+    """
+    editor = _editor(tmp_path, repo={"host_ports": []})
+    _descend(editor, "host_ports")
+
+    editor.new_entry_here()
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.new_entry == ("host_ports", 0)
+
+    editor.back()  # first Esc: entry is invalid (no name/port), refused
+    assert st.screen(editor.state).kind == "entry"
+
+    editor.back()  # second Esc: discards it outright
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.new_entry is None
+    assert editor.state.staged[("host_ports",)] == []
+
+
+def test_x_deletes_the_entry_under_the_cursor(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}]
+
+
+def test_x_refuses_an_inherited_entry(tmp_path):
+    """A repo list appends to the global one; the global entries are not ours."""
+    editor = _editor(
+        tmp_path,
+        repo={"host_mounts": [{"host": "/mine"}]},
+        global_={"host_mounts": [{"host": "/theirs"}]},
+    )
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == []  # only /mine was ours
+
+
+def test_x_re_clamps_the_cursor_past_the_new_end(tmp_path):
+    """Deleting the last entry must move the cursor back onto the new last
+    one rather than leaving it pointing past the end of the shorter list.
+    """
+    editor = _editor(
+        tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}, {"host": "/c"}]}
+    )
+    _descend(editor, "host_mounts")
+    editor.state = st.move(editor.state, 2)  # cursor on the last entry
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/a"}, {"host": "/b"}]
+    assert editor.state.index == 1  # clamped onto the new last entry
+
+
+def test_x_does_nothing_on_a_field_screen(tmp_path):
+    editor = _editor(tmp_path, repo={})
+    _descend(editor, "defaults")
+
+    editor.delete_entry_here()
+
+    assert "collection" in editor.message.casefold()
+
+
+def test_shift_j_moves_an_entry_down(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.move_entry_here(1)
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}, {"host": "/a"}]
+    assert editor.state.index == 1  # the cursor follows the entry it moved
+
+
+def test_a_rejected_move_past_the_end_does_not_move_the_cursor(tmp_path):
+    """`move_entry` is a no-op past either end and stages nothing then, so
+    the cursor must not move either — even though the collection is already
+    staged from the first, successful `J` a moment earlier. That is exactly
+    the case that trips up a predicate based on `staged.get(spec.path) is
+    not None` rather than whether *this particular call* changed anything:
+    the collection was already staged going in, so such a predicate would
+    read the second, rejected move as having moved and drag the cursor one
+    past the last entry.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.move_entry_here(1)  # stages the collection; cursor now on index 1
+    assert editor.state.index == 1
+
+    editor.move_entry_here(1)  # index 1 is the last entry: a second J is a no-op
+
+    assert editor.state.index == 1  # unchanged — the second move was rejected
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}, {"host": "/a"}]
+
+
+def test_j_on_a_map_says_it_has_no_order(tmp_path):
+    editor = _editor(tmp_path, repo={"agents": {"codex": {}}})
+    _descend(editor, "agents")
+
+    editor.move_entry_here(1)
+
+    assert "no order" in editor.message
+
+
+def test_the_collection_keys_do_nothing_on_a_field_screen(tmp_path):
+    editor = _editor(tmp_path, repo={})
+    _descend(editor, "defaults")
+
+    editor.new_entry_here()
+
+    assert editor.prompt is None
+    assert "collection" in editor.message.casefold()
+
+
+def test_n_x_j_k_are_wired_through_the_real_application(tmp_path):
+    """Presses the real keys through a real `Application`, so a binding that
+    is never wired cannot pass its unit test — `_editor` calls `Editor`'s
+    methods directly and would not catch that.
+
+    `host_mounts` is a section of one, so the first `Enter` lands straight on
+    its collection screen. `n` appends an entry and opens its form; typing
+    `host`/`container` and Enter/Tab-Enter fills the two required fields (the
+    entry form validates on the way out, so it must be complete before the
+    Escape that leaves it counts as valid). Back on the collection screen with
+    one real entry, `n` again appends a second, which is then deleted with
+    `x`; `J`/`K` are exercised on the two entries that remain from the first
+    fixture-seeded row plus the one just added.
+    """
+    from prompt_toolkit.input import create_pipe_input
+
+    from jailbee.config_edit.app import run_editor
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text(
+        "host_mounts:\n  - host: /a\n    container: /data-a\n  - host: /b\n    container: /data-b\n"
+    )
+    glob = tmp_path / "global.yaml"
+    glob.write_text("")
+
+    specs = repo_specs()
+    idx = _index_of_section(specs, "host_mounts")
+
+    def run(keys: str) -> str:
+        layer_set = read_layers(repo, glob)
+        output = _CapturingOutput()
+        with create_pipe_input() as pipe:
+            pipe.send_text(keys)
+            run_editor(
+                layer="repo",
+                layer_set=layer_set,
+                specs=specs,
+                origins=resolve(specs, layer_set),
+                policy="patch",
+                input=pipe,
+                output=output,
+            )
+        return output.screen_text()
+
+    # host_mounts collection screen (two entries), n adds a third and opens
+    # it, escape leaves the (incomplete) entry, escape again discards it —
+    # back on the collection screen with the original two (/a, /b; cursor on
+    # /a at index 0). J swaps /a down to index 1 and the cursor follows it
+    # there; x then deletes the entry under the cursor — /a, now at index 1 —
+    # leaving only /b.
+    # Ends `qq`, not `q`: the delete leaves an unsaved edit staged, so the
+    # first `q` only hits the unsaved-changes warning and the second is what
+    # actually exits — a lone `q` here hangs the pipe rather than failing.
+    text = run(f"{'j' * idx}\r" + "n\x1b\x1b" + "J" + "x" + "qq")
+    assert "/b" in text
+    assert "/a" not in text
+    assert "J/K move" in text  # the footer of a live collection screen
