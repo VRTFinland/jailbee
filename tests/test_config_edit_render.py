@@ -11,6 +11,7 @@ from jailbee.config import HostMount
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import Origin, read_layers, resolve
 from jailbee.config_edit.render import (
+    _SECRET_MASK,
     body_pane,
     collection_pane,
     edit_block,
@@ -474,6 +475,26 @@ def test_a_secret_maps_keys_are_listed_and_its_values_are_not(tmp_path):
     assert "ghp_realtoken" not in text
     assert "ghp_other" not in text
     assert "••••" in text
+
+
+def test_a_secret_maps_mask_is_fixed_not_sized_to_the_value(tmp_path):
+    """`assert "••••" in text` alone would still pass for a mask sized to the
+    value (`"•" * len(value)`) — the length of a token is information too, so
+    the mask must be a fixed string, and two entries with wildly different
+    token lengths must render byte-identical value columns.
+    """
+    state = _secret_map_state({"short": "a", "long": "a" * 97})
+
+    pane = collection_pane(state, _layers(tmp_path))
+    rows = [t for _, t in pane.fragments if "short" in t or "long" in t]
+
+    assert len(rows) == 2
+    # `rsplit` (not `split`) on the *last* double space: the cursor glyph
+    # itself pads the row with a leading double space on a non-cursor line
+    # ("  long  ••••••\n"), so splitting from the front would grab the label
+    # instead of the mask for that row.
+    masks = [row.rsplit("  ", 1)[1] for row in rows]
+    assert masks[0] == masks[1] == f"{_SECRET_MASK}\n"
 
 
 def test_footer_names_every_action_the_editor_offers():

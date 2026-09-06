@@ -14,6 +14,7 @@ also records what got painted, and assert on that.
 from __future__ import annotations
 
 import pytest
+from prompt_toolkit.layout.processors import ConditionalProcessor, PasswordProcessor
 from prompt_toolkit.output import DummyOutput
 
 from jailbee.config_edit import render
@@ -195,6 +196,29 @@ def _descend(editor, *crumbs):
     """
     for crumb in crumbs:
         editor.state = st.enter_crumb(editor.state, crumb)
+
+
+def _masking_enabled(area) -> bool:
+    """Whether `area`'s widget actually hides its input, not just what it was
+    asked to do.
+
+    `_Prompt.password` only mirrors the `password=` `_open_prompt` passed to
+    `TextArea`'s constructor — it is bookkeeping, not proof. A test built on
+    it alone stays green even if the `password=` argument itself is dropped
+    from the `TextArea(...)` call, because nothing then re-derives `password`
+    from the widget (confirmed: that exact mutation passed 230/230 before
+    this helper existed). `TextArea(password=...)` actually works by putting
+    a `ConditionalProcessor(PasswordProcessor, filter=Always()/Never())` into
+    `area.control.input_processors` — this walks that list and reads the
+    filter directly, the same thing prompt_toolkit's renderer consults on
+    every keystroke.
+    """
+    for proc in area.control.input_processors:
+        if isinstance(proc, ConditionalProcessor) and isinstance(
+            proc.processor, PasswordProcessor
+        ):
+            return bool(proc.filter())
+    raise AssertionError("no PasswordProcessor on this TextArea at all")
 
 
 def test_q_quits_cleanly_and_writes_nothing(editor):
@@ -1072,6 +1096,12 @@ def test_setting_a_token_uses_a_hidden_input_and_stages_the_whole_map(tmp_path):
 
     assert editor.prompt is not None
     assert editor.prompt.password is True
+    assert _masking_enabled(editor.prompt.area)  # the widget itself, not just the bookkeeping
+    # Never seeded with the stored token (spec 3.4): the prompt opens empty,
+    # and the token appears nowhere on it — text or label.
+    assert editor.prompt.area.text == ""
+    assert "ghp_old" not in editor.prompt.area.text
+    assert "ghp_old" not in editor.prompt.label
     editor.prompt.area.text = "ghp_new"
     editor.commit_prompt()
 
@@ -1135,6 +1165,7 @@ def test_n_on_a_secret_map_asks_for_the_key_then_hides_the_value(tmp_path):
     editor.new_entry_here()
     assert editor.prompt is not None
     assert editor.prompt.password is False  # this prompt names the key, not a token
+    assert not _masking_enabled(editor.prompt.area)
     editor.prompt.area.text = "personal"
     editor.commit_prompt()
 
@@ -1143,7 +1174,11 @@ def test_n_on_a_secret_map_asks_for_the_key_then_hides_the_value(tmp_path):
     assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old", "personal": ""}
     assert editor.prompt is not None
     assert editor.prompt.password is True
+    assert _masking_enabled(editor.prompt.area)
     assert editor.prompt.secret_key == "personal"
+    assert editor.prompt.area.text == ""
+    assert "ghp_old" not in editor.prompt.area.text
+    assert "ghp_old" not in editor.prompt.label
 
     editor.prompt.area.text = "ghp_brandnew"
     editor.commit_prompt()
@@ -1173,6 +1208,29 @@ def test_esc_on_a_freshly_created_secret_entry_removes_the_empty_placeholder(tmp
 
     assert editor.prompt is None
     assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old"}
+
+
+def test_esc_on_a_freshly_created_secret_entry_in_a_previously_absent_map_stages_nothing(
+    tmp_path,
+):
+    """The stronger case: when `github.api_tokens` did not exist on this
+    layer's file at all, cancelling the only entry `n` just created must
+    leave *nothing* staged — not `{}`. A staged `{}` still writes an empty
+    `api_tokens: {}` on save, which is not "as if `n` had never been
+    pressed" for a layer that had nothing to begin with.
+    """
+    editor = _editor(tmp_path, global_={}, layer="global")
+    _descend(editor, "github", "api_tokens")
+    editor.new_entry_here()
+    editor.prompt.area.text = "gisgro"
+    editor.commit_prompt()
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": ""}
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert ("github", "api_tokens") not in editor.state.staged
+    assert not editor.dirty()
 
 
 def test_esc_on_an_existing_secret_entry_leaves_it_untouched(tmp_path):

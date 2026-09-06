@@ -34,7 +34,7 @@ from prompt_toolkit.widgets import TextArea
 
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import raw_for, validate_entry
+from jailbee.config_edit.layers import lookup, raw_for, validate_entry
 from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 
 if TYPE_CHECKING:
@@ -445,8 +445,21 @@ class Editor:
             and prompt.spec is not None
             and self.new_entry == (*prompt.spec.path, prompt.secret_key)
         ):
-            self.state = st.delete_entry(self.state, prompt.spec, prompt.secret_key)
+            spec = prompt.spec
+            self.state = st.delete_entry(self.state, spec, prompt.secret_key)
             self.new_entry = None
+            # `delete_entry` stages whatever the map is left holding — `{}`
+            # when the key just removed was the only one in it. If the map
+            # was not on this layer's file at all before this session either,
+            # a staged `{}` still writes an empty `api_tokens: {}` on save —
+            # not "as if `n` had never been pressed". Drop the staged key
+            # outright in that case so a layer with nothing to begin with
+            # ends up with nothing staged, not an empty one.
+            present, _ = lookup(raw_for(self.layer_set, self.state.layer), spec.path)
+            if not present and self.state.staged.get(spec.path) == {}:
+                staged = dict(self.state.staged)
+                del staged[spec.path]
+                self.state = replace(self.state, staged=staged)
         self.prompt = None
 
     def commit_prompt(self) -> None:
