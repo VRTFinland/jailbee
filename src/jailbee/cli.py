@@ -7966,6 +7966,14 @@ def apps_ls_cmd(
             ),
         ),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — probe straight away.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """List the GUI apps this repo's containers can launch.
@@ -7985,7 +7993,7 @@ def apps_ls_cmd(
 
     status: dict[str, str] = {}
     if name is not None:
-        incus, resolved = _resolve_attachable(cfg, name, attach_cmd="apps ls")
+        incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd="apps ls")
         status = {s.name: probe(cfg, incus, resolved, s) for s in specs}
 
     all_fields: list[table_format.FieldSpec[AppSpec]] = [

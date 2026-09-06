@@ -84,6 +84,28 @@ def test_apps_ls_empty_registry_says_so(tmp_path, mocker):
     assert "No GUI apps" in result.output
 
 
+def test_apps_ls_force_reaches_the_container_resolver(tmp_path, mocker):
+    """`apps ls` is the command you reach for when a container's background
+    job failed — the case where `_resolve_attachable` stops to ask whether
+    to go in anyway. Without `--force` it could block on that prompt while
+    every sibling launch command offers the flag.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    resolve = mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.apps.probe", return_value="present")
+
+    assert runner.invoke(app, ["apps", "ls", "c1", "--force"]).exit_code == 0
+    assert resolve.call_args.kwargs["force"] is True
+
+    # And the flag really is a flag: absent, the resolver is asked to confirm.
+    assert runner.invoke(app, ["apps", "ls", "c1"]).exit_code == 0
+    assert resolve.call_args.kwargs["force"] is False
+
+
 def test_apps_run_launches_the_named_app(tmp_path, mocker):
     from jailbee.apps import get_app
     from jailbee.incus import Incus
