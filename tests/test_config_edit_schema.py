@@ -8,8 +8,8 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, SecretStr
 
-from jailbee.config import ClaudeAgentConfig, Config
-from jailbee.config_edit.schema import Classified, FieldKind, classify
+from jailbee.config import ClaudeAgentConfig, Config, HostMount
+from jailbee.config_edit.schema import Classified, FieldKind, build_specs, classify, rebase
 from jailbee.global_config import GlobalConfig
 from tests.test_config_schema_closure import walk_models
 
@@ -359,3 +359,23 @@ def test_config_edit_is_editable_in_the_global_tree_only():
     repo_paths = {s.path for s in repo_specs()}
     assert ("config_edit", "write_policy") in global_paths
     assert ("config_edit", "write_policy") not in repo_paths
+
+
+def test_rebase_prefixes_every_path_and_clears_the_advanced_filter():
+    """Entry specs are addressed by their full path, and are never 'advanced'.
+
+    `build_specs` marks a field advanced when its path is not in `BASIC_FIELDS`,
+    and no entry path ever is — so without this an entry form would render empty
+    until the user pressed `a`.
+    """
+    specs = build_specs(HostMount)
+
+    got = rebase(specs, ("host_mounts", 1))
+
+    assert [s.path for s in got] == [
+        ("host_mounts", 1, "host"),
+        ("host_mounts", 1, "container"),
+        ("host_mounts", 1, "readonly"),
+    ]
+    assert all(not s.advanced for s in got)
+    assert [s.label for s in got] == ["host", "container", "readonly"]

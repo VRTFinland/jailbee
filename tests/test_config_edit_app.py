@@ -1,7 +1,7 @@
 """A pipe-driven smoke test of the real Application.
 
 Deliberately thin — the interaction model is `state.py`'s and the drawing is
-`render.py`'s, both tested directly (every transition `move`, `enter_section`,
+`render.py`'s, both tested directly (every transition `move`, `enter_crumb`,
 `toggle_show_all` and friends can produce is exhaustively covered in
 `test_config_edit_state.py`). What is left here, and what nothing else can
 cover, is the wiring: that a keypress actually reaches its transition. The

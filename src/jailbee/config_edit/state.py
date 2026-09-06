@@ -10,43 +10,91 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from jailbee.config_edit.layers import lookup
-from jailbee.config_edit.schema import FieldKind
-from jailbee.config_writer import DELETE, YamlChange
+from jailbee.config_edit.schema import (
+    COLLECTION_KINDS,
+    FieldKind,
+    build_specs,
+    dotted,
+    rebase,
+)
+from jailbee.config_writer import DELETE, KeyPath, YamlChange
 
 if TYPE_CHECKING:
     from jailbee.config_edit.layers import LayerName, Origin
     from jailbee.config_edit.schema import FieldSpec
 
 
+Crumb = str | int
+"""One step of the editor's trail: a section name, a map key, or a list index."""
+
+
 @dataclass(frozen=True)
 class EditorState:
     """One open editor.
 
-    `section` is `None` while the section list has focus and the section's
-    top-level key while its fields do. `staged` holds only the paths the
-    user has changed, keyed the same way `FieldSpec.path` and
-    `YamlChange.path` are, so the three never need translating between
-    each other.
+    `trail` is where the cursor is in the config tree: empty on the section
+    list, `("ssh",)` inside a section, `("host_mounts", 1)` on one entry's
+    form. It is the config path, so it doubles as the prefix every spec on
+    screen is addressed by — see `screen`, the one place depth is
+    interpreted.
+
+    `staged` holds only the paths the user has changed, keyed the same way
+    `FieldSpec.path` and `YamlChange.path` are, so the three never need
+    translating between each other.
     """
 
     layer: LayerName
     specs: tuple[FieldSpec, ...]
-    origins: Mapping[tuple[str, ...], Origin]
-    staged: Mapping[tuple[str, ...], object]
-    section: str | None = None
+    origins: Mapping[KeyPath, Origin]
+    staged: Mapping[KeyPath, object]
+    trail: tuple[Crumb, ...] = ()
     index: int = 0
     query: str = ""
     show_all: bool = False
+
+    @property
+    def section(self) -> str | None:
+        """The open top-level key, or `None` on the section list.
+
+        Kept as a property because `render.section_pane`, `render.field_pane`
+        and `title_bar` ask exactly this question and should not learn about
+        depth to answer it. Not a field: `dataclasses.replace` would then need
+        it kept in step with `trail` at every call site.
+        """
+        if not self.trail:
+            return None
+        first = self.trail[0]
+        return first if isinstance(first, str) else None
+
+
+@dataclass(frozen=True)
+class Screen:
+    """What the field pane is showing, resolved from the trail.
+
+    `specs` is the rows to draw for a `fields` or `entry` screen and is empty
+    for the other two. `collection` is the collection spec on a `collection`
+    screen and, on an `entry` screen, the collection the entry belongs to —
+    `entry_path` then addresses the entry itself. Both are what lets `app.py`
+    validate an entry against its item model without re-deriving the trail.
+
+    Resolved rather than stored, so the trail stays the single source of truth
+    and no transition can leave a cached screen behind.
+    """
+
+    kind: Literal["sections", "fields", "collection", "entry"]
+    specs: tuple[FieldSpec, ...] = ()
+    collection: FieldSpec | None = None
+    entry_path: KeyPath = ()
 
 
 def open_editor(
     *,
     layer: LayerName,
     specs: Sequence[FieldSpec],
-    origins: Mapping[tuple[str, ...], Origin],
+    origins: Mapping[KeyPath, Origin],
 ) -> EditorState:
     """A fresh editor on the section list with nothing staged."""
     return EditorState(layer=layer, specs=tuple(specs), origins=origins, staged={})
@@ -62,15 +110,66 @@ def sections(state: EditorState) -> tuple[str, ...]:
     """
     out: list[str] = []
     for spec in state.specs:
-        if spec.path[0] not in out:
-            out.append(spec.path[0])
+        head = spec.path[0]
+        # `build_specs` only ever emits string segments, so every top-level
+        # key is a `str`; the `isinstance` is what tells mypy so now that
+        # `FieldSpec.path` is a `KeyPath`.
+        if isinstance(head, str) and head not in out:
+            out.append(head)
     return tuple(out)
 
 
 def _matches(spec: FieldSpec, query: str) -> bool:
     needle = query.casefold()
-    haystack = (".".join(spec.path), spec.label, spec.description)
+    haystack = (dotted(spec.path), spec.label, spec.description)
     return any(needle in field.casefold() for field in haystack)
+
+
+def _spec_at(specs: Sequence[FieldSpec], path: KeyPath) -> FieldSpec | None:
+    return next((s for s in specs if s.path == path), None)
+
+
+def screen(state: EditorState) -> Screen:
+    """What the trail points at. The one place depth is interpreted."""
+    if state.query:
+        return Screen("fields", tuple(s for s in state.specs if _matches(s, state.query)))
+    if not state.trail:
+        return Screen("sections")
+    pool = state.specs
+    prefix: KeyPath = ()
+    holder: FieldSpec | None = None
+    entry_path: KeyPath = ()
+    i = 0
+    while i < len(state.trail):
+        prefix = (*prefix, state.trail[i])
+        spec = _spec_at(pool, prefix)
+        if spec is not None and spec.kind in COLLECTION_KINDS and spec.item_model is not None:
+            if i + 1 == len(state.trail):
+                return Screen("collection", (), spec)
+            prefix = (*prefix, state.trail[i + 1])
+            pool = rebase(build_specs(spec.item_model), prefix)
+            holder, entry_path = spec, prefix
+            i += 2
+            continue
+        i += 1
+    rows = tuple(s for s in pool if s.path[: len(prefix)] == prefix)
+    if holder is not None:
+        return Screen("entry", rows, holder, entry_path)
+    return Screen("fields", tuple(s for s in rows if state.show_all or not s.advanced))
+
+
+def entries(state: EditorState, spec: FieldSpec) -> tuple[Crumb, ...]:
+    """The crumbs addressing `spec`'s own entries, in document order.
+
+    Indices for a `MODEL_LIST`, keys for a `MODEL_MAP`, nothing for a value
+    that is neither — a hand-broken file must not crash the read path.
+    """
+    value = effective(state, spec.path)
+    if isinstance(value, list):
+        return tuple(range(len(value)))
+    if isinstance(value, dict):
+        return tuple(value)
+    return ()
 
 
 def visible_specs(state: EditorState) -> tuple[FieldSpec, ...]:
@@ -80,15 +179,11 @@ def visible_specs(state: EditorState) -> tuple[FieldSpec, ...]:
     basic/advanced filter** (spec 4.3). At this schema size search is how
     a field actually gets found, and filtering its results would hide
     exactly what was being looked for.
+
+    Empty on the two screens that do not draw fields at all: the section
+    list, and a collection's entry list.
     """
-    if state.query:
-        return tuple(s for s in state.specs if _matches(s, state.query))
-    if state.section is None:
-        return ()
-    in_section = tuple(s for s in state.specs if s.path[0] == state.section)
-    if state.show_all:
-        return in_section
-    return tuple(s for s in in_section if not s.advanced)
+    return screen(state).specs
 
 
 def current(state: EditorState) -> FieldSpec | None:
@@ -101,28 +196,39 @@ def current(state: EditorState) -> FieldSpec | None:
 
 def move(state: EditorState, delta: int) -> EditorState:
     """Move the cursor within the current list, clamped at both ends."""
-    total = len(visible_specs(state)) if (state.section or state.query) else len(sections(state))
+    view = screen(state)
+    if view.kind == "sections":
+        total = len(sections(state))
+    elif view.kind == "collection":
+        total = len(entries(state, view.collection)) if view.collection is not None else 0
+    else:
+        total = len(view.specs)
     last = max(0, total - 1)
     return replace(state, index=max(0, min(last, state.index + delta)))
 
 
-def enter_section(state: EditorState, name: str) -> EditorState:
-    """Focus `name`'s fields, cursor at the top.
+def enter_crumb(state: EditorState, crumb: Crumb) -> EditorState:
+    """Descend one level, cursor at the top, clearing any active search.
 
-    The cursor resets because sections differ in length: carrying an index
-    across could leave it past the end of a shorter one.
+    The cursor resets because two screens rarely have the same length:
+    carrying an index across could leave it past the end of a shorter one.
     """
-    return replace(state, section=name, index=0, query="")
+    return replace(state, trail=(*state.trail, crumb), index=0, query="")
 
 
-def leave_section(state: EditorState) -> EditorState:
-    """Return to the section list, clearing any active search."""
-    return replace(state, section=None, index=0, query="")
+def leave_crumb(state: EditorState) -> EditorState:
+    """Ascend one level. On the section list this is already the top."""
+    return replace(state, trail=state.trail[:-1], index=0, query="")
 
 
 def set_query(state: EditorState, query: str) -> EditorState:
-    """Set the search string. Empty restores the section view."""
-    return replace(state, query=query, index=0)
+    """Set the search string. Empty restores the section list.
+
+    The trail is cleared: search spans the top-level specs only, so a query
+    run from inside an entry form would otherwise leave the trail pointing at
+    a screen the results cannot describe (spec 11.3 rule 3).
+    """
+    return replace(state, query=query, trail=(), index=0)
 
 
 def toggle_show_all(state: EditorState) -> EditorState:
@@ -150,7 +256,7 @@ the key is actually present, and a reset of an inherited key produces no
 """
 
 
-def effective(state: EditorState, path: tuple[str, ...]) -> object:
+def effective(state: EditorState, path: KeyPath) -> object:
     """The value the user currently sees for `path`.
 
     A staged edit wins over the resolved origin; a staged reset falls back
@@ -177,7 +283,7 @@ def effective(state: EditorState, path: tuple[str, ...]) -> object:
     return origin.value if origin is not None else None
 
 
-def stage(state: EditorState, path: tuple[str, ...], value: object) -> EditorState:
+def stage(state: EditorState, path: KeyPath, value: object) -> EditorState:
     """Record an edit to `path`. Does not validate — that happens at save."""
     return replace(state, staged={**state.staged, path: value})
 
@@ -203,7 +309,7 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
     if spec is None:
         return state
     present, _ = lookup(layer_raw, spec.path)
-    staged = dict(state.staged)
+    staged: dict[KeyPath, object] = dict(state.staged)
     if present:
         staged[spec.path] = UNSET
     else:

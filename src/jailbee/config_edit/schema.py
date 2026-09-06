@@ -12,7 +12,8 @@ never renders.
 from __future__ import annotations
 
 import types
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypeGuard, Union, get_args, get_origin
@@ -23,6 +24,7 @@ from pydantic_core import PydanticUndefined
 
 from jailbee.config import Config
 from jailbee.config.common import _HOST_LEVEL_KEYS  # router impl; must stay in sync
+from jailbee.config_writer import KeyPath
 from jailbee.global_config import GlobalConfig
 
 
@@ -194,9 +196,14 @@ class FieldSpec:
     staged changes (`config_writer.YamlChange.path`) and by
     `BASIC_FIELDS`. `default` is the schema default, shown in the help
     pane so the user can see what resetting the field gives back.
+
+    A path is a `KeyPath`, not a tuple of strings: `rebase` produces the
+    specs of one *entry* of a collection, and those carry the entry's
+    index or map key as a segment (`("host_mounts", 1, "readonly")`).
+    `build_specs` itself only ever emits string segments.
     """
 
-    path: tuple[str, ...]
+    path: KeyPath
     label: str
     kind: FieldKind
     description: str
@@ -275,6 +282,42 @@ def _walk(
             )
         )
     return out
+
+
+def dotted(path: KeyPath) -> str:
+    """A `KeyPath` as one readable string: `host_mounts.1.readonly`.
+
+    One definition rather than a `".".join(path)` per call site: since a path
+    can carry integer segments, every such join now needs the `str()` and one
+    that forgets it raises `TypeError` in the middle of a redraw.
+    """
+    return ".".join(str(seg) for seg in path)
+
+
+COLLECTION_KINDS: frozenset[FieldKind] = frozenset({FieldKind.MODEL_LIST, FieldKind.MODEL_MAP})
+"""Kinds whose editor is a drill-down screen rather than a modal line.
+
+Public because three modules need the same answer: `state` decides what
+entering the row means, `render` draws the screen, `app` binds `n`/`x`/`J`/`K`
+only where it makes sense. It used to be `render._COLLECTION_KINDS`, private
+because a collection was not editable at all.
+"""
+
+
+def rebase(specs: Sequence[FieldSpec], prefix: KeyPath) -> tuple[FieldSpec, ...]:
+    """`specs` re-addressed as fields of the entry at `prefix`.
+
+    Two things happen here, and both are load-bearing:
+
+    * **The path becomes absolute.** `state.staged`, `render._pending` and
+      `YamlChange.path` all key on `FieldSpec.path`, so re-basing at the single
+      point where entry specs are produced is what keeps every one of them
+      unchanged.
+    * **`advanced` is cleared.** `build_specs` sets it from `BASIC_FIELDS`, and
+      no entry path is in that set — an entry form would otherwise render empty
+      until the user pressed `a` (spec 11.3).
+    """
+    return tuple(replace(spec, path=(*prefix, *spec.path), advanced=False) for spec in specs)
 
 
 BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(

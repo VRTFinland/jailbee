@@ -27,7 +27,7 @@ from jailbee.config import ConfigError, load_config_from_layers
 # routing exactly — a key on one side of the boundary merges by
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
 from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
-from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
+from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted
 from jailbee.config_writer import DELETE, KeyPath, YamlChange
 from jailbee.global_config import validate_global_raw
 
@@ -114,14 +114,14 @@ def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     return True, node
 
 
-def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[tuple[str, ...], Origin]:
+def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[KeyPath, Origin]:
     """Where each spec's value comes from: repo, else global, else the default.
 
     Independent of which layer is open. A repo-layer editor still marks an
     inherited value `(global)`, so the user can see that editing it will
     create a repo-layer key rather than change the one they are looking at.
     """
-    out: dict[tuple[str, ...], Origin] = {}
+    out: dict[KeyPath, Origin] = {}
     for spec in specs:
         present, value = lookup(layers.repo_raw, spec.path)
         if present:
@@ -237,14 +237,14 @@ def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict
             node = _descend_raw(node, key, change.path)
         if isinstance(leaf, int):
             if not isinstance(node, list) or not 0 <= leaf < len(node):
-                raise ValueError(f"{_dotted(change.path)}: index out of range")
+                raise ValueError(f"{dotted(change.path)}: index out of range")
             if change.value is DELETE:
                 del node[leaf]
             else:
                 node[leaf] = change.value
             continue
         if not isinstance(node, dict):
-            raise ValueError(f"{_dotted(change.path)}: expected a mapping")
+            raise ValueError(f"{dotted(change.path)}: expected a mapping")
         if change.value is DELETE:
             node.pop(leaf, None)
         else:
@@ -262,19 +262,15 @@ def _descend_raw(node: object, key: str | int, path: KeyPath) -> object:
     """
     if isinstance(key, int):
         if not isinstance(node, list) or not 0 <= key < len(node):
-            raise ValueError(f"{_dotted(path)}: index out of range")
+            raise ValueError(f"{dotted(path)}: index out of range")
         return node[key]
     if not isinstance(node, dict):
-        raise ValueError(f"{_dotted(path)}: expected a mapping")
+        raise ValueError(f"{dotted(path)}: expected a mapping")
     child = node.get(key)
     if not isinstance(child, (dict, list)):
         child = {}
         node[key] = child
     return child
-
-
-def _dotted(path: KeyPath) -> str:
-    return ".".join(str(seg) for seg in path)
 
 
 _PREFIX_PATH = ("container_prefix",)

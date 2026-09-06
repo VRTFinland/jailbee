@@ -78,7 +78,7 @@ def test_section_pane_lists_every_top_level_key_once():
 def test_field_pane_shows_the_saved_value_and_its_origin(tmp_path):
     origins = {s.path: Origin("default", s.default) for s in SPECS}
     origins[("gpg", "enabled")] = Origin("global", True)
-    pane = field_pane(_state(section="gpg", origins=origins), _layers(tmp_path))
+    pane = field_pane(_state(trail=("gpg",), origins=origins), _layers(tmp_path))
     text = _text(pane.fragments)
     assert "enabled" in text
     assert "true" in text
@@ -87,8 +87,8 @@ def test_field_pane_shows_the_saved_value_and_its_origin(tmp_path):
 
 def test_the_default_view_hides_advanced_fields_until_a_is_pressed(tmp_path):
     layers = _layers(tmp_path)
-    assert "agent_forward" not in _text(field_pane(_state(section="gpg"), layers).fragments)
-    shown = field_pane(_state(section="gpg", show_all=True), layers)
+    assert "agent_forward" not in _text(field_pane(_state(trail=("gpg",)), layers).fragments)
+    shown = field_pane(_state(trail=("gpg",), show_all=True), layers)
     assert "agent_forward" in _text(shown.fragments)
 
 
@@ -96,7 +96,7 @@ def test_a_staged_edit_is_marked_and_says_what_will_happen(tmp_path):
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: false\n")
     origins = {s.path: Origin("default", s.default) for s in SPECS}
     origins[("gpg", "enabled")] = Origin("repo", False)
-    state = st.stage(_state(section="gpg", origins=origins), ("gpg", "enabled"), True)
+    state = st.stage(_state(trail=("gpg",), origins=origins), ("gpg", "enabled"), True)
     text = _text(field_pane(state, layers).fragments)
     before, arrow, after = text.partition("→")
     assert arrow, "no staged edit was marked at all"
@@ -113,7 +113,7 @@ def test_a_staged_reset_says_reset_rather_than_the_old_value(tmp_path):
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: true\n")
     origins = {s.path: Origin("default", s.default) for s in SPECS}
     origins[("gpg", "enabled")] = Origin("repo", True)
-    state = st.reset_current(_state(section="gpg", origins=origins), layers.repo_raw)
+    state = st.reset_current(_state(trail=("gpg",), origins=origins), layers.repo_raw)
     assert "→ reset" in _text(field_pane(state, layers).fragments)
 
 
@@ -122,7 +122,7 @@ def test_a_no_op_edit_is_not_marked(tmp_path):
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: true\n")
     origins = {s.path: Origin("default", s.default) for s in SPECS}
     origins[("gpg", "enabled")] = Origin("repo", True)
-    state = st.stage(_state(section="gpg", origins=origins), ("gpg", "enabled"), True)
+    state = st.stage(_state(trail=("gpg",), origins=origins), ("gpg", "enabled"), True)
     assert "→" not in _text(field_pane(state, layers).fragments)
     assert "modified: 0" in _text(title_bar(state, layers))
 
@@ -143,7 +143,7 @@ def test_title_bar_names_the_layer_the_file_and_the_pending_count(tmp_path):
 
 
 def test_help_pane_carries_the_description_and_the_default(tmp_path):
-    state = _state(section="gpg")
+    state = _state(trail=("gpg",))
     text = _text(help_pane(state, _layers(tmp_path)))
     assert "gpg.enabled" in text
     assert "what gpg.enabled does" in text
@@ -163,7 +163,7 @@ def test_help_pane_shows_inherited_list_context_for_an_appending_key(tmp_path):
         specs=tuple(rows),
         origins={s.path: Origin("default", s.default) for s in rows},
         staged={},
-        section="egress_allow",
+        trail=("egress_allow",),
     )
     text = _text(help_pane(state, layers))
     assert "global.example" in text
@@ -177,7 +177,7 @@ def _egress_state(staged):
         specs=tuple(rows),
         origins={s.path: Origin("default", s.default) for s in rows},
         staged=staged,
-        section="egress_allow",
+        trail=("egress_allow",),
     )
 
 

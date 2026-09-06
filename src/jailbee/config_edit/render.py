@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Final
 from prompt_toolkit.styles import Style
 
 from jailbee.config_edit.layers import disabled_reason, inherited_entries, raw_for
-from jailbee.config_edit.schema import FieldKind
+from jailbee.config_edit.schema import COLLECTION_KINDS, FieldKind, dotted
 from jailbee.config_edit.state import (
     UNSET,
     changes,
@@ -39,13 +39,6 @@ if TYPE_CHECKING:
     from jailbee.config_edit.schema import FieldSpec
     from jailbee.config_edit.state import EditorState
     from jailbee.config_writer import KeyPath
-
-_COLLECTION_KINDS = frozenset({FieldKind.MODEL_LIST, FieldKind.MODEL_MAP})
-"""Kinds whose editor is a drill-down screen this release does not have yet.
-
-They render read-only with a reason rather than vanishing: a setting that is
-simply missing reads as a bug, one that explains itself reads as a boundary.
-"""
 
 _ORIGIN_LABEL = {"default": "(default)", "global": "(global)", "repo": "(repo)"}
 
@@ -106,7 +99,7 @@ def edit_block(spec: FieldSpec, layer: LayerName) -> str | None:
             "Secrets are not editable here — the editor will not paint a token on a "
             "terminal. Edit the file by hand and keep it at mode 0600."
         )
-    if spec.kind in _COLLECTION_KINDS:
+    if spec.kind in COLLECTION_KINDS:
         return "Lists of structured entries are not editable here yet — edit this key by hand."
     return None
 
@@ -122,7 +115,7 @@ def _row_name(state: EditorState, spec: FieldSpec) -> str:
     Search spans every section, so a bare `enabled` there would name four
     different fields identically.
     """
-    return ".".join(spec.path) if state.query else spec.label
+    return dotted(spec.path) if state.query else spec.label
 
 
 def _staged_suffix(state: EditorState, spec: FieldSpec) -> str:
@@ -232,7 +225,7 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
     source = origin.source if origin is not None else "default"
     saved = format_value(spec, origin.value if origin is not None else spec.default)
     out: StyleAndTextTuples = [
-        ("class:cursor", ".".join(spec.path)),
+        ("class:cursor", dotted(spec.path)),
         ("class:dim", f"   [{spec.kind.value}]\n"),
         ("", f"{spec.description or 'No description.'}\n"),
         ("class:dim", f"Default: {format_value(spec, spec.default)} · Now: {saved} ({source})\n"),

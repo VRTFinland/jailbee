@@ -35,7 +35,7 @@ from prompt_toolkit.widgets import TextArea
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import raw_for
-from jailbee.config_edit.schema import FieldKind
+from jailbee.config_edit.schema import FieldKind, dotted
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from jailbee.config_edit.layers import LayerName, LayerSet, Origin
     from jailbee.config_edit.save import SavePlan, WritePolicy
     from jailbee.config_edit.schema import FieldSpec
+    from jailbee.config_writer import KeyPath
 
 _SECTION_WIDTH = 20
 _HELP_HEIGHT = 9
@@ -90,7 +91,7 @@ class _Prompt:
         if self.spec is None:
             return "Search — Enter to apply, Esc to cancel"
         verb = "Ctrl-S to commit" if self.multiline else "Enter to commit"
-        return f"{'.'.join(self.spec.path)} — {verb}, Esc to cancel"
+        return f"{dotted(self.spec.path)} — {verb}, Esc to cancel"
 
 
 @dataclass
@@ -130,22 +131,22 @@ class Editor:
         """Open the section under the cursor, or edit the field under it.
 
         The one Enter key does both because the two lists are never focused at
-        the same time: `state.section` is `None` exactly while the section list
-        has the cursor.
+        the same time: the trail is empty exactly while the section list has
+        the cursor.
         """
-        if self.state.section is None and not self.state.query:
+        if not self.state.trail and not self.state.query:
             names = st.sections(self.state)
             if names:
-                self.state = st.enter_section(self.state, names[self.state.index])
+                self.state = st.enter_crumb(self.state, names[self.state.index])
             return
         self.edit_current()
 
     def back(self) -> None:
-        """Escape: clear a search first, then leave the section."""
+        """Escape: clear a search first, then ascend one level."""
         if self.state.query:
             self.state = st.set_query(self.state, "")
             return
-        self.state = st.leave_section(self.state)
+        self.state = st.leave_crumb(self.state)
 
     # -- editing --------------------------------------------------------
 
@@ -345,7 +346,7 @@ class Editor:
         )
         self.state = replace(
             fresh,
-            section=self.state.section,
+            trail=self.state.trail,
             index=self.state.index,
             query=self.state.query,
             show_all=self.state.show_all,
@@ -374,7 +375,7 @@ def run_editor(
     layer: LayerName,
     layer_set: LayerSet,
     specs: Sequence[FieldSpec],
-    origins: Mapping[tuple[str, ...], Origin],
+    origins: Mapping[KeyPath, Origin],
     policy: WritePolicy,
     input: Input | None = None,
     output: Output | None = None,
