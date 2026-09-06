@@ -344,8 +344,10 @@
   defines a GUI app beyond the builtins (an AppImage, a vendor binary, a
   wrapper script — command, args, cwd, env, description, autostart); an
   entry with `top_level: true` is also promoted to a bare `jailbee <name>
-  <container>`, refused at load time as a config error if the name
-  collides with a built-in command. `jailbee browser [<container>] [<url>]`
+  [<args>…]`, which keeps `apps run`'s own shape — name another container
+  with `--container <name>`, never as a positional. A name colliding with
+  a built-in command is reported by `jailbee config validate` as a config
+  error. `jailbee browser [<container>] [<url>]`
   launches whichever browser `browsers.default` names, or the single
   enabled one. Both dashboards' action menus and quick-launch surfaces now
   read the same registry instead of two hardcoded IDE/Chrome switches.

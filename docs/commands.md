@@ -65,11 +65,17 @@
 ### Top-level app promotion
 
 An `apps:` entry with `top_level: true` also runs as a bare `jailbee <name>
-<container> [args…]` — equivalent to `jailbee apps run <name> --container
-<container> [args…]`, just without the `apps run`. A built-in command of
-the same name always wins, and a config validation error catches the
-collision (`jailbee config validate`, and on every command that loads
-config) rather than the app silently never being reachable that way. See
+[args…]` — equivalent to `jailbee apps run <name> [args…]`, just without
+the `apps run`. Everything after the name is passed through unchanged, so
+another container is named exactly the way `apps run` names one:
+`jailbee <name> --container <container> [args…]`. A bare `jailbee <name>
+<container>` does **not** work — `apps run` takes the container as an
+option, so the name is appended to the app's own arguments and the app
+starts in the default container instead. A built-in command of the same
+name always wins, and `jailbee config validate` reports the collision as a
+config error (it is checked in `validate_runtime`, so only that command
+reports it — `jailbee doctor` and ordinary commands do not) rather than
+the app silently never being reachable that way. See
 [`apps`](config.md#apps).
 
 ### `jailbee gui` / `jailbee dashboard --gui`

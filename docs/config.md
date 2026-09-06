@@ -1003,6 +1003,12 @@ the folded legacy block field-by-field, so a half-migrated config behaves
 the way the newer spelling says. It is removed entirely in 1.4.0 — migrate
 to `browsers.chrome`.
 
+The fold runs on the **merged** global+repo dict, so `browsers:` wins over
+`chrome:` regardless of which layer each one sits in — a `browsers.chrome`
+block in `~/.config/jailbee/global.yaml` overlays a repo's legacy
+`chrome:` block, not the other way round. Migrate the global layer last,
+or a repo still on the old spelling silently loses its overrides.
+
 ### `apps`
 
 User-defined GUI applications beyond the built-in browsers and JetBrains
@@ -1031,14 +1037,25 @@ apps:
     description: "Figma desktop app"
 ```
 
-With the above, `jailbee figma <container>` launches it — equivalently,
-`jailbee apps run figma --container <container>`. Note the asymmetry:
-`jailbee apps run` takes the app name as its first positional and the
-container behind `--container`, while `jailbee chrome [container] [url]`
-takes the container as its first positional. The two shapes can't be
-unified — `jailbee apps run` allows an optional app name, an optional
-container and a variadic list of extra arguments, and three positionals
-with an optional one in the middle cannot be told apart reliably.
+With the above, `jailbee figma [args…]` launches it in the container this
+branch would attach to, and `jailbee figma --container <container>
+[args…]` names a different one. Both are literally
+`jailbee apps run figma …` — the promotion only drops the `apps run`, and
+everything after the app name is passed through untouched.
+
+**`jailbee figma <container>` does not name a container.** `apps run`
+takes the container as an option, not as a positional, so a bare name
+there is appended to the app's own arguments: the app starts in the
+default container and receives `<container>` on its command line, with no
+error. Use `--container`.
+
+Note the asymmetry: `jailbee apps run` takes the app name as its first
+positional and the container behind `--container`, while `jailbee chrome
+[container] [url]` takes the container as its first positional. The two
+shapes can't be unified — `jailbee apps run` allows an optional app name,
+an optional container and a variadic list of extra arguments, and three
+positionals with an optional one in the middle cannot be told apart
+reliably.
 
 An app name must match `[a-z0-9][a-z0-9._-]*` — it becomes a command word,
 a log-file path segment (`/tmp/jailbee-app-<name>.log`), and a dashboard
