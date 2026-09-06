@@ -173,10 +173,22 @@ def _backfill_firefox_default_source(v: object) -> object:
     Pydantic's behavior: a submodel field's `default_factory` only fires when
     the whole key is absent; a partial dict validates straight against
     BrowserConfig, bypassing the BrowsersConfig.firefox default_factory.
+
+    Skips the backfill when the dict sets a `host_path`, the mirror image of
+    the guard `_backfill_chrome_default_host_path` carries. `{enabled: true,
+    host_path: /opt/firefox}` says "mount this host install" as plainly as
+    `source: host` does; backfilling `source: image` over it made
+    `validate_runtime` reject the config for setting `host_path` under
+    `source: image` — an error about a key the user never wrote, naming a
+    contradiction jailbee invented. An explicit `host_path: null` still gets
+    the image default: that is the field's own default value, not a host
+    install.
     """
     if not isinstance(v, dict):
         return v
     if "source" in v:
+        return v
+    if v.get("host_path") is not None:
         return v
     return {**v, "source": "image"}
 

@@ -72,6 +72,40 @@ def test_explicit_host_source_does_not_backfill_firefox_source():
     assert b.firefox.source == "host"
 
 
+def test_a_firefox_host_path_implies_the_host_source():
+    # `firefox: {enabled: true, host_path: /opt/firefox}` says "mount this
+    # host install" as plainly as `source: host` does. Backfilling
+    # `source: image` over it made `validate_runtime` reject the config for
+    # setting `host_path` under `source: image` — an error about a key the
+    # user never wrote, naming a contradiction jailbee invented. Chrome's
+    # backfill has the mirror-image guard.
+    b = BrowsersConfig.model_validate({"firefox": {"enabled": True, "host_path": "/opt/firefox"}})
+    assert b.firefox.source == "host"
+
+
+def test_a_firefox_host_path_config_passes_runtime_validation(tmp_path):
+    """The consequence of the backfill guard, end to end.
+
+    Asserting `source == "host"` alone would still pass if `validate_runtime`
+    were the thing that changed; this pins the user-visible symptom — a
+    config that named an existing Firefox install and got an error about
+    `source: image`.
+    """
+    from tests.conftest import make_cfg
+
+    ff = tmp_path / "ff"
+    ff.mkdir()
+    cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True, "host_path": str(ff)}})
+    assert [i for i in cfg.validate_runtime() if "firefox" in i] == []
+
+
+def test_an_explicit_null_firefox_host_path_still_gets_the_image_source():
+    # `host_path: null` is the field's own default, not a host install, so
+    # the guard must key on the *value*, not on the key's presence.
+    b = BrowsersConfig.model_validate({"firefox": {"enabled": True, "host_path": None}})
+    assert b.firefox.source == "image"
+
+
 def test_unknown_browser_key_is_rejected():
     with pytest.raises(ValidationError):
         BrowsersConfig.model_validate({"safari": {"enabled": True}})
