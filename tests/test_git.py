@@ -1575,3 +1575,22 @@ def test_push_to_remote_uses_the_given_remote(mocker, tmp_path):
         "public",
         "refs/jailbee/x/feat:refs/heads/feat",
     ]
+
+
+def test_remove_origin_runs_git_remote_remove(mocker, tmp_path):
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.MagicMock(returncode=0, stderr="")
+
+    git.remove_origin(tmp_path)
+
+    args, kwargs = run.call_args
+    assert args[0] == ["git", "remote", "remove", "origin"]
+    assert kwargs["cwd"] == tmp_path
+
+
+def test_remove_origin_raises_on_failure(mocker, tmp_path):
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.MagicMock(returncode=2, stderr="No such remote")
+
+    with pytest.raises(git.GitError):
+        git.remove_origin(tmp_path)

@@ -182,6 +182,26 @@ def set_origin_url(repo_root: Path, url: str) -> None:
         raise GitError(f"git remote set-url origin failed (exit {result.returncode})")
 
 
+def remove_origin(repo_root: Path) -> None:
+    """`git remote remove origin` in repo_root.
+
+    Used when a sub-repo cloned out of a container has no upstream the host
+    could reach: the `ext::incus exec …` origin `git clone` left behind is
+    worse than none — it dies with the container, and `git push origin` from
+    the host would push *into* it. Raises `GitError` when the command fails;
+    callers treat that as cosmetic.
+    """
+    result = subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise GitError(f"git remote remove origin failed: {result.stderr.strip()}")
+
+
 def get_branch_tracking(repo_root: Path, branch: str) -> tuple[str, str] | None:
     """Return (remote, merge_ref) tracking config for `branch`, or None.
 

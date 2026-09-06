@@ -815,23 +815,76 @@ def _container_submodule_url(
     return None
 
 
+def _container_subrepo_origin_url(
+    incus: Incus, container: str, repo_dir: str, subpath: str, *, uid: int
+) -> str | None:
+    """The `remote.origin.url` of the container's own sub-repo at `subpath`.
+
+    The fallback for a submodule whose upstream was set on the sub-repo rather
+    than declared in the superproject's `.gitmodules` — the shape a repository
+    created inside the container tends to have. None when the sub-repo has no
+    origin or the query fails.
+    """
+    try:
+        out = incus.exec(
+            container,
+            ["git", "-C", f"{repo_dir}/{subpath}", "config", "--get", "remote.origin.url"],
+            uid=uid,
+        )
+    except IncusError:
+        return None
+    return out.strip() or None
+
+
 def _repoint_cloned_subrepo(
     incus: Incus, container: str, repo_dir: str, subpath: str, host_sub: Path, *, uid: int
 ) -> None:
-    """Give a just-cloned host sub-repo the upstream its `.gitmodules` names.
+    """Give a just-cloned host sub-repo a usable upstream, or none at all.
 
     `git clone` over `ext::` leaves origin pointing at `incus exec … container`:
     a remote that pushes into the container and breaks once it is destroyed.
-    Failure here is cosmetic — the objects are already across — so it warns
-    instead of failing the pull.
+    The upstream is looked for in order:
+
+    1. the URL the container's `.gitmodules` declares for this path — the
+       superproject's own answer, and the one `git submodule update --init`
+       will register on the host regardless, so overriding it would only make
+       two files disagree;
+    2. the container sub-repo's own `remote.origin.url`, which is where a
+       repository created inside the container carries its upstream;
+    3. nothing — in which case `origin` is *removed*. An `ext::` remote left
+       in place is a live footgun; an absent one only costs a benign
+       `warning: could not look up configuration 'remote.origin.url'` from a
+       later `submodule update --init`.
+
+    A candidate that is itself an `ext::` URL is skipped at step 2: that is
+    jailbee's own transport, never a real upstream.
+
+    Failure here is cosmetic — the objects are already across — so every
+    branch warns instead of failing the pull.
     """
     url = _container_submodule_url(incus, container, repo_dir, subpath, uid=uid)
     if not url:
+        candidate = _container_subrepo_origin_url(
+            incus, container, repo_dir, subpath, uid=uid
+        )
+        if candidate and not candidate.startswith("ext::"):
+            url = candidate
+    if url:
+        try:
+            git.set_origin_url(host_sub, url)
+        except git.GitError as exc:
+            _warn(f"submodule '{subpath}': could not set origin to '{url}' ({exc})")
         return
     try:
-        git.set_origin_url(host_sub, url)
+        git.remove_origin(host_sub)
     except git.GitError as exc:
-        _warn(f"submodule '{subpath}': could not set origin to '{url}' ({exc})")
+        _warn(f"submodule '{subpath}': could not remove the container-local origin ({exc})")
+        return
+    _warn(
+        f"submodule '{subpath}': no upstream the host can reach was found, so its "
+        f"origin was removed. Set one with: "
+        f"git -C {subpath} remote add origin <url>"
+    )
 
 
 def transport_submodules_to_host(
