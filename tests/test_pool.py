@@ -204,7 +204,10 @@ def test_allocate_startup_attaches_every_on_start_pool(tmp_path, mocker):
     pool, would pass `test_allocate_startup_skips_on_demand_pools` (it only
     asserts the negative) but fails the assertions below.
     """
-    cfg = _cfg_gradle(tmp_path).model_copy(update={"chrome": ChromeConfig(enabled=True)})
+    cfg = _cfg_gradle(tmp_path)
+    cfg = cfg.model_copy(
+        update={"browsers": cfg.browsers.model_copy(update={"chrome": ChromeConfig(enabled=True)})}
+    )
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "c1"}]
     mocker.patch("jailbee.pool.subprocess.run")
@@ -251,7 +254,10 @@ def test_allocate_skips_seed_when_pool_spec_disables_it(tmp_path, mocker, capsys
 
 def test_release_all_releases_every_pool(tmp_path, mocker):
     """Two pools at once: gradle (on-start) and chrome-profile (on-demand)."""
-    cfg = _cfg_gradle(tmp_path).model_copy(update={"chrome": ChromeConfig(enabled=True)})
+    cfg = _cfg_gradle(tmp_path)
+    cfg = cfg.model_copy(
+        update={"browsers": cfg.browsers.model_copy(update={"chrome": ChromeConfig(enabled=True)})}
+    )
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "c1"}]
     mocker.patch("jailbee.pool.subprocess.run")
@@ -267,7 +273,10 @@ def test_release_all_releases_every_pool(tmp_path, mocker):
 
 
 def test_ensure_pools_creates_layout_for_every_pool(tmp_path):
-    cfg = _cfg_gradle(tmp_path).model_copy(update={"chrome": ChromeConfig(enabled=True)})
+    cfg = _cfg_gradle(tmp_path)
+    cfg = cfg.model_copy(
+        update={"browsers": cfg.browsers.model_copy(update={"chrome": ChromeConfig(enabled=True)})}
+    )
 
     pool.ensure_pools(cfg)
 

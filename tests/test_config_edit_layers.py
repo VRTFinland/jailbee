@@ -50,15 +50,16 @@ def test_repo_wins_over_global_wins_over_default(tmp_path):
 
 
 def test_an_explicit_null_is_a_set_value_not_an_absent_one(tmp_path):
-    """`chrome.url: null` is a deliberate choice, distinct from not setting it.
+    """`browsers.chrome.url: null` is a deliberate choice, distinct from not
+    setting it.
 
     Treating None as absent would make the origin marker lie and would
     make reset a no-op on a key the user did set.
     """
-    _write(tmp_path / "global.yaml", "chrome:\n  url: null\n")
+    _write(tmp_path / "global.yaml", "browsers:\n  chrome:\n    url: null\n")
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     origins = layers.resolve(repo_specs(), got)
-    assert origins[("chrome", "url")] == layers.Origin("global", None)
+    assert origins[("browsers", "chrome", "url")] == layers.Origin("global", None)
 
 
 def test_lookup_distinguishes_absent_from_none():
@@ -140,17 +141,18 @@ def test_non_list_fields_inherit_nothing(tmp_path):
 
 
 def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
-    """`chrome.url: null` in the repo layer is the twin of the global test.
+    """`browsers.chrome.url: null` in the repo layer is the twin of the
+    global test.
 
     This closes a gap: `test_an_explicit_null_is_a_set_value_not_an_absent_one`
     only covers the global layer. Both branches of `resolve()` are
     structurally identical, so a mutation breaking only the repo one would
     pass the suite without this twin.
     """
-    _write(tmp_path / "repo.yaml", "chrome:\n  url: null\n")
+    _write(tmp_path / "repo.yaml", "browsers:\n  chrome:\n    url: null\n")
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     origins = layers.resolve(repo_specs(), got)
-    assert origins[("chrome", "url")] == layers.Origin("repo", None)
+    assert origins[("browsers", "chrome", "url")] == layers.Origin("repo", None)
 
 
 def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):

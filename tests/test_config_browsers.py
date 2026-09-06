@@ -132,3 +132,57 @@ def test_image_source_with_host_path_is_an_error(tmp_path):
         },
     )
     assert any("host_path" in i and "image" in i for i in cfg.validate_runtime())
+
+
+def test_legacy_chrome_block_still_loads(tmp_path, capsys):
+    from jailbee.config.loader import resolve_browsers_raw
+
+    raw = resolve_browsers_raw({"chrome": {"enabled": True, "url": "https://example.test"}})
+    assert "chrome" not in raw
+    assert raw["browsers"]["chrome"]["enabled"] is True
+    assert raw["browsers"]["chrome"]["url"] == "https://example.test"
+    # The legacy block predates `source:`, so it means what it always meant.
+    assert raw["browsers"]["chrome"]["source"] == "host"
+
+
+def test_legacy_chrome_block_warns_where_it_moved(capsys):
+    from jailbee.config.loader import resolve_browsers_raw
+
+    resolve_browsers_raw({"chrome": {"enabled": True}})
+    # `tui.warn` prints to stdout, not stderr (see
+    # test_tui.test_warn_plain_keeps_bracketed_text_verbatim) — so the
+    # deprecation notice is read from `.out`.
+    out = capsys.readouterr().out
+    assert "chrome:" in out and "browsers.chrome" in out
+
+
+def test_an_explicit_browsers_block_wins_over_the_legacy_one():
+    from jailbee.config.loader import resolve_browsers_raw
+
+    raw = resolve_browsers_raw(
+        {"chrome": {"url": "https://old.test"}, "browsers": {"chrome": {"url": "https://new.test"}}}
+    )
+    assert raw["browsers"]["chrome"]["url"] == "https://new.test"
+
+
+def test_no_warning_when_there_is_no_legacy_block(capsys):
+    from jailbee.config.loader import resolve_browsers_raw
+
+    resolve_browsers_raw({"browsers": {"chrome": {"enabled": True}}})
+    assert "chrome:" not in capsys.readouterr().out
+
+
+def test_legacy_chrome_block_loads_through_the_real_loader(tmp_path):
+    """End-to-end proof, not just the `resolve_browsers_raw` unit: a repo
+    config still spelled the old way must load through the real
+    `load_config_from_text` path (retired-key checks, deep-merge with the
+    global layer, model validation) to a `Config` with the browser
+    reachable at `cfg.browsers.chrome`.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    text = "container_prefix: myrepo\nchrome:\n  enabled: true\n  url: https://legacy.example\n"
+    cfg = load_config_from_text(text, tmp_path / ".jailbee" / "config.yaml")
+    assert cfg.browsers.chrome.enabled is True
+    assert cfg.browsers.chrome.url == "https://legacy.example"
+    assert cfg.browsers.chrome.source == "host"

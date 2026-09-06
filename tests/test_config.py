@@ -780,7 +780,7 @@ def test_container_env_rejects_invalid_name(tmp_path, mocker):
 
 def test_retired_open_chrome_string_rejected_with_migration_message(tmp_path, mocker):
     """Retired `autostart.open_chrome: "<url>"` must fail with a clear
-    migration pointer to the new `chrome.url` field."""
+    migration pointer to the new `browsers.chrome.autostart` field."""
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(
         tmp_path,
@@ -1609,12 +1609,12 @@ def test_claude_rejects_unknown_key(tmp_path, mocker):
     "key,parent,target",
     [
         ("ide", None, "jetbrains.ide"),
-        ("chrome_url", None, "chrome.url"),
+        ("chrome_url", None, "browsers.chrome.url"),
         ("seed_ssh_from_host", None, "ssh.seed_from_host"),
         ("jetbrains_userprefs_from_host", None, "jetbrains.userprefs_from_host"),
         ("open_ide", "autostart", "jetbrains.ide + jetbrains.autostart"),
-        ("open_chrome", "autostart", "chrome.autostart"),
-        ("chrome_dark_mode", "autostart", "chrome.dark_mode"),
+        ("open_chrome", "autostart", "browsers.chrome.autostart"),
+        ("chrome_dark_mode", "autostart", "browsers.chrome.dark_mode"),
         ("install_gie_skills", "claude", "claude.install_jailbee_skills"),
     ],
 )

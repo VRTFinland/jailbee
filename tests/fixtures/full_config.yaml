@@ -15,11 +15,12 @@ jetbrains:
   autostart: true
   userprefs_from_host: true
 
-chrome:
-  enabled: true
-  url: https://example.com
-  autostart: true
-  dark_mode: false
+browsers:
+  chrome:
+    enabled: true
+    url: https://example.com
+    autostart: true
+    dark_mode: false
 
 claude:
   enabled: true

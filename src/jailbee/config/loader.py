@@ -42,6 +42,7 @@ from jailbee.config.retired import (
 from jailbee.config.root import Config
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
+from jailbee.tui import warn
 
 if TYPE_CHECKING:
     # Runtime import would be a cycle: `global_config` imports from
@@ -189,6 +190,34 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
+    """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
+
+    `chrome:` was the only browser block through 1.2.x. Rather than the hard
+    `retired.py` error other renames got, it is accepted for one release with
+    a warning: it lives in `~/.config/jailbee/global.yaml` on every host that
+    ever enabled Chrome, and a hard error there would break every command in
+    every repo at once. Retire in 1.4.0.
+
+    An explicit `browsers:` block wins, so a half-migrated config behaves the
+    way the newer spelling says. The legacy block predates `source:`, so it
+    resolves to `source: host` — the behaviour it has always had.
+    """
+    legacy = raw.get("chrome")
+    if not isinstance(legacy, dict):
+        return raw
+    warn(
+        "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+        "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+    )
+    merged = deep_merge({"source": "host", **legacy}, {})
+    browsers = raw.get("browsers")
+    overlay = browsers if isinstance(browsers, dict) else {}
+    result = {k: v for k, v in raw.items() if k != "chrome"}
+    result["browsers"] = deep_merge({"chrome": merged}, overlay)
+    return result
+
+
 def _build_config_from_dict(
     raw: dict[str, object], config_path: Path, *, origin: str | None = None
 ) -> Config:
@@ -211,6 +240,7 @@ def _build_config_from_dict(
         raw = resolve_agents_raw(raw)
     except ConfigError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
+    raw = resolve_browsers_raw(raw)
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)

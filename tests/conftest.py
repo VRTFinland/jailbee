@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
-from jailbee.config import Config, resolve_agents_raw
+from jailbee.config import Config, resolve_agents_raw, resolve_browsers_raw
 from jailbee.db import _ENGINES, _ensure_schema
 
 
@@ -36,12 +36,17 @@ def make_config(
     Extra keyword args are forwarded to ``Config.model_validate`` so callers
     can pass e.g. ``gpg={"enabled": False}`` or ``host_mounts=[...]``.
 
-    Overrides are routed through ``resolve_agents_raw`` first — the same
-    normalisation ``load_config`` applies to YAML — so a legacy
-    ``claude={...}`` override and a preset-backed ``agents={...}`` override
-    both resolve exactly as they would from a real config file.
+    Overrides are routed through ``resolve_agents_raw`` and
+    ``resolve_browsers_raw`` first — the same normalisation ``load_config``
+    applies to YAML — so a legacy ``claude={...}`` override, a legacy
+    ``chrome={...}`` override, and a preset-backed ``agents={...}`` override
+    all resolve exactly as they would from a real config file.
     """
-    cfg = Config.model_validate(resolve_agents_raw(overrides)) if overrides else Config()
+    cfg = (
+        Config.model_validate(resolve_browsers_raw(resolve_agents_raw(overrides)))
+        if overrides
+        else Config()
+    )
     object.__setattr__(cfg, "repo_root", repo_root)
     object.__setattr__(cfg, "default_branch", default_branch)
     object.__setattr__(cfg, "upstream_remote", upstream_remote)

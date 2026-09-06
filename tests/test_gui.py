@@ -217,7 +217,13 @@ def test_open_chrome_passes_ozone_wayland_on_wayland_host(mocker, monkeypatch):
 def test_open_chrome_passes_dark_mode_flags_when_enabled(mocker):
     """Chrome.dark_mode=True (opt-in) forces Chrome into dark mode."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"chrome": cfg.chrome.model_copy(update={"dark_mode": True})})
+    cfg = cfg.model_copy(
+        update={
+            "browsers": cfg.browsers.model_copy(
+                update={"chrome": cfg.chrome.model_copy(update={"dark_mode": True})}
+            )
+        }
+    )
     incus = Incus()
     mocker.patch("jailbee.pool.ensure_pool_dirs")
     mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))

@@ -35,6 +35,7 @@ from jailbee.config.loader import (
     load_repo_config,
     load_repo_config_unsanitized,
     resolve_agents_raw,
+    resolve_browsers_raw,
     scratch_repo_layer,
     synthesized_repo_layer,
 )
@@ -176,6 +177,7 @@ __all__ = [
     "load_repo_config_unsanitized",
     "parse_loose_ttl",
     "resolve_agents_raw",
+    "resolve_browsers_raw",
     "resolve_kitty_terminfo_path",
     "sanitize_column_blocks",
     "scratch_repo_layer",
