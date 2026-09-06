@@ -4523,6 +4523,34 @@ def test_load_config_from_layers_ignores_the_global_file_on_disk(tmp_path, monke
     assert on_disk.read_text() == "defaults:\n  memory: 1GB\n"
 
 
+def test_load_config_from_layers_still_warns_about_a_legacy_chrome_block(
+    tmp_path, monkeypatch, mocker, capsys
+):
+    """`emit_hint` defaults to `True` end-to-end through this entry point too.
+
+    `config_edit.layers.validate` passes `emit_hint=False` because it runs
+    while the editor's full-screen `Application` is live, but every other
+    caller — this one included — must keep warning about a legacy
+    top-level `chrome:` block, or the deprecation notice goes silent for
+    ordinary commands.
+    """
+    from jailbee.config.loader import load_config_from_layers
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    _write_global(tmp_path, monkeypatch, "")
+
+    load_config_from_layers(
+        {"chrome": {"enabled": True}},
+        {},
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="<staged>",
+    )
+
+    err = capsys.readouterr().err
+    assert "chrome:" in err and "browsers.chrome" in err
+
+
 def test_load_config_from_layers_still_applies_the_repo_ban_list(tmp_path, mocker):
     """The seam must not become a way around the placement constraints."""
     from jailbee.config import ConfigError

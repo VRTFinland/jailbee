@@ -308,7 +308,14 @@ def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
 
 
 def test_every_basic_path_exists_in_a_layer_tree():
-    """A curated path that no longer exists would silently curate nothing."""
+    """A curated path that no longer exists would silently curate nothing.
+
+    Exact-match, unlike `test_default_view_paths_all_resolve` below (which
+    also accepts a curated path that is a real leaf's *prefix*, not a leaf
+    itself). Keep this one: deleting it would let a curated non-leaf slip
+    through unnoticed, since the prefix-tolerant test alone would not
+    catch it.
+    """
     from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
 
     known = {s.path for s in repo_specs()} | {s.path for s in global_specs()}
@@ -320,6 +327,22 @@ def test_basic_set_is_a_readable_shortlist():
     from jailbee.config_edit.schema import BASIC_FIELDS
 
     assert 20 <= len(BASIC_FIELDS) <= 35
+
+
+def test_basic_fields_count_matches_the_docstring():
+    """The docstring's "The N paths the default view shows" is a plain
+    comment, pinned by nothing — it has already drifted twice (28 was
+    already wrong before Task 19's `apps` addition made it 30, which this
+    task's `browsers.default` addition then made 31). A comment that has
+    been wrong twice will be wrong a third time; this failing loudly, with
+    a message naming the fix, is cheaper than a fourth drift going unnoticed.
+    """
+    from jailbee.config_edit.schema import BASIC_FIELDS
+
+    assert len(BASIC_FIELDS) == 31, (
+        "BASIC_FIELDS changed size — update the docstring's "
+        '"The N paths the default view shows" to match.'
+    )
 
 
 def test_a_spec_defaults_to_advanced():
@@ -357,6 +380,11 @@ def test_default_view_paths_all_resolve():
     resolve against the generated tree — either as an exact leaf, or (for a
     curated section like `golden`, which is never itself a leaf) as a
     prefix of one.
+
+    Being prefix-tolerant, this test alone would let through a curated
+    entry that is a prefix of a real leaf but not itself one (no such
+    entry exists in `BASIC_FIELDS` today). The exact-match guard for that
+    is `test_every_basic_path_exists_in_a_layer_tree` above — keep both.
     """
     from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
 

@@ -236,7 +236,11 @@ def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> d
 
 
 def _build_config_from_dict(
-    raw: dict[str, object], config_path: Path, *, origin: str | None = None
+    raw: dict[str, object],
+    config_path: Path,
+    *,
+    origin: str | None = None,
+    emit_hint: bool = True,
 ) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -251,13 +255,16 @@ def _build_config_from_dict(
     `origin` labels the source in error messages when it is not the file at
     `config_path` — a config layer synthesized from `global.yaml`'s
     `scratch.config` has no file of its own.
+
+    `emit_hint` is threaded straight to `resolve_browsers_raw` — see that
+    function's docstring for why a caller would ever want it `False`.
     """
     label = origin or str(config_path)
     try:
         raw = resolve_agents_raw(raw)
     except ConfigError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
-    raw = resolve_browsers_raw(raw)
+    raw = resolve_browsers_raw(raw, emit_hint=emit_hint)
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)
@@ -386,6 +393,7 @@ def load_config_from_layers(
     path: Path,
     *,
     origin: str,
+    emit_hint: bool = True,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
@@ -399,6 +407,16 @@ def load_config_from_layers(
 
     `global_raw` is the whole `global.yaml` mapping, host-level keys
     included; the split is done here, exactly as the on-disk path does it.
+
+    `emit_hint` reaches `resolve_browsers_raw` through `_build_config_from_dict`
+    unchanged. The default `True` is right for every real load — the CLI path
+    (`_load_config_from_repo_raw`) never overrides it, so the legacy `chrome:`
+    deprecation notice still prints exactly once per ordinary command.
+    `config_edit.layers.validate` passes `False`: it calls this function
+    synchronously from the editor's save handler, while the full-screen
+    `Application` is live, and `hint()` writes straight to a Rich stderr
+    `Console` that bypasses prompt_toolkit — the same terminal-corruption
+    hazard `config_edit.layers.resolve` already guards against on reload.
     """
     # Local import for the same cycle as in `_load_config_from_repo_raw`:
     # global_config imports ConfigError from this package, so importing
@@ -435,7 +453,7 @@ def load_config_from_layers(
             )
 
     merged = deep_merge(global_for_merge, repo_raw)
-    cfg = _build_config_from_dict(merged, path, origin=origin)
+    cfg = _build_config_from_dict(merged, path, origin=origin, emit_hint=emit_hint)
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))

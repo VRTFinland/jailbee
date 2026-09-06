@@ -296,6 +296,23 @@ def test_validate_accepts_a_good_repo_change(opened):
     assert layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)]) is None
 
 
+def test_validate_does_not_print_the_legacy_chrome_hint_mid_session(opened, capsys):
+    """`validate()` runs `load_config_from_layers` synchronously from the
+    editor's save handler while the full-screen `Application` is live.
+    `resolve_browsers_raw`'s deprecation hint writes straight to a Rich
+    stderr `Console`, bypassing prompt_toolkit entirely — printing it here
+    would corrupt the display, exactly the hazard `resolve()` already
+    guards against on reload (Ruling 30).
+
+    A host still on the legacy `chrome:` spelling must see this go quiet
+    for *any* staged change, not just one touching `browsers`.
+    """
+    got = opened("chrome:\n  enabled: true\n")
+    error = layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)])
+    assert error is None
+    assert capsys.readouterr().err == ""
+
+
 def test_validate_rejects_a_bad_value_and_names_the_field(opened):
     got = opened()
     error = layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), "lots")])

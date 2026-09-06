@@ -290,6 +290,12 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
     first: it is the broader check (it scans the whole global mapping for
     retired keys and sees both layers for the cross-layer rules), so its
     diagnosis is the more general one when both would fire.
+
+    `emit_hint=False`: this runs synchronously from the editor's save
+    handler while the full-screen `Application` is live. Without it, a
+    legacy top-level `chrome:` block would print `resolve_browsers_raw`'s
+    deprecation notice straight to the terminal on every save — the same
+    hazard `resolve()` already guards against on reload.
     """
     global_raw = layers.global_raw
     repo_raw = layers.repo_raw
@@ -303,7 +309,11 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
             repo_raw = {**repo_raw, "container_prefix": _PLACEHOLDER_PREFIX}
     try:
         load_config_from_layers(
-            global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)
+            global_raw,
+            repo_raw,
+            layers.repo_path,
+            origin=str(layers.repo_path),
+            emit_hint=False,
         )
         if layer == "global":
             validate_global_raw(global_raw, layers.global_path)
