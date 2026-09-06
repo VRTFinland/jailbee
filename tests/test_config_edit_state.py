@@ -698,43 +698,88 @@ def test_a_reset_made_before_a_structural_change_survives_it():
     assert state.staged[("host_mounts",)] == [{"host": "/b"}, {}]
 
 
-def test_adding_to_a_collection_this_layer_does_not_have_writes_only_the_new_entry():
-    """`n` on an untouched `shared_caches` stages `[{}]`, not the default plus it.
+def test_adding_to_a_collection_with_a_schema_default_keeps_the_built_in():
+    """End to end: `n` on an untouched `shared_caches`, fill it in, save.
 
-    `shared_caches` is the schema's only collection with a non-empty default:
-    `_default_shared_caches()` returns one built-in `SharedCache`. `add_entry`
-    reads the collection through `own`, which sees the *open layer's* file and
-    nothing else — the default is not this layer's content, so `n` appends to
-    an empty list.
+    `shared_caches` is the schema's only collection with a non-empty default —
+    `_default_shared_caches()` returns one built-in `ssh` cache, which is what
+    mounts `~/.ssh` into every container. Writing the key *replaces* that
+    default outright, so a save that carried only the new entry silently
+    dropped the built-in: `jailbee config show` then reported no `ssh` cache and
+    the container lost the mount, with nothing on screen to warn about it —
+    `inherited_entries` covers the global layer, not schema defaults, and only
+    `Default: [1]` in the help pane hinted at it.
 
-    That is spec 4.3 applied to a collection: writing the default out would
-    freeze it at today's value, while leaving it absent keeps it following
-    jailbee's own. It is also what the screen shows — `entries()` reads the
-    same `own`, so a collection screen with no rows cannot stage a list with
-    rows in it.
+    This is the other half of the rule in `_absent_collection`: an inherited
+    value must **not** be copied (`deep_merge` appends it, so the entry would
+    arrive twice), a schema default **must** be, because writing replaces it.
 
-    `patch_yaml` runs over the result because the older behaviour folded the
-    default in as real `SharedCache` instances, which `config_writer` cannot
-    represent at all (`RepresenterError: cannot represent an object`).
-    `_default_of`'s `_to_raw` normalisation is what fixed that, and is pinned
-    directly in
-    `test_config_edit_schema.py::test_shared_caches_default_is_plain_data_not_model_instances`;
-    this keeps the writer on the path in case any value ever reaches it again.
+    `patch_yaml` runs over the result because the default reaches the writer
+    again on this path, and a `SharedCache` model instance rather than plain
+    data blows up there (`RepresenterError: cannot represent an object`) rather
+    than anywhere closer to the cause. `schema.to_raw` is what keeps it plain,
+    and is pinned directly in
+    `test_config_edit_schema.py::test_shared_caches_default_is_plain_data_not_model_instances`.
     """
     from jailbee.config import Config
     from jailbee.config_edit.schema import build_specs
     from jailbee.config_writer import patch_yaml
 
     spec = next(s for s in build_specs(Config) if s.path == ("shared_caches",))
+    built_in = spec.default
+    assert [c["name"] for c in built_in] == ["ssh"], "fixture assumes one built-in cache"
     state = _open(specs=(spec,))
-    assert st.entries(state, spec) == ()
 
     state, crumb = st.add_entry(state, spec)
+    state = st.stage(state, ("shared_caches", crumb, "name"), "pnpm")
+    state = st.stage(state, ("shared_caches", crumb, "container"), "/root/.cache/pnpm")
     got = st.changes(state)
 
-    assert crumb == 0
-    assert got == (YamlChange(("shared_caches",), [{}]),)
+    assert crumb == 1  # appended after the built-in, not in place of it
+    assert len(got) == 1
+    written = got[0].value
+    assert isinstance(written, list)
+    assert written[0] == built_in[0]  # the built-in survives the save
+    assert written[1]["name"] == "pnpm"
     patch_yaml("", got)  # must not raise RepresenterError
+
+
+def test_a_schema_default_is_copied_but_an_inherited_value_is_not():
+    """The two halves of `_absent_collection`'s rule, side by side.
+
+    Same shape of screen — the open layer has no key — and opposite answers,
+    because writing *replaces* a default and *appends* to another layer's list.
+    """
+    from jailbee.config import Config
+    from jailbee.config_edit.schema import build_specs
+
+    spec = next(s for s in build_specs(Config) if s.path == ("shared_caches",))
+
+    from_default, _ = st.add_entry(_open(specs=(spec,)), spec)
+    from_global, _ = st.add_entry(
+        _open(global_raw={"shared_caches": [{"name": "ssh", "container": "/x"}]}, specs=(spec,)),
+        spec,
+    )
+
+    assert len(from_default.staged[("shared_caches",)]) == 2
+    assert from_global.staged[("shared_caches",)] == [{}]
+
+
+def test_a_hand_broken_scalar_is_not_replaced_by_the_schema_default():
+    """The layer *has* the key, written as a scalar. `origins` says `repo`, so
+    the default is not this layer's to write and the empty collection is what a
+    structural edit starts from — rather than a default quietly overwriting
+    whatever the user has in the file."""
+    from jailbee.config import Config
+    from jailbee.config_edit.schema import build_specs
+
+    spec = next(s for s in build_specs(Config) if s.path == ("shared_caches",))
+    state = _open({"shared_caches": "not a collection"}, specs=(spec,))
+
+    got, crumb = st.add_entry(state, spec)
+
+    assert crumb == 0
+    assert got.staged[("shared_caches",)] == [{}]
 
 
 def test_changes_survives_an_index_and_a_key_at_the_same_depth():

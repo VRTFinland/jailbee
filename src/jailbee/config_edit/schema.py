@@ -215,7 +215,7 @@ class FieldSpec:
     advanced: bool = True
 
 
-def _to_raw(value: object) -> object:
+def to_raw(value: object) -> object:
     """`value` with every pydantic model instance dumped to plain data.
 
     A `default_factory` is free to return real model instances rather than
@@ -239,11 +239,11 @@ def _to_raw(value: object) -> object:
     in each place that might otherwise dig into a default.
     """
     if isinstance(value, BaseModel):
-        return _to_raw(value.model_dump(mode="python"))
+        return to_raw(value.model_dump(mode="python"))
     if isinstance(value, list):
-        return [_to_raw(item) for item in value]
+        return [to_raw(item) for item in value]
     if isinstance(value, dict):
-        return {key: _to_raw(item) for key, item in value.items()}
+        return {key: to_raw(item) for key, item in value.items()}
     return value
 
 
@@ -252,17 +252,17 @@ def _default_of(info: FieldInfo) -> object:
 
     A `default_factory` field reports `PydanticUndefined` as its
     `default`, which would render as the string "PydanticUndefined" in
-    the help pane. Calling the factory gives the real empty value — `_to_raw`
+    the help pane. Calling the factory gives the real empty value — `to_raw`
     is what keeps it usable as one, see its own docstring for why.
     """
     if info.default_factory is not None:
         # `default_factory` may take the already-validated data as its one
         # argument; none of jailbee's do, so the no-arg call below is fine —
         # that's what the `type: ignore[call-arg]` on it is for.
-        return _to_raw(info.default_factory())  # type: ignore[call-arg]
+        return to_raw(info.default_factory())  # type: ignore[call-arg]
     if info.default is PydanticUndefined:
         return None
-    return _to_raw(info.default)
+    return to_raw(info.default)
 
 
 def build_specs(model: type[BaseModel]) -> tuple[FieldSpec, ...]:

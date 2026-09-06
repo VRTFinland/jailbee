@@ -277,8 +277,8 @@ def test_shared_caches_default_is_plain_data_not_model_instances():
     collection's default into what gets staged and saved — see
     `test_adding_a_shared_cache_entry_over_the_default_produces_writable_yaml`
     in `test_config_edit_state.py` for the crash this pins from the other
-    end. `_default_of`'s `_to_raw` is what normalises it; this asserts its
-    output rather than testing `_to_raw` in isolation, since `.default` is
+    end. `_default_of`'s `to_raw` is what normalises it; this asserts its
+    output rather than testing `to_raw` in isolation, since `.default` is
     the one place any caller actually reads it.
     """
     from jailbee.config_edit.schema import build_specs

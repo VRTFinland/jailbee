@@ -20,6 +20,7 @@ from jailbee.config_edit.schema import (
     dotted,
     is_drilldown,
     rebase,
+    to_raw,
 )
 from jailbee.config_writer import DELETE, KeyPath, YamlChange
 
@@ -767,11 +768,9 @@ def _collection_value(state: EditorState, spec: FieldSpec) -> list[object] | dic
     """This collection as it stands now: staged paths folded in, and copied.
 
     `_materialised` does the work — the same value `stage` folds an edit into,
-    which is the value the screen is showing. The only thing added here is the
-    empty fallback for a collection the open layer's own value of which is
-    neither a list nor a mapping — absent (the repo layer inherits global's
-    entries whole and has none of its own), or a hand-broken file:
-    `spec.kind` says which empty.
+    which is the value the screen is showing. What is added here is the
+    fallback for a collection the open layer's own value of which is neither a
+    list nor a mapping: absent, or a hand-broken file.
 
     The fold happens **before** the caller's structural change, so an edit
     travels with its entry: editing entry 1 and then deleting entry 0 saves
@@ -781,8 +780,47 @@ def _collection_value(state: EditorState, spec: FieldSpec) -> list[object] | dic
     """
     out = _materialised(state, spec.path)
     if out is None:
-        return [] if spec.kind is FieldKind.MODEL_LIST else {}
+        return _absent_collection(state, spec)
     return out
+
+
+def _absent_collection(state: EditorState, spec: FieldSpec) -> list[object] | dict[str, object]:
+    """What a structural edit starts from when the open layer has no such key.
+
+    The rule, and the two halves of it pull in opposite directions:
+
+        A value **inherited from another layer** must not be copied, because
+        `deep_merge` appends it — writing it out would give the container that
+        entry twice. A **schema default** must be copied when the open layer is
+        about to write the key, because writing *replaces* the default
+        wholesale.
+
+    So the default is copied only when nothing in either layer supplies this
+    path — `state.origins` says `default` — and the empty collection is
+    returned otherwise. That covers the inherited case (`global`), and it also
+    covers a hand-broken file: a layer that *has* the key, written as a scalar,
+    reports `repo`/`global` and gets the empty collection rather than a default
+    silently replacing what is there.
+
+    `shared_caches` is the only collection in the schema with a non-empty
+    default (`_default_shared_caches`, the built-in `ssh` cache), and losing it
+    is not cosmetic: without this, `n` on an untouched `shared_caches` saved a
+    file holding only the new entry, `jailbee config show` reported no `ssh`
+    cache, and the container lost its `~/.ssh` mount — with nothing on screen
+    to say so. The rule is written generally all the same; the next collection
+    to grow a default must not have to rediscover it.
+
+    `schema.to_raw` because `spec.default` may be model instances rather than
+    the plain data every consumer assumes, and because it rebuilds every list
+    and mapping level on the way — the caller mutates what it gets back, and
+    `spec.default` is shared with every other state.
+    """
+    origin = state.origins.get(spec.path)
+    if origin is not None and origin.source == "default":
+        default = to_raw(spec.default)
+        if isinstance(default, (list, dict)) and default:
+            return default
+    return [] if spec.kind is FieldKind.MODEL_LIST else {}
 
 
 def add_entry(
