@@ -657,7 +657,7 @@ def test_menu_actions_running_default_hides_ide_and_chrome():
 
 
 def test_menu_actions_running_ide_enabled_only():
-    actions = dashboard.menu_actions(_ctx(ide_enabled=True))
+    actions = dashboard.menu_actions(_ctx(app_names=["ide"]))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -671,7 +671,7 @@ def test_menu_actions_running_ide_enabled_only():
 
 
 def test_menu_actions_running_chrome_enabled_only():
-    actions = dashboard.menu_actions(_ctx(chrome_enabled=True))
+    actions = dashboard.menu_actions(_ctx(app_names=["chrome"]))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -685,7 +685,7 @@ def test_menu_actions_running_chrome_enabled_only():
 
 
 def test_menu_actions_running_both_enabled():
-    actions = dashboard.menu_actions(_ctx(ide_enabled=True, chrome_enabled=True))
+    actions = dashboard.menu_actions(_ctx(app_names=["ide", "chrome"]))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -698,6 +698,23 @@ def test_menu_actions_running_both_enabled():
     ]
 
 
+def test_action_menu_lists_every_registry_app():
+    """`menu_actions` renders whatever `app_names` it is handed, in order —
+    not just the two builtins that used to have their own booleans."""
+    actions = dashboard.menu_actions(_ctx(app_names=["firefox", "figma"]))
+    verbs = [verb for _label, verb in actions]
+    assert "firefox" in verbs
+    assert "figma" in verbs
+    assert ("Launch firefox", "firefox") in actions
+    assert ("Launch figma", "figma") in actions
+
+
+def test_action_menu_has_no_apps_when_none_are_configured():
+    actions = dashboard.menu_actions(_ctx(app_names=[]))
+    verbs = [verb for _label, verb in actions]
+    assert "chrome" not in verbs and "ide" not in verbs
+
+
 def test_menu_actions_stopped():
     actions = dashboard.menu_actions(_ctx(state="Stopped"))
     assert [a for _, a in actions] == ["start", "destroy"]
@@ -708,7 +725,7 @@ def test_menu_actions_orphan_disabled():
 
 
 def test_menu_actions_orphan_disabled_regardless_of_flags():
-    assert dashboard.menu_actions(_ctx(has_repo=False, ide_enabled=True, chrome_enabled=True)) == []
+    assert dashboard.menu_actions(_ctx(has_repo=False, app_names=["ide", "chrome"])) == []
 
 
 def test_menu_actions_unknown_state_only_destroy():
@@ -743,7 +760,7 @@ def test_menu_actions_orphan_disabled_even_with_network():
 
 
 def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
-    actions = dashboard.menu_actions(_ctx(ide_enabled=True, chrome_enabled=True))
+    actions = dashboard.menu_actions(_ctx(app_names=["ide", "chrome"]))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -1056,6 +1073,25 @@ def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
     assert "--force" not in run.call_args[0][0]
 
 
+def test_attach_verbs_includes_configured_apps(tmp_path, make_cfg):
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/f"}})
+    assert "figma" in dashboard.attach_verbs(cfg)
+    assert {"shell", "tmux"} <= dashboard.attach_verbs(cfg)
+
+
+def test_attach_verbs_excludes_apps_not_in_this_config(tmp_path, make_cfg):
+    """`attach_verbs` is config-aware — an app name unique to some other
+    repo's config must not leak in."""
+    cfg = make_cfg(tmp_path)
+    assert "figma" not in dashboard.attach_verbs(cfg)
+
+
+def test_qtui_still_imports_the_constant():
+    # qtui/actions.py derives _ASSUME_YES_VERBS from ATTACH_VERBS at import
+    # time, before any Config exists — it must stay a plain module constant.
+    assert {"shell", "tmux", "ide", "chrome", "firefox", "browser"} == dashboard.ATTACH_VERBS
+
+
 def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 2
@@ -1122,8 +1158,7 @@ def test_every_printing_verb_is_a_real_menu_verb():
             for _label, verb in dashboard.menu_actions(
                 _ctx(
                     state=state,
-                    ide_enabled=True,
-                    chrome_enabled=True,
+                    app_names=["ide", "chrome"],
                     pr_number=7,
                     job_clearable=True,
                     has_job=True,
@@ -1303,18 +1338,22 @@ def test_actions_for_container_matches_menu_actions():
             "/repo",
             Path("/repo/.jailbee/config.yaml"),
             [running],
-            ide_enabled=True,
-            chrome_enabled=False,
+            app_names=["ide"],
         )
     ]
-    expected = menu_actions(_ctx(ide_enabled=True, chrome_enabled=False))
+    expected = menu_actions(_ctx(app_names=["ide"]))
     assert actions_for_container(groups, "p-foo") == expected
     assert actions_for_container(groups, "nope") == []
     assert actions_for_container(groups, None) == []
 
 
-def test_gather_rows_sets_ide_and_chrome_flags_from_config(tmp_path, mocker, make_cfg):
-    cfg = make_cfg(tmp_path / "alpha", jetbrains={"enabled": True}, chrome={"enabled": False})
+def test_gather_rows_sets_app_names_from_config(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(
+        tmp_path / "alpha",
+        jetbrains={"enabled": True},
+        chrome={"enabled": False},
+        apps={"figma": {"command": "/f"}},
+    )
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
@@ -1324,11 +1363,12 @@ def test_gather_rows_sets_ide_and_chrome_flags_from_config(tmp_path, mocker, mak
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
     groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     group = next(g for g in groups if g.prefix == "alpha")
-    assert group.ide_enabled is True
-    assert group.chrome_enabled is False
+    # Registry order (builtins first, then `apps:` alphabetically) — not
+    # YAML key order, which here would put `figma` before `ide`.
+    assert group.app_names == ["ide", "figma"]
 
 
-def test_gather_rows_orphan_groups_default_ide_chrome_disabled(tmp_path, mocker, make_cfg):
+def test_gather_rows_orphan_groups_have_no_app_names(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
@@ -1341,8 +1381,7 @@ def test_gather_rows_orphan_groups_default_ide_chrome_disabled(tmp_path, mocker,
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
     groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
-    assert orphan.ide_enabled is False
-    assert orphan.chrome_enabled is False
+    assert orphan.app_names == []
 
 
 def test_visible_fields_excludes_hidden_and_respects_default_table():
@@ -2366,8 +2405,7 @@ def test_every_quick_action_verb_is_a_real_menu_verb():
             for _label, verb in dashboard.menu_actions(
                 _ctx(
                     state=state,
-                    ide_enabled=True,
-                    chrome_enabled=True,
+                    app_names=["ide", "chrome"],
                     pr_number=7,
                     job_clearable=True,
                     has_job=True,
@@ -2409,14 +2447,13 @@ def test_quick_verb_is_none_when_the_action_is_not_offered(tmp_path):
     assert dashboard.quick_verb([running], "alpha-x", "refresh") is None  # not an action key
 
 
-def test_quick_verb_follows_the_repos_ide_and_chrome_flags(tmp_path):
+def test_quick_verb_follows_the_repos_app_names(tmp_path):
     group = dashboard.RepoGroup(
         "alpha",
         str(tmp_path),
         tmp_path / "c.yaml",
         [_ci("alpha-x", "alpha")],
-        ide_enabled=True,
-        chrome_enabled=True,
+        app_names=["ide", "chrome"],
     )
 
     assert dashboard.quick_verb([group], "alpha-x", "action:ide") == "ide"

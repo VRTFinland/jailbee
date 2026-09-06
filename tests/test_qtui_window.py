@@ -53,17 +53,16 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
     stopped = ContainerInfo(
         name="p-bar", state="Stopped", network=None, ip=None, memory_limit=None, repo="p"
     )
-    # ide_enabled/chrome_enabled differ deliberately so this test proves the
-    # window actually threads the group's flags through to menu_actions
-    # rather than merely matching two hardcoded defaults.
+    # app_names carries only "ide" (not "chrome") deliberately so this test
+    # proves the window actually threads the group's app names through to
+    # menu_actions rather than merely matching two hardcoded defaults.
     groups = [
         RepoGroup(
             "p",
             "/repo",
             Path("/repo/.gie/config.yaml"),
             [running, stopped],
-            ide_enabled=True,
-            chrome_enabled=False,
+            app_names=["ide"],
         )
     ]
 
@@ -76,15 +75,14 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
             MenuContext(
                 state="Running",
                 has_repo=True,
-                ide_enabled=True,
-                chrome_enabled=False,
+                app_names=["ide"],
                 current_network="strict",
             )
         )
     ]
     assert win.menu_labels_for("p-foo") == expected
-    assert "Launch IDE" in expected
-    assert "Launch Chrome" not in expected
+    assert "Launch ide" in expected
+    assert "Launch chrome" not in expected
     assert "Network: loose" in expected
     assert "Network: strict" not in expected
 
