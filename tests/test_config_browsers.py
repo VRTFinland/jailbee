@@ -253,6 +253,25 @@ def test_an_explicit_browsers_block_wins_over_the_legacy_one():
     assert raw["browsers"]["chrome"]["url"] == "https://new.test"
 
 
+def test_make_cfg_folds_a_legacy_chrome_override_without_printing(tmp_path, capsys):
+    """`make_cfg(chrome=...)` must fold the legacy block but stay silent.
+
+    Every such call otherwise writes the deprecation notice to stderr, and
+    the first test to assert on `capsys.readouterr().err` would find a line
+    no code under test produced. The fold itself must still happen — this
+    asserts both halves, so suppressing the notice by skipping the fold
+    fails here too.
+    """
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, chrome={"enabled": True})
+    assert cfg.browsers.chrome.enabled is True
+    assert cfg.browsers.chrome.source == "host"
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == ""
+
+
 def test_no_warning_when_there_is_no_legacy_block(capsys):
     from jailbee.config.loader import resolve_browsers_raw
 
