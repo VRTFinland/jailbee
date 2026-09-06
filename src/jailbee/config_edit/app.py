@@ -406,10 +406,10 @@ def _build_application(
         return Point(0, render.section_pane(editor.state).cursor_row)
 
     def fields_pane() -> StyleAndTextTuples:
-        return render.field_pane(editor.state, editor.layer_set).fragments
+        return render.body_pane(editor.state, editor.layer_set).fragments
 
     def fields_cursor() -> Point:
-        return Point(0, render.field_pane(editor.state, editor.layer_set).cursor_row)
+        return Point(0, render.body_pane(editor.state, editor.layer_set).cursor_row)
 
     def message_line() -> StyleAndTextTuples:
         return [(editor.message_style, f" {editor.message} ")] if editor.message else []
@@ -467,7 +467,7 @@ def _build_application(
                 filter=Condition(lambda: editor.confirm is not None),
             ),
             Window(FormattedTextControl(message_line), height=1),
-            Window(FormattedTextControl(render.footer), height=1),
+            Window(FormattedTextControl(lambda: render.footer(editor.state)), height=1),
         ]
     )
     return Application(

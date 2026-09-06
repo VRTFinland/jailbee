@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from jailbee.config import HostMount
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import Origin, read_layers
+from jailbee.config_edit.layers import Origin, read_layers, resolve
 from jailbee.config_edit.render import (
+    body_pane,
+    collection_pane,
     edit_block,
     field_pane,
     footer,
@@ -18,7 +20,7 @@ from jailbee.config_edit.render import (
     section_pane,
     title_bar,
 )
-from jailbee.config_edit.schema import FieldKind, FieldSpec
+from jailbee.config_edit.schema import FieldKind, FieldSpec, repo_specs
 
 
 def _text(fragments) -> str:
@@ -66,6 +68,29 @@ def _state(layer="repo", origins=None, **kwargs):
         origins=origins or {s.path: Origin("default", s.default) for s in SPECS},
     )
     return st.EditorState(**{**base.__dict__, **kwargs})
+
+
+_HOST_MOUNTS_SPEC = next(s for s in SPECS if s.path == ("host_mounts",))
+
+
+def _collection_state(entries, layer="repo", **kwargs):
+    """A state on the `host_mounts` collection screen.
+
+    `entries` is the collection's own current (unstaged) contents — what
+    `state.origins` reports it holds, independent of whatever a `LayerSet`
+    passed alongside this state says (that is only ever consulted for the
+    *inherited* block, through `layers.inherited_entries`).
+    """
+    origins = {s.path: Origin("default", s.default) for s in SPECS}
+    origins[("host_mounts",)] = Origin(layer, entries)
+    return _state(layer=layer, origins=origins, trail=("host_mounts",), **kwargs)
+
+
+def _entry_state(entry, layer="repo", **kwargs):
+    """A state on entry `0` of `host_mounts`, `entry` as its own unstaged value."""
+    origins = {s.path: Origin("default", s.default) for s in SPECS}
+    origins[("host_mounts",)] = Origin(layer, [entry])
+    return _state(layer=layer, origins=origins, trail=("host_mounts", 0), **kwargs)
 
 
 def test_the_fixture_schema_yields_the_same_screen_shapes_the_real_one_does():
@@ -248,12 +273,139 @@ def test_edit_block_names_a_global_only_key():
     assert edit_block(_spec("github.enabled"), "global") is None
 
 
-def test_edit_block_refuses_a_model_collection_for_now():
-    reason = edit_block(
-        _spec("host_mounts", kind=FieldKind.MODEL_LIST, item_model=HostMount), "repo"
+def test_edit_block_lets_a_collection_through():
+    """A collection of models now has its own drill-down screen
+    (`collection_pane`/`body_pane`), so `edit_block` no longer refuses it —
+    replaces `test_edit_block_refuses_a_model_collection_for_now`.
+    """
+    spec = _spec("host_mounts", kind=FieldKind.MODEL_LIST, item_model=HostMount)
+    assert edit_block(spec, "repo") is None
+
+
+def test_collection_pane_lists_entries_with_a_one_line_summary(tmp_path):
+    state = _collection_state([{"host": "/a", "container": "/data"}])
+
+    got = collection_pane(state, _layers(tmp_path))
+
+    text = _text(got.fragments)
+    assert "[0]" in text
+    assert "/a" in text
+
+
+def test_collection_pane_shows_inherited_entries_above_and_marks_them(tmp_path):
+    """Repo-layer lists append to the global one; the global entries cannot be
+    removed here (spec 11.2), so they must not look like rows the cursor owns.
+    """
+    state = _collection_state([{"host": "/mine"}], layer="repo")
+    layer_set = _layers(tmp_path, global_text="host_mounts:\n  - host: /inherited\n")
+
+    text = _text(collection_pane(state, layer_set).fragments)
+
+    assert text.index("/inherited") < text.index("/mine")
+    assert "inherited from global" in text.casefold()
+
+
+def test_collection_pane_says_so_when_the_collection_is_empty(tmp_path):
+    state = _collection_state([])
+
+    text = _text(collection_pane(state, _layers(tmp_path)).fragments)
+
+    assert "press `n`" in text
+
+
+def test_field_pane_marks_an_entry_field_that_is_not_set(tmp_path):
+    state = _entry_state({"host": "/a"})
+
+    text = _text(field_pane(state, _layers(tmp_path)).fragments)
+
+    assert "(set)" in text  # host
+    assert "(default)" in text  # readonly
+
+
+def test_title_bar_shows_the_trail_once_inside_a_collection(tmp_path):
+    state = _entry_state({"host": "/a"})
+
+    text = _text(title_bar(state, _layers(tmp_path)))
+
+    assert "host_mounts ▸ 0" in text
+
+
+def test_body_pane_dispatches_to_the_collection_pane_on_a_collection_screen(tmp_path):
+    """`app.py` calls only `body_pane`; this pins that it actually reaches
+    `collection_pane` rather than falling through to the (empty) field pane.
+    """
+    state = _collection_state([{"host": "/a"}])
+
+    text = _text(body_pane(state, _layers(tmp_path)).fragments)
+
+    assert "[0]" in text
+    assert "/a" in text
+
+
+def test_body_pane_draws_every_real_collection_section_the_bare_field_pane_used_to_blank(
+    tmp_path,
+):
+    """The live regression this task fixes.
+
+    Since Task 3, `state.screen` resolves `host_mounts`, `host_devices`,
+    `host_ports`, `optional_mounts`, `shared_caches` and `agents` (all six of
+    them, on the real schema) to a `collection` screen — but nothing drew
+    one, so `field_pane` rendered its own *fields*-screen empty note instead:
+    "nothing in the basic set — press `a` to show all", with `a` doing
+    nothing because there were no fields to show in the first place, basic or
+    otherwise. Verified here against `schema.repo_specs()`, not the
+    module's own small fixture above, which is the only way to be sure the
+    real schema still classifies every one of them the same way.
+    """
+    specs = repo_specs()
+    layers = _layers(tmp_path)
+    origins = resolve(specs, layers)
+    # `shared_caches` alone ships a non-empty default (one `ssh` entry, from
+    # `_default_shared_caches`) — the other five default to `[]`/`{}`.
+    empty_by_default = ("host_mounts", "host_devices", "host_ports", "optional_mounts", "agents")
+    for section in (*empty_by_default, "shared_caches"):
+        state = st.EditorState(
+            layer="repo", specs=specs, origins=origins, staged={}, trail=(section,)
+        )
+        assert st.screen(state).kind == "collection", section
+        text = _text(body_pane(state, layers).fragments)
+        assert "press `a`" not in text, section
+        if section in empty_by_default:
+            assert "press `n`" in text, section
+        else:
+            assert "[0]" in text, section
+
+
+def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collection(tmp_path):
+    """Task 5's invariant (a leaf and its own staged ancestor never coexist in
+    `state.staged`) means that once the whole collection is staged — here, by
+    `add_entry` (`n`) — a field edited on one of its entries is folded *into*
+    that staged collection rather than getting a staged key of its own.
+    `_pending`'s `spec.path in pending` reads `changes()`'s own paths, which
+    are folded the same way, so it can never mark such a row: without
+    `_entry_pending` comparing against the saved layer directly, this test
+    fails with neither row painted `class:staged` at all.
+    """
+    layers = _layers(
+        tmp_path, repo_text="host_mounts:\n  - host: /old\n    container: /old\n"
     )
-    assert reason is not None
-    assert "by hand" in reason
+    state = _collection_state([{"host": "/old", "container": "/old"}])
+    state, crumb = st.add_entry(state, _HOST_MOUNTS_SPEC)
+    state = st.enter_crumb(state, crumb)
+    entry_specs = st.screen(state).specs
+    host_spec = next(s for s in entry_specs if s.path[-1] == "host")
+    state = st.stage(state, host_spec.path, "/new")
+
+    pane = field_pane(state, layers)
+    staged_lines = [text for style, text in pane.fragments if style == "class:staged"]
+
+    host_line = next(line for line in staged_lines if "host" in line)
+    assert "●" in host_line
+    assert "/new" in host_line
+    # The untouched sibling field of the same (staged) entry must not be
+    # marked — only `host` actually changed.
+    container_line = next(text for _style, text in pane.fragments if "container" in text)
+    assert "●" not in container_line
 
 
 def test_edit_block_refuses_a_secret():
@@ -268,6 +420,15 @@ def test_footer_names_every_action_the_editor_offers():
     `app.py` and nothing here reads it. What this pins is that no action
     quietly drops out of the one line the user is told to read.
     """
-    text = _text(footer())
+    text = _text(footer(_state()))
     for key in ("search", "toggle", "edit", "reset", "show all", "save", "quit"):
+        assert key in text
+
+
+def test_footer_names_the_collection_actions_on_a_collection_screen():
+    """`footer` now takes the state, so it can offer different keys for a
+    collection screen (`n`/`x`/`J`/`K`) instead of the section/field ones,
+    which make no sense there (there is nothing to search or toggle)."""
+    text = _text(footer(_collection_state([])))
+    for key in ("new", "delete", "move", "open", "save", "quit"):
         assert key in text
