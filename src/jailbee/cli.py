@@ -8151,9 +8151,7 @@ def _launch_registry_app(
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    incus, resolved = _resolve_attachable(
-        cfg, name, force=force, attach_cmd=attach_cmd or app_name
-    )
+    incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd=attach_cmd or app_name)
     _launch_or_exit(cfg, incus, resolved, spec, args)
 
 

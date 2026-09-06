@@ -50,9 +50,7 @@ def make_config(
     themselves (see ``test_config_browsers.py``).
     """
     cfg = (
-        Config.model_validate(
-            resolve_browsers_raw(resolve_agents_raw(overrides), emit_hint=False)
-        )
+        Config.model_validate(resolve_browsers_raw(resolve_agents_raw(overrides), emit_hint=False))
         if overrides
         else Config()
     )
