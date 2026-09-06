@@ -90,6 +90,62 @@ def test_a_top_level_app_is_rewritten(mocker):
     assert rewrite_app_argv(["figma", "--flag"]) == ["apps", "run", "figma", "--flag"]
 
 
+def test_the_container_option_survives_the_rewrite(mocker):
+    """The documented way to name a container for a promoted app.
+
+    `apps run` takes the container as an *option*, so the docs must teach
+    `jailbee <app> --container c1` and never `jailbee <app> c1` — the latter
+    lands in the app's variadic `args` and launches in the default
+    container. This pins the spelling four documents now describe: a
+    rewrite that reordered, swallowed or reinterpreted the argv after the
+    app name would fail here.
+    """
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert rewrite_app_argv(["figma", "--container", "c1"]) == [
+        "apps",
+        "run",
+        "figma",
+        "--container",
+        "c1",
+    ]
+
+
+def test_the_documented_spellings_bind_the_container_option_not_args(mocker):
+    """Parse the rewritten argv the way Typer will, and assert where each
+    token lands.
+
+    `test_the_container_option_survives_the_rewrite` pins the rewrite;
+    this pins the *consequence* — that click binds `--container` to the
+    option and a bare positional to `args`. It is the failure the four
+    documents taught: no error, the app just launches in the wrong
+    container. Asserting on the parse rather than on the argv list is what
+    makes this test able to notice `apps run` growing a positional
+    container slot (which would make the old docs correct again, and this
+    test wrong on purpose).
+    """
+    import typer.main
+
+    from jailbee.cli import app
+    from jailbee.entry import rewrite_app_argv
+
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    group = typer.main.get_command(app)
+    apps_group = group.commands["apps"]
+    run_cmd = apps_group.commands["run"]
+
+    def parse(argv: list[str]) -> dict[str, object]:
+        ctx = run_cmd.make_context("run", rewrite_app_argv(argv)[2:], resilient_parsing=True)
+        return ctx.params
+
+    documented = parse(["figma", "--container", "c1"])
+    assert documented["container"] == "c1"
+    assert documented["args"] == ()
+
+    broken = parse(["figma", "c1"])
+    assert broken["container"] is None
+    assert broken["args"] == ("c1",)
+
+
 def test_an_unknown_name_falls_through_to_typers_own_error(mocker):
     mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
     assert rewrite_app_argv(["lss"]) == ["lss"]
