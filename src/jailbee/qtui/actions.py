@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.dashboard import ATTACH_VERBS, PRINTING_VERBS
+from jailbee.dashboard import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, build_terminal_command
 
 if TYPE_CHECKING:
@@ -49,7 +49,9 @@ _FORCE_ON_CONFIRM: frozenset[str] = frozenset({"destroy"})
 # the Qt dialog, and an attach verb's "continue anyway?" would only repeat the
 # failed-job state the card already showed. :data:`ATTACH_VERBS` is not the same
 # set as ``_TERMINAL_VERBS``: `ide`/`chrome` need no terminal but do hit the
-# guard.
+# guard. A config-sourced `apps:` entry's verb is *not* in this set — it
+# carries its own app name, so there is no fixed set of them to enumerate —
+# and is checked separately in `build_action` by ``APPS_RUN_PREFIX``.
 _ASSUME_YES_VERBS: frozenset[str] = _FORCE_ON_CONFIRM | ATTACH_VERBS
 
 
@@ -107,16 +109,19 @@ def build_action(
     entries either way, so ``jailbee net loose <container> --config <path>``
     dispatches correctly.
 
-    Verbs in ``_ASSUME_YES_VERBS`` get ``--force`` appended, for two
+    Verbs in ``_ASSUME_YES_VERBS``, and any verb starting with
+    ``jailbee.dashboard.APPS_RUN_PREFIX`` (a config-sourced ``apps:`` entry —
+    see ``dashboard._app_menu_verb``), get ``--force`` appended, for two
     unrelated reasons. ``destroy`` has already been through the GUI's own
     confirmation dialog, and the detached ``Popen`` child has no interactive
     stdin, so the CLI's ``typer.confirm`` would read EOF and abort the
     operation silently. Not every confirm verb is forced, though — see
-    ``_FORCE_ON_CONFIRM``. The attach verbs are forced for a different
-    reason: their "continue anyway?" question would only restate the failed
-    background job the card was already showing when the operator clicked.
-    ``shell``/``tmux`` do get a real terminal, but ``ide``/``chrome`` would
-    hang on the prompt in whatever terminal launched the GUI.
+    ``_FORCE_ON_CONFIRM``. The attach verbs (and every ``apps run`` launch)
+    are forced for a different reason: their "continue anyway?" question
+    would only restate the failed background job the card was already
+    showing when the operator clicked. ``shell``/``tmux`` do get a real
+    terminal, but ``ide``/``chrome``/a registry app would hang on the prompt
+    in whatever terminal launched the GUI.
 
     ``extra_flags`` are the answers the GUI collected for the questions the CLI
     would have prompted for — `net loose`'s ``--for <duration>``, `git push`'s
@@ -129,7 +134,7 @@ def build_action(
     """
     confirm = verb in _CONFIRM_VERBS
     argv = ["jailbee", *verb.split(), container, *target.flags()]
-    if verb in _ASSUME_YES_VERBS:
+    if verb in _ASSUME_YES_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     if extra_flags:
         argv += extra_flags

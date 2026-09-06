@@ -1094,6 +1094,88 @@ def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
     assert "--force" not in run.call_args[0][0]
 
 
+def test_dispatch_action_routes_a_top_level_apps_container_through_the_flag(
+    mocker, tmp_path, make_cfg
+):
+    """The bug this guards: `jailbee apps run <app> <container>` is *not*
+    the same command as `jailbee apps run <app> --container <container>` —
+    Ruling 24 made the container `apps run`'s `--container` option, not a
+    second positional. A dispatch verb that put the container as a bare
+    trailing positional would have it swallowed by the app's own variadic
+    `args`, and the app would launch in the *default* container instead —
+    silently, no error. This fails if `_app_menu_verb` ever goes back to
+    dispatching a registry app by its bare name (`"figma"` instead of
+    `"apps run figma --container"`), which is exactly what put the
+    container in `args` in the first place."""
+    from jailbee.apps import resolve_apps
+
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/f", "top_level": True}})
+    spec = next(s for s in resolve_apps(cfg) if s.name == "figma")
+    verb = dashboard._app_menu_verb(spec)
+
+    config_path = tmp_path / "config.yaml"
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    dashboard._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
+
+    run.assert_called_once_with(
+        [
+            "jailbee",
+            "apps",
+            "run",
+            "figma",
+            "--container",
+            "alpha-x",
+            "--config",
+            str(config_path),
+            "--force",
+        ],
+        check=False,
+        cwd=tmp_path,
+    )
+
+
+def test_dispatch_action_routes_a_non_top_level_app_to_a_real_command(mocker, tmp_path, make_cfg):
+    """A non-`top_level` `apps:` entry has no `jailbee <app>` command at all
+    — `entry._top_level_app_names` (and thus `entry.rewrite_app_argv`) only
+    rewrites the bare name for an app that declared `top_level: true`.
+    Dispatching through `apps run <app> --container` sidesteps that rewrite
+    entirely, so a non-`top_level` app still reaches a real command instead
+    of a Typer "no such command" error. Fails if the dispatch verb depended
+    on `top_level` and fell back to the bare name for one that lacks it."""
+    from jailbee.apps import resolve_apps
+
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/f"}})  # top_level defaults False
+    spec = next(s for s in resolve_apps(cfg) if s.name == "figma")
+    assert spec.top_level is False  # the config under test, not the fix
+
+    verb = dashboard._app_menu_verb(spec)
+    assert verb == "apps run figma --container"
+
+    config_path = tmp_path / "config.yaml"
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+
+    dashboard._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
+
+    run.assert_called_once_with(
+        [
+            "jailbee",
+            "apps",
+            "run",
+            "figma",
+            "--container",
+            "alpha-x",
+            "--config",
+            str(config_path),
+            "--force",
+        ],
+        check=False,
+        cwd=tmp_path,
+    )
+
+
 def test_qtui_still_imports_the_constant():
     # qtui/actions.py derives _ASSUME_YES_VERBS from ATTACH_VERBS at import
     # time, before any Config exists — it must stay a plain module constant.
@@ -1356,12 +1438,20 @@ def test_actions_for_container_matches_menu_actions():
 
 
 def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
-    """Covers both registry order and the label fallback in one pass: `ide`
-    (a builtin, `jetbrains.enabled`) carries a real description ("JetBrains
-    idea"); `figma` (a bare `apps:` entry with no `description` set) falls
-    back to its own name. `apps:` sorts before `jetbrains` alphabetically, so
-    if `gather_rows` read YAML/dict key order instead of delegating to
-    `resolve_apps`, `figma` would come first here."""
+    """Covers registry order, the label fallback, and the dispatch verb in
+    one pass: `ide` (a builtin, `jetbrains.enabled`) carries a real
+    description ("JetBrains idea") and dispatches by its bare name — a real
+    top-level `jailbee` command. `figma` (a bare `apps:` entry with no
+    `description` and no `top_level` set) falls back to its own name as the
+    label, but its dispatch verb is `"apps run figma --container"`, not the
+    bare name: a bare `jailbee figma <container>` either fails outright (no
+    such command, since it never declared `top_level`) or — worse — for one
+    that did, gets rewritten to `apps run figma <container>`, where the
+    container lands in the app's own variadic `args` instead of naming a
+    container (Ruling 24 made the container `apps run`'s `--container`
+    option, not a second positional). `apps:` sorts before `jetbrains`
+    alphabetically, so if `gather_rows` read YAML/dict key order instead of
+    delegating to `resolve_apps`, `figma` would come first here."""
     cfg = make_cfg(
         tmp_path / "alpha",
         jetbrains={"enabled": True},
@@ -1379,7 +1469,7 @@ def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
     group = next(g for g in groups if g.prefix == "alpha")
     assert group.apps == [
         dashboard.AppMenuEntry("ide", "JetBrains idea"),
-        dashboard.AppMenuEntry("figma", "figma"),
+        dashboard.AppMenuEntry("apps run figma --container", "figma"),
     ]
 
 

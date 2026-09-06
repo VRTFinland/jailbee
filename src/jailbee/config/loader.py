@@ -96,7 +96,7 @@ def _validate_pooled_caches(cfg: Config) -> None:
         preset = POOL_PRESETS.get(name)
         if not wanted and preset is not None and preset.pool_only:
             remedy = (
-                "Set `chrome.enabled: false` to turn Chrome off instead."
+                "Set `browsers.chrome.enabled: false` to turn Chrome off instead."
                 if name == "chrome-profile"
                 else "Disable the integration that adds it instead."
             )

@@ -4102,7 +4102,10 @@ def test_pooled_caches_false_on_a_pool_only_preset_is_an_error(tmp_path):
     from jailbee.config import ConfigError, load_config_from_text
 
     text = "chrome:\n  enabled: true\npooled_caches:\n  chrome-profile: false\n"
-    with pytest.raises(ConfigError, match="cannot be un-pooled"):
+    # The remedy must name the key that actually exists (`browsers.chrome.enabled`),
+    # not the legacy `chrome.enabled` this loader retired — a remedy pointing at
+    # a dead key is worse than no remedy.
+    with pytest.raises(ConfigError, match=r"cannot be un-pooled.*browsers\.chrome\.enabled"):
         load_config_from_text(text, tmp_path / "c.yaml")
 
 
