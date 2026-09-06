@@ -351,6 +351,38 @@ def test_the_most_used_keys_are_not_advanced():
         assert specs[tuple(dotted.split("."))].advanced is False, dotted
 
 
+def test_default_view_paths_all_resolve():
+    """A stale path in `BASIC_FIELDS` is invisible: the editor silently shows
+    one fewer field than the curators intended. Every curated path must
+    resolve against the generated tree — either as an exact leaf, or (for a
+    curated section like `golden`, which is never itself a leaf) as a
+    prefix of one.
+    """
+    from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
+
+    known = {spec.path for spec in repo_specs()} | {spec.path for spec in global_specs()}
+    prefixes = {p[:i] for p in known for i in range(1, len(p) + 1)}
+    missing = [p for p in BASIC_FIELDS if p not in prefixes]
+    assert missing == []
+
+
+def test_browser_switches_and_apps_are_curated():
+    """Task 4 curated the two browser switches; Task 19 adds `apps`.
+
+    A curated path silently dropped (e.g. by a stale rename) would leave
+    `advanced` at its safe-default `True` and vanish from the default view.
+    """
+    from jailbee.config_edit.schema import repo_specs
+
+    specs = {s.path: s for s in repo_specs()}
+    for path in (
+        ("browsers", "chrome", "enabled"),
+        ("browsers", "firefox", "enabled"),
+        ("apps",),
+    ):
+        assert specs[path].advanced is False, path
+
+
 def test_an_uncurated_key_is_advanced():
     from jailbee.config_edit.schema import repo_specs
 

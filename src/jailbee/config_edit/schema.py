@@ -307,8 +307,9 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("jetbrains", "ide"),
         ("browsers", "chrome", "enabled"),
         ("browsers", "firefox", "enabled"),
-        # Agents and startup.
+        # Agents, apps and startup.
         ("agents",),
+        ("apps",),
         ("autostart", "on_create"),
         ("autostart", "on_start"),
         ("after_new",),
@@ -318,7 +319,7 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("pull", "destroy_container"),
     }
 )
-"""The 28 paths the default view shows; everything else is behind "show all".
+"""The 30 paths the default view shows; everything else is behind "show all".
 
 Curation lives here rather than as metadata on the models: a config model
 should not also carry a presentational concern, and the curated set is only
