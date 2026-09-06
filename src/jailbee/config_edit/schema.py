@@ -334,6 +334,19 @@ because a collection was not editable at all.
 """
 
 
+def is_drilldown(spec: FieldSpec) -> bool:
+    """Whether this field is edited on a screen of its own rather than in a line.
+
+    Two families, for two different reasons. A **model collection** has no
+    single value to type. A **secret map** has one, and must not be typed: the
+    block editor for a `STR_MAP` is seeded with every value in it
+    (`values.map_to_text`), which for `github.api_tokens` would print the
+    user's tokens into a text area. Listing the keys and hiding the values is
+    what makes it editable at all (spec 11.9).
+    """
+    return spec.kind in COLLECTION_KINDS or (spec.secret and spec.kind is FieldKind.STR_MAP)
+
+
 def rebase(specs: Sequence[FieldSpec], prefix: KeyPath) -> tuple[FieldSpec, ...]:
     """`specs` re-addressed as fields of the entry at `prefix`.
 

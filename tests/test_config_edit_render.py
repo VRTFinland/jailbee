@@ -208,6 +208,28 @@ def test_help_pane_shows_inherited_list_context_for_an_appending_key(tmp_path):
     assert "global.example" in text
 
 
+_API_TOKENS_SPEC = _spec("github.api_tokens", kind=FieldKind.STR_MAP, secret=True)
+
+
+def _secret_map_state(entries, layer="global"):
+    """A state on `github.api_tokens`'s own collection screen.
+
+    A secret map has no `item_model`, so this — trail pointing at the map
+    itself — is as deep as the trail can go (`state.screen`'s guard).
+    `entries` is the map's current (unstaged) `key -> token` contents.
+    """
+    specs = (*SPECS, _API_TOKENS_SPEC)
+    origins = {s.path: Origin("default", s.default) for s in specs}
+    origins[_API_TOKENS_SPEC.path] = Origin(layer, entries)
+    return st.EditorState(
+        layer=layer,
+        specs=specs,
+        origins=origins,
+        staged={},
+        trail=_API_TOKENS_SPEC.path,
+    )
+
+
 def _egress_state(staged):
     """A repo-layer state on the `egress_allow` section with `staged` applied."""
     rows = list(SPECS)
@@ -415,10 +437,43 @@ def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collecti
 
 
 def test_edit_block_refuses_a_secret():
-    spec = _spec("github.api_tokens", kind=FieldKind.STR_MAP, secret=True)
+    """A scalar secret has no drill-down screen to make it safe — unlike
+    `github.api_tokens` (a secret *map*), which is a drill-down since Task 9
+    and is no longer refused here (see `test_a_secret_maps_keys_are_listed...`
+    and `test_edit_block_still_refuses_a_secret_that_is_not_a_map`)."""
+    spec = _spec("some.token", kind=FieldKind.STR, secret=True)
     reason = edit_block(spec, "global")
     assert reason is not None
     assert "0600" in reason
+
+
+def test_edit_block_still_refuses_a_secret_that_is_not_a_map():
+    """The screen is what makes a secret map safe; a scalar secret has none."""
+    spec = _spec("some.token", FieldKind.STR, secret=True)
+
+    assert edit_block(spec, "global") is not None
+
+
+def test_edit_block_lets_a_secret_map_through():
+    """The mirror of the refusal above: `github.api_tokens` is a `STR_MAP`
+    with `secret=True`, and it is the map shape — not the secret flag alone —
+    that now makes it editable."""
+    spec = _spec("github.api_tokens", kind=FieldKind.STR_MAP, secret=True)
+    assert edit_block(spec, "global") is None
+
+
+def test_a_secret_maps_keys_are_listed_and_its_values_are_not(tmp_path):
+    """The whole point of Task 9's screen: keys are listable, tokens are not
+    — not even a masked stand-in sized to the real value."""
+    state = _secret_map_state({"gisgro": "ghp_realtoken", "personal": "ghp_other"})
+
+    text = "".join(t for _, t in collection_pane(state, _layers(tmp_path)).fragments)
+
+    assert "gisgro" in text
+    assert "personal" in text
+    assert "ghp_realtoken" not in text
+    assert "ghp_other" not in text
+    assert "••••" in text
 
 
 def test_footer_names_every_action_the_editor_offers():

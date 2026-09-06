@@ -1056,3 +1056,50 @@ def test_deleting_the_entry_the_trail_stands_in_does_not_move_the_trail():
     assert state.trail == ("host_mounts", 1)
     with pytest.raises(ValueError, match=r"host_mounts\.1\.host"):
         st.stage(state, ("host_mounts", 1, "host"), "/typed")
+
+
+SECRET_MAP = FieldSpec(
+    path=("github", "api_tokens"),
+    label="api_tokens",
+    kind=FieldKind.STR_MAP,
+    description="github tokens",
+    default={},
+    secret=True,
+    advanced=False,
+)
+"""A secret map has no `item_model` at all — unlike `COLLECTION`/`NESTED`,
+there is no form its own entries could resolve to."""
+
+
+def _secret_state(value):
+    origins = {s.path: Origin("default", s.default) for s in (*SPECS, SECRET_MAP)}
+    origins[SECRET_MAP.path] = Origin("global", value)
+    return st.open_editor(layer="global", specs=(*SPECS, SECRET_MAP), origins=origins)
+
+
+def test_a_secret_map_resolves_to_its_own_collection_screen():
+    """`is_drilldown` covers a secret `STR_MAP` the same way it covers a
+    `MODEL_LIST`/`MODEL_MAP` — this is what lets `github.api_tokens` reach a
+    screen of its own rather than the block editor every other `STR_MAP`
+    gets (which would print every token into a text area)."""
+    got = st.enter_crumb(st.enter_crumb(_secret_state({"gisgro": "tok"}), "github"), "api_tokens")
+
+    screen = st.screen(got)
+
+    assert screen.kind == "collection"
+    assert screen.collection is SECRET_MAP
+    assert st.entries(got, screen.collection) == ("gisgro",)
+
+
+def test_a_secret_maps_trail_cannot_go_past_the_map_itself():
+    """A secret map's "entry" is one string with no form to descend into —
+    `screen` must resolve a trail that (in error, or via some future key
+    binding) continues past the map back onto the map's own collection
+    screen rather than calling `build_specs(None)`."""
+    state = _secret_state({"gisgro": "tok"})
+    state = replace(state, trail=("github", "api_tokens", "gisgro"))
+
+    screen = st.screen(state)
+
+    assert screen.kind == "collection"
+    assert screen.collection is SECRET_MAP

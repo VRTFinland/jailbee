@@ -9,13 +9,37 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 from jailbee.config import ClaudeAgentConfig, Config, HostMount
-from jailbee.config_edit.schema import Classified, FieldKind, build_specs, classify, rebase
+from jailbee.config_edit.schema import (
+    Classified,
+    FieldKind,
+    FieldSpec,
+    build_specs,
+    classify,
+    is_drilldown,
+    rebase,
+)
 from jailbee.global_config import GlobalConfig
 from tests.test_config_schema_closure import walk_models
 
 
 class _Item(BaseModel):
     x: int = 0
+
+
+def _spec(kind, *, secret=False):
+    """A minimal `FieldSpec` of one `kind`, for `is_drilldown`'s own tests.
+
+    Only `kind` and `secret` matter to `is_drilldown`; everything else is
+    filled with a value that satisfies the dataclass but is never inspected.
+    """
+    return FieldSpec(
+        path=("x",),
+        label="x",
+        kind=kind,
+        description="d",
+        default=None,
+        secret=secret,
+    )
 
 
 @pytest.mark.parametrize(
@@ -56,6 +80,17 @@ def test_secret_map_is_flagged():
     result = classify(dict[str, SecretStr])
     assert result.kind is FieldKind.STR_MAP
     assert result.secret is True
+
+
+def test_is_drilldown_covers_collections_and_a_secret_map():
+    """Two families end up on a screen of their own, for two different
+    reasons — see `is_drilldown`'s own docstring — and everything else edits
+    in place."""
+    assert is_drilldown(_spec(FieldKind.MODEL_LIST))
+    assert is_drilldown(_spec(FieldKind.MODEL_MAP))
+    assert is_drilldown(_spec(FieldKind.STR_MAP, secret=True))
+    assert not is_drilldown(_spec(FieldKind.STR_MAP))
+    assert not is_drilldown(_spec(FieldKind.STR))
 
 
 @pytest.mark.parametrize(

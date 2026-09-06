@@ -1062,6 +1062,159 @@ def test_the_collection_keys_do_nothing_on_a_field_screen(tmp_path):
     assert "collection" in editor.message.casefold()
 
 
+def test_setting_a_token_uses_a_hidden_input_and_stages_the_whole_map(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.enter()
+
+    assert editor.prompt is not None
+    assert editor.prompt.password is True
+    editor.prompt.area.text = "ghp_new"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_new"}
+
+
+def test_a_staged_token_is_masked_in_the_diff(tmp_path):
+    """The whole point of Task 1, asserted end to end."""
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()
+    editor.prompt.area.text = "ghp_brandnew"
+    editor.commit_prompt()
+
+    editor.show_diff()
+
+    assert editor.confirm is not None
+    assert "ghp_brandnew" not in editor.confirm.diff
+    assert "ghp_old" not in editor.confirm.diff
+
+
+def test_the_prompt_label_names_the_key_but_never_the_value(tmp_path):
+    """`_Prompt.label` is painted on every redraw while the prompt is open —
+    the exact kind of place the one rule (never paint a token) has to hold.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.enter()
+
+    assert editor.prompt is not None
+    assert "github.api_tokens.gisgro" in editor.prompt.label
+    assert "ghp_old" not in editor.prompt.label
+
+
+def test_an_empty_token_refuses_and_says_so(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()
+
+    editor.prompt.area.text = "   "
+    editor.commit_prompt()
+
+    assert editor.prompt is not None  # kept open, nothing staged
+    assert "token is required" in editor.message.casefold()
+    assert ("github", "api_tokens") not in editor.state.staged
+
+
+def test_n_on_a_secret_map_asks_for_the_key_then_hides_the_value(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.new_entry_here()
+    assert editor.prompt is not None
+    assert editor.prompt.password is False  # this prompt names the key, not a token
+    editor.prompt.area.text = "personal"
+    editor.commit_prompt()
+
+    # The key exists (with a placeholder), and a *second*, hidden prompt is
+    # now open on its value rather than any entry form.
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old", "personal": ""}
+    assert editor.prompt is not None
+    assert editor.prompt.password is True
+    assert editor.prompt.secret_key == "personal"
+
+    editor.prompt.area.text = "ghp_brandnew"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("github", "api_tokens")] == {
+        "gisgro": "ghp_old",
+        "personal": "ghp_brandnew",
+    }
+
+
+def test_esc_on_a_freshly_created_secret_entry_removes_the_empty_placeholder(tmp_path):
+    """`n` on a secret map stages `{key: ""}` before the value is even typed
+    (there is no form to hold it meanwhile) — abandoning the value prompt
+    must not leave that placeholder behind as if it were a real, empty
+    token.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.new_entry_here()
+    editor.prompt.area.text = "personal"
+    editor.commit_prompt()
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old", "personal": ""}
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old"}
+
+
+def test_esc_on_an_existing_secret_entry_leaves_it_untouched(tmp_path):
+    """The removal above is scoped to the entry `n` just created — cancelling
+    a prompt opened on an *existing* key must not delete that key."""
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()  # opens the hidden prompt on the existing "gisgro" key
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert ("github", "api_tokens") not in editor.state.staged
+
+
+def test_edit_current_refuses_a_secret_map_directly_rather_than_leaking_it(tmp_path):
+    """`enter()` is the only route the shipped UI takes to a drill-down row,
+    and it never calls `edit_current` for one — but `edit_current` is public
+    and takes nothing from `enter()` about how it got called, so it must
+    refuse a secret map on its own rather than trust that invariant. Without
+    its own `is_drilldown` guard, `edit_block` (which now lets a secret map
+    through) plus `spec.kind in _MAP_KINDS` matching `STR_MAP` would hand
+    `values.map_to_text` — every token in the map — to a plain multiline
+    prompt. Found by direct call during this task's leak audit.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_REALSECRET"}}}, layer="global"
+    )
+    editor.state = st.toggle_show_all(st.enter_crumb(editor.state, "github"))
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.label == "api_tokens")
+    )
+
+    editor.edit_current()
+
+    assert editor.prompt is None
+    assert "not editable here" in editor.message.casefold()
+
+
 def test_n_x_j_k_are_wired_through_the_real_application(tmp_path):
     """Presses the real keys through a real `Application`, so a binding that
     is never wired cannot pass its unit test — `_editor` calls `Editor`'s

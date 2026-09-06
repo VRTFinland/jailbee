@@ -35,7 +35,7 @@ from prompt_toolkit.widgets import TextArea
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import raw_for, validate_entry
-from jailbee.config_edit.schema import COLLECTION_KINDS, FieldKind, dotted
+from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -91,11 +91,31 @@ class _Prompt:
     entry's key rather than editing a field. `spec` is `None` here too (there
     is no field yet to attach to), so `commit_prompt` must tell the two
     `spec is None` prompts apart by checking this first."""
+    secret_key: str | None = None
+    """Set when this prompt is setting one key's token inside a secret map:
+    `spec` is the map itself (`github.api_tokens`), and this is the key under
+    the cursor (`"gisgro"`). Unlike `map_key_for`, `spec` is *not* `None`
+    here — the map field already exists — so `commit_prompt` tells this
+    apart from an ordinary field edit by checking `secret_key` first."""
+    password: bool = False
+    """Mirrors the `password=` the `TextArea` was built with (spec 11.9).
+
+    Not redundant bookkeeping: `TextArea` accepts `password=` in its
+    constructor but exposes no attribute for it (verified against the
+    installed prompt_toolkit), so this is the only way a test — or a future
+    reviewer — can prove the input is actually hidden rather than trusting
+    that `_open_prompt` passed the right thing at construction time.
+    """
 
     @property
     def label(self) -> str:
         if self.map_key_for is not None:
             return f"New {self.map_key_for.label} entry — name it, Enter to create"
+        if self.secret_key is not None and self.spec is not None:
+            # Names the key, never the value: this label is painted on every
+            # redraw while the prompt is open, so it is exactly the kind of
+            # place the one rule (never paint a token) has to hold.
+            return f"{dotted(self.spec.path)}.{self.secret_key} — Enter to set, Esc to cancel"
         if self.spec is None:
             return "Search — Enter to apply, Esc to cancel"
         verb = "Ctrl-S to commit" if self.multiline else "Enter to commit"
@@ -154,13 +174,21 @@ class Editor:
             return
         if view.kind == "collection" and view.collection is not None:
             crumbs = st.entries(self.state, view.collection)
-            if crumbs:
-                self.state = st.enter_crumb(self.state, crumbs[self.state.index])
-            else:
+            if not crumbs:
                 self.notice("No entries yet — press `n` to add one.")
+                return
+            if view.collection.item_model is None:
+                # A secret map: there is no entry form to descend into, so
+                # open a hidden input on the key under the cursor instead —
+                # never seeded with the current token (see `_open_prompt`).
+                self._open_prompt(view.collection, "", multiline=False, password=True)
+                if self.prompt is not None:
+                    self.prompt.secret_key = str(crumbs[self.state.index])
+                return
+            self.state = st.enter_crumb(self.state, crumbs[self.state.index])
             return
         spec = st.current(self.state)
-        if spec is not None and spec.kind in COLLECTION_KINDS:
+        if spec is not None and is_drilldown(spec):
             self.state = st.enter_crumb(self.state, spec.path[len(self.state.trail)])
             return
         self.edit_current()
@@ -222,11 +250,19 @@ class Editor:
         return view.collection
 
     def new_entry_here(self) -> None:
-        """`n`: append an entry and open it. A map is asked for its key first."""
+        """`n`: append an entry and open it. A map is asked for its key first.
+
+        A secret map is also asked for its key first — its condition joins
+        `MODEL_MAP`'s rather than replacing it, since both need a name before
+        there is anything to stage. `commit_prompt`'s `map_key_for` branch is
+        what tells the two apart afterward and stages the new key's value as
+        an empty string rather than `{}` (a secret map's entries are strings,
+        not models).
+        """
         spec = self._open_collection()
         if spec is None:
             return
-        if spec.kind is FieldKind.MODEL_MAP:
+        if spec.item_model is None or spec.kind is FieldKind.MODEL_MAP:
             self._open_prompt(None, "", multiline=False)
             if self.prompt is not None:
                 self.prompt.map_key_for = spec
@@ -326,13 +362,32 @@ class Editor:
             self.notice(f"Discarded pending edits inside {dotted(spec.path)}.")
 
     def edit_current(self) -> None:
-        """Open the modal editor on the field under the cursor."""
+        """Open the modal editor on the field under the cursor.
+
+        `enter()` is the only place a drill-down field's row is supposed to
+        reach this: it checks `is_drilldown` first and routes a collection —
+        secret map included — to its own screen instead. But this method is
+        public and takes no state from `enter()` about how it was reached, so
+        it re-checks here rather than trusting that invariant to hold
+        forever. For a `MODEL_LIST`/`MODEL_MAP` that would just be defence in
+        depth (the kind dispatch below already falls through to the same
+        "not editable here" notice, since neither kind matches a case
+        above). For a secret `STR_MAP` it is load-bearing: `edit_block` now
+        lets it through (Task 9 — it *is* editable, just not here), and its
+        kind *does* match `_MAP_KINDS` below, which would otherwise hand
+        `values.map_to_text` — every token in the map — straight to a plain
+        multiline prompt. Confirmed by direct call in this task's audit
+        before this guard existed.
+        """
         spec = st.current(self.state)
         if spec is None:
             return
         blocked = render.edit_block(spec, self.state.layer)
         if blocked is not None:
             self.notice(blocked, style="class:error")
+            return
+        if is_drilldown(spec):
+            self.notice(f"`{spec.kind.value}` fields are not editable here.", style="class:error")
             return
         value = st.effective(self.state, spec.path)
         if spec.kind is FieldKind.STR_LIST:
@@ -356,7 +411,9 @@ class Editor:
         """`/`: a modal line whose commit sets the search query."""
         self._open_prompt(None, self.state.query, multiline=False)
 
-    def _open_prompt(self, spec: FieldSpec | None, text: str, *, multiline: bool) -> None:
+    def _open_prompt(
+        self, spec: FieldSpec | None, text: str, *, multiline: bool, password: bool = False
+    ) -> None:
         completer = None
         if spec is not None and spec.choices:
             completer = WordCompleter([str(c) for c in spec.choices], ignore_case=True)
@@ -366,11 +423,30 @@ class Editor:
             completer=completer,
             complete_while_typing=completer is not None,
             height=6 if multiline else 1,
+            password=password,
         )
         area.buffer.cursor_position = len(text)
-        self.prompt = _Prompt(spec=spec, area=area, multiline=multiline)
+        self.prompt = _Prompt(spec=spec, area=area, multiline=multiline, password=password)
 
     def cancel_prompt(self) -> None:
+        """Close the modal, discarding anything typed into it.
+
+        A secret prompt on a key `n` just created is the one case this
+        undoes more than the keystroke: `n` on a secret map stages
+        `{key: ""}` *before* the value is even typed (there is no form to
+        hold it meanwhile), so an untouched entry abandoned here must not
+        survive as an empty token rather than as if `n` had never been
+        pressed.
+        """
+        prompt = self.prompt
+        if (
+            prompt is not None
+            and prompt.secret_key is not None
+            and prompt.spec is not None
+            and self.new_entry == (*prompt.spec.path, prompt.secret_key)
+        ):
+            self.state = st.delete_entry(self.state, prompt.spec, prompt.secret_key)
+            self.new_entry = None
         self.prompt = None
 
     def commit_prompt(self) -> None:
@@ -384,6 +460,36 @@ class Editor:
         if prompt is None:
             return
         text = prompt.area.text
+        # Checked first, before both branches below: a secret-key prompt has
+        # `spec` set (the map itself) and `map_key_for` unset, so neither of
+        # the next two checks would catch it — and if it fell through to the
+        # generic `spec.kind` dispatch at the bottom, `_MAP_KINDS` would hand
+        # a bare token to `values.parse_map`, which on anything without `=`
+        # in it reports the error as `got {entry!r}` — quoting the token
+        # right back onto the message line. Closing that off here, before
+        # any other branch can partially match, is what the one rule (never
+        # paint a token) actually rests on for this prompt.
+        if prompt.secret_key is not None and prompt.spec is not None:
+            token = text.strip()
+            if not token:
+                self.notice(
+                    "A token is required — press Esc to leave it unchanged.",
+                    style="class:error",
+                )
+                return
+            current = st.effective(self.state, prompt.spec.path)
+            updated = dict(current) if isinstance(current, dict) else {}
+            updated[prompt.secret_key] = token
+            self.state = st.stage(self.state, prompt.spec.path, updated)
+            if self.new_entry == (*prompt.spec.path, prompt.secret_key):
+                # The key `n` just created now has a real token, so it is no
+                # longer "new" — an unrelated Esc elsewhere must not treat it
+                # as abandoned and delete it (`cancel_prompt`'s own guard).
+                # Anything else `new_entry` might be tracking (a MODEL_LIST
+                # entry left mid-form) is untouched.
+                self.new_entry = None
+            self.prompt = None
+            return
         # Checked before `prompt.spec is None` below: a map-key prompt also has
         # `spec is None` (there is no field yet to attach to), and the search
         # branch would otherwise read the typed key name as a search query and
@@ -393,10 +499,26 @@ class Editor:
             if not key:
                 self.notice("A name is required.", style="class:error")
                 return
-            if key in st.entries(self.state, prompt.map_key_for):
+            spec = prompt.map_key_for
+            if key in st.entries(self.state, spec):
                 self.notice(f"`{key}` already exists.", style="class:error")
                 return
-            self.state, crumb = st.add_entry(self.state, prompt.map_key_for, key)
+            if spec.secret:
+                # A secret map's entry is a string, not a model: stage the
+                # key with an empty placeholder, then open a hidden prompt to
+                # fill it in — there is no entry form to descend into, and
+                # the placeholder is never shown (`cancel_prompt` removes it
+                # again if that second prompt is abandoned).
+                current = st.effective(self.state, spec.path)
+                updated = dict(current) if isinstance(current, dict) else {}
+                updated[key] = ""
+                self.state = st.stage(self.state, spec.path, updated)
+                self.new_entry = (*spec.path, key)
+                self._open_prompt(spec, "", multiline=False, password=True)
+                if self.prompt is not None:
+                    self.prompt.secret_key = key
+                return
+            self.state, crumb = st.add_entry(self.state, spec, key)
             self.new_entry = (*self.state.trail, crumb)
             self.state = st.enter_crumb(self.state, crumb)
             self.prompt = None

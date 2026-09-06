@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Final
 from prompt_toolkit.styles import Style
 
 from jailbee.config_edit.layers import disabled_reason, inherited_entries, lookup, raw_for
-from jailbee.config_edit.schema import FieldKind, dotted
+from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 from jailbee.config_edit.state import (
     UNSET,
     changes,
@@ -52,6 +52,16 @@ _ORIGIN_LABEL = {
 }
 
 _VALUE_WIDTH = 22
+
+_SECRET_MASK = "••••••"
+"""A secret map entry's value column, inside its own drill-down screen.
+
+Fixed, not sized to the value: `format_value`'s "N entries (hidden)" is right
+for the field's own row (a count is safe to reveal), but here each row is one
+key's token, and the length of a token is information too — a mask that grew
+or shrank with the real value would leak exactly the length it is supposed to
+hide.
+"""
 
 _NOT_STAGED: Final = object()
 """`state.staged.get` default: `None` and `UNSET` are both real staged values,
@@ -95,16 +105,19 @@ def edit_block(spec: FieldSpec, layer: LayerName) -> str | None:
     returns a string, and `field_pane` greys the row and shows the reason.
     Two causes: a config rule (`layers.disabled_reason`: an `OPAQUE` free-form
     block, a key the loader bans from a repo config) and a deliberate refusal
-    (a secret, which the editor will not paint on a terminal — until Task 9
-    narrows that to something less than "never").  A collection of models used
-    to be a third cause; it now has its own drill-down screen
+    (a secret with no drill-down screen of its own — a scalar secret has
+    nowhere safe to be edited, so it stays refused). A collection of models
+    used to be a third cause; it now has its own drill-down screen
     (`collection_pane`/`body_pane`, spec 11.2/11.7), so it is no longer
-    refused here.
+    refused here. A secret **map** (`github.api_tokens`) follows the same
+    path since Task 9: `is_drilldown` is true for it too, so this falls
+    through to `None` and `app.Editor.enter` opens the map's own screen
+    instead — masked keys, a hidden-input prompt, never a value on screen.
     """
     reason = disabled_reason(spec, layer)
     if reason is not None:
         return reason
-    if spec.secret:
+    if spec.secret and not is_drilldown(spec):
         return (
             "Secrets are not editable here — the editor will not paint a token on a "
             "terminal. Edit the file by hand and keep it at mode 0600."
@@ -290,9 +303,12 @@ def collection_pane(state: EditorState, layer_set: LayerSet) -> Pane:
     for i, crumb in enumerate(crumbs):
         cursor = "▸" if i == state.index else " "
         label = f"[{crumb}]" if isinstance(crumb, int) else str(crumb)
-        value = _dig_entry(state, spec, crumb)
+        # A secret map's value is never read here at all, let alone painted:
+        # the mask is fixed text, not derived from the entry, so there is
+        # nothing for `_entry_summary` to do with it.
+        summary = _SECRET_MASK if spec.secret else _entry_summary(_dig_entry(state, spec, crumb))
         style = "class:cursor" if i == state.index else ""
-        fragments.append((style, f"{cursor} {label}  {_entry_summary(value)}\n"))
+        fragments.append((style, f"{cursor} {label}  {summary}\n"))
     return Pane(fragments, offset + state.index)
 
 

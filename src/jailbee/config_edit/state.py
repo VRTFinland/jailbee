@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from jailbee.config_edit.layers import lookup
 from jailbee.config_edit.schema import (
-    COLLECTION_KINDS,
     FieldKind,
     build_specs,
     dotted,
+    is_drilldown,
     rebase,
 )
 from jailbee.config_writer import DELETE, KeyPath, YamlChange
@@ -144,8 +144,13 @@ def screen(state: EditorState) -> Screen:
     while i < len(state.trail):
         prefix = (*prefix, state.trail[i])
         spec = _spec_at(pool, prefix)
-        if spec is not None and spec.kind in COLLECTION_KINDS and spec.item_model is not None:
+        if spec is not None and is_drilldown(spec):
             if i + 1 == len(state.trail):
+                return Screen("collection", (), spec)
+            if spec.item_model is None:
+                # A secret map's "entry" is one string, edited in a hidden
+                # prompt (`app.Editor.enter`) — there is no form to descend
+                # into, so the trail cannot go deeper than the map itself.
                 return Screen("collection", (), spec)
             prefix = (*prefix, state.trail[i + 1])
             pool = rebase(build_specs(spec.item_model), prefix)
