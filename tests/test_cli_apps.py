@@ -59,10 +59,15 @@ def test_apps_run_launches_the_named_app(tmp_path, mocker):
 
     cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    resolve_attachable = mocker.patch(
+        "jailbee.cli._resolve_attachable", return_value=(Incus(), "c1")
+    )
     launch = mocker.patch("jailbee.apps.launch")
-    result = runner.invoke(app, ["apps", "run", "figma", "c1", "--", "--flag"])
+    result = runner.invoke(app, ["apps", "run", "figma", "--container", "c1", "--", "--flag"])
     assert result.exit_code == 0
+    # RULING 24: container is `--container`, not a positional — assert it
+    # actually reached `_resolve_attachable` as the option value.
+    assert resolve_attachable.call_args.args[1] == "c1"
     assert launch.call_args.args[3].name == "figma"
     assert launch.call_args.args[4] == ["--flag"]
 
@@ -74,7 +79,7 @@ def test_apps_run_unknown_name_exits_2_and_lists_options(tmp_path, mocker):
     cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
-    result = runner.invoke(app, ["apps", "run", "nope", "c1"])
+    result = runner.invoke(app, ["apps", "run", "nope", "--container", "c1"])
     assert result.exit_code == 2
     assert "figma" in result.output
 
@@ -98,8 +103,34 @@ def test_apps_run_omitting_container_resolves_default(tmp_path, mocker):
     launch = mocker.patch("jailbee.apps.launch")
     result = runner.invoke(app, ["apps", "run", "figma"])
     assert result.exit_code == 0
-    # The container positional was omitted, so `_resolve_attachable` must have
-    # been called with name=None, not "figma".
+    # No --container was given, so `_resolve_attachable` must have been
+    # called with container=None, not "figma".
     assert resolve_attachable.call_args.args[1] is None
     assert launch.call_args.args[3].name == "figma"
     assert launch.call_args.args[4] == []
+
+
+def test_apps_run_args_after_double_dash_are_not_swallowed_as_container(tmp_path, mocker):
+    """RULING 24 — the whole point of moving the container behind `--container`.
+
+    With three positionals (app_name, [name], [args]...) and no container
+    given, `jailbee apps run figma -- --flag` used to bind "--flag" to the
+    middle `name` (container) slot, since Click fills fixed-arity positionals
+    before the trailing variadic one regardless of what the user meant to
+    skip. Pin the fix directly: with the container behind `--container`,
+    the same invocation must put "--flag" in `args` and leave the container
+    unset (`_resolve_attachable` called with `None`), not the reverse.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    resolve_attachable = mocker.patch(
+        "jailbee.cli._resolve_attachable", return_value=(Incus(), "c1")
+    )
+    launch = mocker.patch("jailbee.apps.launch")
+    result = runner.invoke(app, ["apps", "run", "figma", "--", "--flag"])
+    assert result.exit_code == 0
+    assert resolve_attachable.call_args.args[1] is None
+    assert launch.call_args.args[4] == ["--flag"]

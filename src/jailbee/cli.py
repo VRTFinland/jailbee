@@ -8047,13 +8047,17 @@ def apps_run_cmd(
         str | None,
         typer.Argument(help="App to launch.", autocompletion=completion.complete_app_name),
     ] = None,
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
     args: Annotated[
         list[str] | None,
         typer.Argument(help="Extra arguments appended to the app's command line."),
+    ] = None,
+    container: Annotated[
+        str | None,
+        typer.Option(
+            "--container",
+            help="Container to launch in. Defaults like every other attach command.",
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     force: Annotated[
         bool,
@@ -8068,7 +8072,12 @@ def apps_run_cmd(
     """Launch a GUI app in the container.
 
     APP_NAME is required and comes first — see `jailbee apps ls` for what is
-    available. CONTAINER is optional, like every other attach command.
+    available. The container is named with `--container`, not a second
+    positional (`-c` is already `--config`'s short flag on every command, so
+    it is not reused here): with APP_NAME optional-in-form and ARGS variadic,
+    a middle positional for the container could not be told apart from the
+    app's own arguments (`jailbee apps run figma -- --flag` would otherwise
+    bind `--flag` to the container slot instead of `args`).
     """
     from jailbee.apps import get_app, launch
 
@@ -8081,7 +8090,7 @@ def apps_run_cmd(
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd="apps run")
+    incus, resolved = _resolve_attachable(cfg, container, force=force, attach_cmd="apps run")
     launch(cfg, incus, resolved, spec, list(args or []))
 
 
