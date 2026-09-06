@@ -16,7 +16,7 @@ from jailbee.tui import error, info
 _SUPPORTED_IDE_LAUNCHERS: frozenset[str] = frozenset(get_args(IdeName))
 
 
-def _gui_env(cfg: Config) -> dict[str, str]:
+def gui_env(cfg: Config) -> dict[str, str]:
     """Environment vars for GUI apps inside the container.
 
     HOME must be set explicitly: ``incus exec --user <uid>`` doesn't read
@@ -67,24 +67,31 @@ def host_wayland_socket() -> str:
     return os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
 
 
-def _detached_incus_exec(
+def launch_detached(
     container: str,
     uid: int,
-    env_args: list[str],
+    env: dict[str, str],
     inner_cmd: str,
     log_path: str,
     *,
     cwd: str | None = None,
 ) -> None:
-    """Spawn `incus exec` so the GUI app survives `jailbee` returning.
+    """Spawn `incus exec` so a GUI app survives `jailbee` returning.
 
     Two layers of detachment: the parent Python ``subprocess.Popen`` is given
     a fresh session and ``/dev/null`` stdio so the child doesn't share jailbee's
-    TTY (which would leave the terminal in a messed-up state on parent
-    exit). The inner shell uses ``setsid`` + ``</dev/null`` so the GUI
-    process detaches from the bash that launched it.
+    TTY (which would leave the terminal in a messed-up state on parent exit).
+    The inner shell uses ``setsid`` + ``</dev/null`` so the GUI process
+    detaches from the bash that launched it.
+
+    This is the one place in jailbee outside ``incus.py`` that runs the
+    ``incus`` binary directly, and it stays that way: callers hand it an
+    environment and a command line, never their own subprocess.
     """
     cwd_args = ["--cwd", cwd] if cwd else []
+    env_args: list[str] = []
+    for k, v in env.items():
+        env_args += ["--env", f"{k}={v}"]
     shell = f"setsid bash -c {shlex.quote(inner_cmd)} </dev/null >{shlex.quote(log_path)} 2>&1 &"
     subprocess.Popen(
         [
@@ -140,13 +147,10 @@ def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
     repo_dir = container_repo_dir(cfg, incus, container)
     log_path = f"/tmp/jailbee-ide-{app}.log"
     info(f"Launching {app} in {container} (background, logs in container: {log_path})")
-    env_args: list[str] = []
-    for k, v in _gui_env(cfg).items():
-        env_args += ["--env", f"{k}={v}"]
-    _detached_incus_exec(
+    launch_detached(
         container,
         cfg.container_user.uid,
-        env_args,
+        gui_env(cfg),
         f"{shlex.quote(result)} {shlex.quote(repo_dir)}",
         log_path,
         cwd=repo_dir,
@@ -184,13 +188,10 @@ def open_chrome(cfg: Config, incus: Incus, container: str, url: str | None) -> N
 
     log_path = "/tmp/jailbee-chrome.log"
     info(f"Launching Chrome in {container} (background, logs in container: {log_path})")
-    env_args: list[str] = []
-    for k, v in _gui_env(cfg).items():
-        env_args += ["--env", f"{k}={v}"]
-    _detached_incus_exec(
+    launch_detached(
         container,
         cfg.container_user.uid,
-        env_args,
+        gui_env(cfg),
         " ".join(shlex.quote(a) for a in args),
         log_path,
     )

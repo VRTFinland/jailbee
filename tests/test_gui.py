@@ -403,3 +403,27 @@ def test_host_wayland_socket_falls_back_to_wayland_0_when_unset(monkeypatch):
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
 
     assert host_wayland_socket() == "wayland-0"
+
+
+# --- launch_detached primitive ---
+
+
+def test_launch_detached_passes_env_as_incus_env_flags(mocker):
+    from jailbee.gui import launch_detached
+
+    popen = mocker.patch("jailbee.gui.subprocess.Popen")
+    launch_detached("c1", 1000, {"HOME": "/home/dev", "DISPLAY": ":0"}, "/bin/true", "/tmp/x.log")
+
+    argv = popen.call_args.args[0]
+    pairs = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
+    assert pairs == ["HOME=/home/dev", "DISPLAY=:0"]
+
+
+def test_launch_detached_redirects_to_the_log_file(mocker):
+    from jailbee.gui import launch_detached
+
+    popen = mocker.patch("jailbee.gui.subprocess.Popen")
+    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/jailbee-app-x.log")
+    script = popen.call_args.args[0][-1]
+    assert ">/tmp/jailbee-app-x.log" in script
+    assert "/dev/null" in script  # stdin only
