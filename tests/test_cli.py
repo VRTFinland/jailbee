@@ -2751,11 +2751,11 @@ def test_ide_cmd_uses_cfg_jetbrains_ide_when_no_app_flag(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "pycharm"
+    assert launch.call_args.args[3].command == ["pycharm"]
 
 
 def test_ide_cmd_errors_when_jetbrains_disabled(tmp_path, mocker):
@@ -2776,12 +2776,12 @@ def test_ide_cmd_errors_when_jetbrains_disabled(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
 
     assert result.exit_code == 2
-    open_ide.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_ide_cmd_defaults_to_idea_when_no_app_and_no_override(tmp_path, mocker):
@@ -2799,11 +2799,11 @@ def test_ide_cmd_defaults_to_idea_when_no_app_and_no_override(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "idea"
+    assert launch.call_args.args[3].command == ["idea"]
 
 
 def test_ide_cmd_app_flag_overrides_cfg_ide(tmp_path, mocker):
@@ -2820,11 +2820,11 @@ def test_ide_cmd_app_flag_overrides_cfg_ide(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x", "--app", "pycharm"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "pycharm"
+    assert launch.call_args.args[3].command == ["pycharm"]
 
 
 # --- `gie chrome` URL resolution (cfg.chrome_url + CLI override) ---
@@ -2858,11 +2858,17 @@ def test_chrome_cmd_uses_cfg_chrome_url_when_no_url_arg(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] == "https://example.com"
+    # No explicit URL argument: `args` stays None and the spec's own
+    # `default_url` (from `browsers.chrome.url`) is what `apps.launch` falls
+    # back to — asserted directly here so a regression that resurrects the
+    # old `url or cfg.chrome.url` double-application bug (which would smuggle
+    # the configured URL into `args` too) is caught.
+    assert launch.call_args.args[4] is None
+    assert launch.call_args.args[3].default_url == "https://example.com"
 
 
 def test_chrome_cmd_url_arg_overrides_cfg_chrome_url(tmp_path, mocker):
@@ -2879,11 +2885,11 @@ def test_chrome_cmd_url_arg_overrides_cfg_chrome_url(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x", "https://from-cli"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] == "https://from-cli"
+    assert launch.call_args.args[4] == ["https://from-cli"]
 
 
 def test_chrome_cmd_errors_when_chrome_disabled(tmp_path, mocker):
@@ -2904,12 +2910,12 @@ def test_chrome_cmd_errors_when_chrome_disabled(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
 
     assert result.exit_code == 2
-    open_chrome.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_chrome_cmd_passes_none_when_no_url_anywhere(tmp_path, mocker):
@@ -2926,11 +2932,12 @@ def test_chrome_cmd_passes_none_when_no_url_anywhere(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] is None
+    assert launch.call_args.args[4] is None
+    assert launch.call_args.args[3].default_url is None
 
 
 # --- Phase A Task 7: config show --layer -------------------------------------

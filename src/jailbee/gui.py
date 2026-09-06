@@ -1,4 +1,9 @@
-"""GUI app launchers — IDE and Chrome inside containers."""
+"""GUI launch primitives shared by every registry app.
+
+`gui.py` knows about no application by name — see `apps.py` for the
+registry (`AppSpec`, `get_app`, `launch`) that resolves what to run and
+which container path each app lives at.
+"""
 
 from __future__ import annotations
 
@@ -7,8 +12,6 @@ import shlex
 import subprocess
 
 from jailbee.config import CONTAINER_USERNAME, Config
-from jailbee.incus import Incus
-from jailbee.tui import error
 
 
 def gui_env(cfg: Config) -> dict[str, str]:
@@ -107,29 +110,3 @@ def launch_detached(
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-
-
-def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
-    """Deprecated shim: use `apps.launch(cfg, incus, container, apps.get_app(cfg, "ide"))`.
-
-    Removed once `cli.py` reads the registry directly (Task 14).
-    """
-    from jailbee.apps import AppSpec, launch
-    from jailbee.ide import resolve_launcher
-
-    try:
-        argv = resolve_launcher(
-            incus, container, app, uid=cfg.container_user.uid, gid=cfg.container_user.gid
-        )
-    except ValueError as e:
-        error(str(e))
-        return
-
-    launch(cfg, incus, container, AppSpec(name="ide", command=argv, cwd="repo", source="builtin"))
-
-
-def open_chrome(cfg: Config, incus: Incus, container: str, url: str | None) -> None:
-    """Deprecated shim: use `apps.launch(...)` with the `chrome` spec."""
-    from jailbee.apps import get_app, launch
-
-    launch(cfg, incus, container, get_app(cfg, "chrome"), [url] if url else None)

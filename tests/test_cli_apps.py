@@ -166,3 +166,112 @@ def test_apps_run_args_after_double_dash_are_not_swallowed_as_container(tmp_path
     assert result.exit_code == 0
     assert resolve_attachable.call_args.args[1] is None
     launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), ["--flag"])
+
+
+def test_browser_opens_the_single_enabled_browser(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    launch = mocker.patch("jailbee.apps.launch")
+    assert runner.invoke(app, ["browser", "c1"]).exit_code == 0
+    assert launch.call_args.args[3].name == "firefox"
+
+
+def test_browser_with_two_enabled_and_no_default_explains(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={"chrome": {"enabled": True}, "firefox": {"enabled": True}},
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    result = runner.invoke(app, ["browser", "c1"])
+    assert result.exit_code == 2
+    assert "browsers.default" in result.output
+    assert "chrome" in result.output and "firefox" in result.output
+
+
+def test_browser_with_none_enabled_says_so(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    result = runner.invoke(app, ["browser", "c1"])
+    assert result.exit_code == 2
+    assert "No browser is enabled" in result.output
+
+
+def test_firefox_command_errors_when_disabled(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    result = runner.invoke(app, ["firefox", "c1"])
+    assert result.exit_code == 2
+    assert "browsers.firefox.enabled" in result.output
+
+
+def test_chrome_url_argument_still_overrides_config(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "url": "https://cfg.test"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    launch = mocker.patch("jailbee.apps.launch")
+    runner.invoke(app, ["chrome", "c1", "https://call.test"])
+    assert launch.call_args.args[4] == ["https://call.test"]
+
+
+def test_chrome_with_no_explicit_url_passes_none_and_lets_the_spec_supply_it(tmp_path, mocker):
+    """Regression guard for the Task 10 double-URL bug: `chrome_cmd` must
+    pass only the explicit URL (or None) to `launch`, never
+    `url or cfg.chrome.url` — the spec's own `default_url` already carries
+    the configured URL, and `apps.launch` appends it only when `args` is
+    falsy. Asserting the configured URL's *count* on the launched argv (via
+    `launch`'s own `args` parameter here, count semantics owned by
+    `apps.launch` and covered in `test_apps.py`) is what would catch a
+    regression that passed the URL twice.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "url": "https://cfg.test"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    launch = mocker.patch("jailbee.apps.launch")
+    runner.invoke(app, ["chrome", "c1"])
+    assert launch.call_args.args[4] is None
+    assert launch.call_args.args[3].default_url == "https://cfg.test"
+
+
+def test_ide_app_flag_one_off_spec_passes_container_user_uid_gid(tmp_path, mocker):
+    """The one-off `AppSpec` built for `--app <ide other than cfg.jetbrains.ide>`
+    must forward the configured container uid/gid to `resolve_launcher` — it
+    runs the Toolbox search as the container user because container root is
+    an unprivileged subuid that cannot read the host-mounted Toolbox tree.
+    This exact wiring has already been dropped twice; `launch` runs for real
+    here (not mocked) so `spec.resolve_command`'s closure actually executes,
+    which a mocked `apps.launch` would skip entirely.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        jetbrains={"enabled": True, "ide": "idea"},
+        container_user={"uid": 4242, "gid": 4343},
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    resolve_launcher = mocker.patch(
+        "jailbee.ide.resolve_launcher", return_value=["/opt/x/bin/pycharm"]
+    )
+    mocker.patch("jailbee.gui.launch_detached")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    result = runner.invoke(app, ["ide", "c1", "--app", "pycharm"])
+    assert result.exit_code == 0, result.output
+    assert resolve_launcher.call_args.kwargs["uid"] == 4242
+    assert resolve_launcher.call_args.kwargs["gid"] == 4343

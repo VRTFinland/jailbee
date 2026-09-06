@@ -107,7 +107,7 @@ class JetbrainsConfig(BaseModel):
         default_factory=lambda: Path.home() / ".local" / "share" / "JetBrains" / "Toolbox",
         description=(
             "Host path RO-mounted to /opt/jetbrains-toolbox (the container-side path is "
-            "hardcoded in gui.open_ide). Set to null to disable the auto-mount."
+            "hardcoded in ide.resolve_launcher). Set to null to disable the auto-mount."
         ),
     )
 

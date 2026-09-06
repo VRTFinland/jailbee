@@ -94,8 +94,7 @@ def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
     mocker.patch("jailbee.autostart.run_autostart")
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app,
@@ -103,8 +102,8 @@ def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_called_once()
-    open_ide.assert_called_once()
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {"ide", "chrome"}
 
 
 def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
@@ -121,16 +120,14 @@ def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
         "jetbrains:\n  enabled: false\n  autostart: true\nchrome:\n  autostart: false\n"
     )
 
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app, ["restart", "myrepo-feat-x", "--config", str(repo / ".gie" / "config.yaml")]
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_not_called()
-    open_ide.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_restart_skips_chrome_when_chrome_disabled(mocker, tmp_path):
@@ -147,13 +144,11 @@ def test_restart_skips_chrome_when_chrome_disabled(mocker, tmp_path):
         "chrome:\n  enabled: false\n  autostart: true\njetbrains:\n  autostart: false\n"
     )
 
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app, ["restart", "myrepo-feat-x", "--config", str(repo / ".gie" / "config.yaml")]
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_not_called()
-    open_ide.assert_not_called()
+    launch.assert_not_called()

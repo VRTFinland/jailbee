@@ -1791,17 +1791,17 @@ def _finalize_new(
 
     if launch_gui:
         launch_ide = cfg.jetbrains.enabled and cfg.jetbrains.autostart
-        launch_chrome = cfg.chrome.enabled and cfg.chrome.autostart
+        launch_chrome = cfg.browsers.chrome.enabled and cfg.browsers.chrome.autostart
         if launch_ide or launch_chrome:
             if not has_graphical_session():
                 maybe_warn_no_gui()
             else:
-                from jailbee.gui import open_chrome, open_ide
+                from jailbee.apps import get_app, launch
 
                 if launch_ide:
-                    open_ide(cfg, incus, created, cfg.jetbrains.ide)
+                    launch(cfg, incus, created, get_app(cfg, "ide"))
                 if launch_chrome:
-                    open_chrome(cfg, incus, created, cfg.chrome.url)
+                    launch(cfg, incus, created, get_app(cfg, "chrome"))
 
 
 @app.command("_new-worker", hidden=True)
@@ -2563,17 +2563,17 @@ def _post_start_actions(
         raise typer.Exit(1) from e
 
     launch_ide = cfg.jetbrains.enabled and cfg.jetbrains.autostart
-    launch_chrome = cfg.chrome.enabled and cfg.chrome.autostart
+    launch_chrome = cfg.browsers.chrome.enabled and cfg.browsers.chrome.autostart
     if launch_ide or launch_chrome:
         if not has_graphical_session():
             maybe_warn_no_gui()
         else:
-            from jailbee.gui import open_chrome, open_ide
+            from jailbee.apps import get_app, launch
 
             if launch_ide:
-                open_ide(cfg, incus, name, cfg.jetbrains.ide)
+                launch(cfg, incus, name, get_app(cfg, "ide"))
             if launch_chrome:
-                open_chrome(cfg, incus, name, cfg.chrome.url)
+                launch(cfg, incus, name, get_app(cfg, "chrome"))
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -8097,6 +8097,66 @@ def apps_run_cmd(
 # ---- GUI launcher commands ----
 
 
+def _launch_registry_app(
+    cfg: "Config", name: str | None, app_name: str, *, force: bool, args: list[str] | None = None
+) -> None:
+    """Resolve a container and launch one registry app in it."""
+    from jailbee.apps import get_app, launch
+
+    try:
+        spec = get_app(cfg, app_name)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+    incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd=app_name)
+    launch(cfg, incus, resolved, spec, args)
+
+
+@app.command("browser")
+def browser_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    url: Annotated[
+        str | None,
+        typer.Argument(help="URL to open. Falls back to the browser's `url` config."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Launch the default browser in the container.
+
+    The default is `browsers.default` when set, or the single enabled
+    browser when exactly one is — see `jailbee chrome` / `jailbee firefox`
+    to name one directly.
+    """
+    cfg = _load_or_exit(config)
+    chosen = cfg.resolve_default_browser()
+    if chosen is None:
+        enabled = cfg.browsers.enabled_names()
+        if not enabled:
+            error(
+                "No browser is enabled. Set `browsers.chrome.enabled: true` or "
+                "`browsers.firefox.enabled: true` — see docs/config.md."
+            )
+        else:
+            error(
+                f"More than one browser is enabled ({', '.join(enabled)}). Set "
+                f"`browsers.default` to pick one, or name it directly: "
+                f"`jailbee {enabled[0]}`."
+            )
+        raise typer.Exit(2)
+    _launch_registry_app(cfg, name, chosen, force=force, args=[url] if url else None)
+
+
 @app.command("ide")
 def ide_cmd(
     name: Annotated[
@@ -8122,15 +8182,30 @@ def ide_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Launch JetBrains IDE in the container."""
-    from jailbee.gui import open_ide
-
     cfg = _load_or_exit(config)
     if not cfg.jetbrains.enabled:
         error("JetBrains integration disabled in config (jetbrains.enabled: false).")
         raise typer.Exit(2)
-    resolved = app_name or cfg.jetbrains.ide
-    incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="ide")
-    open_ide(cfg, incus, name, resolved)
+    resolved_app = app_name or cfg.jetbrains.ide
+    if resolved_app == cfg.jetbrains.ide:
+        _launch_registry_app(cfg, name, "ide", force=force)
+        return
+    # --app named a different IDE than the registry's own "ide" spec (which
+    # is always cfg.jetbrains.ide) — build a one-off spec for it instead.
+    from jailbee.apps import AppSpec, launch
+    from jailbee.ide import resolve_launcher
+
+    incus, container = _resolve_attachable(cfg, name, force=force, attach_cmd="ide")
+    spec = AppSpec(
+        name="ide",
+        command=[resolved_app],
+        cwd="repo",
+        source="builtin",
+        resolve_command=lambda i, c: resolve_launcher(
+            i, c, resolved_app, uid=cfg.container_user.uid, gid=cfg.container_user.gid
+        ),
+    )
+    launch(cfg, incus, container, spec)
 
 
 @app.command("chrome")
@@ -8141,7 +8216,7 @@ def chrome_cmd(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Argument(help="URL to open. Falls back to chrome.url config."),
+        typer.Argument(help="URL to open. Falls back to `browsers.chrome.url` config."),
     ] = None,
     force: Annotated[
         bool,
@@ -8154,14 +8229,39 @@ def chrome_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Launch Chrome in the container."""
-    from jailbee.gui import open_chrome
-
     cfg = _load_or_exit(config)
-    if not cfg.chrome.enabled:
-        error("Chrome integration disabled in config (chrome.enabled: false).")
+    if not cfg.browsers.chrome.enabled:
+        error("Chrome is disabled in config (browsers.chrome.enabled: false).")
         raise typer.Exit(2)
-    incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="chrome")
-    open_chrome(cfg, incus, name, url or cfg.chrome.url)
+    _launch_registry_app(cfg, name, "chrome", force=force, args=[url] if url else None)
+
+
+@app.command("firefox")
+def firefox_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    url: Annotated[
+        str | None,
+        typer.Argument(help="URL to open. Falls back to `browsers.firefox.url` config."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Launch Firefox in the container."""
+    cfg = _load_or_exit(config)
+    if not cfg.browsers.firefox.enabled:
+        error("Firefox is disabled in config (browsers.firefox.enabled: false).")
+        raise typer.Exit(2)
+    _launch_registry_app(cfg, name, "firefox", force=force, args=[url] if url else None)
 
 
 claude_app = typer.Typer(

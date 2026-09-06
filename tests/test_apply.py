@@ -1334,13 +1334,11 @@ def test_restart_one_does_not_launch_gui_apps(
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.autostart.run_autostart")
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     _restart_one(cfg, incus, "a")
 
-    open_chrome.assert_not_called()
-    open_ide.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_run_apply_creates_claude_shared_dir_when_enabled(
