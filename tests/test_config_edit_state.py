@@ -1255,3 +1255,43 @@ def test_toggle_flips_the_entry_field_the_row_shows_not_another_layers():
     got = st.toggle_current(state)
 
     assert st.own(got, ("host_mounts", 0, "readonly")) is True
+
+
+# -- putting the cursor back after a save moves the ground ----------------
+
+
+def test_reanchor_walks_out_of_an_entry_the_layers_no_longer_have():
+    """What `app.Editor._reload` needs after a save deleted the open entry.
+
+    `r` on a collection from a search hit, then walk into its entry list (which
+    still renders — `own` falls through an `UNSET` to the file), then `s`. The
+    save removes the key; without this the trail still names entry 1, the form
+    paints an absent list, and the next edit stages a path whose index
+    addresses nothing.
+    """
+    state = _open(trail=("host_mounts", 1), index=2)
+
+    got = st.reanchor(state)
+
+    assert got.trail == ("host_mounts",)
+    assert st.screen(got).kind == "collection"
+    assert got.index == 0
+
+
+def test_reanchor_keeps_a_trail_that_still_resolves():
+    """Not a blanket reset: a save that left the entry alone must not move the
+    cursor out of the form the user is filling in."""
+    state = _open(SAVED, trail=("host_mounts", 1), index=2)
+
+    assert st.reanchor(state) == state
+
+
+def test_reanchor_drops_as_many_crumbs_as_the_layers_have_lost():
+    """One crumb at a time, re-probing after each: an entry can hold a
+    collection of its own, so the stale crumb need not be the last one."""
+    state = _open(trail=("autostart", "on_create", 3), index=1)
+
+    got = st.reanchor(state)
+
+    assert got.trail == ("autostart", "on_create")
+    assert st.screen(got).kind == "collection"

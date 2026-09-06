@@ -622,10 +622,20 @@ class Editor:
         """The plan for the staged edits, or `None` with a notice explaining why.
 
         Shared by `save` and `show_diff` so the two cannot drift on which
-        failures stop a save: nothing staged, a mapping the loader rejects, and
-        a rendering this package cannot read back (`RenderedYamlError`, spec
+        failures stop a save: nothing staged, a mapping the loader rejects, a
+        staged path that does not address the file (`ValueError`), and a
+        rendering this package cannot read back (`RenderedYamlError`, spec
         3.5's last line of defence — `validate` sees the mapping, never the
         text). Every one of them keeps the session and the staged edits alive.
+
+        The `ValueError` arm is what makes that last sentence true rather than
+        aspirational. `layers.apply_changes` raises on a path whose integer
+        segment addresses a list the layer does not have, and `validate` calls
+        it — so before this, a staged path gone stale took the whole
+        application down out of the key handler, taking every other staged edit
+        with it. `_reload`'s re-anchoring removes the one sequence that
+        produced such a path; this makes the next one a message instead of a
+        crash, which is what every other failure here already is.
         """
         from jailbee.config_edit.layers import validate
         from jailbee.config_edit.save import RenderedYamlError, build_plan
@@ -634,16 +644,19 @@ class Editor:
         if not edits:
             self.notice(nothing_staged)
             return None
-        error = validate(self.layer_set, self.state.layer, edits)
-        if error is not None:
-            self.notice(error, style="class:error")
-            return None
         try:
+            error = validate(self.layer_set, self.state.layer, edits)
+            if error is not None:
+                self.notice(error, style="class:error")
+                return None
             return build_plan(
                 self.layer_set, self.state.layer, edits, self.state.specs, self.policy
             )
         except RenderedYamlError as e:
             self.notice(str(e), style="class:error")
+            return None
+        except ValueError as e:
+            self.notice(f"Cannot apply the staged edits: {e}", style="class:error")
             return None
 
     def _write(self, plan: SavePlan) -> None:
@@ -674,6 +687,12 @@ class Editor:
         flag survive: the user's place in a tree of eighty-odd fields is
         expensive to find again.
 
+        Survive, but re-anchored: the save may have deleted the entry the trail
+        was standing in (`r` on a collection, then walk into it, then `s`), and
+        carrying the trail over unchanged leaves a form painting an entry that
+        is no longer in the file — and the next edit stages a path whose index
+        addresses nothing. `st.reanchor` trims the trail back to a screen that
+        still exists and re-clamps the cursor to it.
         """
         from jailbee.config_edit.layers import raw_for, read_layers, resolve
 
@@ -684,12 +703,14 @@ class Editor:
             origins=resolve(self.state.specs, self.layer_set),
             layer_raw=raw_for(self.layer_set, self.state.layer),
         )
-        self.state = replace(
-            fresh,
-            trail=self.state.trail,
-            index=self.state.index,
-            query=self.state.query,
-            show_all=self.state.show_all,
+        self.state = st.reanchor(
+            replace(
+                fresh,
+                trail=self.state.trail,
+                index=self.state.index,
+                query=self.state.query,
+                show_all=self.state.show_all,
+            )
         )
 
     def show_diff(self) -> None:

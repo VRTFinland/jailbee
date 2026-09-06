@@ -1553,3 +1553,49 @@ def test_edit_current_seeds_an_entry_field_from_the_layer_the_row_shows(tmp_path
     row = "".join(chunk for _style, chunk, *_rest in render.field_pane(editor.state).fragments)
     assert "/GLOBAL" in row
     assert "/REPO" not in row
+
+
+def test_a_save_that_deletes_the_open_collection_walks_the_cursor_out_of_it(tmp_path):
+    """The reviewer's sequence, which crashed on the tree that fixed the first
+    round: `/host_mounts` `Enter` → `r` → `Esc` → walk in → stand on entry 1 →
+    `s`. The save deletes the key, `_reload` used to carry the trail over
+    unchanged, and the next edit staged `host_mounts.1.host` into a file with no
+    `host_mounts` at all — `ValueError: index out of range` out of the key
+    handler on the following `s`, app dead.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")  # `/host_mounts` + Enter
+    editor.reset()  # `r` on the collection's own row
+    editor.state = st.set_query(editor.state, "")  # `Esc` out of the search
+    _descend(editor, "host_mounts", 1)
+    assert st.screen(editor.state).kind == "entry"
+
+    editor.save()
+
+    assert editor.message.startswith("Saved")
+    assert editor.state.trail == ("host_mounts",)
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.state.index == 0
+    # And the screen the cursor landed on is a live one: `Enter` offers `n`
+    # rather than opening a form over an entry that is not in the file.
+    editor.enter()
+    assert "press `n`" in editor.message
+
+
+def test_a_stale_staged_path_is_reported_rather_than_taking_the_editor_down(tmp_path):
+    """`_plan`'s own docstring promises every failure keeps the session; the
+    `ValueError` `layers.apply_changes` raises on a path whose integer segment
+    addresses a list the layer does not have was the one that did not.
+
+    `_reload`'s re-anchoring removes the sequence that produced such a path, but
+    the two fixes are independent: this one is what makes the next sequence a
+    message instead of a crash.
+    """
+    editor = _editor(tmp_path, repo={})
+    editor.state = st.stage(editor.state, ("host_mounts", 1, "host"), "/x")
+
+    editor.save()  # must not raise
+
+    assert "host_mounts.1.host: index out of range" in editor.message
+    assert editor.message_style == "class:error"
+    assert editor.state.staged  # the session, and the staged work, survive

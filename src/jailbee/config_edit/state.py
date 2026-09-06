@@ -265,6 +265,37 @@ def leave_crumb(state: EditorState) -> EditorState:
     return replace(state, trail=state.trail[:-1], index=0, query="")
 
 
+def reanchor(state: EditorState) -> EditorState:
+    """Trim the trail to a screen the layers still have, and re-clamp the cursor.
+
+    A save can delete the very entry — or the whole collection — the trail is
+    standing in: `r` on `host_mounts` from a search hit stages the collection's
+    deletion, and the user can then walk into the entry list (which still
+    renders: `own` falls through an `UNSET` to the file) and stand on entry 1
+    before pressing `s`. `app.Editor._reload` rebuilds the session from the
+    file that save just wrote, and without this the trail still points at an
+    entry that no longer exists: the form paints from an absent list, and the
+    next edit stages a leaf whose integer segment addresses nothing —
+    `layers.apply_changes` raises `index out of range` out of the key handler
+    on the following save.
+
+    One crumb at a time, re-probing after each: an entry can contain a
+    collection of its own, so the stale crumb need not be the last one.
+    `move(..., 0)` at the end re-clamps `index` against whatever screen is left,
+    which is a different length from the one the cursor was measured against.
+    """
+    trail = state.trail
+    while trail:
+        probe = replace(state, trail=trail)
+        view = screen(probe)
+        if view.kind != "entry" or view.collection is None:
+            break
+        if view.entry_path[-1] in entries(probe, view.collection):
+            break
+        trail = trail[:-1]
+    return move(replace(state, trail=trail), 0)
+
+
 def set_query(state: EditorState, query: str) -> EditorState:
     """Set the search string. Empty restores the section list.
 
