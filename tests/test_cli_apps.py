@@ -299,6 +299,42 @@ def test_ide_app_flag_one_off_spec_passes_container_user_uid_gid(tmp_path, mocke
     assert resolve_launcher.call_args.kwargs["gid"] == 4343
 
 
+def test_ide_app_flag_one_off_spec_logs_under_the_launcher_name(tmp_path, mocker):
+    """`AppSpec.name` picks the log path, so a one-off spec named "ide" made
+    `--app webstorm` and `--app idea` share /tmp/jailbee-app-ide.log and
+    overwrite each other's output. Pre-registry they had separate logs.
+
+    `launch` runs for real so the assertion is on the path actually handed
+    to `launch_detached`, not on the spec's name in isolation.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, jetbrains={"enabled": True, "ide": "idea"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.ide.resolve_launcher", return_value=["/opt/x/bin/webstorm"])
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+
+    assert runner.invoke(app, ["ide", "c1", "--app", "webstorm"]).exit_code == 0
+    assert detached.call_args.args[4] == "/tmp/jailbee-app-webstorm.log"
+
+
+def test_every_ide_name_is_a_legal_app_name():
+    """`--app <name>` now becomes an `AppSpec.name`, hence a log-file path
+    segment. That is only safe while every `IdeName` literal matches
+    `APP_NAME_RE` — a future launcher with a slash, a space or an uppercase
+    letter in it would put an unquoted surprise in `/tmp`.
+    """
+    from typing import get_args
+
+    from jailbee.config import APP_NAME_RE, IdeName
+
+    offenders = [n for n in get_args(IdeName) if not APP_NAME_RE.match(n)]
+    assert offenders == []
+
+
 def test_ide_reports_missing_launcher_instead_of_a_traceback(tmp_path, mocker):
     """Finding 1 (review round): a container built before the Toolbox mount
     existed, or `toolbox_host_path: null`, is an ordinary state — not a

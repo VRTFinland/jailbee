@@ -8227,7 +8227,13 @@ def ide_cmd(
 
     incus, container = _resolve_attachable(cfg, name, force=force, attach_cmd="ide")
     spec = AppSpec(
-        name="ide",
+        # Named for the launcher, not "ide": `AppSpec.name` picks the log
+        # path, so `--app webstorm` and `--app idea` would otherwise both
+        # write /tmp/jailbee-app-ide.log and overwrite each other's output.
+        # Pre-registry these had separate logs. Every `IdeName` literal is
+        # already APP_NAME_RE-shaped, which is what makes it safe as a path
+        # segment — `test_cli_apps` pins that.
+        name=resolved_app,
         command=[resolved_app],
         cwd="repo",
         # As in `ide.builtin_specs`: the repo path on the launcher's command
