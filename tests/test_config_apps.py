@@ -37,3 +37,15 @@ def test_cwd_accepts_an_absolute_container_path():
 def test_unknown_key_is_rejected():
     with pytest.raises(ValidationError):
         AppEntry.model_validate({"command": "x", "detach": True})
+
+
+def test_command_empty_string_is_rejected():
+    # Empty string splits to empty list via _split_command, then _command_not_empty rejects it.
+    with pytest.raises(ValidationError):
+        AppEntry.model_validate({"command": ""})
+
+
+def test_command_empty_list_is_rejected():
+    # Empty list reaches _command_not_empty directly without split.
+    with pytest.raises(ValidationError):
+        AppEntry.model_validate({"command": []})
