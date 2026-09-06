@@ -2014,6 +2014,14 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
     incus.exists.side_effect = lambda n: n == "myrepo-feat-x"
     incus.exec_interactive.return_value = 0
 
+    # env is now the GUI environment (jailbee.gui.gui_env), passed
+    # unconditionally: HOME is the load-bearing fix (incus exec --user
+    # doesn't read /etc/passwd), the rest is inert for a non-GUI command
+    # like this one. Pin the wiring, not gui_env's own host-dependent
+    # values (WAYLAND_DISPLAY/DISPLAY come from the host environment).
+    fake_env = {"HOME": "/home/dev", "WAYLAND_DISPLAY": "wayland-9", "DISPLAY": ":9"}
+    mocker.patch("jailbee.gui.gui_env", return_value=fake_env)
+
     result = CliRunner().invoke(app, ["exec", "feat-x", "--", "claude"])
     assert result.exit_code == 0, result.stdout
     import os
@@ -2023,7 +2031,7 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
         ["bash", "-lc", "cd /home/dev/myrepo && exec claude"],
         uid=os.getuid(),
         gid=os.getgid(),
-        env={"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev"},
+        env=fake_env,
         init_groups=True,
     )
 

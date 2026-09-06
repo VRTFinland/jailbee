@@ -9758,6 +9758,16 @@ def exec_cmd(
             help="`repo` (default), `home`, or an absolute container path.",
         ),
     ] = "repo",
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            "-d",
+            help="Run in the background: the command survives `jailbee` returning and "
+            "its output goes to a log file inside the container. Needed for GUI apps; "
+            "works for anything long-running.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Run a command in the container as the dev user.
@@ -9766,6 +9776,7 @@ def exec_cmd(
         jailbee exec smoke -- claude
         jailbee exec smoke -- pnpm test
         jailbee exec smoke --cwd home -- ls -la
+        jailbee exec smoke -d -- firefox
     """
     import shlex
 
@@ -9789,6 +9800,34 @@ def exec_cmd(
         target = cwd
 
     shell_cmd = " ".join(shlex.quote(a) for a in cmd)
+
+    # The GUI environment goes in unconditionally. It is inert for a
+    # non-GUI command, and HOME is an outright fix: `incus exec --user`
+    # does not read /etc/passwd, so without this every `jailbee exec` runs
+    # with HOME unset.
+    from jailbee.gui import gui_env
+
+    env = gui_env(cfg)
+
+    if detach:
+        from datetime import datetime
+
+        from jailbee.gui import launch_detached
+
+        log_path = f"/tmp/jailbee-exec-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+        # A login shell in both paths, so `~/.local/bin` is on PATH whether
+        # or not the caller detached.
+        launch_detached(
+            resolved,
+            cfg.container_user.uid,
+            env,
+            f"bash -lc {shlex.quote(shell_cmd)}",
+            log_path,
+            cwd=target,
+        )
+        info(f"Started in background in {resolved} (logs in container: {log_path})")
+        raise typer.Exit(0)
+
     # Route through `incus exec --user` instead of `sudo -u`: sudo
     # silently filters env vars not in env_keep, dropping any
     # `container.env` entries set on the base profile.
@@ -9805,11 +9844,7 @@ def exec_cmd(
         ["bash", "-lc", f"cd {shlex.quote(target)} && exec {shell_cmd}"],
         uid=cfg.container_user.uid,
         gid=cfg.container_user.gid,
-        env={
-            "HOME": f"/home/{CONTAINER_USERNAME}",
-            "USER": CONTAINER_USERNAME,
-            "LOGNAME": CONTAINER_USERNAME,
-        },
+        env=env,
         init_groups=True,
     )
     raise typer.Exit(rc)
