@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jailbee.config.common import PathExpanded
 from jailbee.config.models_golden import IdeName
@@ -128,6 +128,34 @@ source that works for Firefox on Ubuntu, where the host's Firefox is a snap.
 """
 
 
+def _backfill_chrome_default_host_path(v: object) -> object:
+    """Fill in Chrome's default `host_path` when a raw dict omits it.
+
+    A submodel field's own `default_factory` only fires when the whole key
+    (e.g. `chrome:`) is absent from the input entirely — a partial dict such
+    as `{"enabled": true}` validates straight against `BrowserConfig`, whose
+    own `host_path` default is `None` (shared with Firefox, which has no
+    host default at all). Without this, `{"chrome": {"enabled": true}}` —
+    the ordinary "just turn Chrome on" config — would silently lose the
+    standard google-chrome-stable mount.
+
+    Skips the backfill when the dict explicitly sets `source: "image"`: an
+    explicit switch away from the host source must not gain a `host_path`,
+    or runtime validation would reject the config for setting `host_path`
+    under `source: image`.
+
+    Shared by `BrowsersConfig.chrome`'s before-validator and (for one
+    release, until the `chrome:` field is retired) `Config.chrome`'s.
+    """
+    if not isinstance(v, dict):
+        return v
+    if v.get("source", "host") != "host":
+        return v
+    if "host_path" in v:
+        return v
+    return {**v, "host_path": _DEFAULT_CHROME_HOST_PATH}
+
+
 class BrowserConfig(BaseModel):
     """One browser inside containers."""
 
@@ -219,6 +247,11 @@ class BrowsersConfig(BaseModel):
         how a user happened to write their YAML.
         """
         return [n for n in ("chrome", "firefox") if getattr(self, n).enabled]
+
+    @field_validator("chrome", mode="before")
+    @classmethod
+    def _default_chrome_host_path(cls, v: object) -> object:
+        return _backfill_chrome_default_host_path(v)
 
 
 # Kept as a name for one release so `from jailbee.config import ChromeConfig`

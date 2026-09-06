@@ -69,6 +69,7 @@ from jailbee.config.models_tools import (
     JetbrainsConfig,
     SshConfig,
     TerminalConfig,
+    _backfill_chrome_default_host_path,
     _kitty_terminfo_candidates,
     resolve_kitty_terminfo_path,
 )
@@ -468,17 +469,14 @@ class Config(BaseModel):
     def _default_chrome_host_path(cls, v: object) -> object:
         """Fill in the default host_path when a raw dict omits it.
 
-        The `chrome` field's own `default_factory` only fires when the whole
-        `chrome:` key is absent from the source data — a partial dict such as
-        `{"enabled": true}` is validated straight against `BrowserConfig`,
-        whose `host_path` default is `None` (shared with Firefox, which has
-        no host default at all). Fill it in before validation so a config
-        that only sets `enabled` still gets the standard
-        google-chrome-stable path.
+        See `models_tools._backfill_chrome_default_host_path` for why this
+        is needed (a submodel field's own `default_factory` does not cover
+        a partial dict) and why it skips the backfill under `source:
+        image`. `BrowsersConfig.chrome` carries the same before-validator;
+        this one goes away with the `chrome:` field itself once `browsers:`
+        replaces it.
         """
-        if isinstance(v, dict) and "host_path" not in v:
-            return {**v, "host_path": _DEFAULT_CHROME_HOST_PATH}
-        return v
+        return _backfill_chrome_default_host_path(v)
 
     @field_validator("agents", mode="before")
     @classmethod

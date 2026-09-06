@@ -34,6 +34,24 @@ def test_enabled_names_is_in_registry_order_not_config_order():
     assert b.enabled_names() == ["chrome", "firefox"]
 
 
+def test_partial_chrome_dict_keeps_the_default_host_path():
+    # The ordinary "just turn Chrome on" config: a dict that sets only
+    # `enabled` must not lose Chrome's default host_path. Pydantic's
+    # field-level default_factory only fires when the `chrome` key is
+    # absent entirely — a present-but-partial dict validates straight
+    # against BrowserConfig, whose own host_path default is None.
+    b = BrowsersConfig.model_validate({"chrome": {"enabled": True}})
+    assert str(b.chrome.host_path) == "/opt/google/chrome"
+
+
+def test_explicit_image_source_does_not_backfill_host_path():
+    # Once source is explicitly "image", host_path must stay None — a
+    # naive backfill would set it regardless of source, and runtime
+    # validation must be free to reject host_path set under source: image.
+    b = BrowsersConfig.model_validate({"chrome": {"enabled": True, "source": "image"}})
+    assert b.chrome.host_path is None
+
+
 def test_unknown_browser_key_is_rejected():
     with pytest.raises(ValidationError):
         BrowsersConfig.model_validate({"safari": {"enabled": True}})
