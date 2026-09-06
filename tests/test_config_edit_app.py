@@ -862,6 +862,33 @@ def test_typing_into_an_entry_cancels_the_collection_s_pending_reset(tmp_path):
     assert "cancels the pending reset of host_mounts" in editor.message
 
 
+def test_enter_on_a_boolean_field_also_cancels_the_collection_s_pending_reset(tmp_path):
+    """`Enter` reaches a bool field through `edit_current`'s own `BOOL`
+    branch, not through `toggle`'s `Space` binding — both must say the same
+    thing when they cancel a pending reset, not just the one bound to `Space`.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+    editor.reset()
+    assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+    editor.state = st.set_query(editor.state, "")
+    _descend(editor, "host_mounts", 0)
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.label == "readonly")
+    )
+
+    editor.edit_current()  # a bool field toggles directly, no prompt opens
+
+    assert editor.prompt is None
+    assert "cancels the pending reset of host_mounts" in editor.message
+
+
 def test_resetting_a_collection_discards_pending_edits_inside_it_and_says_so(tmp_path):
     """The other half of the same rule: resetting a collection that has
     pending edits inside it discards them.

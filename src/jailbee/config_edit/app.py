@@ -277,7 +277,13 @@ class Editor:
         elif spec.kind in _TEXT_KINDS:
             self._open_prompt(spec, values.to_text(spec, value), multiline=False)
         elif spec.kind is FieldKind.BOOL:
-            self.state = st.toggle_current(self.state)
+            # Through `toggle`, not a bare `st.toggle_current` call, so `Enter`
+            # on a bool field gets the same pending-reset-cancelled notice
+            # `Space` does — the two are otherwise the same one keystroke to
+            # the user, and `toggle` has already re-checked `edit_block`/kind,
+            # both of which just passed above, so this is not a new failure
+            # mode, only shared plumbing.
+            self.toggle()
         else:
             self.notice(f"`{spec.kind.value}` fields are not editable here.", style="class:error")
 
