@@ -717,12 +717,30 @@ def test_pick_submodule_cancel_row_uses_a_sentinel_not_its_title(mocker):
 
 
 def test_pick_submodule_offers_every_candidate_in_the_given_order(mocker):
+    """The caller orders the list (via order_candidates); the picker must not
+    re-sort. The fixture is deliberately in an order `order_candidates` would
+    NOT produce — it would put the 5-commit entry first — so an internal sort
+    would fail this test."""
     from jailbee import tui
 
     select = mocker.patch("questionary.select")
-    select.return_value.ask.return_value = "libs/a"
+    select.return_value.ask.return_value = "libs/b"
 
-    tui.pick_submodule([_sub("libs/a"), _sub("libs/b")])
+    tui.pick_submodule([_sub("libs/b", commits=1), _sub("libs/a", commits=5)])
 
     values = [c.value for c in select.call_args.kwargs["choices"]]
-    assert values[:2] == ["libs/a", "libs/b"]
+    assert values[:2] == ["libs/b", "libs/a"]
+
+
+def test_pick_submodule_offers_a_submodule_with_nothing_to_publish(mocker):
+    """A submodule with no commits ahead is still a legitimate target; hiding
+    it would force the user to retype the command with an explicit path."""
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/idle"
+
+    assert tui.pick_submodule([_sub("libs/idle", commits=0)]) == "libs/idle"
+
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert "libs/idle" in values
