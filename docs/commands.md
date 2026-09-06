@@ -12,7 +12,7 @@
 | `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; navigate + act (Enter). The action menu carries the workflow commands too — `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git pull`, `git diff`, `job log` — each shown only when it would do something. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `Space` fold the repo group under the cursor, `F2`/`S` settings overlay (columns + folding), `h`/`?` help, `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal) |
 | `jailbee shell <name>` | Interactive shell (lands in the in-container clone) |
 | `jailbee tmux <name>` | Attach to the autostart tmux session inside the container |
-| `jailbee exec <name> -- <cmd>` | Run a command in the container as the dev user (e.g. `jailbee exec smoke -- pnpm test`) |
+| `jailbee exec <name> [--cwd repo\|home\|<path>] [--detach\|-d] -- <cmd>` | Run a command in the container as the dev user (e.g. `jailbee exec smoke -- pnpm test`). `--detach`/`-d` runs it in the background — it survives `jailbee` returning and its output goes to a log file inside the container (`/tmp/jailbee-exec-<timestamp>-<uuid>.log`); needed for a GUI app (`jailbee exec smoke -d -- firefox`), useful for anything long-running |
 | `jailbee start/stop/restart <name>` | Lifecycle (start/restart re-run autostart) |
 | `jailbee destroy [<name>] [--all] [--force] [--background]` | Destroy one container, `--all` for the whole repo, or no-arg interactive checkbox. Before the usual confirmation, JailBee assesses what would be lost (dirty tree, changed submodule, commits held nowhere else) and, if anything is at risk, shows a summary and a second confirmation defaulting to No; `--force` skips both prompts and the assessment |
 | `jailbee git fetch <name> [-b <branch>]` | Fetch commits from a container's clone into `refs/jailbee/<short>/<branch>` |
@@ -44,9 +44,13 @@
 | `jailbee claude park [-g <group>]` | Store the login in use and leave the holder empty, so the next `claude` in a container of this holder prompts `/login`. This is how a **new** account enters the pool — there is no `add`, because only a browser login creates a credential. `-g` parks that group's login instead of this repo's |
 | `jailbee claude rm [<email\|slot>] [--yes]` | Delete a stored login permanently. Omit the account to pick from a menu. Refuses the live one (park it first). JailBee never contacts Anthropic, so a deleted login only comes back through `/login` |
 | `jailbee mount <kind> <name>` / `jailbee unmount <kind> <name>` | Optional mounts |
-| `jailbee ide <name> [--app idea\|webstorm]` | Launch JetBrains IDE |
-| `jailbee chrome <name> [URL]` | Launch Chrome |
-| `jailbee pool ls/prune [NAME]` | Inspect or clean per-container cache pool slots (Gradle, Maven and Chrome by default — see [`pooled_caches`](config.md#pooled_caches)); omit `NAME` for every pool. `jailbee chrome-pool ls/prune` still works as a deprecated alias for `jailbee pool ls/prune chrome-profile` |
+| `jailbee apps ls [<name>] [-o json] [--fields …]` | List the GUI apps this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without a container this is config only; name one to add a STATUS column that actually probes each app (`present`/`missing`) |
+| `jailbee apps run <app> [<args>…] [--container <name>] [--force]` | Launch a GUI app by name. `<app>` is required and comes first — see `jailbee apps ls`; the container is named with `--container`, not a second positional (three positionals with an optional middle one can't be told apart) |
+| `jailbee ide <name> [--app idea\|webstorm]` | Launch JetBrains IDE. Needs `jetbrains.enabled` |
+| `jailbee chrome <name> [URL]` | Launch Chrome. Needs `browsers.chrome.enabled` (or the deprecated top-level `chrome.enabled`); URL falls back to `browsers.chrome.url` |
+| `jailbee firefox <name> [URL]` | Launch Firefox. Needs `browsers.firefox.enabled`; URL falls back to `browsers.firefox.url`. Firefox defaults to `source: image` (the host's Firefox is a snap on Ubuntu, so there's nothing useful to mount) |
+| `jailbee browser [<name>] [URL]` | Launch the default browser: `browsers.default` when set, or the single enabled browser when exactly one is. Otherwise it errors and names what to set |
+| `jailbee pool ls/prune [NAME]` | Inspect or clean per-container cache pool slots (Gradle, Maven, Chrome and Firefox by default — see [`pooled_caches`](config.md#pooled_caches)); omit `NAME` for every pool. `jailbee chrome-pool ls/prune` still works as a deprecated alias for `jailbee pool ls/prune chrome-profile`; Firefox has no such alias — use `jailbee pool ls/prune firefox-profile` |
 | `jailbee base build` | Build the golden image |
 | `jailbee base prune [--all] [--days N] [--yes-to-all]` | Remove superseded dated golden-image archives (`<alias>-YYYY-MM-DD`). Lists all candidates and confirms once (a single batch confirmation, not per-archive); the live base image is always kept; in-use archives are skipped (batch continues). `--all` prunes archives for every registered repo, not just the current one; `--days N` only removes archives older than N days (default: all dated archives are candidates); `--yes-to-all` skips the confirmation prompt |
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base and dated archive with its size, per-repo subtotals, a prunable (archives-only) figure, and a grand total. `--all` includes every registered repo, not just the current one |
@@ -57,6 +61,16 @@
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration. `show`'s effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
+
+### Top-level app promotion
+
+An `apps:` entry with `top_level: true` also runs as a bare `jailbee <name>
+<container> [args…]` — equivalent to `jailbee apps run <name> --container
+<container> [args…]`, just without the `apps run`. A built-in command of
+the same name always wins, and a config validation error catches the
+collision (`jailbee config validate`, and on every command that loads
+config) rather than the app silently never being reachable that way. See
+[`apps`](config.md#apps).
 
 ### `jailbee gui` / `jailbee dashboard --gui`
 
@@ -78,8 +92,13 @@ instead (blocks until the window closes; errors surface directly).
 
 Interactive actions (shell, tmux) open in a host terminal emulator. Set
 `$JAILBEE_TERMINAL` to force a specific emulator; otherwise JailBee auto-detects one
-(x-terminal-emulator, ptyxis, gnome-terminal, konsole, foot, alacritty, kitty, xterm). IDE and
-Chrome launches reuse the same `jailbee ide` / `jailbee chrome` behaviour.
+(x-terminal-emulator, ptyxis, gnome-terminal, konsole, foot, alacritty, kitty, xterm). IDE,
+Chrome and Firefox launches reuse the same `jailbee ide` / `jailbee chrome` /
+`jailbee firefox` behaviour; the action menu also lists every other
+`apps:` entry as a "Launch `<name>`" item, dispatched as a bare `jailbee
+<name> <container>` — which is only a real command for an entry with
+`top_level: true`. Launch a non-top-level `apps:` entry with
+`jailbee apps run <name> --container <container>` from a shell instead.
 
 The commands that exist for the text they print — `pr`, `git push`, `git pull`,
 `git diff`, `job log` — get no terminal emulator: they run inside the GUI and

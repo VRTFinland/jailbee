@@ -60,8 +60,10 @@ sped up and say so on screen; nothing else is edited.
   `jailbee new` and their objects move with the superproject on every
   push/pull, so a repo with submodules needs no manual setup on either side.
 - **Nested Docker** — `security.nesting=true` out of the box on Ubuntu 26.04.
-- **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`) and Chrome
-  (`jailbee chrome`) from inside a container onto your Wayland session.
+- **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`), Chrome or
+  Firefox (`jailbee chrome`, `jailbee firefox`), or any other app registered
+  under `apps:` (`jailbee apps run <name>`), from inside a container onto
+  your Wayland session.
 - **Host sockets, shared** — Wayland, PulseAudio, D-Bus and the gpg-agent are
   attached to every container, so `git commit -S` and `ssh` work inside while
   the private key never leaves the host (a smartcard still asks for its

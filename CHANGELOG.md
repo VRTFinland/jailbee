@@ -315,6 +315,51 @@
   repo's egress pool keeps refreshing instead of being pruned as soon as its
   (nonexistent) config file goes missing. See
   [`scratch`](docs/config.md#scratch).
+- **A generic GUI app registry, plus Firefox as a first-class browser
+  alongside Chrome.** `chrome:` becomes `browsers.chrome` (see below), and a
+  new `browsers.firefox` block adds Firefox as an equal citizen: its own
+  master switch, URL, dark-mode, autostart, and per-container profile pool
+  (`firefox-profile`, same pooling machinery Chrome's `chrome-profile` has
+  always used) so two containers running Firefox never fight over one
+  profile directory or see "Firefox is already running". Unlike Chrome,
+  Firefox **defaults to `source: image`**: on Ubuntu the host's Firefox is a
+  snap, and `/snap/firefox` is not usefully mountable into a container, so
+  `jailbee base build` now installs it (and, when asked, Chrome too) from
+  each browser's own upstream apt repository via new `70-chrome.sh` /
+  `70-firefox.sh` provisioning snippets, auto-staged from
+  `browsers.<name>.source: image` with no separate `enable_snippets` toggle
+  to keep in sync. Changing `source` needs `jailbee base build` (`image`)
+  or `jailbee apply` (`host`) to take effect.
+
+  Browsers, the JetBrains IDE, and now any number of user-defined
+  applications all resolve to one **app registry** (`AppSpec`), read by
+  every surface that used to hardcode "IDE" and "Chrome": `jailbee apps ls
+  [<container>]` lists every app a repo can launch — config only without a
+  container, a live `present`/`missing` probe with one — and
+  `jailbee apps run <app> [<args>…] [--container <name>]` launches one by
+  name (app name first, container behind `--container` — deliberately not
+  the container-first shape `jailbee chrome [<container>] [<url>]` uses,
+  since an optional app name plus variadic arguments can't be told apart
+  from an optional container in the middle). A new `apps:` config block
+  defines a GUI app beyond the builtins (an AppImage, a vendor binary, a
+  wrapper script — command, args, cwd, env, description, autostart); an
+  entry with `top_level: true` is also promoted to a bare `jailbee <name>
+  <container>`, refused at load time as a config error if the name
+  collides with a built-in command. `jailbee browser [<container>] [<url>]`
+  launches whichever browser `browsers.default` names, or the single
+  enabled one. Both dashboards' action menus and quick-launch surfaces now
+  read the same registry instead of two hardcoded IDE/Chrome switches.
+
+  `jailbee exec` gained `--detach`/`-d`: runs any command in the background
+  — the same detached-`incus exec` mechanism every registry launch already
+  used — so it returns immediately and logs to a file inside the container
+  instead of the terminal. Needed for a GUI app run by hand
+  (`jailbee exec <name> -d -- firefox`), useful for anything long-running.
+
+  The top-level `chrome:` block is **deprecated**: it still works in 1.3.x,
+  folded into `browsers.chrome` at load time with a one-time hint on
+  stderr, and is removed in 1.4.0. See
+  [`browsers`](docs/config.md#browsers) and [`apps`](docs/config.md#apps).
 
 ## 1.2.2 - 2026-08-28
 

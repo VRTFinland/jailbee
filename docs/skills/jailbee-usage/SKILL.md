@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, and opening/updating PRs with `jailbee pr`/`jailbee submodule pr`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -565,17 +565,36 @@ otherwise fight over.
   the same summary in its own dialog instead, because its destroy runs as a
   detached, `--force`-appended background process that cannot answer a
   terminal prompt.
-- **GUI:** `jailbee ide <name>` (JetBrains; `--app webstorm` to override), `jailbee chrome
-  <name> [URL]`. Both require the matching `jetbrains`/`chrome` blocks enabled
-  (usually in `~/.config/jailbee/global.yaml`). One JetBrains IDE runs at a time
-  (shared profile); Chrome is per-container, from a cache pool slot
-  (`jailbee pool ls`/`prune chrome-profile`; the old `jailbee chrome-pool
-  ls`/`prune` spelling still works, deprecated).
+- **GUI:** `jailbee ide <name>` (JetBrains; `--app webstorm` to override),
+  `jailbee chrome <name> [URL]`, `jailbee firefox <name> [URL]`,
+  `jailbee browser [<name>] [URL]` (whichever `browsers.default` names, or
+  the single enabled browser). All require the matching `jetbrains`/
+  `browsers.chrome`/`browsers.firefox` blocks enabled (usually in
+  `~/.config/jailbee/global.yaml`; the pre-1.3.0 top-level `chrome:` block
+  still works too, with a deprecation hint). One JetBrains IDE runs at a
+  time (shared profile); Chrome and Firefox are each per-container, from
+  their own cache pool slot (`jailbee pool ls`/`prune chrome-profile` /
+  `firefox-profile`; the old `jailbee chrome-pool ls`/`prune` spelling
+  still works for Chrome, deprecated). Firefox defaults to `source: image`
+  (built into the golden image) — Ubuntu's own Firefox is a snap, not
+  usefully mountable.
+- **Other GUI apps:** anything registered under `apps:` (an AppImage, a
+  vendor binary, a wrapper script) launches with `jailbee apps run <name>
+  [<args>…] [--container <name>]`, or directly as `jailbee <name>` when the
+  entry sets `top_level: true`. `jailbee apps ls [<name>]` lists every app
+  the repo's config can launch — builtins plus `apps:` entries — and, given
+  a container, probes each one for `present`/`missing`.
+- **Background commands:** `jailbee exec <name> -d -- <cmd>` (alias
+  `--detach`) runs any command detached — needed for a GUI app run by hand
+  (`jailbee exec smoke -d -- some-gui-tool`), useful for anything
+  long-running. It returns immediately; output goes to a log file inside
+  the container.
 - **Cache pools:** `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` — any
-  cache configured with `pooled_caches`/`SharedCache.pool` (Gradle and Maven by
-  default) gets one private slot per container instead of one cache shared
-  by all of them, because those tools take a lock on the cache directory that
-  a shared mount serialised across containers. Omit `NAME` for every pool.
+  cache configured with `pooled_caches`/`SharedCache.pool` (Gradle, Maven,
+  Chrome and Firefox by default) gets one private slot per container instead
+  of one cache shared by all of them, because those tools take a lock on the
+  cache directory that a shared mount serialised across containers. Omit
+  `NAME` for every pool.
   `ls`'s footer total is deduplicated (hardlinked files counted once); the
   per-slot sizes above it are not, and over-report when slots share files.
 - **Snapshots:** `jailbee snapshot create <name> <tag>` / `restore <name> <tag>` /

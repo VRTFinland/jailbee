@@ -94,13 +94,16 @@ gpg:
   enabled: false
 jetbrains:
   enabled: false
-chrome:
-  enabled: false
+browsers:
+  chrome:
+    enabled: false
+  firefox:
+    enabled: false
 ```
 
 Core JailBee — containers, the host↔container [git bridge](git-bridge.md),
-network modes, build/test — is unaffected. Only `jailbee ide` / `jailbee chrome` and
-GPG commit signing are lost.
+network modes, build/test — is unaffected. Only `jailbee ide` / `jailbee chrome`
+/ `jailbee firefox` and GPG commit signing are lost.
 
 ## Known rough edges
 
@@ -139,8 +142,9 @@ attention; the rest of JailBee behaves as on a native Linux host.
 
 - Running JailBee **natively on macOS** against a remote Incus daemon (see
   [Why in-VM](#why-in-vm-not-native-macos)).
-- `jailbee ide`, `jailbee chrome`, and GPG commit signing inside containers (no local
-  Linux display server / gpg-agent socket to bridge to macOS).
+- `jailbee ide`, `jailbee chrome` / `jailbee firefox` / any GUI `apps:` entry,
+  and GPG commit signing inside containers (no local Linux display server /
+  gpg-agent socket to bridge to macOS).
 
 ## Manual end-to-end verification (real Apple hardware)
 

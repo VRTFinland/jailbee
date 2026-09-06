@@ -207,10 +207,11 @@ autostart:
       mounts: [aws]      # attach optional_mounts.aws for this step only
 ```
 
-Auto-launching an IDE or Chrome is configured **outside** the `autostart`
-block: set `jetbrains.ide` + `jetbrains.autostart` and `chrome.autostart`
-in your config. See [`config.md`](config.md) for the full step-field
-reference and those keys.
+Auto-launching an IDE or a browser is configured **outside** the `autostart`
+block: set `jetbrains.ide` + `jetbrains.autostart`, and
+`browsers.chrome.autostart` / `browsers.firefox.autostart`, in your config
+(a plain `apps:` entry has its own `apps.<name>.autostart`). See
+[`config.md`](config.md) for the full step-field reference and those keys.
 
 ## 6. Build the image and create your first container
 

@@ -468,13 +468,18 @@ permissions and classic (`ghp_*`) tokens.
 
 ### Can I run the IDE and a browser from inside the container?
 
-`jailbee ide <name>` launches a JetBrains IDE and `jailbee chrome <name> [URL]`
-a Chrome onto your Wayland session. Both are opt-in
-(`jetbrains.enabled`, `chrome.enabled`, personal settings that belong in
-`global.yaml`). Only one IDEA-family IDE runs at a time across containers
-(shared profile); Chrome runs per-container from a profile pool
-(`jailbee pool ls/prune chrome-profile`, or the deprecated
-`jailbee chrome-pool ls/prune` alias).
+`jailbee ide <name>` launches a JetBrains IDE; `jailbee chrome <name> [URL]`
+and `jailbee firefox <name> [URL]` launch a browser onto your Wayland
+session (`jailbee browser` launches whichever one is `browsers.default`, or
+the single enabled one). All are opt-in (`jetbrains.enabled`,
+`browsers.chrome.enabled`, `browsers.firefox.enabled` — personal settings
+that belong in `global.yaml`). Only one IDEA-family IDE runs at a time
+across containers (shared profile); Chrome and Firefox each run
+per-container from their own profile pool (`jailbee pool ls/prune
+chrome-profile` / `firefox-profile`, or the deprecated `jailbee chrome-pool
+ls/prune` alias for the Chrome one). Beyond the two built-in browsers, an
+`apps:` entry (an AppImage, a vendor binary, a wrapper script) launches with
+`jailbee apps run <name>` — see [`apps`](config.md#apps).
 
 → [Limitations](security.md#limitations),
 [Configuration reference](config.md)
@@ -544,8 +549,8 @@ Then `jailbee base build`.
 `autostart.on_create` fires on `jailbee new`, `autostart.on_start` on
 `jailbee start`. Each step is a shell command run as the dev user, with
 optional `working_dir`, `background`, per-step `mounts` and `network`.
-Auto-launching the IDE or Chrome is configured *outside* that block, via
-`jetbrains.autostart` / `chrome.autostart`.
+Auto-launching the IDE or a GUI app is configured *outside* that block, via
+`jetbrains.autostart`, `browsers.<name>.autostart` and `apps.<name>.autostart`.
 
 → [Define autostart steps](project-config.md#5-define-autostart-steps),
 [`autostart`](config.md#autostart)

@@ -77,7 +77,7 @@ Don't add this key if the directory name already matches — the default is clea
 
 ### `host_mounts` — credentials the repo's tooling needs
 
-Personal credentials (`~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, the host Chrome install) usually live in `~/.config/jailbee/global.yaml`, not the per-repo file. `~/.gnupg`, the Toolbox dir, and `/opt/google/chrome` are also added automatically by the `gpg` / `jetbrains.toolbox_host_path` / `chrome.host_path` auto-mounts when those blocks are enabled — only list them manually if you want to override readonly/source. The per-repo file is for repo-specific mounts:
+Personal credentials (`~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, the host Chrome install) usually live in `~/.config/jailbee/global.yaml`, not the per-repo file. `~/.gnupg`, the Toolbox dir, and `/opt/google/chrome` are also added automatically by the `gpg` / `jetbrains.toolbox_host_path` / `browsers.chrome.host_path` auto-mounts when those blocks are enabled (and `source: host`) — only list them manually if you want to override readonly/source. Firefox has no equivalent host mount by default: it defaults to `source: image` (built into the golden image), since the host's Firefox is normally a snap. The per-repo file is for repo-specific mounts:
 
 ```yaml
 host_mounts:
@@ -274,8 +274,9 @@ A typical pattern:
 ```yaml
 jetbrains:
   autostart: true       # opt in to IDE auto-launch (default false)
-chrome:
-  autostart: true       # opt in to Chrome auto-launch (default false)
+browsers:
+  chrome:
+    autostart: true      # opt in to Chrome auto-launch (default false)
 
 autostart:
   step_timeout: 600
@@ -290,7 +291,17 @@ autostart:
       background: true
 ```
 
-> `jetbrains.autostart` / `chrome.autostart` only fire when the corresponding **`enabled`** master switch is true. Both `jetbrains.enabled` and `chrome.enabled` default to **`false`** — the user normally turns them on in `~/.config/jailbee/global.yaml` (the `jailbee config init --global` template does this). If the repo-level config above doesn't seem to launch the IDE or browser, check that the master switch is on.
+> `jetbrains.autostart` and `browsers.<name>.autostart` (and, for a plain
+> GUI app, `apps.<name>.autostart`) only fire when the corresponding
+> **`enabled`** master switch is true. `jetbrains.enabled`,
+> `browsers.chrome.enabled` and `browsers.firefox.enabled` all default to
+> **`false`** — the user normally turns them on in
+> `~/.config/jailbee/global.yaml` (the `jailbee config init --global`
+> template does this for `jetbrains` and `browsers.chrome`, not for
+> `browsers.firefox`). If the repo-level config above doesn't seem to
+> launch the IDE or browser, check that the master switch is on. The
+> top-level `chrome:` block from before 1.3.0 is still accepted (with a
+> deprecation hint) — write `browsers.chrome` in anything you generate.
 
 Inspect the repo's `package.json` scripts / `Makefile` targets / `README` quickstart section to figure out the right commands. Don't invent commands — if the repo's `README` says `make run`, use exactly that.
 
@@ -421,7 +432,7 @@ jailbee doctor                  # host-level (incus running, bridges, uid delega
 - **Don't invent autostart commands.** Read the repo's README / Makefile / package.json scripts and use exactly what's documented.
 - **Don't add `github.com` to `egress_allow`.** That's a security boundary by design.
 - **Don't put personal credentials in the per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The per-repo file is committed to git and shared with the team.
-- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `chrome` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config. The same goes for `agents.<name>.enabled`/`claude.enabled` — an agent's login state is personal, so turn it on in global config unless the repo needs everyone to have that agent.
+- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `browsers.chrome`, `browsers.firefox` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config. The same goes for `agents.<name>.enabled`/`claude.enabled` — an agent's login state is personal, so turn it on in global config unless the repo needs everyone to have that agent.
 
 ## Inside a JailBee container
 

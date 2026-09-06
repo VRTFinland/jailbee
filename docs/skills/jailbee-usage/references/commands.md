@@ -29,7 +29,7 @@ Common conventions:
 - [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
 - [Claude accounts (`claude ls|use|park|rm`)](#claude-accounts)
-- [GUI (`ide`, `chrome`)](#gui)
+- [GUI (`ide`, `chrome`, `firefox`, `browser`, `apps ls`, `apps run`, `exec --detach`)](#gui)
 - [Cache pools (`pool`, `chrome-pool`)](#cache-pools)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
@@ -331,9 +331,12 @@ menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
 the dashboard).
 
 The menu, in order: `job clear`, `job log`, `pr --open`, `pr`, `git push`,
-`git push --pr`, `git pull`, `git diff`, then
-tmux/shell/ide/chrome/net/restart/stop/destroy for Running (start/destroy for
-Stopped). Each entry appears only when it would do something:
+`git push --pr`, `git pull`, `git diff`, then tmux/shell, then one "Launch
+`<name>`" entry per app the repo's GUI registry declares (browsers, the
+JetBrains IDE, and any `apps:` entries, in that order — empty repos get
+none), then network mode switches, then restart/stop/destroy for Running
+(start/destroy for Stopped). Each entry appears only when it would do
+something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live
   worker's log and prints a finished one once);
@@ -350,12 +353,19 @@ Stopped). Each entry appears only when it would do something:
   first git-tier refresh — hides nothing: a missing column is not evidence of a
   clean tree.
 
+Every "Launch `<name>`" entry dispatches a bare `jailbee <name> <container>`
+— a real command for a browser, the IDE, or an `apps:` entry with
+`top_level: true`; an `apps:` entry without it appears in the menu (it is
+still part of the registry) but that dispatch is not a real command for it —
+launch it with `jailbee apps run <name> --container <container>` instead.
+
 Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
 open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR, `P`
 create/update the PR, `u` update from base, `d` show the diff. Each one
 fires only when that action is offered for that container — the gate is the
-same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need the
-repo's `jetbrains.enabled`/`chrome.enabled`, `p` needs a known PR, `P`/`u`/`d`
+same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need
+`jetbrains.enabled`/`browsers.chrome.enabled` (Firefox and `apps:` entries
+have no quick key, only the full menu), `p` needs a known PR, `P`/`u`/`d`
 need a running clone-mode container, and orphan
 rows have none of them. A declined key prints the reason in the panel footer
 for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
@@ -1036,13 +1046,19 @@ throw away a name nothing can supply again until a container runs Claude.
 | Command | Notes |
 |---|---|
 | `jailbee ide [NAME] [--app idea\|webstorm\|pycharm\|...]` | Launch a JetBrains IDE in the container. Needs `jetbrains.enabled`. One IDE at a time across containers (shared profile). |
-| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `chrome.enabled`. URL falls back to `chrome.url`. |
+| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`. |
+| `jailbee firefox [NAME] [URL]` | Launch Firefox (per-container profile slot). Needs `browsers.firefox.enabled`. URL falls back to `browsers.firefox.url`. Defaults to `source: image` — installed into the golden image, since the host's Firefox is normally a snap and not usefully mountable. |
+| `jailbee browser [NAME] [URL]` | Launch the default browser: `browsers.default` when set, otherwise the single enabled browser. Errors and names what to set if that's ambiguous (none, or more than one, enabled). |
+| `jailbee apps ls [NAME] [-o json] [--fields ...]` | List every GUI app this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without `NAME` this is config only; with it, a STATUS column probes each app for real (`present`/`missing`). |
+| `jailbee apps run APP [ARGS...] [--container NAME] [--force]` | Launch a GUI app by name — `APP` is required and comes first (see `jailbee apps ls`); the container is named with `--container`, not a second positional, because `APP` optional-in-form plus variadic `ARGS` can't be told apart from a middle container slot. An `apps:` entry with `top_level: true` also runs as bare `jailbee <name> [NAME] [ARGS...]`. |
+| `jailbee exec NAME -- CMD [ARGS...] [--cwd repo\|home\|PATH] [-d\|--detach]` | Run any command in the container as the dev user. `-d`/`--detach` backgrounds it — needed for a GUI app run by hand (`jailbee exec smoke -d -- some-gui-tool`), useful for anything long-running; it returns immediately and logs to a file inside the container instead of the terminal. |
 
 ## Cache pools
 
-Any cache pooled via `pooled_caches` or `SharedCache.pool` — `gradle`, `m2`
-and (when `chrome.enabled`) `chrome-profile` default on; `npm` and
-`pnpm-store` ship a preset but need an explicit opt-in (see
+Any cache pooled via `pooled_caches` or `SharedCache.pool` — `gradle`, `m2`,
+`chrome-profile` (when `browsers.chrome.enabled`) and `firefox-profile`
+(when `browsers.firefox.enabled`) default on; `npm` and `pnpm-store` ship a
+preset but need an explicit opt-in (see
 [`config-schema.md` `pooled_caches`](../../jailbee-repo-setup/references/config-schema.md#pooled_caches))
 — gets one private slot directory per container instead of one mount
 shared by all of them, seeded from the warmest existing slot.
@@ -1051,7 +1067,7 @@ shared by all of them, seeded from the warmest existing slot.
 |---|---|
 | `jailbee pool ls [NAME] [--format table\|json] [--fields ...]` | List every slot of every pool, or just `NAME`'s. Fields: `pool`, `slot`, `container` (or `(free)`), `warmth_mtime`, `size_bytes`/`size`, `path`. The table footer's "total on disk (deduplicated)" counts each inode once — per-slot sizes above it don't, and over-report once slots share hardlinked files. |
 | `jailbee pool prune [NAME]` | Delete every slot with no container attached, for `NAME`'s pool or all of them. |
-| `jailbee chrome-pool ls` / `prune` | Deprecated alias for `jailbee pool ls/prune chrome-profile`. Still works; prints a deprecation warning. |
+| `jailbee chrome-pool ls` / `prune` | Deprecated alias for `jailbee pool ls/prune chrome-profile`. Still works; prints a deprecation warning. Firefox has no such alias — use `jailbee pool ls/prune firefox-profile`. |
 
 ## Mounts
 
