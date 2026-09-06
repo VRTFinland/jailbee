@@ -692,6 +692,45 @@ def test_a_reset_made_before_a_structural_change_survives_it():
     assert state.staged[("host_mounts",)] == [{"host": "/b"}, {}]
 
 
+def test_adding_a_shared_cache_entry_over_the_default_produces_writable_yaml():
+    """The crash `schema._default_of`'s `_to_raw` normalisation fixes,
+    followed all the way to the YAML writer.
+
+    `shared_caches` is the schema's only collection whose default (nothing
+    saved in either layer) is non-empty: `_default_shared_caches()` returns
+    one built-in `SharedCache`. Before `_default_of` normalised it, that
+    default was a real model instance rather than a plain dict. `add_entry`
+    on the untouched collection folds `effective(state, spec.path)` — which
+    resolves straight to that default, since nothing is staged and nothing
+    saved — into the staged value (`_collection_value`/`_materialised`), so
+    `n` on a fresh `shared_caches` staged `[SharedCache(...), {}]`. `changes()`
+    reports that verbatim (a `YamlChange` is not the place to validate
+    shape), and `config_writer.patch_yaml` cannot represent a pydantic model
+    at all — `RepresenterError: cannot represent an object`. This uses the
+    real schema spec (`schema.build_specs(Config)`), not a synthetic one like
+    `COLLECTION` above, so a regression in `_default_of` would be caught here
+    even if a narrower unit test on it were wrong.
+    """
+    from jailbee.config import Config
+    from jailbee.config_edit.schema import build_specs
+    from jailbee.config_writer import patch_yaml
+
+    spec = next(s for s in build_specs(Config) if s.path == ("shared_caches",))
+    state = st.EditorState(
+        layer="repo",
+        specs=(spec,),
+        origins={spec.path: Origin("default", spec.default)},
+        staged={},
+    )
+
+    state, _crumb = st.add_entry(state, spec)
+    got = st.changes(state, {})
+
+    text = patch_yaml("", got)  # must not raise RepresenterError
+
+    assert "ssh" in text
+
+
 def test_changes_survives_an_index_and_a_key_at_the_same_depth():
     """What `_sort_key` actually buys: plain `sorted` raises `TypeError` here.
 

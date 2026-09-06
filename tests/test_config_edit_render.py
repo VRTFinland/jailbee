@@ -373,7 +373,13 @@ def test_body_pane_draws_every_real_collection_section_the_bare_field_pane_used_
         if section in empty_by_default:
             assert "press `n`" in text, section
         else:
+            # `shared_caches`'s one built-in default (`_default_shared_caches`)
+            # is now plain data (`schema._default_of`'s `_to_raw`
+            # normalisation) — the real summary, not the "(empty)" fallback
+            # a raw `SharedCache` model instance used to produce.
             assert "[0]" in text, section
+            assert "name=ssh" in text, section
+            assert "(empty" not in text, section
 
 
 def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collection(tmp_path):

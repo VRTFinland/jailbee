@@ -230,6 +230,31 @@ def test_a_default_factory_field_reports_its_real_default():
     assert _by_path(specs, "egress_allow").default == []
 
 
+def test_shared_caches_default_is_plain_data_not_model_instances():
+    """`_default_shared_caches()` returns real `SharedCache` instances, not
+    raw dicts — the only `default_factory` in the schema that does.
+
+    Every consumer of `FieldSpec.default` assumes the shape a raw YAML load
+    produces: `state._dig`'s `isinstance(node, dict)` checks, and ultimately
+    `config_writer.patch_yaml`, which cannot represent a pydantic model at
+    all. A model instance surviving into `.default` reaches the YAML writer
+    the moment a structural edit (`add_entry`, i.e. `n`) folds an unset
+    collection's default into what gets staged and saved — see
+    `test_adding_a_shared_cache_entry_over_the_default_produces_writable_yaml`
+    in `test_config_edit_state.py` for the crash this pins from the other
+    end. `_default_of`'s `_to_raw` is what normalises it; this asserts its
+    output rather than testing `_to_raw` in isolation, since `.default` is
+    the one place any caller actually reads it.
+    """
+    from jailbee.config_edit.schema import build_specs
+
+    caches = _by_path(build_specs(Config), "shared_caches").default
+    assert isinstance(caches, list) and caches
+    for cache in caches:
+        assert isinstance(cache, dict), f"expected plain dict, got {type(cache)!r}"
+        assert not any(isinstance(v, BaseModel) for v in cache.values())
+
+
 def test_repo_specs_is_the_config_tree():
     from jailbee.config_edit.schema import build_specs, repo_specs
 
