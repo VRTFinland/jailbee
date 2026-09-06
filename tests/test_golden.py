@@ -888,3 +888,41 @@ def test_repo_uses_docker_ignores_unrelated_extra_apt_packages(tmp_path, make_cf
     late in the name."""
     cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["golang-docker-dev"]})
     assert repo_uses_docker(cfg) is False
+
+
+def test_image_sourced_browsers_stage_their_snippets(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={
+            "chrome": {"enabled": True, "source": "image", "host_path": None},
+            "firefox": {"enabled": True, "source": "image"},
+        },
+    )
+    assert browser_snippet_names(cfg) == ["70-chrome.sh", "70-firefox.sh"]
+
+
+def test_host_sourced_browsers_stage_nothing(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "source": "host"}})
+    assert browser_snippet_names(cfg) == []
+
+
+def test_disabled_browsers_stage_nothing(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    assert browser_snippet_names(make_cfg(tmp_path)) == []
+
+
+def test_both_browser_snippets_exist_and_run_after_gui_libs():
+    from jailbee.golden import _resource_dir
+
+    available = _resource_dir("install.d.available")
+    for name in ("70-chrome.sh", "70-firefox.sh"):
+        path = available / name
+        assert path.is_file(), f"{name} missing from install.d.available"
+        # 70 > 60: the shared GUI libraries are installed first, or the
+        # browser installs its own copies and the image grows twice.
+        assert name.startswith("70-")

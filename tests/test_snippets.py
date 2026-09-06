@@ -276,6 +276,8 @@ def test_available_library_contains_optin_snippets():
         "30-nodejs.sh",
         "40-python.sh",
         "50-docker.sh",
+        "70-chrome.sh",
+        "70-firefox.sh",
         "80-ecr-helper.sh",
         "90-registry-mirror-ca.sh",
     ]

@@ -218,6 +218,20 @@ def _resource_dir(name: str) -> Path:
         return Path("/nonexistent")
 
 
+def browser_snippet_names(cfg: Config) -> list[str]:
+    """Provisioning snippets for browsers configured to come from the image.
+
+    Derived from `browsers.<name>.source` rather than declared separately:
+    a `golden.stacks.browsers` toggle would be a second way to say the same
+    thing, and the two could disagree.
+    """
+    names: list[str] = []
+    for name in cfg.browsers.enabled_names():
+        if getattr(cfg.browsers, name).source == "image":
+            names.append(f"70-{name}.sh")
+    return names
+
+
 def resolved_snippet_paths(cfg: Config) -> list[Path]:
     """The install.d snippets a golden build for `cfg` would run, in order.
 
@@ -250,7 +264,15 @@ def resolved_snippet_paths(cfg: Config) -> list[Path]:
         if cfg.is_synthetic()
         else cfg.repo_root / repo_config_dir_name(cfg.repo_root) / "install.d"
     )
-    enabled = list(dict.fromkeys([*cfg.golden.enable_snippets, *cfg.golden.stacks.snippet_names()]))
+    enabled = list(
+        dict.fromkeys(
+            [
+                *cfg.golden.enable_snippets,
+                *cfg.golden.stacks.snippet_names(),
+                *browser_snippet_names(cfg),
+            ]
+        )
+    )
     return resolve_snippets(
         bundled_dir=_resource_dir("install.d"),
         user_dir=user_install_d,

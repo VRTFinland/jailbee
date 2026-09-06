@@ -1,5 +1,6 @@
 #!/bin/bash
-# 60-gui-libs — install JetBrains/Chrome runtime libraries and fonts.
+# 60-gui-libs — install GUI application runtime libraries (JetBrains IDEs,
+# browsers, and anything launched through `jailbee apps`) and fonts.
 # Env: (none)
 # Installs: ~30 apt packages needed for JBR + Chrome to render via the
 #           host's Wayland/X11 socket bind-mount.
