@@ -95,10 +95,10 @@ Interactive actions (shell, tmux) open in a host terminal emulator. Set
 (x-terminal-emulator, ptyxis, gnome-terminal, konsole, foot, alacritty, kitty, xterm). IDE,
 Chrome and Firefox launches reuse the same `jailbee ide` / `jailbee chrome` /
 `jailbee firefox` behaviour; the action menu also lists every other
-`apps:` entry as a "Launch `<name>`" item, dispatched as a bare `jailbee
-<name> <container>` — which is only a real command for an entry with
-`top_level: true`. Launch a non-top-level `apps:` entry with
-`jailbee apps run <name> --container <container>` from a shell instead.
+`apps:` entry as a "Launch `<name>`" item — dispatched as
+`jailbee apps run <name> --container <container>` regardless of
+`top_level`, so it launches in the highlighted row's own container whether
+or not the entry is promoted to a top-level command.
 
 The commands that exist for the text they print — `pr`, `git push`, `git pull`,
 `git diff`, `job log` — get no terminal emulator: they run inside the GUI and

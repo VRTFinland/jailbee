@@ -353,11 +353,13 @@ something:
   first git-tier refresh — hides nothing: a missing column is not evidence of a
   clean tree.
 
-Every "Launch `<name>`" entry dispatches a bare `jailbee <name> <container>`
-— a real command for a browser, the IDE, or an `apps:` entry with
-`top_level: true`; an `apps:` entry without it appears in the menu (it is
-still part of the registry) but that dispatch is not a real command for it —
-launch it with `jailbee apps run <name> --container <container>` instead.
+A builtin's "Launch `<name>`" entry (a browser or the IDE) dispatches a bare
+`jailbee <name> <container>` — each is a real top-level command that takes
+the container as a plain positional. An `apps:` entry's "Launch" entry
+dispatches `jailbee apps run <name> --container <container>` instead — the
+same command `apps run` documents above, with the container passed as its
+`--container` option rather than a positional — regardless of whether the
+entry set `top_level: true`, so it launches correctly either way.
 
 Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
 open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR, `P`
