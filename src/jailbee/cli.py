@@ -5484,67 +5484,31 @@ def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
         console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
 
 
-@submodule_app.command("checkout")
-def submodule_checkout(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
-    branch: Annotated[
-        str | None,
-        typer.Option(
-            "--branch",
-            "-b",
-            help="Branch to put the tree on (default: current). On the host this "
-            "checks the branch out in the superproject too.",
-        ),
-    ] = None,
-    submodules_only: Annotated[
-        bool,
-        typer.Option(
-            "--submodules-only",
-            help="Align submodules without checking -b out in the superproject "
-            "(host only: a container's branch is never switched here).",
-        ),
-    ] = False,
-    config: ConfigOption = None,
+def _align_tree_to_branch(
+    cfg: "Config",
+    *,
+    branch: str | None,
+    container: str | None,
+    submodules_only: bool,
 ) -> None:
-    """Put the repo tree — superproject and submodules — on one branch.
+    """Put a repo tree — superproject and submodules — on one branch.
 
-    Purely local — moves nothing between host and container (that is
-    `jailbee git push`/`pull`).
-
-    With no NAME this works on the host repo: bare, it aligns the submodules
-    to the branch already checked out; with -b it checks that branch out in
-    the superproject first and then aligns the submodules to it, so one
-    command jumps the whole tree. Pass --submodules-only to leave the
-    superproject where it is (a deliberate mismatch, or a detached HEAD you
-    want to keep).
-
-    With a container NAME, aligns that container's submodules to its branch
-    (or -b). A container's branch is its identity, so -b never switches it.
-
-    Examples:
-
-      jailbee submodule checkout               # host, align to current branch
-      jailbee submodule checkout -b master     # host, whole tree to master
-      jailbee submodule checkout -b master --submodules-only
-      jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
+    The single implementation behind `jailbee branch` and its hidden
+    `jailbee submodule checkout` alias. Purely local: moves nothing between
+    host and container (that is `jailbee git push`/`pull`).
     """
     from jailbee import sync
     from jailbee.lifecycle import short_name
 
-    cfg = _load_or_exit(config)
-
     try:
-        if name is None:
+        if container is None:
             resolved, report = sync.checkout_submodules_on_host(
                 cfg,
                 branch=branch,
                 switch_superproject=branch is not None and not submodules_only,
             )
         else:
-            incus, full = _resolve_existing(cfg, name)
+            incus, full = _resolve_existing(cfg, container)
             short = short_name(cfg, full)
             resolved, report = sync.checkout_submodules_in_container(
                 cfg, incus, short, branch=branch
@@ -5554,6 +5518,99 @@ def submodule_checkout(
         raise typer.Exit(1) from exc
 
     _print_submodule_report(resolved, report)
+
+
+@app.command("branch")
+def branch_cmd(
+    branch: Annotated[
+        str | None,
+        typer.Argument(
+            autocompletion=completion.complete_branch,
+            help="Branch to put the tree on (default: the one already checked out).",
+        ),
+    ] = None,
+    container: Annotated[
+        str | None,
+        typer.Option(
+            "--container",
+            autocompletion=completion.complete_container,
+            help="Align this container's submodules instead of the host repo's.",
+        ),
+    ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option(
+            "--submodules-only",
+            help="Align submodules without checking BRANCH out in the superproject "
+            "(host only).",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Put the repo tree — superproject and submodules — on one branch.
+
+    Purely local — moves nothing between host and container (that is
+    `jailbee git push`/`pull`).
+
+    Without --container this works on the host repo: bare, it aligns the
+    submodules to the branch already checked out; with BRANCH it checks that
+    branch out in the superproject first and then aligns the submodules to it,
+    so one command jumps the whole tree. Pass --submodules-only to leave the
+    superproject where it is (a deliberate mismatch, or a detached HEAD you
+    want to keep).
+
+    With --container, aligns that container's submodules to its branch (or
+    BRANCH). A container's branch is its identity, so this never switches it.
+
+    There is no `-c` short form: `-c` is `--config` on every jailbee command.
+
+    Examples:
+
+      jailbee branch                              # host, align to current branch
+      jailbee branch master                       # host, whole tree to master
+      jailbee branch master --submodules-only
+      jailbee branch --container feat-foo         # container 'feat-foo', its branch
+      jailbee branch master --container feat-foo
+    """
+    cfg = _load_or_exit(config)
+    _align_tree_to_branch(
+        cfg, branch=branch, container=container, submodules_only=submodules_only
+    )
+
+
+@submodule_app.command("checkout", hidden=True)
+def submodule_checkout(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Branch to put the tree on (default: current)."),
+    ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option("--submodules-only", help="Align submodules only (host only)."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated alias for `jailbee branch`. See `jailbee branch --help`.
+
+    Kept with its original argument shape — container as the positional,
+    branch behind `-b` — so existing scripts and muscle memory keep working.
+    """
+    from jailbee.tui import hint
+
+    cfg = _load_or_exit(config)
+    hint(
+        [
+            "`jailbee submodule checkout` is now `jailbee branch`.",
+            "  jailbee branch [BRANCH] [--container NAME] [--submodules-only]",
+        ]
+    )
+    _align_tree_to_branch(
+        cfg, branch=branch, container=name, submodules_only=submodules_only
+    )
 
 
 @submodule_app.command("pr")
