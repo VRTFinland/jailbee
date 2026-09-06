@@ -308,9 +308,10 @@ def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocke
     set_origin.assert_called_once_with(tmp_path / "lib/nested", "git@github.com:acme/nested.git")
 
 
-def test_transport_to_host_leaves_origin_alone_when_no_url_is_recorded(mocker, tmp_path):
-    """No .gitmodules entry to copy → leave the clone as git made it rather
-    than inventing a remote.
+def test_transport_to_host_removes_origin_when_no_url_is_recorded(mocker, tmp_path):
+    """No .gitmodules entry and no container sub-repo origin → remove the ext::
+    origin left by the clone, which would push into the container and dies
+    with it.
     """
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
@@ -319,13 +320,14 @@ def test_transport_to_host_leaves_origin_alone_when_no_url_is_recorded(mocker, t
     mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
-    mocker.patch("jailbee.submodules.git.remove_origin")
+    remove_origin = mocker.patch("jailbee.submodules.git.remove_origin")
 
     submodules.transport_submodules_to_host(
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
     )
 
     set_origin.assert_not_called()
+    remove_origin.assert_called_once_with(tmp_path / "lib")
 
 
 def test_transport_to_host_never_rewrites_an_existing_subrepos_origin(mocker, tmp_path):
@@ -1657,7 +1659,9 @@ def test_repoint_removal_failure_is_cosmetic(mocker, tmp_path):
 
     _repoint_mocks(mocker, gitmodules_url=None, subrepo_url=None)
     mocker.patch("jailbee.git.remove_origin", side_effect=git_mod.GitError("boom"))
-    mocker.patch("jailbee.submodules._warn")
+    warn = mocker.patch("jailbee.submodules._warn")
     incus = mocker.MagicMock()
 
     submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
+
+    warn.assert_called_once()
