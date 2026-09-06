@@ -668,3 +668,61 @@ def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answe
     assert (
         choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
     )
+
+
+def _sub(path="libs/foo", commits=2):
+    from jailbee.submodule_pr import SubCandidate
+
+    return SubCandidate(
+        path=path,
+        commits=commits,
+        branch="feat/x",
+        dirty=False,
+        head_sha="aaa",
+        recorded_sha="aaa",
+        subject="feat: work",
+    )
+
+
+def test_pick_submodule_returns_the_chosen_path(mocker):
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/foo"
+
+    assert tui.pick_submodule([_sub("libs/foo"), _sub("libs/bar")]) == "libs/foo"
+
+
+def test_pick_submodule_returns_none_on_escape(mocker):
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = None  # questionary's Ctrl-C / ESC answer
+
+    assert tui.pick_submodule([_sub()]) is None
+
+
+def test_pick_submodule_cancel_row_uses_a_sentinel_not_its_title(mocker):
+    """A Choice with value=None answers its *title*, which would read as a path."""
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = tui._CANCEL_SUBMODULE
+
+    assert tui.pick_submodule([_sub()]) is None
+
+    choices = select.call_args.kwargs["choices"]
+    assert choices[-1].value is tui._CANCEL_SUBMODULE
+    assert choices[-1].value is not None
+
+
+def test_pick_submodule_offers_every_candidate_in_the_given_order(mocker):
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/a"
+
+    tui.pick_submodule([_sub("libs/a"), _sub("libs/b")])
+
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert values[:2] == ["libs/a", "libs/b"]

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from jailbee.destroy_guard import RiskSummary
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.submodule_pr import SubCandidate
     from jailbee.sync import BridgePlan, RefSummary
 
 console = Console()
@@ -641,6 +642,45 @@ def pick_container(containers: list[ContainerInfo]) -> str | None:
         use_shortcuts=True,
     ).ask()
     if result is None:
+        return None
+    return str(result)
+
+
+# A unique object, never `None` and never a string: questionary falls back to a
+# Choice's *title* when its value is None, so a `value=None` cancel row would
+# answer the label text and be used as a submodule path. Same hazard the
+# credential picker documents above.
+_CANCEL_SUBMODULE = object()
+
+
+def pick_submodule(candidates: list[SubCandidate]) -> str | None:
+    """Interactive arrow-key picker over a container's submodules.
+
+    Offers every submodule, not only the ones ahead of their base: a submodule
+    with nothing to publish is still a legitimate target (`jailbee submodule
+    pr` accepts an explicit path regardless), and hiding it would force the
+    user to retype the command. The caller orders the list — see
+    `submodule_pr.order_candidates` — and does the TTY check, exactly as for
+    `pick_container`.
+
+    Returns the chosen submodule's path, or None if the user cancels.
+    """
+    import questionary
+
+    from jailbee.submodule_pr import describe_candidate
+
+    width = max((len(c.path) for c in candidates), default=0)
+    choices = [
+        questionary.Choice(title=describe_candidate(c, width=width), value=c.path)
+        for c in candidates
+    ]
+    choices.append(questionary.Choice(title="cancel — open no PR", value=_CANCEL_SUBMODULE))
+    result = questionary.select(
+        "Which submodule should the PR be for?",
+        choices=choices,
+        use_shortcuts=True,
+    ).ask()
+    if result is None or result is _CANCEL_SUBMODULE:
         return None
     return str(result)
 
