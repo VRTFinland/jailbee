@@ -345,6 +345,40 @@ def test_field_pane_marks_an_entry_field_that_is_not_set(tmp_path):
     assert "(default)" in text  # readonly
 
 
+def test_help_pane_matches_the_row_for_an_unedited_entry_field(tmp_path):
+    """`host_mounts.0.host`, never touched this session: the row reads
+    `/home/dev/data (set)` because the entry as loaded carries the key.
+
+    `help_pane` used to answer through `state.origins`, which holds no
+    entry-level keys at all (spec 11.4) — so it fell back to `spec.default`
+    and reported `Now: — (default)` under a row that said the opposite.
+    """
+    state = _entry_state({"host": "/home/dev/data"})  # index 0 is "host"
+
+    text = _text(help_pane(state, _layers(tmp_path)))
+
+    assert "Now: /home/dev/data (set)" in text
+
+
+def test_help_pane_matches_the_row_for_a_toggled_entry_field(tmp_path):
+    """`host_mounts.0.readonly`, toggled with Space: the row reads
+    `true (set)`. `help_pane` used to read the item model's static default
+    (`readonly`'s is `false`) instead of the staged value, and labelled it
+    `(default)` even though the row right above it said `(set)`.
+
+    The "Default:" half must still name the model's own default (`false`),
+    not the entry's staged value — only "Now:" and the origin follow the row.
+    """
+    state = _entry_state({"host": "/a"}, index=2)  # index 2 is "readonly"
+    state = st.stage(state, (*state.trail, "readonly"), True)
+
+    text = _text(help_pane(state, _layers(tmp_path)))
+
+    assert "Default: false" in text
+    assert "Now: true (set)" in text
+    assert "(default)" not in text
+
+
 def test_title_bar_shows_the_trail_once_inside_a_collection(tmp_path):
     state = _entry_state({"host": "/a"})
 

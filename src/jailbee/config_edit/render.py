@@ -246,16 +246,12 @@ def field_pane(state: EditorState, layer_set: LayerSet) -> Pane:
         cursor = "▸" if i == state.index else " "
         modified = _entry_pending(state, layer_set, spec) if is_entry else spec.path in pending
         mark = "●" if modified else " "
-        if is_entry:
-            # No separate "as saved" to contrast against here (an entry's own
-            # row is the collection's — see `collection_pane`), so the value
-            # column is simply the current one.
-            value = format_value(spec, effective(state, spec.path))
-            suffix = ""
-        else:
-            origin = state.origins.get(spec.path)
-            value = format_value(spec, origin.value if origin is not None else spec.default)
-            suffix = _staged_suffix(state, spec) if modified else ""
+        # No separate "as saved" to contrast against on an entry screen (an
+        # entry's own row is the collection's — see `collection_pane`), so
+        # `_now` reads through `effective` there instead of a saved-layer
+        # origin.
+        value = format_value(spec, _now(state, spec))
+        suffix = "" if is_entry else (_staged_suffix(state, spec) if modified else "")
         line = (
             f"{cursor}{mark} {_row_name(state, spec):<{width}}  "
             f"{value:<{_VALUE_WIDTH}}  {_ORIGIN_LABEL[_origin_source(state, spec)]}{suffix}\n"
@@ -278,6 +274,24 @@ def _origin_source(state: EditorState, spec: FieldSpec) -> str:
         return entry_origin(state, spec.path)
     origin = state.origins.get(spec.path)
     return origin.source if origin is not None else "default"
+
+
+def _now(state: EditorState, spec: FieldSpec) -> object:
+    """What a field is set to right now — the same value `_origin_source`
+    names the layer of.
+
+    An entry has no saved-layer origin of its own (`state.origins` is
+    resolved once in `open_editor` and deliberately holds no entry-level
+    keys — spec 11.4), so this reads through `effective` there instead,
+    exactly as `field_pane`'s row does. Everywhere else it is the
+    saved-layer origin, falling back to the item model's default. Used by
+    both `field_pane` and `help_pane` so the row and the pane beneath it
+    can never show two different answers for "what is this set to".
+    """
+    if screen(state).kind == "entry":
+        return effective(state, spec.path)
+    origin = state.origins.get(spec.path)
+    return origin.value if origin is not None else spec.default
 
 
 def collection_pane(state: EditorState, layer_set: LayerSet) -> Pane:
@@ -354,9 +368,8 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
     spec = current(state)
     if spec is None:
         return [("class:dim", "Pick a section, or press `/` to search every field.")]
-    origin = state.origins.get(spec.path)
-    source = origin.source if origin is not None else "default"
-    saved = format_value(spec, origin.value if origin is not None else spec.default)
+    source = _origin_source(state, spec)
+    saved = format_value(spec, _now(state, spec))
     out: StyleAndTextTuples = [
         ("class:cursor", dotted(spec.path)),
         ("class:dim", f"   [{spec.kind.value}]\n"),
