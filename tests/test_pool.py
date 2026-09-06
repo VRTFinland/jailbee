@@ -178,6 +178,95 @@ def test_wipe_removes_wipe_paths_and_stale_globs_recursively(tmp_path):
     assert (slot / "caches" / "keep.bin").exists()
 
 
+def test_wipe_expands_glob_wipe_paths(tmp_path):
+    """Firefox's profile directory has a random `<id>.default-release/`
+    component, so its caches can only be named with a glob.
+
+    `_wipe` used to do `shutil.rmtree(slot / rel)` on the literal string,
+    and `slot / "*/cache2"` matches nothing — so the Firefox preset's
+    `wipe_paths` never ran. rsync's `--exclude` does honour globs, which is
+    why a freshly *seeded* slot looked right and only a reused one carried
+    the caches forward. Revert `_wipe` to the literal join and this fails.
+    """
+    p = _pool(tmp_path, wipe_paths=["*/cache2", "*/startupCache"])
+    slot = p.slots_dir / "slot-0"
+    profile = slot / "8a1b2c3d.default-release"
+    (profile / "cache2" / "entries").mkdir(parents=True)
+    (profile / "cache2" / "entries" / "blob").write_bytes(b"x")
+    (profile / "startupCache").mkdir()
+    (profile / "places.sqlite").write_bytes(b"keep-me")
+
+    pool._wipe(p, slot)
+
+    assert not (profile / "cache2").exists()
+    assert not (profile / "startupCache").exists()
+    # Real profile state next to the caches must survive the wipe.
+    assert (profile / "places.sqlite").read_bytes() == b"keep-me"
+
+
+def test_wipe_leaves_a_literal_wipe_path_working(tmp_path):
+    """The glob expansion must be a no-op for every existing preset, all of
+    which supply literal paths (`Default/Cache`, `daemon`, `_logs`). A
+    nested literal is the interesting case: `Path.glob` treats `/` as a
+    separator, so it still resolves — but it would break under, say, an
+    implementation that only globbed the last component.
+    """
+    p = _pool(tmp_path, wipe_paths=["Default/Cache"])
+    slot = p.slots_dir / "slot-0"
+    (slot / "Default" / "Cache" / "f").mkdir(parents=True)
+    (slot / "Default" / "Login Data").write_bytes(b"keep-me")
+
+    pool._wipe(p, slot)
+
+    assert not (slot / "Default" / "Cache").exists()
+    assert (slot / "Default" / "Login Data").read_bytes() == b"keep-me"
+
+
+def test_wipe_is_a_no_op_when_a_wipe_path_is_absent(tmp_path):
+    # `Path.glob` on a literal path that does not exist yields nothing,
+    # matching the old `rmtree(..., ignore_errors=True)`. Release runs on
+    # every slot, most of which have never held every wipe path.
+    p = _pool(tmp_path, wipe_paths=["daemon", "*/cache2"])
+    slot = p.slots_dir / "slot-0"
+    slot.mkdir(parents=True)
+    pool._wipe(p, slot)  # must not raise
+    assert slot.is_dir()
+
+
+def test_releasing_a_firefox_slot_reclaims_its_caches(tmp_path, mocker):
+    """End-to-end through `release` with the shipped Firefox preset, not a
+    hand-written `PoolSpec`.
+
+    The existing preset tests assert the literal preset data and would pass
+    against any consumer at all — including one that never expands the
+    patterns. This one goes through the real `POOL_PRESETS` entry, so a
+    preset rewritten to literal paths (which cannot express the random
+    profile-directory name) fails here too.
+    """
+    cfg = load_config_from_text(
+        "browsers:\n  firefox:\n    enabled: true\n", tmp_path / "c.yaml"
+    ).model_copy(update={"shared_dir": tmp_path / "shared"})
+    p = pool.get(cfg, "firefox-profile")
+    assert p is not None
+    pool.ensure_pool_dirs(cfg, p)
+    slot = _make_slot(p, "slot-0")
+    profile = slot / "8a1b2c3d.default-release"
+    (profile / "cache2" / "entries").mkdir(parents=True)
+    (profile / "startupCache").mkdir()
+    (profile / "places.sqlite").write_bytes(b"keep-me")
+    (profile / ".parentlock").write_bytes(b"")
+    (p.by_container_dir / "feat-foo").symlink_to(Path("..") / "slots" / "slot-0")
+
+    pool.release(cfg, MagicMock(), p, "feat-foo")
+
+    assert not (profile / "cache2").exists()
+    assert not (profile / "startupCache").exists()
+    # `stale_globs` already worked; asserted here so the two mechanisms are
+    # pinned together on the preset that needs both.
+    assert not (profile / ".parentlock").exists()
+    assert (profile / "places.sqlite").read_bytes() == b"keep-me"
+
+
 def test_pools_for_returns_only_pooled_caches_with_expanded_paths(tmp_path):
     cfg = _cfg(tmp_path)
     names = {p.name for p in pool.pools_for(cfg)}

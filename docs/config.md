@@ -636,7 +636,10 @@ that a tool rewrites in place, would restore exactly the cross-container
 sharing pooling exists to remove. `wipe_paths` and `stale_globs` are the
 other side of that same rule: content excluded from seeding and removed
 when a slot is released — regenerable bulk (Gradle's `daemon/` dir) and
-stale lock files an unclean exit left behind, respectively.
+stale lock files an unclean exit left behind, respectively. Both accept
+glob patterns; `wipe_paths` needs them for Firefox, whose profile
+directory carries a random `<id>.default-release/` component that no
+literal path can name (`*/cache2`).
 
 To pool a cache with no builtin preset — including one of your own
 `shared_caches` entries — give that entry an explicit `pool:` block

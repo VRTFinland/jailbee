@@ -365,7 +365,9 @@ class PoolSpec(BaseModel):
         default=[],
         description=(
             "Slot-relative regenerable subtrees removed when a slot is released, and "
-            "excluded from seeding."
+            "excluded from seeding. Glob patterns are allowed — Firefox's profile "
+            "directory has a random `<id>.default-release/` component, so its caches "
+            "can only be named as `*/cache2` and friends."
         ),
     )
     stale_globs: list[str] = Field(

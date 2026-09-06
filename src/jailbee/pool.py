@@ -319,9 +319,20 @@ def _wipe(pool: Pool, slot: Path) -> None:
     Always runs at release, including on the reuse path (target ==
     source) where rsync's excludes never execute — a lock file left by
     an unclean exit would otherwise break the next allocator.
+
+    `wipe_paths` entries are expanded as globs, not joined literally. Every
+    preset except Firefox supplies a literal path, for which `Path.glob`
+    yields exactly that path (or nothing, if it is absent — the same no-op
+    a literal `rmtree(..., ignore_errors=True)` was). Firefox needs the
+    patterns: its profile directory carries a random `<id>.default-release/`
+    component, so `*/cache2` is the only way to name the cache at all, and
+    `slot / "*/cache2"` matched nothing — the caches rsync's `--exclude`
+    (which does honour globs) kept out of a freshly seeded slot were never
+    reclaimed on release, which is the reuse path this function exists for.
     """
     for rel in pool.spec.wipe_paths:
-        shutil.rmtree(slot / rel, ignore_errors=True)
+        for target in slot.glob(rel):
+            shutil.rmtree(target, ignore_errors=True)
     for pattern in pool.spec.stale_globs:
         for orphan in slot.glob(pattern):
             try:
