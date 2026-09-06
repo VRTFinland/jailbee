@@ -140,6 +140,47 @@ def test_non_list_fields_inherit_nothing(tmp_path):
     assert layers.inherited_entries(_spec("defaults.cpu"), got, "repo") == ()
 
 
+def test_a_legacy_top_level_chrome_block_still_resolves_its_origin(tmp_path, capsys):
+    """`chrome:` is folded into `browsers.chrome` at config-load time
+    (`resolve_browsers_raw`), but `layers.resolve` reads the raw layers
+    directly and never applied that fold — so a host still on the legacy
+    spelling saw `browsers.chrome.enabled` reported as origin "default"
+    even though a real value is set. Not data loss (an explicit
+    `browsers:` block still wins on the next load), but the origin marker
+    lies, which is exactly what this test suite exists to prevent.
+
+    Quiet: `resolve_browsers_raw`'s deprecation hint must not fire here —
+    `resolve()` runs on every reload, including while the full-screen
+    editor `Application` is live, and printing to the terminal mid-session
+    would corrupt the display.
+    """
+    _write(tmp_path / "global.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("browsers", "chrome", "enabled")] == layers.Origin("global", True)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_legacy_top_level_chrome_block_in_the_repo_layer_also_resolves(tmp_path, capsys):
+    _write(tmp_path / "repo.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("browsers", "chrome", "enabled")] == layers.Origin("repo", True)
+    assert capsys.readouterr().err == ""
+
+
+def test_resolving_a_legacy_chrome_block_does_not_rewrite_the_stored_raw(tmp_path):
+    """The fold is only for origin lookup. `raw_for` (the write path's base
+    mapping) must still show the file's real, un-migrated content — a save
+    of an unrelated field must not silently rewrite `chrome:` into
+    `browsers:` as a side effect.
+    """
+    _write(tmp_path / "global.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    layers.resolve(repo_specs(), got)
+    assert layers.raw_for(got, "global") == {"chrome": {"enabled": True}}
+
+
 def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
     """`browsers.chrome.url: null` in the repo layer is the twin of the
     global test.

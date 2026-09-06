@@ -19,7 +19,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config import ConfigError, load_config_from_layers
+from jailbee.config import ConfigError, load_config_from_layers, resolve_browsers_raw
 
 # `_HOST_LEVEL_KEYS` is the loader's own routing table: the keys
 # `_split_host_keys` lifts out of `global.yaml` *before* `deep_merge` runs.
@@ -108,14 +108,27 @@ def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[tuple[str, ...
     Independent of which layer is open. A repo-layer editor still marks an
     inherited value `(global)`, so the user can see that editing it will
     create a repo-layer key rather than change the one they are looking at.
+
+    Looks up paths through `resolve_browsers_raw`'s fold rather than
+    `layers.repo_raw`/`global_raw` directly, so a legacy top-level
+    `chrome:` block still reports a real origin for `browsers.chrome.*`
+    instead of lying and saying "default". `emit_hint=False` because this
+    runs on every reload — including while the editor `Application` is
+    live — and the deprecation notice writing to the terminal mid-session
+    would corrupt the display. The stored `layers.repo_raw`/`global_raw`
+    are left untouched: they are also the write path's base mapping
+    (`raw_for`), and folding there would rewrite a user's `chrome:` block
+    into `browsers:` as a side effect of an unrelated save.
     """
+    repo_raw = resolve_browsers_raw(layers.repo_raw, emit_hint=False)
+    global_raw = resolve_browsers_raw(layers.global_raw, emit_hint=False)
     out: dict[tuple[str, ...], Origin] = {}
     for spec in specs:
-        present, value = lookup(layers.repo_raw, spec.path)
+        present, value = lookup(repo_raw, spec.path)
         if present:
             out[spec.path] = Origin("repo", value)
             continue
-        present, value = lookup(layers.global_raw, spec.path)
+        present, value = lookup(global_raw, spec.path)
         if present:
             out[spec.path] = Origin("global", value)
             continue

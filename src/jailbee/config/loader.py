@@ -190,7 +190,7 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
+def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> dict[str, object]:
     """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
 
     `chrome:` was the only browser block through 1.2.x. Rather than the hard
@@ -208,16 +208,25 @@ def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
     json` and friends put script-parsed output. `warn` would inject
     `⚠ ...` ahead of that payload for any host with a legacy `chrome:`
     block. See `hint`'s own docstring for the same reasoning.
+
+    `emit_hint=False` suppresses that notice without changing the fold
+    itself. `config_edit.layers.resolve` needs the fold — so a legacy
+    `chrome:` block still reports a real origin instead of "default" — but
+    calls it on every reload, including while the full-screen editor
+    `Application` is running; printing to the terminal mid-session would
+    corrupt the display, and the CLI's own load of the same file already
+    prints the notice once elsewhere.
     """
     legacy = raw.get("chrome")
     if not isinstance(legacy, dict):
         return raw
-    hint(
-        [
-            "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
-            "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
-        ]
-    )
+    if emit_hint:
+        hint(
+            [
+                "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+                "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+            ]
+        )
     merged = deep_merge({"source": "host", **legacy}, {})
     browsers = raw.get("browsers")
     overlay = browsers if isinstance(browsers, dict) else {}

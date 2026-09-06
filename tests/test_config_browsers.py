@@ -226,6 +226,18 @@ def test_no_warning_when_there_is_no_legacy_block(capsys):
     assert "chrome:" not in capsys.readouterr().err
 
 
+def test_emit_hint_false_suppresses_the_notice_but_not_the_fold(capsys):
+    """`config_edit.layers.resolve` needs the fold quiet: it runs on every
+    editor reload, including mid-session, where the hint printing to the
+    terminal would corrupt the display.
+    """
+    from jailbee.config.loader import resolve_browsers_raw
+
+    raw = resolve_browsers_raw({"chrome": {"enabled": True}}, emit_hint=False)
+    assert raw["browsers"]["chrome"]["enabled"] is True
+    assert capsys.readouterr().err == ""
+
+
 def test_legacy_chrome_block_loads_through_the_real_loader(tmp_path):
     """End-to-end proof, not just the `resolve_browsers_raw` unit: a repo
     config still spelled the old way must load through the real
