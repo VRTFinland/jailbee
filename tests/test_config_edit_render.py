@@ -590,3 +590,31 @@ def test_collection_pane_draws_the_inherited_entries_once_and_only_dimmed(tmp_pa
     assert "press `n`" in text  # nothing here is this layer's to edit
     addressable = [chunk for style, chunk, *_ in pane.fragments if style != "class:dim"]
     assert addressable == []
+
+
+def test_help_pane_on_a_collection_screen_describes_the_collection(tmp_path):
+    """MINOR 3: it used to print "Pick a section, or press `/` to search every
+    field" — `current()` is `None` on a collection screen — while the reader was
+    standing inside `host_mounts`. The same contradiction the entry screen had.
+
+    The count it adds is the *open layer's*, which is the one thing "Now:"
+    cannot say: "Now:" reads through to global here, so without this line the
+    pane would claim 2 entries over a screen listing none.
+    """
+    layers = _layers(tmp_path, global_text=_INHERITED_TEXT)
+
+    text = _text(help_pane(_collection_state(layers), layers))
+
+    assert "Pick a section" not in text
+    assert "host_mounts" in text
+    assert "what host_mounts does" in text
+    assert "In this layer: 0 entries" in text
+
+
+def test_help_pane_on_a_collection_counts_this_layers_own_entries(tmp_path):
+    """The singular, and a layer that does own its entries."""
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/mine"}]))
+
+    text = _text(help_pane(_collection_state(layers), layers))
+
+    assert "In this layer: 1 entry" in text

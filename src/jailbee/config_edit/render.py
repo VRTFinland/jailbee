@@ -380,8 +380,20 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
     changes what editing it means — a reason it cannot be edited here, or the
     inherited list entries a repo-level list will be *added to* rather than
     replace (`layers.inherited_entries`, spec 3.3).
+
+    A collection screen has no field under the cursor — `visible_specs` is
+    empty there, so `current()` is `None` — but it is not the section list
+    either, and telling the reader to "pick a section" while they are standing
+    inside `host_mounts` is the same contradiction the entry screen used to
+    print. The open collection's own spec is the subject there, plus a line
+    saying how many entries *this layer* has, which is what the rows below
+    actually are.
     """
     spec = current(state)
+    view = screen(state)
+    on_collection = spec is None and view.kind == "collection" and view.collection is not None
+    if on_collection:
+        spec = view.collection
     if spec is None:
         return [("class:dim", "Pick a section, or press `/` to search every field.")]
     source = _origin_source(state, spec)
@@ -392,6 +404,17 @@ def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
         ("", f"{spec.description or 'No description.'}\n"),
         ("class:dim", f"Default: {format_value(spec, spec.default)} · Now: {saved} ({source})\n"),
     ]
+    if on_collection:
+        # `Now:` above answers out of whichever layer supplies the value,
+        # which for a repo config with no key of its own is global's list. The
+        # rows on this screen are only the open layer's, so say how many those
+        # are — without it the pane reads "Now: 2 entries (global)" over a
+        # screen that says "no entries", and the reader has no way to tell
+        # which one is lying.
+        count = len(entries(state, spec))
+        out.append(
+            ("class:dim", f"In this layer: {count} entr{'y' if count == 1 else 'ies'}\n"),
+        )
     if spec.kind is FieldKind.CHOICE and spec.choices:
         out.append(("class:dim", f"One of: {', '.join(str(c) for c in spec.choices)}\n"))
     elif spec.kind is FieldKind.SCALAR_UNION and spec.choices:
