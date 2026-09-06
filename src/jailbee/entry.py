@@ -53,17 +53,25 @@ def rewrite_app_argv(argv: list[str]) -> list[str]:
     behaviour. Anything that is not a known command and not a known app is
     returned untouched, so Typer produces its own unknown-command error.
 
-    Every failure mode of the config load — no repo, invalid YAML, a
-    validation error — resolves to "not an app": a typo must not turn into
-    a traceback from the config loader.
+    `(ConfigError, OSError)` — the same pair, and the same reasoning, as the
+    identical `load_repo_config(Path.cwd())` call in `cli._run_dashboard`:
+    the loader wraps every YAML and Pydantic failure as `ConfigError`
+    (covering no repo, invalid YAML, and a validation error — the three
+    failure modes this rewrite must tolerate), but lets `read_text()`'s own
+    errors through raw as `OSError`. Both resolve to "not an app": a typo
+    must not turn into a traceback from the config loader. Anything else —
+    a bug in this module's own code, an unrelated internal error — is a
+    programming error and must still surface, so it is not caught here.
     """
     if not argv or argv[0].startswith("-"):
         return argv
     if argv[0] in _command_names():
         return argv
+    from jailbee.config import ConfigError
+
     try:
         apps = _top_level_app_names()
-    except Exception:
+    except (ConfigError, OSError):
         return argv
     if argv[0] in apps:
         return ["apps", "run", argv[0], *argv[1:]]

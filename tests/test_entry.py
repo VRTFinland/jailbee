@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from jailbee.config import ConfigError
 from jailbee.entry import main, rewrite_app_argv
 from jailbee.incus import IncusError
 
@@ -97,9 +98,26 @@ def test_an_unknown_name_falls_through_to_typers_own_error(mocker):
 def test_a_broken_config_does_not_break_unrelated_commands(mocker):
     # Outside a repo, or with a config that fails validation, an unknown
     # first argument must still reach Typer's own error rather than a
-    # traceback from the config loader.
-    mocker.patch("jailbee.entry._top_level_app_names", side_effect=RuntimeError("boom"))
+    # traceback from the config loader. ConfigError is what the loader
+    # actually raises for both of those cases (see config/loader.py) — the
+    # same exception `cli._run_dashboard` catches from the identical
+    # `load_repo_config(Path.cwd())` call.
+    mocker.patch("jailbee.entry._top_level_app_names", side_effect=ConfigError("boom"))
     assert rewrite_app_argv(["lss"]) == ["lss"]
+
+
+def test_an_unrelated_internal_error_propagates(mocker):
+    """A failure that is not one of the config loader's own documented modes
+    must surface, not be silently treated as "not an app".
+
+    This is the property a narrow `except (ConfigError, OSError)` buys over
+    a bare `except Exception`: a bug in this module's own code, or an
+    unrelated internal error, must still produce a traceback rather than
+    quietly falling through to Typer's unknown-command error.
+    """
+    mocker.patch("jailbee.entry._top_level_app_names", side_effect=RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        rewrite_app_argv(["lss"])
 
 
 def test_command_names_come_from_the_live_typer_app():
