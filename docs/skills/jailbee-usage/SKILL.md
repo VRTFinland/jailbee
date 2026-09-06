@@ -306,13 +306,25 @@ scripting.
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). The stacked-PR tool: when a parent PR merges to `main`, retarget
   its dependent container from the parent branch onto `main`.
-- `jailbee submodule checkout [<name>] [-b <branch>] [--submodules-only]` — put the
+- `jailbee branch [<branch>] [--container <name>] [--submodules-only]` — put the
   tree on one branch, superproject and submodules, when they land on a detached
-  HEAD after clone/push/pull. No name → the host repo; a name → that container.
-  On the host, `-b <branch>` checks that branch out in the superproject first and
-  then aligns the submodules to it, so jumping the whole tree back to `master` is
-  one command; `--submodules-only` keeps the superproject where it is. A
-  container's branch is its identity, so `-b` never switches it.
+  HEAD after clone/push/pull. No `--container` → the host repo; `--container
+  <name>` → that container. On the host, a BRANCH argument checks that branch
+  out in the superproject first and then aligns the submodules to it, so jumping
+  the whole tree back to `master` is one command; `--submodules-only` keeps the
+  superproject where it is. A container's branch is its identity, so BRANCH
+  never switches it there, and `--submodules-only` combined with `--container`
+  is rejected (exit 2). No `-c` short form: `-c` is `--config` on every jailbee
+  command. `jailbee submodule checkout` is a hidden alias kept for
+  compatibility; it prints a pointer to `jailbee branch`.
+
+  ```bash
+  jailbee branch                              # host, align to current branch
+  jailbee branch master                       # host, whole tree to master
+  jailbee branch master --submodules-only
+  jailbee branch --container feat-foo         # container 'feat-foo', its branch
+  jailbee branch master --container feat-foo
+  ```
 
 **Recipe — merging several containers through one.** Three features built in
 parallel become one branch without resolving anything on the host, which is the
@@ -820,6 +832,14 @@ Without a path, the submodule with commits ahead of its own base is targeted
 automatically; several ahead lists them and asks you to name one (two
 submodules are two repositories and two PRs). None ahead is reported as a
 plain fact, not an error.
+
+On a TTY, `jailbee submodule pr` is interactive: it asks which container even
+when there is only one, offers a picker over every submodule instead of
+erroring when several are ahead, and shows a plan block to confirm before
+anything is transported or published — `--yes` skips that confirmation but
+not the pickers. Naming NAME/PATH skips the corresponding picker. Off a TTY
+none of this applies: the auto-targeting and several-ahead behaviour above,
+and every message and exit code, are exactly as before.
 
 The key thing to know: the signal is the submodule's **own** base anchor
 (pinned when the container was created), not the superproject's gitlink diff

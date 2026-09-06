@@ -5718,12 +5718,12 @@ def submodule_pr_cmd(
     submodule's own GitHub repository — a separate repo, so a separate PR from
     the superproject's `jailbee pr`. One PR per run.
 
-    On a TTY you are asked which container and which submodule, and shown what
-    will be published before anything is transported; --yes skips that last
-    question. Off a TTY nothing is asked: without PATH the submodule that has
-    commits ahead of its base is targeted automatically, and when several do
-    they are listed and PATH is required (two submodules are two repositories
-    and two PRs).
+    On a TTY you are asked which container and which submodule when you do not
+    name them, and shown what will be published before anything is
+    transported; --yes skips that last question. Off a TTY nothing is asked:
+    without PATH the submodule that has commits ahead of its base is targeted
+    automatically, and when several do they are listed and PATH is required
+    (two submodules are two repositories and two PRs).
 
     The base branch comes from the submodule's own `.gitmodules` entry, else its
     `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is

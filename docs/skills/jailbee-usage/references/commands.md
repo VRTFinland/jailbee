@@ -26,7 +26,8 @@ Common conventions:
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
-- [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
+- [Branch placement (`branch`)](#branch-placement)
+- [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
 - [Claude accounts (`claude ls|use|park|rm`)](#claude-accounts)
 - [GUI (`ide`, `chrome`)](#gui)
@@ -696,36 +697,49 @@ names the container and the session id of the attempt, so you can see how far it
 got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
 transcript as it works, so a run that ran out of budget is still on disk.
 
-## Submodules
+## Branch placement
 
-### `jailbee submodule checkout [NAME] [-b BRANCH] [--submodules-only]`
+### `jailbee branch [BRANCH] [--container NAME] [--submodules-only]`
 
 Put the tree — superproject and submodules, recursively — on one branch.
 Submodules can end up on a detached HEAD after clone / `jailbee git
-push`/`pull`. With **no NAME** it works on the **host** repo; with a NAME on
-that **container's** submodules.
+push`/`pull`. With **no `--container`** it works on the **host** repo; with
+`--container NAME` on that **container's** submodules. There is no `-c` short
+form: `-c` is `--config` on every jailbee command.
 
 ```bash
-jailbee submodule checkout                # host, align to current branch
-jailbee submodule checkout -b master      # host, whole tree to master
-jailbee submodule checkout -b master --submodules-only
-jailbee submodule checkout feat-foo       # container 'feat-foo', its branch
+jailbee branch                              # host, align to current branch
+jailbee branch master                       # host, whole tree to master
+jailbee branch master --submodules-only
+jailbee branch --container feat-foo         # container 'feat-foo', its branch
+jailbee branch master --container feat-foo
 ```
 
-On the host, `-b BRANCH` checks that branch out in the **superproject** first
-and then aligns the submodules to it — one command for jumping the whole tree
-between `master` and a container's branch (towards a container, use `jailbee
-git checkout <container>`, which already aligns submodules). `--submodules-only`
-skips the superproject checkout, which is the only way to align submodules
-from a detached HEAD or to keep a deliberate mismatch. With a container NAME,
-`-b` is pure submodule placement: a container's branch is its identity and is
-never switched here.
+On the host, a BRANCH argument checks that branch out in the **superproject**
+first and then aligns the submodules to it — one command for jumping the
+whole tree between `master` and a container's branch (towards a container,
+use `jailbee git checkout <container>`, which already aligns submodules).
+`--submodules-only` skips the superproject checkout, which is the only way to
+align submodules from a detached HEAD or to keep a deliberate mismatch. With
+`--container NAME`, BRANCH is pure submodule placement: a container's branch
+is its identity and is never switched here — and `--submodules-only` combined
+with `--container` is rejected outright (exit 2), since there is nothing for
+it to opt out of.
 
 Placement never rewinds a submodule branch. A submodule whose local branch is
 ahead of the superproject's recorded gitlink keeps that newer branch checked
 out and warns — bump the pointer with `git add <sub> && git commit` in the
 superproject. A dirty or genuinely diverged submodule is left on its detached
 HEAD, also with a warning.
+
+`jailbee submodule checkout [NAME] [-b BRANCH] [--submodules-only]` is a
+**hidden** deprecated alias, kept with its original (opposite) argument shape
+— NAME is the positional, BRANCH is behind `-b`/`--branch` — for existing
+scripts and muscle memory. It prints a deprecation hint pointing at `jailbee
+branch` and then behaves identically, including the same `--submodules-only`
++ container rejection.
+
+## Submodules
 
 ### `jailbee submodule pr [NAME] [PATH]`
 
@@ -741,11 +755,22 @@ jailbee submodule pr feat-foo --ready      # mark ready for review
 jailbee submodule pr feat-foo --open       # just open it in the browser
 ```
 
-Without PATH, the submodule that has commits ahead of its own base is targeted
-automatically; several ahead prints a table (path, commits, last subject) and
-exits 2 asking you to name one — two submodules are two repositories and two
-PRs. None ahead is reported as a fact (exit 0), not an error; name one with
-PATH to publish it anyway.
+**Off a TTY** (or with NAME and PATH both given), without PATH the submodule
+that has commits ahead of its own base is targeted automatically; several
+ahead prints a table (path, commits, last subject) and exits 2 asking you to
+name one — two submodules are two repositories and two PRs. None ahead is
+reported as a fact (exit 0), not an error; name one with PATH to publish it
+anyway.
+
+**On a TTY**, this command is interactive instead: a container picker runs
+when NAME is not given (even with only one container), a submodule picker
+runs when PATH is not given (offering **every** submodule, not only the ones
+ahead of their base), and a plan block (base, head, commit count) is shown
+for confirmation before anything is transported or published. `--yes` skips
+only that last confirmation — it does not skip the pickers. Naming NAME/PATH
+still skips the corresponding picker. `--open` is unaffected: it never asks
+anything. Off a TTY, none of this applies — every message and exit code is
+exactly as documented above.
 
 The candidate signal is deliberately the submodule's **own**
 `refs/jailbee/base/<super-base>` anchor (seeded at container creation), not
@@ -763,7 +788,7 @@ yet in the superproject's gitlink"), never as an error.
 | `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
 | `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
-| `--yes` / `-y` | Skip confirmations. Required when there is no TTY. Does **not** skip the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
+| `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
 | `--web` | Open the PR in the browser afterwards. |

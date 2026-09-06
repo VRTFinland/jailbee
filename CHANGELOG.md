@@ -70,6 +70,19 @@
   group than the one being parked from — silently mislabeling the stored
   login. Parking and switching now only trust a container's config home
   when it is an *authoritative* member of the group in question.
+- **A submodule created inside a container now lands on the host in git's
+  normal layout.** Cloning a sub-repo out of a container over `ext::` used to
+  leave a legacy `.git` directory instead of git's usual gitdir-file-plus-
+  `.git/modules/<name>` layout. It is now absorbed into
+  `<repo>/.git/modules/<name>` between `submodule update --init` and branch
+  placement; sub-repos cloned by earlier versions are healed the same way on
+  the next `jailbee git pull`/`checkout`.
+- **Such a submodule's `origin` is no longer left pointing at the dead
+  `ext::incus exec …` transport URL**, which would have pushed the host's
+  commits into a container that no longer exists. The upstream now comes
+  from the container's `.gitmodules`, else the container sub-repo's own
+  `remote.origin.url`; when neither names one, `origin` is removed and the
+  fix is printed instead of silently leaving a broken remote behind.
 
 ### Changed
 
@@ -152,6 +165,11 @@
   fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
   width no longer changes between frames; the subtitle carries a transient
   notice and nothing else.
+- **BREAKING (narrow): `--submodules-only` combined with a container is now
+  a usage error (exit 2)** on both `jailbee branch` and the `jailbee
+  submodule checkout` alias. It was previously accepted and silently
+  ignored — a container's branch is never switched, so there was nothing
+  for it to opt out of.
 
 ### Added
 
@@ -315,6 +333,17 @@
   repo's egress pool keeps refreshing instead of being pruned as soon as its
   (nonexistent) config file goes missing. See
   [`scratch`](docs/config.md#scratch).
+- **`jailbee branch [BRANCH] [--container NAME] [--submodules-only]`** puts
+  the whole tree, superproject and submodules, on one branch. Replaces
+  `jailbee submodule checkout`, which stays as a hidden deprecated alias with
+  its original argument shape. There is no `-c` short form for
+  `--container`: `-c` is `--config` on every jailbee command.
+- **`jailbee submodule pr` is now interactive on a TTY:** it asks which
+  container (even when there is only one), offers a picker over every
+  submodule instead of erroring when several are ahead, and confirms a plan
+  block before transporting or publishing anything. `--yes` skips the
+  confirmation but not the pickers. `--open` is unaffected. Off a TTY every
+  message and exit code is unchanged.
 
 ## 1.2.2 - 2026-08-28
 
