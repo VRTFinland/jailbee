@@ -234,3 +234,39 @@ def test_autostart_launches_only_apps_that_asked_for_it(tmp_path, mocker):
     launched = [c.args[3] for c in detached.call_args_list]
     assert len(launched) == 1
     assert "/a" in launched[0]
+
+
+def test_launch_autostart_apps_continues_after_one_raises(tmp_path, mocker):
+    """Per-app error containment lives here now — moved out of cli.py's two
+    inline blocks (Task 14) since every autostart caller now goes through
+    this one function. One spec's `launch` raising `ValueError` (e.g.
+    `ide.resolve_launcher` finding no matching JetBrains Toolbox launcher in
+    a freshly built image) must not stop a later app in the list, and must
+    not propagate to the caller — there is no CLI invocation left to exit
+    non-zero from at this point; the container is already up.
+    """
+    from jailbee.apps import launch_autostart_apps
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(
+        tmp_path,
+        apps={
+            "a": {"command": "/a", "autostart": True},
+            "b": {"command": "/b", "autostart": True},
+        },
+    )
+
+    def fake_launch(cfg, incus, container, spec, args=None):
+        if spec.name == "a":
+            raise ValueError("No launcher found for 'a'")
+
+    launch = mocker.patch("jailbee.apps.launch", side_effect=fake_launch)
+    error_mock = mocker.patch("jailbee.tui.error")
+
+    # Must not raise: one app's resolver failing must not abort the caller.
+    launch_autostart_apps(cfg, Incus(), "c1")
+
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {"a", "b"}
+    error_mock.assert_called_once()
+    assert "'a'" in error_mock.call_args.args[0]

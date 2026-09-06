@@ -224,7 +224,22 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
     Lives here rather than in `cli.py` so the two call sites (container
     create, container boot) share one implementation and `cli.py` stays a
     delegation layer.
+
+    Each app is launched independently: a `ValueError` from one spec — the
+    only case today is `resolve_command` (the JetBrains IDE entry) finding
+    no matching Toolbox launcher in this image, e.g. a container built
+    before the Toolbox mount existed, or `toolbox_host_path: null` — is
+    reported and must not stop a later app in the list. By the time this
+    runs the container is already up, so there is no CLI invocation left to
+    exit non-zero from; skipping the rest of the list would also silently
+    drop every app after the failing one, which is worse than one warning.
     """
+    from jailbee.tui import error
+
     for spec in resolve_apps(cfg):
-        if spec.autostart:
+        if not spec.autostart:
+            continue
+        try:
             launch(cfg, incus, container, spec)
+        except ValueError as e:
+            error(str(e))

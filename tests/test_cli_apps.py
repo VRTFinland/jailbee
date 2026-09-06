@@ -345,3 +345,111 @@ def test_ide_app_flag_one_off_spec_reports_missing_launcher_instead_of_a_traceba
     assert result.exit_code == 2
     assert "pycharm" in result.output
     assert not detached.called
+
+
+# ---------- _post_create_gui_launches (Task 17: autostart reads the registry)
+
+
+def test_post_create_gui_launches_delegates_to_registry_once(tmp_path, mocker):
+    """`_post_create_gui_launches` must call `launch_autostart_apps` exactly
+    once — not once per app — so `cli.py` decides *when* and the registry
+    decides *what*, per the module's own docstring contract."""
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, apps={"a": {"command": "/a", "autostart": True}})
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    launcher = mocker.patch("jailbee.apps.launch_autostart_apps")
+
+    from jailbee.cli import _post_create_gui_launches
+
+    _post_create_gui_launches(cfg, Incus(), "c1")
+
+    assert launcher.call_count == 1
+    launcher.assert_called_once_with(cfg, mocker.ANY, "c1")
+
+
+def test_post_create_gui_launches_now_covers_firefox_and_a_user_app(tmp_path, mocker):
+    """The behaviour change this task exists to make: `browsers.firefox.autostart`
+    and `apps.<name>.autostart` are live config fields that the old
+    `_finalize_new`/`_post_start_actions` inline blocks (Task 14) never
+    looked at — those blocks only ever considered `ide` and `chrome`.
+    Routing through `apps.launch_autostart_apps`, which iterates every
+    `resolve_apps` spec, makes them real.
+
+    Before this task, this config would launch {"ide", "chrome"} only.
+    After, it launches every autostart-enabled spec, in `resolve_apps`
+    order: builtins first (browsers, then the IDE), then config apps
+    sorted by name — not YAML order (`apps:` is written zed-then-figma
+    below on purpose).
+    """
+    from jailbee.apps import get_app
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        jetbrains={"enabled": True, "autostart": True},
+        browsers={
+            "chrome": {"enabled": True, "autostart": True},
+            "firefox": {"enabled": True, "autostart": True},
+        },
+        apps={
+            "zed": {"command": "/z", "autostart": True},
+            "figma": {"command": "/opt/f/f", "autostart": True},
+        },
+    )
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    launch = mocker.patch("jailbee.apps.launch")
+
+    from jailbee.cli import _post_create_gui_launches
+
+    _post_create_gui_launches(cfg, Incus(), "c1")
+
+    launched = [c.args[3].name for c in launch.call_args_list]
+    assert launched == [
+        get_app(cfg, "chrome").name,
+        get_app(cfg, "firefox").name,
+        get_app(cfg, "ide").name,
+        "figma",
+        "zed",
+    ]
+
+
+def test_post_create_gui_launches_noop_when_nothing_autostarts(tmp_path, mocker):
+    """No spec has `autostart` set (the default config) -> no graphical-session
+    check, no warning, no launch. A headless CI box with a config that never
+    asked for a GUI app must not print a "no graphical session" warning on
+    every `jailbee new`."""
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    has_session = mocker.patch("jailbee.autostart.has_graphical_session")
+    warn_mock = mocker.patch("jailbee.autostart.maybe_warn_no_gui")
+    launcher = mocker.patch("jailbee.apps.launch_autostart_apps")
+
+    from jailbee.cli import _post_create_gui_launches
+
+    _post_create_gui_launches(cfg, Incus(), "c1")
+
+    assert not has_session.called
+    warn_mock.assert_not_called()
+    launcher.assert_not_called()
+
+
+def test_post_create_gui_launches_warns_without_a_session(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, apps={"a": {"command": "/a", "autostart": True}})
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=False)
+    warn_mock = mocker.patch("jailbee.autostart.maybe_warn_no_gui")
+    launcher = mocker.patch("jailbee.apps.launch_autostart_apps")
+
+    from jailbee.cli import _post_create_gui_launches
+
+    _post_create_gui_launches(cfg, Incus(), "c1")
+
+    warn_mock.assert_called_once()
+    launcher.assert_not_called()

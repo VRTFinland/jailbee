@@ -7413,6 +7413,10 @@ def test_finalize_new_launches_chrome_even_when_ide_launcher_is_missing(make_cfg
     `toolbox_host_path: null`) must not also skip Chrome, and must not raise
     out of `_finalize_new` — the container is already created by this point
     in `jailbee new`, so there is nothing left to abort into.
+
+    Task 17: this containment now lives in `apps.launch_autostart_apps`, not
+    in a `cli.py`-local wrapper, so the reported-failure assertion patches
+    `jailbee.tui.error` (where `apps.py` calls it) rather than `jailbee.cli.error`.
     """
     from jailbee.incus import Incus
 
@@ -7436,7 +7440,7 @@ def test_finalize_new_launches_chrome_even_when_ide_launcher_is_missing(make_cfg
     mocker.patch.object(Incus, "exec", return_value="")  # no ide launcher found
     mocker.patch("jailbee.pool.ensure_pool_dirs")
     mocker.patch("jailbee.pool.allocate")
-    error_mock = mocker.patch("jailbee.cli.error")
+    error_mock = mocker.patch("jailbee.tui.error")
     detached = mocker.patch("jailbee.gui.launch_detached")
 
     from jailbee.cli import _finalize_new

@@ -111,11 +111,15 @@ def test_restart_continues_launching_chrome_after_ide_launcher_is_missing(mocker
     `_post_start_actions` are independent — a missing Toolbox launcher for
     the IDE (an ordinary state, not a crash) must not also skip Chrome, and
     must not abort `jailbee restart`.
+
+    Task 17: this containment now lives in `apps.launch_autostart_apps`, not
+    in a `cli.py`-local wrapper, so the reported-failure assertion patches
+    `jailbee.tui.error` (where `apps.py` calls it) rather than `jailbee.cli.error`.
     """
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
     mocker.patch("jailbee.autostart.run_autostart")
-    error_mock = mocker.patch("jailbee.cli.error")
+    error_mock = mocker.patch("jailbee.tui.error")
 
     def fake_launch(cfg, incus, container, spec, args=None):
         if spec.name == "ide":

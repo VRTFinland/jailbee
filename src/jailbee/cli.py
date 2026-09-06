@@ -1775,27 +1775,26 @@ def _preflight_background_new(
     return replace(opts, approved_autostart_ref=approved_ref, autofetch_done=True)
 
 
-def _launch_registry_app_or_warn(
-    cfg: "Config", incus: "IncusType", container: str, app_name: str
-) -> None:
-    """Launch one registry app during autostart, without aborting its siblings.
+def _post_create_gui_launches(cfg: "Config", incus: "IncusType", container: str) -> None:
+    """Launch every autostart GUI app, or explain why none were launched.
 
-    Used only by the two GUI-autostart blocks (`_finalize_new`,
-    `_post_start_actions`), where the IDE and Chrome are launched
-    independently after the container is already up. A `ValueError` —
-    typically `resolve_launcher` finding no matching JetBrains Toolbox
-    launcher in this image, e.g. a container built before the Toolbox mount
-    existed, or `toolbox_host_path: null` — must not take the *other* app
-    down with it, and there is no CLI invocation left to exit non-zero from
-    at this point in `jailbee new`/`start`/`restart`, so this reports and
-    returns rather than raising.
+    One helper for both call sites (`new` and the boot path): the decision
+    of *what* to launch belongs to the registry (`apps.resolve_apps` /
+    `apps.launch_autostart_apps`, including the per-app error containment
+    there), and `cli.py` only decides *when* — skip the graphical-session
+    check entirely when nothing would launch anyway (a headless CI box with
+    no autostart apps configured must not see a "no graphical session"
+    warning on every `jailbee new`), otherwise warn-and-skip or launch.
     """
-    from jailbee.apps import get_app, launch
+    from jailbee.apps import launch_autostart_apps, resolve_apps
+    from jailbee.autostart import has_graphical_session, maybe_warn_no_gui
 
-    try:
-        launch(cfg, incus, container, get_app(cfg, app_name))
-    except ValueError as e:
-        error(str(e))
+    if not any(s.autostart for s in resolve_apps(cfg)):
+        return
+    if not has_graphical_session():
+        maybe_warn_no_gui()
+        return
+    launch_autostart_apps(cfg, incus, container)
 
 
 def _finalize_new(
@@ -1806,23 +1805,12 @@ def _finalize_new(
     launch_gui: bool,
 ) -> None:
     """Post-create steps shared by the synchronous path and the worker:
-    launch IDE/Chrome if configured. Does NOT attach a shell/tmux —
+    launch autostart GUI apps if configured. Does NOT attach a shell/tmux —
     callers handle that. (The PR label is persisted inside `new_container`,
     before autostart, so it survives an autostart failure — not here.)
     """
-    from jailbee.autostart import has_graphical_session, maybe_warn_no_gui
-
     if launch_gui:
-        launch_ide = cfg.jetbrains.enabled and cfg.jetbrains.autostart
-        launch_chrome = cfg.browsers.chrome.enabled and cfg.browsers.chrome.autostart
-        if launch_ide or launch_chrome:
-            if not has_graphical_session():
-                maybe_warn_no_gui()
-            else:
-                if launch_ide:
-                    _launch_registry_app_or_warn(cfg, incus, created, "ide")
-                if launch_chrome:
-                    _launch_registry_app_or_warn(cfg, incus, created, "chrome")
+        _post_create_gui_launches(cfg, incus, created)
 
 
 @app.command("_new-worker", hidden=True)
@@ -2541,16 +2529,14 @@ def _post_start_actions(
     """Shared post-boot flow for `start` and `restart`.
 
     Re-pins /etc/hosts (strict mode), runs autostart with the ON_START
-    trigger, and launches Chrome / the IDE if a graphical session is
+    trigger, and launches every autostart GUI app if a graphical session is
     available. Caller is responsible for the actual container boot and
     for re-attaching /run/user/<uid> devices beforehand.
     """
     from jailbee.autostart import (
         AutostartStepError,
         AutostartTrigger,
-        has_graphical_session,
         inject_github_token,
-        maybe_warn_no_gui,
         run_autostart,
     )
     from jailbee.lifecycle import container_repo_dir, current_network_mode
@@ -2584,16 +2570,7 @@ def _post_start_actions(
         error(str(e))
         raise typer.Exit(1) from e
 
-    launch_ide = cfg.jetbrains.enabled and cfg.jetbrains.autostart
-    launch_chrome = cfg.browsers.chrome.enabled and cfg.browsers.chrome.autostart
-    if launch_ide or launch_chrome:
-        if not has_graphical_session():
-            maybe_warn_no_gui()
-        else:
-            if launch_ide:
-                _launch_registry_app_or_warn(cfg, incus, name, "ide")
-            if launch_chrome:
-                _launch_registry_app_or_warn(cfg, incus, name, "chrome")
+    _post_create_gui_launches(cfg, incus, name)
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:

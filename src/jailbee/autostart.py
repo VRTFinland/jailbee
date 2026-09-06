@@ -330,4 +330,4 @@ def _apply_step(
 def maybe_warn_no_gui() -> None:
     """Print a friendly warning when autostart wants GUI but there's no session."""
     if not has_graphical_session():
-        warn("No graphical session detected — IDE and Chrome launches skipped")
+        warn("No graphical session detected — GUI app launches skipped")
