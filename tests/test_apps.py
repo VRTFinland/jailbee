@@ -21,7 +21,13 @@ def test_registry_order_is_stable_regardless_of_yaml_key_order(tmp_path):
     # A user's YAML key order must not reshuffle either.
     a = make_cfg(tmp_path, apps={"zed": {"command": "/z"}, "arc": {"command": "/a"}})
     b = make_cfg(tmp_path, apps={"arc": {"command": "/a"}, "zed": {"command": "/z"}})
-    assert [s.name for s in resolve_apps(a)] == [s.name for s in resolve_apps(b)]
+    names_a = [s.name for s in resolve_apps(a)]
+    names_b = [s.name for s in resolve_apps(b)]
+    # Stability alone (names_a == names_b) would also pass for e.g. a
+    # reverse-alphabetical or insertion-order-preserving scheme applied
+    # consistently to both configs. Pin the actual required order too: the
+    # spec says "sorted by name", not merely "independent of YAML order".
+    assert names_a == names_b == ["arc", "zed"]
 
 
 @pytest.mark.xfail(reason="browsers.builtin_specs lands in Task 8", strict=True)
@@ -36,6 +42,12 @@ def test_builtins_come_before_config_apps(tmp_path):
 
 
 def test_disabled_browsers_are_not_in_the_registry(tmp_path):
+    # Inert until Task 8: both `browsers.builtin_specs` and `ide.builtin_specs`
+    # are still stubs returning `[]` unconditionally, so this passes today
+    # against any resolve_apps implementation and exercises no disable logic.
+    # It becomes real coverage once Task 8 gives browsers.builtin_specs actual
+    # enable/disable behaviour (see that task's
+    # test_a_disabled_browser_produces_no_spec).
     cfg = make_cfg(tmp_path)
     assert [s.name for s in resolve_apps(cfg)] == []
 
