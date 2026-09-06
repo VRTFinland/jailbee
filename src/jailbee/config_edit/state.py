@@ -256,31 +256,79 @@ the key is actually present, and a reset of an inherited key produces no
 """
 
 
+def _dig(value: object, path: KeyPath) -> tuple[bool, object]:
+    """`(present, value)` for `path` inside an already-loaded value.
+
+    The in-memory twin of `layers.lookup`, but rooted at any value rather than
+    at a mapping: a staged collection is a *list*, and `effective` has to be
+    able to walk into one.
+    """
+    node = value
+    for key in path:
+        if isinstance(key, int):
+            if not isinstance(node, list) or not 0 <= key < len(node):
+                return False, None
+            node = node[key]
+            continue
+        if not isinstance(node, dict) or key not in node:
+            return False, None
+        node = node[key]
+    return True, node
+
+
 def effective(state: EditorState, path: KeyPath) -> object:
     """The value the user currently sees for `path`.
 
-    A staged edit wins over the resolved origin; a staged reset falls back
-    to the origin.
+    Resolved from the nearest staged ancestor, then from the saved layers. The
+    nearest-ancestor rule is what makes an entry read correct in all three
+    cases that can hold at once: the field itself staged, the whole collection
+    staged around it, or neither.
 
-    `state.origins` reports the layers **as saved**: it is resolved once
-    in `open_editor` against the files on disk and never recomputed. So
-    immediately after `reset_current` on a key the open layer holds, this
-    returns the value being deleted, not the value the key will inherit
-    once the delete is written. Recomputing origins against staged edits
-    belongs to the UI plan, the same limitation `inherited_entries`
-    carries for the same reason.
+    A staged `UNSET` at any level means "this will be deleted", so the reader
+    falls through to what the layers say — the same fall-through the top-level
+    case has always had.
 
-    Membership is tested before reading, not folded into a
-    `state.staged.get(path, ...)` default: `None` is a legitimate staged
-    value (`chrome.url: null`), and a `get` default fires only on a
-    missing key, so the two would become indistinguishable.
+    `state.origins` reports the layers **as saved** (spec 10.1 option b) and is
+    resolved once in `open_editor`. That is unchanged: this function walks
+    *into* an origin's value, it never adds a key to the map.
     """
-    if path in state.staged:
-        staged = state.staged[path]
-        if staged is not UNSET:
-            return staged
-    origin = state.origins.get(path)
-    return origin.value if origin is not None else None
+    for i in range(len(path), 0, -1):
+        if path[:i] not in state.staged:
+            continue
+        staged = state.staged[path[:i]]
+        if staged is UNSET:
+            break
+        present, value = _dig(staged, path[i:])
+        return value if present else None
+    for i in range(len(path), 0, -1):
+        origin = state.origins.get(path[:i])
+        if origin is None:
+            continue
+        present, value = _dig(origin.value, path[i:])
+        return value if present else None
+    return None
+
+
+def entry_origin(state: EditorState, path: KeyPath) -> Literal["set", "default"]:
+    """Whether an entry actually carries this key, or falls back to the model.
+
+    The three-layer marker (`repo`/`global`/`default`) does not apply inside an
+    entry: the entry as a whole came from one layer, so the only question left
+    is whether the key is written in it (spec 11.4).
+    """
+    for i in range(len(path) - 1, 0, -1):
+        if path[:i] in state.staged and state.staged[path[:i]] is not UNSET:
+            present, _ = _dig(state.staged[path[:i]], path[i:])
+            return "set" if present else "default"
+    if path in state.staged and state.staged[path] is not UNSET:
+        return "set"
+    for i in range(len(path) - 1, 0, -1):
+        origin = state.origins.get(path[:i])
+        if origin is None:
+            continue
+        present, _ = _dig(origin.value, path[i:])
+        return "set" if present else "default"
+    return "default"
 
 
 def stage(state: EditorState, path: KeyPath, value: object) -> EditorState:

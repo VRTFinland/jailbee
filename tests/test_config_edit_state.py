@@ -193,6 +193,48 @@ def test_effective_prefers_a_staged_value_over_the_resolved_origin():
     assert st.effective(got, ("ssh", "enabled")) is False
 
 
+def test_effective_reads_an_entry_field_out_of_the_saved_collection():
+    origins = {
+        ("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}]),
+    }
+    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+
+    assert st.effective(state, ("host_mounts", 0, "readonly")) is True
+    assert st.effective(state, ("host_mounts", 0, "container")) is None
+
+
+def test_a_staged_whole_collection_wins_over_the_saved_one_for_entry_reads():
+    origins = {("host_mounts",): Origin("repo", [{"host": "/old"}])}
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts",): [{"host": "/new"}]},
+    )
+
+    assert st.effective(state, ("host_mounts", 0, "host")) == "/new"
+
+
+def test_a_staged_entry_field_wins_over_the_staged_collection_it_sits_in():
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts", 0, "host"): "/edited"},
+    )
+
+    assert st.effective(state, ("host_mounts", 0, "host")) == "/edited"
+
+
+def test_entry_origin_says_set_only_when_the_key_is_in_the_entry():
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
+    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+
+    assert st.entry_origin(state, ("host_mounts", 0, "host")) == "set"
+    assert st.entry_origin(state, ("host_mounts", 0, "readonly")) == "default"
+
+
 def test_toggle_flips_the_bool_under_the_cursor():
     got = st.enter_crumb(_open(), "gpg")
     got = st.toggle_show_all(got)
