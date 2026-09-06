@@ -189,6 +189,16 @@ class Editor:
             return
         spec = st.current(self.state)
         if spec is not None and is_drilldown(spec):
+            # Through `edit_block`, the editor's single gate (`render.py`'s own
+            # word for it), exactly as `toggle`, `reset` and `edit_current` do.
+            # A drill-down used to skip it, which made `github ▸ api_tokens`
+            # fully navigable in a repo-layer session — a screen for a key the
+            # loader bans from a repo config, whose entry prompt then seeded
+            # itself from the *global* tokens.
+            blocked = render.edit_block(spec, self.state.layer)
+            if blocked is not None:
+                self.notice(blocked, style="class:error")
+                return
             self.state = st.enter_crumb(self.state, spec.path[len(self.state.trail)])
             return
         self.edit_current()
@@ -246,6 +256,15 @@ class Editor:
         view = st.screen(self.state)
         if view.kind != "collection" or view.collection is None:
             self.notice("That key is not a collection — open one to add or remove entries.")
+            return None
+        # `enter` now refuses to open a blocked collection at all, so this is
+        # unreachable through the UI — but `new_entry_here`/`delete_entry_here`/
+        # `move_entry_here` are public and take nothing from `enter` about how
+        # the screen was reached, so they re-check rather than trusting that
+        # invariant to hold forever. The same reasoning `edit_current` states.
+        blocked = render.edit_block(view.collection, self.state.layer)
+        if blocked is not None:
+            self.notice(blocked, style="class:error")
             return None
         return view.collection
 

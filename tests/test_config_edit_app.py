@@ -1477,3 +1477,46 @@ def test_n_on_an_inherited_collection_stages_only_the_new_entry(tmp_path):
 
     assert editor.state.staged == {("host_mounts",): [{}]}
     assert editor.state.trail == ("host_mounts", 0)
+
+
+def test_enter_refuses_a_drill_down_the_layer_bans_and_says_why(tmp_path):
+    """`enter` bypassed `render.edit_block` — `render.py` calls it the editor's
+    single gate, and `toggle`, `reset` and `edit_current` all consult it.
+
+    At the repo layer that made `github ▸ api_tokens` fully navigable: a screen
+    for a key `config/loader.py` refuses in a repo config, whose entry prompt
+    then seeded `updated` from `st.effective`, resolving through to the
+    *global* token and staging it into the repo file. `layers.validate` refused
+    the save, so nothing leaked — but the loader ban was the only thing left
+    standing, and `docs/skills/` claimed the UI blocked it.
+    """
+    editor = _editor(tmp_path, repo={}, global_={"github": {"api_tokens": {"gisgro": "ghp_x"}}})
+    _descend(editor, "github")
+    editor.state = st.toggle_show_all(editor.state)  # api_tokens is an advanced field
+    _cursor_to(editor, "api_tokens")
+
+    editor.enter()
+
+    assert editor.state.trail == ("github",)  # did not descend
+    assert "host-local" in editor.message
+    assert editor.message_style == "class:error"
+    assert editor.state.staged == {}
+
+
+def test_the_same_drill_down_opens_normally_on_the_global_layer(tmp_path):
+    """The gate is the layer rule, not a blanket refusal — without this the
+    test above would also pass with `enter` refusing every drill-down."""
+    editor = _editor(
+        tmp_path,
+        repo={},
+        global_={"github": {"api_tokens": {"gisgro": "ghp_x"}}},
+        layer="global",
+    )
+    _descend(editor, "github")
+    editor.state = st.toggle_show_all(editor.state)  # api_tokens is an advanced field
+    _cursor_to(editor, "api_tokens")
+
+    editor.enter()
+
+    assert editor.state.trail == ("github", "api_tokens")
+    assert st.screen(editor.state).kind == "collection"
