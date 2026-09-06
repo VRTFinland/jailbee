@@ -72,6 +72,17 @@ def test_lookup_does_not_walk_through_a_scalar():
     assert layers.lookup({"gpg": "yes"}, ("gpg", "enabled")) == (False, None)
 
 
+def test_lookup_walks_into_a_list_by_index():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+    assert layers.lookup(raw, ("host_mounts", 1, "host")) == (True, "/b")
+
+
+def test_lookup_reports_an_out_of_range_index_as_absent():
+    """The read path must not raise on a hand-broken file (the `lookup` contract)."""
+    raw = {"host_mounts": [{"host": "/a"}]}
+    assert layers.lookup(raw, ("host_mounts", 7, "host")) == (False, None)
+
+
 def test_raw_for_selects_the_open_layer(tmp_path):
     _write(tmp_path / "global.yaml", "defaults:\n  cpu: 2\n")
     _write(tmp_path / "repo.yaml", "defaults:\n  cpu: 8\n")
@@ -221,6 +232,15 @@ def test_apply_changes_creates_missing_parents_and_deletes():
     out = layers.apply_changes({}, [YamlChange(("gpg", "enabled"), True)])
     assert out == {"gpg": {"enabled": True}}
     assert layers.apply_changes(out, [YamlChange(("gpg", "enabled"), DELETE)]) == {"gpg": {}}
+
+
+def test_apply_changes_edits_one_entry_without_touching_its_neighbour():
+    raw = {"host_mounts": [{"host": "/a", "readonly": False}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0, "readonly"), True)])
+
+    assert got["host_mounts"] == [{"host": "/a", "readonly": True}, {"host": "/b"}]
+    assert raw["host_mounts"][0]["readonly"] is False  # deep-copied, not mutated
 
 
 @pytest.fixture

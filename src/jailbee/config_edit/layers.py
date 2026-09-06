@@ -28,7 +28,7 @@ from jailbee.config import ConfigError, load_config_from_layers
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
 from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
-from jailbee.config_writer import DELETE, YamlChange
+from jailbee.config_writer import DELETE, KeyPath, YamlChange
 from jailbee.global_config import validate_global_raw
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ def raw_for(layers: LayerSet, layer: LayerName) -> dict[str, object]:
     return layers.repo_raw if layer == "repo" else layers.global_raw
 
 
-def lookup(raw: dict[str, object], path: tuple[str, ...]) -> tuple[bool, object]:
+def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     """`(present, value)` for `path` in a raw mapping.
 
     `present` and `value` are separate because `None` is a legitimate
@@ -93,9 +93,21 @@ def lookup(raw: dict[str, object], path: tuple[str, ...]) -> tuple[bool, object]
     different states, and collapsing them would make the origin marker
     lie. Walking into a non-mapping returns "absent" rather than raising:
     a hand-broken file must not crash the editor's read path.
+
+    That includes an out-of-range integer segment: `apply_changes` and
+    `config_writer._apply` raise on one, because there an index is always
+    produced by code that just read the same list, so a bad one is a
+    programming error. Here it can also come from a hand-edited file the
+    editor is merely displaying, so it reads as "absent" instead — the
+    read path must never crash on a document it didn't write.
     """
     node: object = raw
     for key in path:
+        if isinstance(key, int):
+            if not isinstance(node, list) or not 0 <= key < len(node):
+                return False, None
+            node = node[key]
+            continue
         if not isinstance(node, dict) or key not in node:
             return False, None
         node = node[key]
@@ -211,22 +223,58 @@ def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict
     validator needs the resulting mapping, not the resulting YAML text.
     Deep-copies first, because `raw` is the editor's live view of the file
     and a rejected validation must leave it untouched.
+
+    An integer path segment addresses an entry of a list already present
+    in `raw` (the caller just read it from this same document), so an
+    out-of-range index raises rather than being silently absorbed — unlike
+    `lookup`, which reads a possibly hand-broken file and must not crash.
     """
     out = deepcopy(raw)
     for change in changes:
         *parents, leaf = change.path
-        node: dict[str, object] = out
+        node: object = out
         for key in parents:
-            child = node.get(key)
-            if not isinstance(child, dict):
-                child = {}
-                node[key] = child
-            node = child
+            node = _descend_raw(node, key, change.path)
+        if isinstance(leaf, int):
+            if not isinstance(node, list) or not 0 <= leaf < len(node):
+                raise ValueError(f"{_dotted(change.path)}: index out of range")
+            if change.value is DELETE:
+                del node[leaf]
+            else:
+                node[leaf] = change.value
+            continue
+        if not isinstance(node, dict):
+            raise ValueError(f"{_dotted(change.path)}: expected a mapping")
         if change.value is DELETE:
             node.pop(leaf, None)
         else:
             node[leaf] = change.value
     return out
+
+
+def _descend_raw(node: object, key: str | int, path: KeyPath) -> object:
+    """One step down a plain `dict`/`list` tree, matching `config_writer._descend`.
+
+    Creates a missing mapping but never a missing list entry, and keeps an
+    existing `list` in place rather than replacing it — otherwise a parent
+    segment pointing at a list (`host_mounts` before its index) would be
+    clobbered with a fresh `dict` and the entry beneath it unreachable.
+    """
+    if isinstance(key, int):
+        if not isinstance(node, list) or not 0 <= key < len(node):
+            raise ValueError(f"{_dotted(path)}: index out of range")
+        return node[key]
+    if not isinstance(node, dict):
+        raise ValueError(f"{_dotted(path)}: expected a mapping")
+    child = node.get(key)
+    if not isinstance(child, (dict, list)):
+        child = {}
+        node[key] = child
+    return child
+
+
+def _dotted(path: KeyPath) -> str:
+    return ".".join(str(seg) for seg in path)
 
 
 _PREFIX_PATH = ("container_prefix",)

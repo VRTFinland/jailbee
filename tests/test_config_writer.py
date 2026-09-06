@@ -9,6 +9,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,6 +106,40 @@ def test_patch_file_leaves_no_temp_file_behind(tmp_path: Path):
     target.write_text(ORIGINAL)
     patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
     assert sorted(p.name for p in tmp_path.iterdir()) == ["global.yaml"]
+
+
+def test_patch_yaml_edits_one_field_of_one_list_entry_in_place():
+    """The other entries, and the comments among them, survive byte-identically."""
+    text = (
+        "host_mounts:\n"
+        "  - host: /home/dev/data      # production data\n"
+        "    container: /data\n"
+        "    readonly: false\n"
+        "  - host: /srv/cache\n"
+        "    container: /cache\n"
+    )
+
+    got = patch_yaml(text, [YamlChange(("host_mounts", 0, "readonly"), True)])
+
+    assert "# production data" in got
+    assert "readonly: true" in got
+    assert "/srv/cache" in got
+
+
+def test_patch_yaml_replaces_a_whole_list_when_the_path_names_the_key():
+    text = "host_ports:\n  - name: web\n    port: 8080\n"
+
+    got = patch_yaml(text, [YamlChange(("host_ports",), [{"name": "api", "port": 9000}])])
+
+    assert "api" in got
+    assert "web" not in got
+
+
+def test_patch_yaml_rejects_an_index_that_is_not_there():
+    text = "host_mounts:\n  - host: /a\n    container: /a\n"
+
+    with pytest.raises(ValueError, match="host_mounts.4"):
+        patch_yaml(text, [YamlChange(("host_mounts", 4, "readonly"), True)])
 
 
 class Sample(BaseModel):

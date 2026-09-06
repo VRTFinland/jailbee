@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from jailbee.config_edit.layers import LayerName, LayerSet
     from jailbee.config_edit.schema import FieldSpec
     from jailbee.config_edit.state import EditorState
+    from jailbee.config_writer import KeyPath
 
 _COLLECTION_KINDS = frozenset({FieldKind.MODEL_LIST, FieldKind.MODEL_MAP})
 """Kinds whose editor is a drill-down screen this release does not have yet.
@@ -110,7 +111,7 @@ def edit_block(spec: FieldSpec, layer: LayerName) -> str | None:
     return None
 
 
-def _pending(state: EditorState, layer_set: LayerSet) -> frozenset[tuple[str, ...]]:
+def _pending(state: EditorState, layer_set: LayerSet) -> frozenset[KeyPath]:
     """Paths whose staged value would actually alter the file."""
     return frozenset(c.path for c in changes(state, raw_for(layer_set, state.layer)))
 
