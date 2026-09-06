@@ -175,6 +175,45 @@ def select_target(subs: list[SubCandidate], path: str | None) -> SubCandidate:
     return ahead[0]
 
 
+def order_candidates(subs: list[SubCandidate]) -> list[SubCandidate]:
+    """Order submodules the way a picker should offer them.
+
+    Ahead of their base first (descending by commit count, because the one
+    with the most unpublished work is the likeliest target), then those whose
+    count could not be resolved, then the rest. Stable by path inside each
+    group so repeated runs offer the same order.
+
+    Returns a new list; the input is not mutated.
+    """
+
+    def key(sub: SubCandidate) -> tuple[int, int, str]:
+        if sub.commits is not None and sub.commits > 0:
+            return (0, -sub.commits, sub.path)
+        if sub.commits is None:
+            return (1, 0, sub.path)
+        return (2, 0, sub.path)
+
+    return sorted(subs, key=key)
+
+
+def describe_candidate(sub: SubCandidate, *, width: int = 0) -> str:
+    """One line describing a submodule, for the picker and the printed list.
+
+    Shared by both so the TTY and non-TTY renderings cannot drift. `width`
+    left-pads the path so a column of these lines up. An unknown commit count
+    renders as `?` rather than a plausible-but-wrong zero.
+    """
+    count = "?" if sub.commits is None else str(sub.commits)
+    flags = ""
+    if sub.dirty:
+        flags += "  [dirty]"
+    if sub.gitlink_stale:
+        flags += "  [gitlink stale]"
+    if sub.branch is None:
+        flags += "  [detached]"
+    return f"{sub.path.ljust(width)}  {count} commits  {sub.subject}{flags}"
+
+
 STATE_KEY = "user.jailbee.sub_pr"
 
 

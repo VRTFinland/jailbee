@@ -5475,13 +5475,18 @@ def _print_submodule_report(branch: str, report: list[tuple[str, str | None]]) -
 
 
 def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
-    """List the submodules that have commits to publish, one per line."""
+    """List the submodules that have commits to publish, one per line.
+
+    Renders through `submodule_pr.describe_candidate`, the same function the
+    TTY picker uses, so the two cannot drift. `markup=False` because a commit
+    subject is user data and may contain Rich markup characters.
+    """
+    from jailbee.submodule_pr import describe_candidate
     from jailbee.tui import console
 
     width = max((len(c.path) for c in candidates), default=0)
     for c in candidates:
-        count = "?" if c.commits is None else str(c.commits)
-        console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
+        console.print(f"  {describe_candidate(c, width=width)}", markup=False, highlight=False)
 
 
 def _align_tree_to_branch(
