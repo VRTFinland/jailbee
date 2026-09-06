@@ -934,6 +934,25 @@ def submodule_update(repo_root: Path) -> None:
         raise GitError(f"git submodule update failed (exit {returncode})")
 
 
+def submodule_absorb_gitdirs(repo_root: Path) -> None:
+    """Run `git submodule absorbgitdirs` in repo_root. Best-effort.
+
+    A sub-repo `submodules.transport_submodules_to_host` cloned out of a
+    container keeps a legacy `.git` *directory* in the working tree; git's own
+    layout since the submodule rewrite is a `.git` *file* pointing at
+    `<superproject>/.git/modules/<name>`. This migrates it, preserving the
+    sub-repo's remotes and refs.
+
+    A non-zero exit is deliberately ignored rather than raised: by the time
+    this runs the objects are already across and the legacy layout still
+    works, so failing the caller's pull over a cosmetic migration would be
+    the worse outcome. The command is a silent no-op (exit 0, no output) both
+    on an already-absorbed repo and on one with no submodules, so it is safe
+    to call unconditionally.
+    """
+    subprocess.call(["git", "submodule", "absorbgitdirs"], cwd=repo_root)
+
+
 def fetch_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
     """`git fetch <url> <refspec...>` in repo_root (multiple refspecs).
 

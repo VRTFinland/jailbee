@@ -879,6 +879,27 @@ def test_submodule_update_raises_on_failure(mocker, tmp_path):
         git.submodule_update(tmp_path)
 
 
+def test_submodule_absorb_gitdirs_runs_in_repo_root(mocker, tmp_path):
+    from jailbee import git
+
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+
+    git.submodule_absorb_gitdirs(tmp_path)
+
+    args, kwargs = call.call_args
+    assert args[0] == ["git", "submodule", "absorbgitdirs"]
+    assert kwargs["cwd"] == tmp_path
+
+
+def test_submodule_absorb_gitdirs_swallows_failure(mocker, tmp_path):
+    """Best-effort: the objects are already across and the legacy layout works."""
+    from jailbee import git
+
+    mocker.patch("jailbee.git.subprocess.call", return_value=1)
+
+    git.submodule_absorb_gitdirs(tmp_path)  # must not raise
+
+
 def test_fetch_url_multi_passes_all_refspecs(mocker, tmp_path):
     from jailbee import git
 

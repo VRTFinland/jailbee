@@ -154,6 +154,7 @@ def test_update_on_host_delegates_to_git(mocker):
     from pathlib import Path
 
     upd = mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
     mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
     submodules.update_submodules_on_host(Path("/host/repo"))
     upd.assert_called_once_with(Path("/host/repo"))
@@ -934,6 +935,7 @@ def test_update_on_host_invokes_placement_with_none_by_default(mocker):
 
     place = mocker.patch("jailbee.submodules._place_submodule_branches")
     mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
 
     submodules.update_submodules_on_host(Path("/host/repo"))
 
@@ -948,11 +950,33 @@ def test_update_on_host_forwards_branch(mocker):
 
     place = mocker.patch("jailbee.submodules._place_submodule_branches")
     mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
 
     submodules.update_submodules_on_host(Path("/host/repo"), branch="feat/foo")
 
     assert place.call_args.args[1] == "/host/repo"
     assert place.call_args.args[2] == "feat/foo"
+
+
+def test_update_submodules_on_host_absorbs_between_update_and_placement(mocker, tmp_path):
+    """Absorb must run after --init registers the path and before placement."""
+    from pathlib import Path
+
+    calls = []
+    mocker.patch(
+        "jailbee.git.submodule_update", side_effect=lambda root: calls.append("update")
+    )
+    mocker.patch(
+        "jailbee.git.submodule_absorb_gitdirs", side_effect=lambda root: calls.append("absorb")
+    )
+    mocker.patch(
+        "jailbee.submodules._place_submodule_branches",
+        side_effect=lambda run, top, branch=None: calls.append("place"),
+    )
+
+    submodules.update_submodules_on_host(tmp_path, branch="master")
+
+    assert calls == ["update", "absorb", "place"]
 
 
 def test_unmerged_entries_parses_stages():
