@@ -8128,9 +8128,22 @@ def apps_run_cmd(
 
 
 def _launch_registry_app(
-    cfg: "Config", name: str | None, app_name: str, *, force: bool, args: list[str] | None = None
+    cfg: "Config",
+    name: str | None,
+    app_name: str,
+    *,
+    force: bool,
+    args: list[str] | None = None,
+    attach_cmd: str | None = None,
 ) -> None:
-    """Resolve a container and launch one registry app in it."""
+    """Resolve a container and launch one registry app in it.
+
+    `attach_cmd` names the command in `_resolve_attachable`'s "you can still
+    reach it" hint. It defaults to the app's own name, which is right for
+    `jailbee chrome`/`jailbee firefox`/`jailbee ide` — the command *is* the
+    app name — but not for `jailbee browser`, which resolves an app the user
+    never typed.
+    """
     from jailbee.apps import get_app
 
     try:
@@ -8138,7 +8151,9 @@ def _launch_registry_app(
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd=app_name)
+    incus, resolved = _resolve_attachable(
+        cfg, name, force=force, attach_cmd=attach_cmd or app_name
+    )
     _launch_or_exit(cfg, incus, resolved, spec, args)
 
 
@@ -8184,7 +8199,9 @@ def browser_cmd(
                 f"`jailbee {enabled[0]}`."
             )
         raise typer.Exit(2)
-    _launch_registry_app(cfg, name, chosen, force=force, args=[url] if url else None)
+    _launch_registry_app(
+        cfg, name, chosen, force=force, args=[url] if url else None, attach_cmd="browser"
+    )
 
 
 @app.command("ide")

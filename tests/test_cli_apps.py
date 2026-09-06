@@ -202,6 +202,28 @@ def test_browser_opens_the_single_enabled_browser(tmp_path, mocker):
     assert launch.call_args.args[3].name == "firefox"
 
 
+def test_browser_names_itself_in_the_container_resolvers_hint(tmp_path, mocker):
+    """`_resolve_attachable`'s "'jailbee <cmd>' can still reach it" hint is
+    built from `attach_cmd`. Passing the *resolved* app there made
+    `jailbee browser` advise `jailbee chrome` — a command the user did not
+    run, and one that stops working the moment `browsers.default` changes.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    resolve = mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.apps.launch")
+
+    assert runner.invoke(app, ["browser", "c1"]).exit_code == 0
+    assert resolve.call_args.kwargs["attach_cmd"] == "browser"
+
+    # `jailbee chrome` keeps naming itself — the default is still the app name.
+    assert runner.invoke(app, ["chrome", "c1"]).exit_code == 0
+    assert resolve.call_args.kwargs["attach_cmd"] == "chrome"
+
+
 def test_browser_with_two_enabled_and_no_default_explains(tmp_path, mocker):
     from tests.conftest import make_cfg
 
