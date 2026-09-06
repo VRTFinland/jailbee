@@ -963,12 +963,9 @@ def test_update_on_host_forwards_branch(mocker):
 
 def test_update_submodules_on_host_absorbs_between_update_and_placement(mocker, tmp_path):
     """Absorb must run after --init registers the path and before placement."""
-    from pathlib import Path
 
     calls = []
-    mocker.patch(
-        "jailbee.git.submodule_update", side_effect=lambda root: calls.append("update")
-    )
+    mocker.patch("jailbee.git.submodule_update", side_effect=lambda root: calls.append("update"))
     mocker.patch(
         "jailbee.git.submodule_absorb_gitdirs", side_effect=lambda root: calls.append("absorb")
     )
@@ -1587,12 +1584,8 @@ def test_declared_branch_for_top_relative_path_returns_none_when_nothing_matches
 
 
 def _repoint_mocks(mocker, *, gitmodules_url, subrepo_url):
-    mocker.patch(
-        "jailbee.submodules._container_submodule_url", return_value=gitmodules_url
-    )
-    mocker.patch(
-        "jailbee.submodules._container_subrepo_origin_url", return_value=subrepo_url
-    )
+    mocker.patch("jailbee.submodules._container_submodule_url", return_value=gitmodules_url)
+    mocker.patch("jailbee.submodules._container_subrepo_origin_url", return_value=subrepo_url)
     return (
         mocker.patch("jailbee.git.set_origin_url"),
         mocker.patch("jailbee.git.remove_origin"),
@@ -1601,7 +1594,9 @@ def _repoint_mocks(mocker, *, gitmodules_url, subrepo_url):
 
 def test_repoint_prefers_the_gitmodules_url(mocker, tmp_path):
     set_url, remove = _repoint_mocks(
-        mocker, gitmodules_url="git@github.com:acme/foo.git", subrepo_url="git@github.com:other/x.git"
+        mocker,
+        gitmodules_url="git@github.com:acme/foo.git",
+        subrepo_url="git@github.com:other/x.git",
     )
     incus = mocker.MagicMock()
 

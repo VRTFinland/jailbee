@@ -872,9 +872,7 @@ def _repoint_cloned_subrepo(
     """
     url = _container_submodule_url(incus, container, repo_dir, subpath, uid=uid)
     if not url:
-        candidate = _container_subrepo_origin_url(
-            incus, container, repo_dir, subpath, uid=uid
-        )
+        candidate = _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
         if candidate and not candidate.startswith("ext::"):
             url = candidate
     if url:

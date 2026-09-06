@@ -5588,8 +5588,7 @@ def branch_cmd(
         bool,
         typer.Option(
             "--submodules-only",
-            help="Align submodules without checking BRANCH out in the superproject "
-            "(host only).",
+            help="Align submodules without checking BRANCH out in the superproject (host only).",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -5620,9 +5619,7 @@ def branch_cmd(
       jailbee branch master --container feat-foo
     """
     cfg = _load_or_exit(config)
-    _align_tree_to_branch(
-        cfg, branch=branch, container=container, submodules_only=submodules_only
-    )
+    _align_tree_to_branch(cfg, branch=branch, container=container, submodules_only=submodules_only)
 
 
 @submodule_app.command("checkout", hidden=True)
@@ -5655,9 +5652,7 @@ def submodule_checkout(
             "  jailbee branch [BRANCH] [--container NAME] [--submodules-only]",
         ]
     )
-    _align_tree_to_branch(
-        cfg, branch=branch, container=name, submodules_only=submodules_only
-    )
+    _align_tree_to_branch(cfg, branch=branch, container=name, submodules_only=submodules_only)
 
 
 @submodule_app.command("pr")
@@ -5856,9 +5851,7 @@ def submodule_pr_cmd(
     on_host = submodules.host_subrepo_exists(cfg.repo_root, subpath)
     plan_remote = submodule_pr.resolve_remote(cfg.repo_root, subpath) if on_host else None
     plan_base = base or (
-        submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=None)
-        if on_host
-        else None
+        submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=None) if on_host else None
     )
 
     notes: list[str] = []

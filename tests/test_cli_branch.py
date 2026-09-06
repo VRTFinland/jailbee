@@ -137,7 +137,9 @@ def test_submodules_only_with_container_is_a_usage_error(mocker, tmp_path):
     inside = mocker.patch("jailbee.sync.checkout_submodules_in_container")
     resolve = mocker.patch("jailbee.cli._resolve_existing")
 
-    result = runner.invoke(app, ["branch", "master", "--container", "feat-foo", "--submodules-only"])
+    result = runner.invoke(
+        app, ["branch", "master", "--container", "feat-foo", "--submodules-only"]
+    )
 
     assert result.exit_code == 2, result.output
     inside.assert_not_called()
