@@ -661,12 +661,32 @@ def stage(state: EditorState, path: KeyPath, value: object) -> EditorState:
     return _stage_structure(state, ancestor, folded)
 
 
+def current_value(state: EditorState, path: KeyPath) -> object:
+    """The value the screen the cursor is on shows for `path`: `own` or `effective`.
+
+    The single place that choice is made for a path the **user is pointing
+    at**, so a keystroke that reads a value (`toggle_current`,
+    `app.edit_current`'s seed) and the row that paints it cannot answer
+    differently. They did once: `render._now` was converted to `own` for an
+    entry screen while these two still read `effective`, so on a global-layer
+    session whose repo config also set the collection, the row displayed
+    global's value and `Enter` pre-filled the repo's — committing wrote one
+    layer's value into the other's file.
+
+    Inside an entry the answer is `own`: the entry belongs to the open layer,
+    because `entries` reports no other layer's. Everywhere else it is
+    `effective`, which is right for a field row — an inherited value is what
+    that field *is*, and editing it is how you create a key of your own.
+    """
+    return own(state, path) if screen(state).kind == "entry" else effective(state, path)
+
+
 def toggle_current(state: EditorState) -> EditorState:
     """Flip the boolean under the cursor. A no-op on anything else."""
     spec = current(state)
     if spec is None or spec.kind is not FieldKind.BOOL:
         return state
-    return stage(state, spec.path, not bool(effective(state, spec.path)))
+    return stage(state, spec.path, not bool(current_value(state, spec.path)))
 
 
 def reset_current(state: EditorState) -> EditorState:

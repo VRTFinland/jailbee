@@ -1520,3 +1520,36 @@ def test_the_same_drill_down_opens_normally_on_the_global_layer(tmp_path):
 
     assert editor.state.trail == ("github", "api_tokens")
     assert st.screen(editor.state).kind == "collection"
+
+
+# -- seeding a prompt, and surviving a save that moved the ground ---------
+
+
+def test_edit_current_seeds_an_entry_field_from_the_layer_the_row_shows(tmp_path):
+    """The modal is pre-filled with what the row displays, not another layer's.
+
+    A global-layer session whose repo config also sets `host_mounts`: the row
+    reads `/GLOBAL` (`render._now` goes through `own`), but the seed still went
+    through `st.effective`, which resolves the repo layer first whichever layer
+    is open — so `Enter` pre-filled `/REPO`, and committing wrote the repo
+    layer's value into `global.yaml`. Making the display right is what left the
+    seed wrong; both now go through `state.current_value`.
+    """
+    editor = _editor(
+        tmp_path,
+        repo={"host_mounts": [{"host": "/REPO", "container": "/c"}]},
+        global_={"host_mounts": [{"host": "/GLOBAL", "container": "/c"}]},
+        layer="global",
+    )
+    _descend(editor, "host_mounts", 0)
+    _cursor_to(editor, "host")
+
+    editor.edit_current()
+
+    assert editor.prompt is not None
+    assert editor.prompt.area.text == "/GLOBAL"
+    # And the row the user is looking at says the same thing — the point of
+    # the fix is that these two cannot disagree.
+    row = "".join(chunk for _style, chunk, *_rest in render.field_pane(editor.state).fragments)
+    assert "/GLOBAL" in row
+    assert "/REPO" not in row

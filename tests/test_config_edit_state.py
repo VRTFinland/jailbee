@@ -1207,3 +1207,51 @@ def test_the_field_row_still_reads_through_to_global_for_an_inherited_collection
     assert state.origins[("host_mounts",)].source == "global"
     assert st.effective(state, ("host_mounts",)) == INHERITED["host_mounts"]
     assert st.entries(state, COLLECTION) == ()
+
+
+# -- reading the value the cursor is actually pointing at ------------------
+
+
+def _two_layer_entry(**kw):
+    """A *global*-layer session whose repo config sets the same collection.
+
+    The shape that separates `own` from `effective` inside an entry:
+    `layers.resolve` consults the repo layer first whichever layer is open, so
+    `origins` answers `repo` here while the screen is editing `global.yaml`.
+    """
+    return _open(
+        {"host_mounts": [{"host": "/REPO", "readonly": True}]},
+        global_raw={"host_mounts": [{"host": "/GLOBAL", "readonly": False}]},
+        layer="global",
+        **kw,
+    )
+
+
+def test_current_value_narrows_to_the_open_layer_inside_an_entry_only():
+    """One function, two answers, and the screen decides which."""
+    entry = _two_layer_entry(trail=("host_mounts", 0))
+    field = _open({"gpg": {"enabled": True}}, trail=("gpg",))
+
+    assert st.current_value(entry, ("host_mounts", 0, "host")) == "/GLOBAL"
+    assert st.effective(entry, ("host_mounts", 0, "host")) == "/REPO"
+    # Outside an entry it is `effective`, unchanged: an inherited value is what
+    # the field *is*, and editing it is how a key of your own gets created.
+    assert st.current_value(field, ("gpg", "enabled")) is True
+
+
+def test_toggle_flips_the_entry_field_the_row_shows_not_another_layers():
+    """`toggle_current` read `effective` while `render._now` had been converted
+    to `own`, so on this shape Space computed its flip from the *repo* value and
+    staged it into `global.yaml`.
+
+    The visible symptom is worse than a wrong write: the row says `false`, Space
+    stages `not True` — `false` again — the row still says `false`, and the key
+    looks broken.
+    """
+    state = _two_layer_entry(trail=("host_mounts", 0), index=2)
+    assert st.current(state).path == ("host_mounts", 0, "readonly")
+    assert st.own(state, ("host_mounts", 0, "readonly")) is False
+
+    got = st.toggle_current(state)
+
+    assert st.own(got, ("host_mounts", 0, "readonly")) is True

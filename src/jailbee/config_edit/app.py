@@ -408,7 +408,12 @@ class Editor:
         if is_drilldown(spec):
             self.notice(f"`{spec.kind.value}` fields are not editable here.", style="class:error")
             return
-        value = st.effective(self.state, spec.path)
+        # `st.current_value`, never `st.effective` directly: the modal is
+        # seeded with what the row under the cursor *displays*, and inside an
+        # entry that is the open layer's own value. Seeding from `effective`
+        # there pre-filled another layer's value into a prompt whose commit
+        # writes to this one (see `state.current_value`).
+        value = st.current_value(self.state, spec.path)
         if spec.kind is FieldKind.STR_LIST:
             self._open_prompt(spec, values.list_to_text(value), multiline=True)
         elif spec.kind in _MAP_KINDS:
@@ -668,6 +673,7 @@ class Editor:
         only here. The cursor, the open section, the search and the show-all
         flag survive: the user's place in a tree of eighty-odd fields is
         expensive to find again.
+
         """
         from jailbee.config_edit.layers import raw_for, read_layers, resolve
 
