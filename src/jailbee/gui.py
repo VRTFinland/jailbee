@@ -5,15 +5,10 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from typing import get_args
 
-from jailbee.config import CONTAINER_USERNAME, Config, IdeName
+from jailbee.config import CONTAINER_USERNAME, Config
 from jailbee.incus import Incus
 from jailbee.tui import error, info
-
-# Allowed JetBrains launcher names — source of truth is the IdeName Literal
-# in config.py. Resolving this once at import time avoids drift.
-_SUPPORTED_IDE_LAUNCHERS: frozenset[str] = frozenset(get_args(IdeName))
 
 
 def gui_env(cfg: Config) -> dict[str, str]:
@@ -123,26 +118,15 @@ def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
     launcher binary is always the IDE's short name — so we match by launcher
     name, not by app-id.
     """
-    if app not in _SUPPORTED_IDE_LAUNCHERS:
-        supported = ", ".join(sorted(_SUPPORTED_IDE_LAUNCHERS))
-        error(f"Unknown IDE app: {app} (must be one of: {supported})")
-        return
-
-    find_cmd = (
-        f"find /opt/jetbrains-toolbox/apps -maxdepth 4 -type f -name '{app}' -executable | head -1"
-    )
-    result = incus.exec(
-        container,
-        ["bash", "-c", find_cmd],
-        uid=cfg.container_user.uid,
-        gid=cfg.container_user.gid,
-    ).strip()
-
-    if not result:
-        error(f"No {app} launcher found in /opt/jetbrains-toolbox/apps")
-        return
-
+    from jailbee.ide import resolve_launcher
     from jailbee.lifecycle import container_repo_dir
+
+    try:
+        launcher_argv = resolve_launcher(incus, container, app)
+        result = launcher_argv[0]
+    except ValueError as e:
+        error(str(e))
+        return
 
     repo_dir = container_repo_dir(cfg, incus, container)
     log_path = f"/tmp/jailbee-ide-{app}.log"
