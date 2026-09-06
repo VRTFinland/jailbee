@@ -31,6 +31,33 @@ def test_spec_is_named_ide_not_the_launcher(tmp_path, mocker):
     assert result == ["/opt/jetbrains-toolbox/apps/x/bin/pycharm"]
 
 
+def test_builtin_spec_resolve_command_forwards_container_user_uid_gid(tmp_path, mocker):
+    """Regression guard for the common path: `jailbee ide`, GUI autostart,
+    `apps run ide`, and the dashboard all launch through `builtin_specs`'
+    `resolve_command` lambda — not the rarer one-off spec cli.py builds for
+    `--app <ide other than cfg.jetbrains.ide>` (covered separately in
+    tests/test_cli_apps.py). This wiring has already been dropped twice;
+    distinct uid/gid values so a drop (uid=0/gid=0) or a swap
+    (uid<->gid) both fail, not just a missing kwarg.
+    """
+    cfg = make_cfg(
+        tmp_path,
+        jetbrains={"enabled": True, "ide": "idea"},
+        container_user={"uid": 4242, "gid": 4343},
+    )
+    spec = builtin_specs(cfg)[0]
+    assert spec.resolve_command is not None
+
+    incus = Incus()
+    exec_mock = mocker.patch.object(
+        Incus, "exec", return_value="/opt/jetbrains-toolbox/apps/x/bin/idea\n"
+    )
+    spec.resolve_command(incus, "c1")
+
+    assert exec_mock.call_args.kwargs["uid"] == 4242
+    assert exec_mock.call_args.kwargs["gid"] == 4343
+
+
 def test_resolve_launcher_searches_the_toolbox_tree(mocker):
     incus = Incus()
     path = "/opt/jetbrains-toolbox/apps/x/bin/idea\n"

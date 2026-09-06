@@ -37,11 +37,25 @@ def test_launch_detached_passes_env_as_incus_env_flags(mocker):
 
 
 def test_launch_detached_redirects_to_the_log_file(mocker):
+    """stdout+stderr go to the per-app log, not to /dev/null — the user needs
+    to be able to read them to diagnose why a GUI failed to appear (Wayland
+    sockets not visible, missing libs, crash on startup, etc.). stdin is
+    closed (`</dev/null`) and the inner process is `setsid`-detached so it
+    survives the launcher's own bash exiting, and the whole thing is
+    backgrounded (`&`) so `incus exec` returns immediately. Each of these
+    four was, until this test, only asserted through the now-deleted
+    `open_ide`/`open_chrome` tests — dropping any one of them ships green
+    without this.
+    """
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
     launch_detached("c1", 1000, {}, "/bin/true", "/tmp/jailbee-app-x.log")
     script = popen.call_args.args[0][-1]
     assert ">/tmp/jailbee-app-x.log" in script
-    assert "/dev/null" in script  # stdin only
+    assert "2>&1" in script
+    assert ">/dev/null" not in script
+    assert "</dev/null" in script  # stdin only
+    assert "setsid" in script
+    assert script.rstrip().endswith("&")
 
 
 def test_launch_detached_fully_detaches_from_parent(mocker):

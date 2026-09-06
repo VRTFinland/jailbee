@@ -275,3 +275,73 @@ def test_ide_app_flag_one_off_spec_passes_container_user_uid_gid(tmp_path, mocke
     assert result.exit_code == 0, result.output
     assert resolve_launcher.call_args.kwargs["uid"] == 4242
     assert resolve_launcher.call_args.kwargs["gid"] == 4343
+
+
+def test_ide_reports_missing_launcher_instead_of_a_traceback(tmp_path, mocker):
+    """Finding 1 (review round): a container built before the Toolbox mount
+    existed, or `toolbox_host_path: null`, is an ordinary state — not a
+    crash. `resolve_launcher`'s `ValueError` must be caught around the
+    `launch` call and reported with exit 2, not reach Typer unhandled (which
+    would print a traceback with no exit code jailbee itself chose).
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, jetbrains={"enabled": True, "ide": "idea"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = Incus()
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(incus, "c1"))
+    mocker.patch.object(Incus, "exec", return_value="")  # no launcher found
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    result = runner.invoke(app, ["ide", "c1"])
+
+    assert result.exit_code == 2
+    assert "idea" in result.output
+    assert "jetbrains-toolbox" in result.output
+    assert not detached.called
+
+
+def test_apps_run_ide_reports_missing_launcher_instead_of_a_traceback(tmp_path, mocker):
+    """The same hole existed in `apps run ide`, predating Task 14 — same fix,
+    same shape of test.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, jetbrains={"enabled": True, "ide": "idea"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = Incus()
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(incus, "c1"))
+    mocker.patch.object(Incus, "exec", return_value="")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    result = runner.invoke(app, ["apps", "run", "ide", "--container", "c1"])
+
+    assert result.exit_code == 2
+    assert "idea" in result.output
+    assert not detached.called
+
+
+def test_ide_app_flag_one_off_spec_reports_missing_launcher_instead_of_a_traceback(
+    tmp_path, mocker
+):
+    """The one-off `AppSpec` built for `--app <ide other than cfg.jetbrains.ide>`
+    has its own `resolve_command` closure — same failure mode, same fix,
+    verified separately since it is not built via `apps.get_app`.
+    """
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, jetbrains={"enabled": True, "ide": "idea"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = Incus()
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(incus, "c1"))
+    mocker.patch.object(Incus, "exec", return_value="")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    result = runner.invoke(app, ["ide", "c1", "--app", "pycharm"])
+
+    assert result.exit_code == 2
+    assert "pycharm" in result.output
+    assert not detached.called

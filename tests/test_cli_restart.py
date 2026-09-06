@@ -106,6 +106,35 @@ def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     assert launched == {"ide", "chrome"}
 
 
+def test_restart_continues_launching_chrome_after_ide_launcher_is_missing(mocker):
+    """Finding 1 (review round): the IDE and Chrome autostart launches in
+    `_post_start_actions` are independent — a missing Toolbox launcher for
+    the IDE (an ordinary state, not a crash) must not also skip Chrome, and
+    must not abort `jailbee restart`.
+    """
+    _common_mocks(mocker)
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    mocker.patch("jailbee.autostart.run_autostart")
+    error_mock = mocker.patch("jailbee.cli.error")
+
+    def fake_launch(cfg, incus, container, spec, args=None):
+        if spec.name == "ide":
+            raise ValueError("No idea launcher found in /opt/jetbrains-toolbox/apps")
+
+    launch = mocker.patch("jailbee.apps.launch", side_effect=fake_launch)
+
+    result = runner.invoke(
+        app,
+        ["restart", "myrepo-feat-x", "--config", str(FIXTURES / "full_config.yaml")],
+    )
+
+    assert result.exit_code == 0, result.output
+    error_mock.assert_called_once()
+    assert "idea" in error_mock.call_args.args[0]
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {"ide", "chrome"}
+
+
 def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
     """jetbrains.enabled=false suppresses the autostart IDE launch even when
     jetbrains.autostart=true and a graphical session is detected."""

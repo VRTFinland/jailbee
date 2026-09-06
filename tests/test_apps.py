@@ -76,6 +76,23 @@ def test_launch_allocates_the_pool_slot_before_starting(tmp_path, mocker):
     assert calls == ["allocate", "launch_detached"]
 
 
+def test_launch_announces_the_app_name_and_log_path(tmp_path, mocker, capsys):
+    """The only thing telling a user where to look when a launched window
+    never appears — dropping this `info(...)` call ships green otherwise.
+    """
+    from jailbee.apps import app_log_path, get_app, launch
+    from jailbee.incus import Incus
+
+    # A plain config app (no `pool`) so this test doesn't need to mock
+    # `jailbee.pool` — that's `test_launch_allocates_the_pool_slot_before_starting`'s job.
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    mocker.patch("jailbee.gui.launch_detached")
+    launch(cfg, Incus(), "c1", get_app(cfg, "figma"))
+    out = capsys.readouterr().out
+    assert "figma" in out
+    assert app_log_path("figma") in out
+
+
 def test_launch_appends_call_args_after_configured_args(tmp_path, mocker):
     from jailbee.apps import get_app, launch
     from jailbee.incus import Incus

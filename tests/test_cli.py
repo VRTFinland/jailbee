@@ -7362,6 +7362,88 @@ def test_finalize_new_skips_gui_without_session(make_cfg, tmp_path, mocker):
     warn_mock.assert_called_once()
 
 
+def test_finalize_new_launches_gui_apps_when_session_available(make_cfg, tmp_path, mocker):
+    """Mirrors `test_restart_launches_chrome_and_ide_when_gui_available` in
+    test_cli_restart.py. Before this test, `_finalize_new`'s positive
+    GUI-launch branch — the lines Task 14 rewrote against the registry — ran
+    under no test at all (the only existing test here forces
+    has_graphical_session=False). That is how an unguarded `ValueError` from
+    `resolve_launcher` slipped through review unnoticed (see the
+    `_finds_missing_launcher` test below, which pins the fix).
+    """
+    from jailbee.apps import get_app
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    cfg = cfg.model_copy(
+        update={
+            "jetbrains": cfg.jetbrains.model_copy(update={"enabled": True, "autostart": True}),
+            "browsers": cfg.browsers.model_copy(
+                update={
+                    "chrome": cfg.chrome.model_copy(update={"enabled": True, "autostart": True})
+                }
+            ),
+        }
+    )
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    launch = mocker.patch("jailbee.apps.launch")
+
+    from jailbee.cli import _finalize_new
+
+    _finalize_new(cfg, incus, f"{cfg.container_prefix}-feat-foo", launch_gui=True)
+
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {get_app(cfg, "ide").name, get_app(cfg, "chrome").name}
+
+
+def test_finalize_new_launches_chrome_even_when_ide_launcher_is_missing(make_cfg, tmp_path, mocker):
+    """Finding 1 (review round): the IDE and Chrome autostart launches are
+    independent. A missing Toolbox launcher for the IDE (an ordinary state —
+    a container built before the Toolbox mount existed, or
+    `toolbox_host_path: null`) must not also skip Chrome, and must not raise
+    out of `_finalize_new` — the container is already created by this point
+    in `jailbee new`, so there is nothing left to abort into.
+    """
+    from jailbee.incus import Incus
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    cfg = cfg.model_copy(
+        update={
+            "jetbrains": cfg.jetbrains.model_copy(
+                update={"enabled": True, "autostart": True, "ide": "idea"}
+            ),
+            "browsers": cfg.browsers.model_copy(
+                update={
+                    "chrome": cfg.chrome.model_copy(update={"enabled": True, "autostart": True})
+                }
+            ),
+        }
+    )
+    incus = Incus()
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    mocker.patch.object(Incus, "exec", return_value="")  # no ide launcher found
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate")
+    error_mock = mocker.patch("jailbee.cli.error")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    from jailbee.cli import _finalize_new
+
+    # Must not raise: one app's resolver failing must not abort the caller.
+    _finalize_new(cfg, incus, f"{cfg.container_prefix}-feat-foo", launch_gui=True)
+
+    # The IDE's failure was reported...
+    error_mock.assert_called_once()
+    assert "idea" in error_mock.call_args.args[0]
+    # ...and Chrome still launched despite it.
+    assert detached.call_count == 1
+    assert "google-chrome" in detached.call_args.args[3]
+
+
 def test_new_worker_success_deletes_op_and_finalizes(make_cfg, tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "myrepo"

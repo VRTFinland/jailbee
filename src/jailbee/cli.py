@@ -1775,6 +1775,29 @@ def _preflight_background_new(
     return replace(opts, approved_autostart_ref=approved_ref, autofetch_done=True)
 
 
+def _launch_registry_app_or_warn(
+    cfg: "Config", incus: "IncusType", container: str, app_name: str
+) -> None:
+    """Launch one registry app during autostart, without aborting its siblings.
+
+    Used only by the two GUI-autostart blocks (`_finalize_new`,
+    `_post_start_actions`), where the IDE and Chrome are launched
+    independently after the container is already up. A `ValueError` —
+    typically `resolve_launcher` finding no matching JetBrains Toolbox
+    launcher in this image, e.g. a container built before the Toolbox mount
+    existed, or `toolbox_host_path: null` — must not take the *other* app
+    down with it, and there is no CLI invocation left to exit non-zero from
+    at this point in `jailbee new`/`start`/`restart`, so this reports and
+    returns rather than raising.
+    """
+    from jailbee.apps import get_app, launch
+
+    try:
+        launch(cfg, incus, container, get_app(cfg, app_name))
+    except ValueError as e:
+        error(str(e))
+
+
 def _finalize_new(
     cfg: "Config",
     incus: "IncusType",
@@ -1796,12 +1819,10 @@ def _finalize_new(
             if not has_graphical_session():
                 maybe_warn_no_gui()
             else:
-                from jailbee.apps import get_app, launch
-
                 if launch_ide:
-                    launch(cfg, incus, created, get_app(cfg, "ide"))
+                    _launch_registry_app_or_warn(cfg, incus, created, "ide")
                 if launch_chrome:
-                    launch(cfg, incus, created, get_app(cfg, "chrome"))
+                    _launch_registry_app_or_warn(cfg, incus, created, "chrome")
 
 
 @app.command("_new-worker", hidden=True)
@@ -2301,6 +2322,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee import claude_overview, claude_pool
+    from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
@@ -2568,12 +2590,10 @@ def _post_start_actions(
         if not has_graphical_session():
             maybe_warn_no_gui()
         else:
-            from jailbee.apps import get_app, launch
-
             if launch_ide:
-                launch(cfg, incus, name, get_app(cfg, "ide"))
+                _launch_registry_app_or_warn(cfg, incus, name, "ide")
             if launch_chrome:
-                launch(cfg, incus, name, get_app(cfg, "chrome"))
+                _launch_registry_app_or_warn(cfg, incus, name, "chrome")
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -8041,6 +8061,31 @@ def apps_ls_cmd(
     )
 
 
+def _launch_or_exit(
+    cfg: "Config",
+    incus: "IncusType",
+    container: str,
+    spec: "AppSpec",
+    args: list[str] | None = None,
+) -> None:
+    """Launch `spec`, turning a resolver's `ValueError` into a clean exit(2).
+
+    `spec.resolve_command` (the JetBrains IDE spec, builtin or one-off via
+    `--app`) raises when nothing matches inside the container — a container
+    built before the Toolbox mount existed, or `toolbox_host_path: null`.
+    Without this, that exception reaches Typer unhandled and the user sees a
+    traceback instead of the same message `jailbee apps ls`'s STATUS column
+    already reports as "missing".
+    """
+    from jailbee.apps import launch
+
+    try:
+        launch(cfg, incus, container, spec, args)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
+
 @apps_app.command("run")
 def apps_run_cmd(
     app_name: Annotated[
@@ -8079,7 +8124,7 @@ def apps_run_cmd(
     app's own arguments (`jailbee apps run figma -- --flag` would otherwise
     bind `--flag` to the container slot instead of `args`).
     """
-    from jailbee.apps import get_app, launch
+    from jailbee.apps import get_app
 
     cfg = _load_or_exit(config)
     if app_name is None:
@@ -8091,7 +8136,7 @@ def apps_run_cmd(
         error(str(e))
         raise typer.Exit(2) from e
     incus, resolved = _resolve_attachable(cfg, container, force=force, attach_cmd="apps run")
-    launch(cfg, incus, resolved, spec, list(args or []))
+    _launch_or_exit(cfg, incus, resolved, spec, list(args or []))
 
 
 # ---- GUI launcher commands ----
@@ -8101,7 +8146,7 @@ def _launch_registry_app(
     cfg: "Config", name: str | None, app_name: str, *, force: bool, args: list[str] | None = None
 ) -> None:
     """Resolve a container and launch one registry app in it."""
-    from jailbee.apps import get_app, launch
+    from jailbee.apps import get_app
 
     try:
         spec = get_app(cfg, app_name)
@@ -8109,7 +8154,7 @@ def _launch_registry_app(
         error(str(e))
         raise typer.Exit(2) from e
     incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd=app_name)
-    launch(cfg, incus, resolved, spec, args)
+    _launch_or_exit(cfg, incus, resolved, spec, args)
 
 
 @app.command("browser")
@@ -8192,7 +8237,7 @@ def ide_cmd(
         return
     # --app named a different IDE than the registry's own "ide" spec (which
     # is always cfg.jetbrains.ide) — build a one-off spec for it instead.
-    from jailbee.apps import AppSpec, launch
+    from jailbee.apps import AppSpec
     from jailbee.ide import resolve_launcher
 
     incus, container = _resolve_attachable(cfg, name, force=force, attach_cmd="ide")
@@ -8205,7 +8250,7 @@ def ide_cmd(
             i, c, resolved_app, uid=cfg.container_user.uid, gid=cfg.container_user.gid
         ),
     )
-    launch(cfg, incus, container, spec)
+    _launch_or_exit(cfg, incus, container, spec)
 
 
 @app.command("chrome")
