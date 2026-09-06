@@ -744,3 +744,62 @@ def test_pick_submodule_offers_a_submodule_with_nothing_to_publish(mocker):
 
     values = [c.value for c in select.call_args.kwargs["choices"]]
     assert "libs/idle" in values
+
+
+def test_render_submodule_pr_plan_shows_every_field():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan())
+
+    assert "feat-foo" in text
+    assert "myrepo-feat-foo" in text
+    assert "libs/foo" in text
+    assert "feat/foo" in text
+    assert "3 commits" in text
+    assert "main" in text
+    assert "origin" in text
+    assert "draft" in text
+
+
+def test_render_submodule_pr_plan_defers_an_unresolvable_base_and_remote():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(base=None, remote=None))
+
+    assert text.count("resolved once the submodule is on the host") == 2
+    assert "None" not in text
+
+
+def test_render_submodule_pr_plan_renders_notes_as_warnings():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(notes=("uncommitted changes are NOT in the PR",)))
+
+    assert "⚠ uncommitted changes are NOT in the PR" in text
+
+
+def test_render_submodule_pr_plan_says_update_for_an_existing_pr():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    assert "update" in tui.render_submodule_pr_plan(_plan(action="update")).lower()
+
+
+def test_render_submodule_pr_plan_says_ready_when_not_draft():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    assert "ready for review" in tui.render_submodule_pr_plan(_plan(draft=False))
+
+
+def test_render_submodule_pr_plan_handles_a_detached_submodule():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(source_branch=None, commits=None))
+
+    assert "detached" in text
+    assert "? commits" in text

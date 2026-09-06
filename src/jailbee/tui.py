@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from jailbee.destroy_guard import RiskSummary
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
-    from jailbee.submodule_pr import SubCandidate
+    from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import BridgePlan, RefSummary
 
 console = Console()
@@ -806,5 +806,32 @@ def render_bridge_plan(plan: BridgePlan) -> str:
     if plan.incoming is not None:
         lines.append(f"            : {plan.incoming} commit(s) to apply")
     lines.append(f"  action    : {plan.action}")
+    lines.extend(f"  ⚠ {note}" for note in plan.notes)
+    return "\n".join(lines)
+
+
+_UNRESOLVED_SUB_FIELD = "(resolved once the submodule is on the host)"
+
+
+def render_submodule_pr_plan(plan: SubmodulePrPlan) -> str:
+    """Render a `SubmodulePrPlan` as the block shown before publishing.
+
+    Plain text on purpose, like `render_bridge_plan`: branch names and commit
+    subjects are user data and may contain Rich markup characters, so callers
+    print this with ``markup=False``.
+    """
+    source = plan.source_branch or "(detached)"
+    count = "?" if plan.commits is None else str(plan.commits)
+    action = "create a PR" if plan.action == "create" else "update the existing PR"
+    state = "draft" if plan.draft else "ready for review"
+    lines = [
+        "Submodule PR  container ──▶ GitHub",
+        f"  container : {plan.container_short}  ({plan.container_full})",
+        f"  submodule : {plan.subpath}",
+        f"  source    : {source}  ({count} commits ahead of base)",
+        f"  base      : {plan.base or _UNRESOLVED_SUB_FIELD}",
+        f"  remote    : {plan.remote or _UNRESOLVED_SUB_FIELD}",
+        f"  action    : {action} ({state})",
+    ]
     lines.extend(f"  ⚠ {note}" for note in plan.notes)
     return "\n".join(lines)

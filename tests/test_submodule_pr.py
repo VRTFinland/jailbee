@@ -548,3 +548,29 @@ def test_describe_candidate_pads_to_width():
     text = describe_candidate(_cand("ab", 1, subject="s"), width=6)
 
     assert text.startswith("ab    ")
+
+
+def _plan(**over):
+    from jailbee.submodule_pr import SubmodulePrPlan
+
+    fields = dict(
+        container_short="feat-foo",
+        container_full="myrepo-feat-foo",
+        subpath="libs/foo",
+        source_branch="feat/foo",
+        commits=3,
+        action="create",
+        base="main",
+        remote="origin",
+        draft=True,
+        notes=(),
+    )
+    fields.update(over)
+    return SubmodulePrPlan(**fields)
+
+
+def test_submodule_pr_plan_is_frozen():
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        _plan().base = "other"

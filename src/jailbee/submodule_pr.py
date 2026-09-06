@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import git, submodules
 from jailbee.incus import IncusError
@@ -212,6 +212,33 @@ def describe_candidate(sub: SubCandidate, *, width: int = 0) -> str:
     if sub.branch is None:
         flags += "  [detached]"
     return f"{sub.path.ljust(width)}  {count} commits  {sub.subject}{flags}"
+
+
+@dataclass(frozen=True)
+class SubmodulePrPlan:
+    """What `jailbee submodule pr` is about to do, before it does it.
+
+    Purely descriptive, like `sync.BridgePlan`: constructing one mutates
+    nothing. Built and shown *before* the submodule is transported to the
+    host, so that declining leaves no clone behind.
+
+    `base` and `remote` are None when the host sub-repo does not exist yet:
+    resolving them there would both misreport (the resolvers fall back to
+    `main`/`origin`) and violate the FIX 2 ordering invariant that nothing
+    reads the host sub-repo before the transport. The renderer says so rather
+    than showing a guess.
+    """
+
+    container_short: str
+    container_full: str
+    subpath: str
+    source_branch: str | None
+    commits: int | None
+    action: Literal["create", "update"]
+    base: str | None
+    remote: str | None
+    draft: bool
+    notes: tuple[str, ...]
 
 
 STATE_KEY = "user.jailbee.sub_pr"

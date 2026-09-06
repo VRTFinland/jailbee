@@ -779,7 +779,15 @@ def _container_submodule_paths(
     return paths
 
 
-def _host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
+def host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
+    """True when `subpath` is already a real git checkout on the host.
+
+    Public: `jailbee submodule pr` uses this as the predicate for whether it
+    may resolve the submodule's base and remote yet. Resolving them before
+    the host has cloned the sub-repo would both misreport (the resolvers
+    fall back to `main`/`origin`) and read a sub-repo that transport has not
+    created yet.
+    """
     return (repo_root / subpath / ".git").exists()
 
 
@@ -923,7 +931,7 @@ def transport_submodules_to_host(
             continue
         url = _sub_upload_pack_url(cfg, container, repo_dir, path)
         host_sub = repo_root / path
-        if not _host_subrepo_exists(repo_root, path):
+        if not host_subrepo_exists(repo_root, path):
             host_sub.parent.mkdir(parents=True, exist_ok=True)
             git.clone_url(url, host_sub)
             _repoint_cloned_subrepo(incus, container, repo_dir, path, host_sub, uid=uid)
