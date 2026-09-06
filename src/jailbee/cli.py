@@ -2307,7 +2307,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
-    from jailbee.submodule_pr import SubCandidate
+    from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
         FetchResult,
@@ -3889,6 +3889,25 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
     from jailbee.tui import console, render_bridge_plan
 
     console.print(render_bridge_plan(plan), markup=False, highlight=False)
+    if not _stdin_is_interactive():
+        return
+    if not typer.confirm("Continue?", default=True):
+        raise typer.Abort()
+
+
+def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
+    """Print a submodule-PR plan and, on a TTY, ask whether to go ahead.
+
+    ``markup=False`` because branch names and commit subjects are user data
+    and may contain Rich markup characters. Off a TTY nothing is asked — a
+    confirmation that is on by default must not break scripts. Declining
+    raises ``typer.Abort()``; nothing has been mutated at that point, which is
+    why this runs before the transport rather than after it.
+    """
+    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee.tui import console, render_submodule_pr_plan
+
+    console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not _stdin_is_interactive():
         return
     if not typer.confirm("Continue?", default=True):
@@ -5690,9 +5709,12 @@ def submodule_pr_cmd(
     submodule's own GitHub repository — a separate repo, so a separate PR from
     the superproject's `jailbee pr`. One PR per run.
 
-    Without PATH, the submodule that has commits ahead of its base is targeted
-    automatically; when several do, they are listed and PATH is required (two
-    submodules are two repositories and two PRs).
+    On a TTY you are asked which container and which submodule, and shown what
+    will be published before anything is transported; --yes skips that last
+    question. Off a TTY nothing is asked: without PATH the submodule that has
+    commits ahead of its base is targeted automatically, and when several do
+    they are listed and PATH is required (two submodules are two repositories
+    and two PRs).
 
     The base branch comes from the submodule's own `.gitmodules` entry, else its
     `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is
@@ -5706,8 +5728,8 @@ def submodule_pr_cmd(
       jailbee submodule pr feat-foo --open       # just open it in the browser
     """
     from jailbee import pr as pr_mod
-    from jailbee import pr_flow, submodule_pr, sync
-    from jailbee.lifecycle import container_repo_dir, short_name
+    from jailbee import pr_flow, submodule_pr, submodules, sync
+    from jailbee.lifecycle import _stdin_is_interactive, container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
         error(
@@ -5717,7 +5739,10 @@ def submodule_pr_cmd(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus, full = _resolve_existing(cfg, name)
+    # --open mutates nothing, so it keeps the silent auto-selection; the
+    # publishing path always shows the user which container it will publish
+    # from, because `gh` is about to change a GitHub repository.
+    incus, full = _resolve_existing(cfg, name, always_prompt=name is None and not open_only)
     short = short_name(cfg, full)
 
     # --open resolves from the recorded state alone: no preflight, no
@@ -5758,18 +5783,39 @@ def submodule_pr_cmd(
         subs = submodule_pr.detect_candidates(
             cfg, incus, full, repo_dir=repo_dir, base_branch=super_base, short=short
         )
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    if not subs and path is None:
+        # "Name one with PATH" is unactionable advice when there is nothing to
+        # name — distinguish "no submodules at all" from "submodules exist,
+        # none are ahead". With an explicit PATH this is not that case: the
+        # user named something that does not exist, which `select_target`
+        # below still reports as an unknown path (exit 2).
+        info(f"Container '{short}' has no submodules.")
+        return
+
+    if path is None and _stdin_is_interactive():
+        # The picker replaces both the silent single-candidate auto-target and
+        # the ambiguity error: it offers every submodule, ahead ones first, so
+        # a submodule with nothing to publish no longer has to be typed from
+        # memory. Off a TTY `select_target` below keeps today's exact
+        # behaviour, messages and exit codes.
+        from jailbee.tui import pick_submodule
+
+        chosen = pick_submodule(submodule_pr.order_candidates(subs))
+        if chosen is None:
+            raise typer.Abort()
+        path = chosen
+
+    try:
         target = submodule_pr.select_target(subs, path)
     except submodule_pr.NoSubmoduleCandidatesError:
-        if not subs:
-            # "Name one with PATH" is unactionable advice when there is
-            # nothing to name — distinguish "no submodules at all" from
-            # "submodules exist, none are ahead".
-            info(f"Container '{short}' has no submodules.")
-        else:
-            info(
-                f"No submodule in '{short}' has commits ahead of its base — nothing to "
-                f"open a PR for. Name one with PATH to publish it anyway."
-            )
+        info(
+            f"No submodule in '{short}' has commits ahead of its base — nothing to "
+            f"open a PR for. Name one with PATH to publish it anyway."
+        )
         return
     except submodule_pr.AmbiguousSubmoduleTargetError as exc:
         error(f"Several submodules in '{short}' have commits to publish:")
@@ -5784,6 +5830,58 @@ def submodule_pr_cmd(
 
     subpath = target.path
     source_branch = branch or target.branch
+
+    # Read the recorded PR state here rather than after the transport: it is
+    # one `incus config get`, it never touches the host sub-repo, and it
+    # decides whether the plan says "create" or "update". Only these two lines
+    # move up — `remote`, `resolved_base`, `scope`, the `--pr N` binding and
+    # `pr_label` all stay below the transport, where they belong.
+    state = submodule_pr.SubmodulePrState(incus, full, subpath)
+    record = state.read()
+
+    # base/remote only when the host sub-repo already exists: resolving them
+    # for a submodule the host has never seen would both misreport (the
+    # resolvers fall back to `origin`/`main`) and break the FIX 2 invariant
+    # that the transport is the first thing to touch that directory. The
+    # authoritative resolution stays after the transport, untouched.
+    on_host = submodules.host_subrepo_exists(cfg.repo_root, subpath)
+    plan_remote = submodule_pr.resolve_remote(cfg.repo_root, subpath) if on_host else None
+    plan_base = base or (
+        submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=None)
+        if on_host
+        else None
+    )
+
+    notes: list[str] = []
+    if target.dirty:
+        notes.append("the submodule has uncommitted changes — they are NOT in the PR")
+    if target.gitlink_stale:
+        notes.append("the superproject's gitlink does not yet point at these commits")
+    if target.commits is None:
+        notes.append("the commit count could not be resolved (no base anchor)")
+
+    if not yes:
+        _confirm_submodule_pr_plan(
+            submodule_pr.SubmodulePrPlan(
+                container_short=short,
+                container_full=full,
+                subpath=subpath,
+                source_branch=source_branch,
+                commits=target.commits,
+                # `--pr N` binds to an existing PR *below*, after this
+                # confirmation, so without it here the line the user approves
+                # would promise a new PR and then update one.
+                action=(
+                    "update"
+                    if (record.author or record.head or pr_number is not None)
+                    else "create"
+                ),
+                base=plan_base,
+                remote=plan_remote,
+                draft=ready is not True,
+                notes=tuple(notes),
+            )
+        )
 
     # Step 2 of the spec's pipeline: transport this submodule's objects to
     # the host BEFORE anything below reads the host sub-repo. For a
@@ -5803,8 +5901,6 @@ def submodule_pr_cmd(
         prefix=f"submodule '{subpath}': ",
         subpath=subpath,
     )
-    state = submodule_pr.SubmodulePrState(incus, full, subpath)
-    record = state.read()
     if pr_number is not None:
         # After the transport, not before: for a submodule the host has never
         # seen, `scope.repo_root` does not exist as a git repo until the
