@@ -52,6 +52,11 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
             name="ide",
             command=[app],
             cwd="repo",
+            # The checkout path on the launcher's command line is what makes
+            # the IDE open *that project*; without it a cold JetBrains config
+            # opens the Welcome screen and a warm one lands on whatever
+            # `reopenLastProject` remembers.
+            append_cwd_arg=True,
             top_level=True,
             autostart=cfg.jetbrains.autostart,
             source="builtin",

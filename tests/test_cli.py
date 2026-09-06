@@ -2835,6 +2835,38 @@ def test_ide_cmd_app_flag_overrides_cfg_ide(tmp_path, mocker):
     assert launch.call_args.args[3].command == ["pycharm"]
 
 
+def test_ide_cmd_app_flag_spec_still_opens_the_project(tmp_path, mocker):
+    """The `--app` one-off spec is built by hand here, so it can drift from
+    `ide.builtin_specs`.
+
+    Without `append_cwd_arg` the launcher gets no project path and the IDE
+    opens the Welcome screen — the same regression `test_apps.py`'s
+    `test_the_ide_launcher_is_given_the_repo_dir_to_open` pins for the
+    registry spec, asserted here at the boundary `cli.py` owns: the spec it
+    hands to `apps.launch`.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_ide(tmp_path, "idea")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_attachable",
+        return_value=(mocker.MagicMock(), "myrepo-feat-x"),
+    )
+    launch = mocker.patch("jailbee.apps.launch")
+
+    result = CliRunner().invoke(app, ["ide", "feat-x", "--app", "pycharm"])
+    assert result.exit_code == 0, result.stdout
+    spec = launch.call_args.args[3]
+    assert spec.append_cwd_arg is True
+    assert spec.cwd == "repo"
+
+
 # --- `gie chrome` URL resolution (cfg.chrome_url + CLI override) ---
 
 

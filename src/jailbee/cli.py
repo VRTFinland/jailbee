@@ -8222,6 +8222,9 @@ def ide_cmd(
         name="ide",
         command=[resolved_app],
         cwd="repo",
+        # As in `ide.builtin_specs`: the repo path on the launcher's command
+        # line is what opens the project rather than the Welcome screen.
+        append_cwd_arg=True,
         source="builtin",
         resolve_command=lambda i, c: resolve_launcher(
             i, c, resolved_app, uid=cfg.container_user.uid, gid=cfg.container_user.gid

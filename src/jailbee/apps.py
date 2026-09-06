@@ -41,6 +41,16 @@ class AppSpec:
     Kept out of `command` itself so a caller-supplied URL *replaces* it
     instead of both ending up on the argv — see `launch`.
     """
+    append_cwd_arg: bool = False
+    """Pass the resolved `cwd` to the app as its first argument.
+
+    A JetBrains launcher opens a *project* only when the project directory
+    is on its command line; `--cwd` on the `incus exec` is not read for
+    that. The path is only known at launch time (it comes from
+    `_container_cwd`), so it cannot live in `command`, and it follows the
+    same "only when the caller gave nothing" rule as `default_url`: an
+    explicit argument list is the caller saying what to open.
+    """
     resolve_command: Callable[[Incus, str], list[str]] | None = None
     """Container-side lookup for a command whose path is not fixed.
 
@@ -197,6 +207,8 @@ def launch(
     else:
         argv = list(spec.command)
 
+    cwd = _container_cwd(cfg, incus, container, spec.cwd)
+
     call_args = list(args or [])
     if call_args:
         argv += call_args
@@ -204,8 +216,14 @@ def launch(
         # No explicit args: fall back to the configured URL. Never both —
         # an explicit URL must replace the configured one, not join it.
         argv.append(spec.default_url)
+    elif spec.append_cwd_arg:
+        # Same rule as `default_url`, for an app whose "what to open"
+        # argument is the working directory itself (a JetBrains IDE opens
+        # the project named on its command line; `--cwd` alone leaves it on
+        # the Welcome screen). No spec sets both, and the ordering here
+        # says which would win if one ever did.
+        argv.append(cwd)
 
-    cwd = _container_cwd(cfg, incus, container, spec.cwd)
     log_path = app_log_path(spec.name)
     info(f"Launching {spec.name} in {container} (background, logs in container: {log_path})")
     launch_detached(

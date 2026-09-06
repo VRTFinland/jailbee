@@ -116,6 +116,61 @@ def test_launch_uses_the_resolved_command_when_the_spec_has_a_resolver(tmp_path,
     assert "/opt/jetbrains-toolbox/apps/a/bin/idea" in detached.call_args.args[3]
 
 
+def test_the_ide_launcher_is_given_the_repo_dir_to_open(tmp_path, mocker):
+    """A JetBrains launcher opens a *project* only when the project
+    directory is on its command line.
+
+    Pre-registry `gui.open_ide` built `f"{launcher} {repo_dir}"`; the
+    registry's `command=[app]` dropped it, leaving the repo dir only as
+    `--cwd`, which a JetBrains launcher does not read. The symptom is
+    silent — a cold container opens the Welcome screen, a warm one lands on
+    the right project by accident via `reopenLastProject`. Drop
+    `append_cwd_arg` from the IDE spec, or stop honouring it in `launch`,
+    and this fails.
+    """
+    from jailbee.apps import get_app, launch
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path, jetbrains={"enabled": True})
+    mocker.patch.object(Incus, "exec", return_value="/opt/jetbrains-toolbox/apps/a/bin/idea\n")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/myrepo")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    launch(cfg, Incus(), "c1", get_app(cfg, "ide"))
+    inner = detached.call_args.args[3]
+    assert inner.split() == ["/opt/jetbrains-toolbox/apps/a/bin/idea", "/home/dev/myrepo"]
+    # And it really is the resolved cwd, not a coincidence of the argv:
+    assert detached.call_args.kwargs["cwd"] == "/home/dev/myrepo"
+
+
+def test_append_cwd_arg_yields_to_caller_supplied_args(tmp_path, mocker):
+    """Same rule `default_url` follows: an explicit argument list is the
+    caller saying what to open, so the cwd must not be appended alongside
+    it. `jailbee apps run ide -- --help` would otherwise get the repo dir
+    tacked on after `--help`.
+    """
+    from jailbee.apps import AppSpec, launch
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    spec = AppSpec(name="x", command=["/bin/x"], cwd="/work", append_cwd_arg=True)
+    launch(cfg, Incus(), "c1", spec, ["--help"])
+    assert detached.call_args.args[3].split() == ["/bin/x", "--help"]
+
+
+def test_append_cwd_arg_is_off_by_default(tmp_path, mocker):
+    # Every non-IDE spec — the browsers, every `apps:` entry — must keep
+    # launching with a bare argv; a default of True would append a
+    # directory to Chrome's command line and open it as a file:// tab.
+    from jailbee.apps import AppSpec, launch
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    launch(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"], cwd="/work"))
+    assert detached.call_args.args[3].split() == ["/bin/x"]
+
+
 def test_probe_reports_missing_when_the_binary_is_absent(tmp_path, mocker):
     from jailbee.apps import AppSpec, probe
     from jailbee.incus import Incus
