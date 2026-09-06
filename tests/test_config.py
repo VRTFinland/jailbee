@@ -4131,6 +4131,26 @@ def test_chrome_pool_entry_matches_the_legacy_layout(tmp_path):
     assert chrome.pool.warmth_file == "Default/Login Data"
 
 
+def test_firefox_profile_preset_is_pool_only_and_on_by_default():
+    from jailbee.config.models_host import POOL_PRESETS
+
+    preset = POOL_PRESETS["firefox-profile"]
+    assert preset.default_on is True
+    assert preset.pool_only is True
+    assert preset.spec.allocate == "on-demand"
+
+
+def test_firefox_profile_preset_clears_the_parent_lock():
+    from jailbee.config.models_host import POOL_PRESETS
+
+    globs = POOL_PRESETS["firefox-profile"].spec.stale_globs
+    # A stale .parentlock makes Firefox refuse to start with
+    # "Firefox is already running", the same failure Singleton* causes
+    # for Chrome. Both the file and its companion symlink must go.
+    assert ".parentlock" in globs
+    assert "lock" in globs
+
+
 @pytest.mark.parametrize(
     ("name", "expected"),
     [

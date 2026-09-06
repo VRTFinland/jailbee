@@ -514,6 +514,31 @@ POOL_PRESETS: dict[str, PoolPreset] = {
             allocate="on-demand",
         ),
     ),
+    "firefox-profile": PoolPreset(
+        default_on=True,
+        # `host_subpath` is "firefox-pool" — the pool root, not a cache dir.
+        pool_only=True,
+        spec=PoolSpec(
+            # Firefox rewrites places.sqlite and prefs.js in place, so
+            # nothing here may be hardlinked from the seed source.
+            link_paths=[],
+            wipe_paths=["*/cache2", "*/startupCache", "*/shader-cache"],
+            # A stale .parentlock (plus its `lock` symlink) is what makes a
+            # seeded profile refuse to start with "Firefox is already
+            # running". The -wal/-shm files belong to a dead process's
+            # SQLite handles and are equally stale in a fresh slot.
+            stale_globs=[
+                ".parentlock",
+                "lock",
+                "*/.parentlock",
+                "*/lock",
+                "**/*.sqlite-wal",
+                "**/*.sqlite-shm",
+            ],
+            warmth_file="profiles.ini",
+            allocate="on-demand",
+        ),
+    ),
 }
 
 
