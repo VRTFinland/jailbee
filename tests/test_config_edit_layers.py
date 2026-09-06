@@ -243,6 +243,15 @@ def test_apply_changes_edits_one_entry_without_touching_its_neighbour():
     assert raw["host_mounts"][0]["readonly"] is False  # deep-copied, not mutated
 
 
+def test_apply_changes_deletes_one_list_entry():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0), DELETE)])
+
+    assert got["host_mounts"] == [{"host": "/b"}]
+    assert raw["host_mounts"] == [{"host": "/a"}, {"host": "/b"}]  # deep-copied, not mutated
+
+
 @pytest.fixture
 def opened(tmp_path, monkeypatch, mocker):
     """A `LayerSet` over an isolated global.yaml, with git detection stubbed.

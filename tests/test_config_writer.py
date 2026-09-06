@@ -142,6 +142,32 @@ def test_patch_yaml_rejects_an_index_that_is_not_there():
         patch_yaml(text, [YamlChange(("host_mounts", 4, "readonly"), True)])
 
 
+def test_patch_yaml_deletes_one_list_entry_and_keeps_its_neighbour():
+    """The surviving entry, and its own comment, must not be disturbed."""
+    text = (
+        "host_mounts:\n"
+        "  - host: /a\n"
+        "    container: /a\n"
+        "  - host: /b      # keep me\n"
+        "    container: /b\n"
+    )
+
+    got = patch_yaml(text, [YamlChange(("host_mounts", 0), DELETE)])
+
+    assert "/a" not in got
+    assert "host: /b" in got
+    assert "container: /b" in got
+    assert "# keep me" in got
+    assert yaml.safe_load(got) == {"host_mounts": [{"host": "/b", "container": "/b"}]}
+
+
+def test_patch_yaml_rejects_deleting_an_index_that_is_not_there():
+    text = "host_mounts:\n  - host: /a\n    container: /a\n"
+
+    with pytest.raises(ValueError, match="host_mounts.4"):
+        patch_yaml(text, [YamlChange(("host_mounts", 4), DELETE)])
+
+
 class Sample(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = Field(default=False, description="Turn the widget on.")
