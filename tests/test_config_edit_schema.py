@@ -367,7 +367,14 @@ def test_default_view_paths_all_resolve():
 
 
 def test_browser_switches_and_apps_are_curated():
-    """Task 4 curated the two browser switches; Task 19 adds `apps`.
+    """Task 4 curated the two browser switches; Task 19 adds `apps` and
+    `browsers.default`.
+
+    `browsers.default` earns its place for a concrete reason:
+    `jailbee browser` exits 2 and tells the user to set it when two
+    browsers are enabled and no default is chosen — leaving the field
+    behind "show all" would point the user at a setting the default view
+    does not show them.
 
     A curated path silently dropped (e.g. by a stale rename) would leave
     `advanced` at its safe-default `True` and vanish from the default view.
@@ -378,6 +385,7 @@ def test_browser_switches_and_apps_are_curated():
     for path in (
         ("browsers", "chrome", "enabled"),
         ("browsers", "firefox", "enabled"),
+        ("browsers", "default"),
         ("apps",),
     ):
         assert specs[path].advanced is False, path
