@@ -52,6 +52,26 @@ def test_explicit_image_source_does_not_backfill_host_path():
     assert b.chrome.host_path is None
 
 
+def test_partial_firefox_dict_keeps_the_default_source():
+    # The ordinary "just turn Firefox on" config: a dict that sets only
+    # `enabled` must not lose Firefox's default source. Pydantic's
+    # field-level default_factory only fires when the `firefox` key is
+    # absent entirely — a present-but-partial dict validates straight
+    # against BrowserConfig, whose own source default is "host". The
+    # backfill in _backfill_firefox_default_source restores the intended
+    # image source.
+    b = BrowsersConfig.model_validate({"firefox": {"enabled": True}})
+    assert b.firefox.source == "image"
+
+
+def test_explicit_host_source_does_not_backfill_firefox_source():
+    # Once source is explicitly "host", source must stay "host" — a
+    # naive backfill would override an explicit choice, which would be
+    # worse than the bug it fixes.
+    b = BrowsersConfig.model_validate({"firefox": {"enabled": True, "source": "host"}})
+    assert b.firefox.source == "host"
+
+
 def test_unknown_browser_key_is_rejected():
     with pytest.raises(ValidationError):
         BrowsersConfig.model_validate({"safari": {"enabled": True}})

@@ -32,7 +32,7 @@ package installs to.
 BROWSER_POOLS: dict[str, str] = {"chrome": "chrome-profile", "firefox": "firefox-profile"}
 
 
-def builtin_specs(cfg: "Config") -> list[AppSpec]:  # noqa: UP037
+def builtin_specs(cfg: Config) -> list[AppSpec]:
     """One `AppSpec` per enabled browser, in registry order."""
     specs: list[AppSpec] = []
     for name in cfg.browsers.enabled_names():
