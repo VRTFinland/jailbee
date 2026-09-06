@@ -19,6 +19,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from pydantic import ValidationError
+
 from jailbee.config import ConfigError, load_config_from_layers
 
 # `_HOST_LEVEL_KEYS` is the loader's own routing table: the keys
@@ -340,4 +342,28 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
             validate_global_raw(global_raw, layers.global_path)
     except ConfigError as e:
         return str(e)
+    return None
+
+
+def validate_entry(spec: FieldSpec, value: object) -> str | None:
+    """The first thing wrong with one collection entry, or `None`.
+
+    Early feedback, not a second gate: `validate` still runs the real loader
+    over the whole staged mapping at save time and remains authoritative. This
+    only spares the user a save that fails with a path they then have to hunt
+    for (spec 11.8) — which is why it reports one field, the way a form does,
+    rather than the whole error tree.
+
+    Kept here rather than in a new `validation.py`: it is six lines and pulls
+    in nothing `layers` does not already reach. Spec 10.7's suggested split
+    still stands for the day `validate` itself grows.
+    """
+    if spec.item_model is None:
+        return None
+    try:
+        spec.item_model.model_validate(value)
+    except ValidationError as e:
+        first = e.errors()[0]
+        where = ".".join(str(part) for part in first["loc"]) or spec.label
+        return f"{where}: {first['msg']}"
     return None

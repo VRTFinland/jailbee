@@ -701,6 +701,20 @@ def move_entry(state: EditorState, spec: FieldSpec, index: int, delta: int) -> E
     return stage(state, spec.path, value)
 
 
+def discard_under(state: EditorState, prefix: KeyPath) -> EditorState:
+    """Drop every staged edit at or below `prefix`.
+
+    `app.py`'s second `Esc` out of an entry that already exists (as opposed
+    to one `n` created this session, which is removed outright by
+    `delete_entry`): the entry stays, but nothing typed into it this session
+    is kept. `_under` alone would miss `prefix` itself — a whole-entry
+    `UNSET` or a materialised replacement staged directly at `prefix` — so
+    this checks the prefix match directly rather than reusing it.
+    """
+    kept = {p: v for p, v in state.staged.items() if p[: len(prefix)] != prefix}
+    return replace(state, staged=kept)
+
+
 def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:
     """Whether a strict ancestor of `path` is staged, making `path` moot.
 

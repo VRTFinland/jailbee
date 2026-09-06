@@ -34,8 +34,8 @@ from prompt_toolkit.widgets import TextArea
 
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import raw_for
-from jailbee.config_edit.schema import FieldKind, dotted
+from jailbee.config_edit.layers import raw_for, validate_entry
+from jailbee.config_edit.schema import COLLECTION_KINDS, FieldKind, dotted
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -59,6 +59,7 @@ Enough to show the whole of any hand-written note anyone actually leaves in a
 config file, and few enough that the diff underneath is not pushed off the
 pane by the header that introduces it."""
 _UNSAVED = "Unsaved changes — press q again to discard, or s to save."
+_ENTRY_INVALID = "This entry is incomplete — press Esc again to discard it. "
 
 _TEXT_KINDS = frozenset(
     {FieldKind.STR, FieldKind.INT, FieldKind.PATH, FieldKind.CHOICE, FieldKind.SCALAR_UNION}
@@ -112,6 +113,11 @@ class Editor:
     prompt: _Prompt | None = field(default=None)
     confirm: SavePlan | None = field(default=None)
     diff_open: bool = False
+    new_entry: KeyPath | None = None
+    """The entry `n` created this session, so a second `Esc` on an invalid
+    one removes it outright rather than merely discarding staged edits — an
+    entry that was never saved has nothing to "keep". Set by `n` (Task 8);
+    always `None` here."""
 
     def notice(self, text: str, *, style: str = "class:notice") -> None:
         """Say something on the message line. Cleared by the next keypress."""
@@ -128,27 +134,93 @@ class Editor:
         self.state = st.move(self.state, delta)
 
     def enter(self) -> None:
-        """Open the section under the cursor, or edit the field under it.
+        """Descend: into a section, into a collection, into an entry, or edit.
 
-        The one Enter key does both because the two lists are never focused at
-        the same time: the trail is empty exactly while the section list has
-        the cursor.
+        One key for all four because the screens are never focused at once —
+        `state.trail` says which one is open, and `state.screen` reads it.
         """
-        if not self.state.trail and not self.state.query:
+        view = st.screen(self.state)
+        if view.kind == "sections":
             names = st.sections(self.state)
             if names:
                 self.state = st.enter_crumb(self.state, names[self.state.index])
             return
+        if view.kind == "collection" and view.collection is not None:
+            crumbs = st.entries(self.state, view.collection)
+            if crumbs:
+                self.state = st.enter_crumb(self.state, crumbs[self.state.index])
+            else:
+                self.notice("No entries yet — press `n` to add one.")
+            return
+        spec = st.current(self.state)
+        if spec is not None and spec.kind in COLLECTION_KINDS:
+            self.state = st.enter_crumb(self.state, spec.path[len(self.state.trail)])
+            return
         self.edit_current()
 
     def back(self) -> None:
-        """Escape: clear a search first, then ascend one level."""
+        """Escape: clear a search, then leave — refusing an invalid entry once.
+
+        The first press reports what is wrong and stays put, so the user can fix
+        it; the second leaves anyway and throws the entry's staged edits away
+        (spec 11.8). `message` is what tells the two presses apart, the same
+        mechanism `_quit` uses for the unsaved-changes confirmation — so, like
+        `_quit`, the key binding must not clear the message line before calling
+        this (see `_bindings`'s docstring).
+        """
         if self.state.query:
             self.state = st.set_query(self.state, "")
+            self.clear_notice()
             return
+        view = st.screen(self.state)
+        if view.kind == "entry" and view.collection is not None:
+            error = validate_entry(view.collection, st.effective(self.state, view.entry_path))
+            if error is not None and not self.message.startswith(_ENTRY_INVALID):
+                self.notice(f"{_ENTRY_INVALID}{error}", style="class:error")
+                return
+            if error is not None:
+                self.state = self._discard_entry(view)
         self.state = st.leave_crumb(self.state)
+        self.clear_notice()
+
+    def _discard_entry(self, view: st.Screen) -> st.EditorState:
+        """Undo this entry: remove it if `n` made it, else drop its staged edits.
+
+        Either branch walks the trail out of the entry via the caller's
+        `leave_crumb` right after this returns — never the other way round.
+        `delete_entry` changes the collection but deliberately leaves `trail`
+        alone (its own docstring), and `stage` now raises on a path whose
+        index no longer exists; discarding before leaving would land the
+        cursor on a now-nonexistent entry with no crash to show for it until
+        the *next* edit, discarding after leaving never happens because the
+        entry is already gone by then. Doing it in this order — discard while
+        still standing on the entry, leave right after — means the trail
+        never points at a hole.
+        """
+        if view.collection is None:
+            return self.state
+        if self.new_entry == view.entry_path:
+            self.new_entry = None
+            return st.delete_entry(self.state, view.collection, view.entry_path[-1])
+        return st.discard_under(self.state, view.entry_path)
 
     # -- editing --------------------------------------------------------
+
+    def _pending_reset_of(self, path: KeyPath) -> KeyPath | None:
+        """The nearest staged ancestor of `path`, if it is a pending reset.
+
+        `state.py` stays pure and cannot say so itself — `stage`'s own
+        docstring: "Whether to *say* so belongs to `app.py`; this module is
+        pure." A peek at `state.staged` (a public field) rather than a call
+        into `state`'s private `_staged_ancestor`, and only useful called
+        *before* the `stage`/`toggle_current` that is about to fold into (and
+        so silently cancel) the reset it finds.
+        """
+        for i in range(len(path) - 1, 0, -1):
+            ancestor = path[:i]
+            if ancestor in self.state.staged:
+                return ancestor if self.state.staged[ancestor] is st.UNSET else None
+        return None
 
     def toggle(self) -> None:
         """Space: flip the boolean under the cursor, if it is one and editable."""
@@ -162,7 +234,10 @@ class Editor:
         if spec.kind is not FieldKind.BOOL:
             self.notice("Space toggles a true/false field — press Enter to edit this one.")
             return
+        cancelled = self._pending_reset_of(spec.path)
         self.state = st.toggle_current(self.state)
+        if cancelled is not None:
+            self.notice(f"This also cancels the pending reset of {dotted(cancelled)}.")
 
     def reset(self) -> None:
         """`r`: stage a delete of this key from the open layer.
@@ -178,7 +253,12 @@ class Editor:
         if blocked is not None:
             self.notice(blocked, style="class:error")
             return
+        discarding = any(
+            len(p) > len(spec.path) and p[: len(spec.path)] == spec.path for p in self.state.staged
+        )
         self.state = st.reset_current(self.state, raw_for(self.layer_set, self.state.layer))
+        if discarding:
+            self.notice(f"Discarded pending edits inside {dotted(spec.path)}.")
 
     def edit_current(self) -> None:
         """Open the modal editor on the field under the cursor."""
@@ -249,8 +329,11 @@ class Editor:
         if error is not None:
             self.notice(error, style="class:error")
             return
+        cancelled = self._pending_reset_of(spec.path)
         self.state = st.stage(self.state, spec.path, parsed)
         self.prompt = None
+        if cancelled is not None:
+            self.notice(f"This also cancels the pending reset of {dotted(cancelled)}.")
 
     # -- saving -----------------------------------------------------------
 
@@ -521,7 +604,7 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     Most handlers clear the message line first — via `_act`/`_act_focus`, or
     explicitly in `_commit`/`_cancel` — so a notice that outlived the keypress
     it answered doesn't read as a fresh complaint about the key just pressed.
-    Three handlers deliberately do not, each for a different reason, and none
+    Four handlers deliberately do not, each for a different reason, and none
     of them should be "fixed" into consistency with the rest:
 
     * `_quit` skips it on purpose. It compares `editor.message` against
@@ -530,6 +613,13 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
       always true, so the second `q` could never be told apart from the
       first — the double-press-to-quit-while-dirty behaviour would trap the
       user in the warning forever with no way out.
+    * `_back` (browsing `escape`) is the same trick for the same reason:
+      `Editor.back` compares `editor.message` against `_ENTRY_INVALID` to
+      tell a first `Esc` out of a broken entry (which refuses and explains)
+      from a confirming second one (which discards and leaves). `back`
+      manages its own message on every path — clearing it on a plain ascend,
+      leaving it set on the first refusal — so the binding must hand it the
+      message untouched and never clear afterward either.
     * `_yes`/`_no` (the confirm modal's accept/decline) don't clear either,
       but harmlessly: `confirm_save` always sets its own fresh notice
       ("Saved ..." or "Not saved."), and `close_diff` (reached via `n` or
@@ -572,7 +662,6 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     kb.add("down", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
     kb.add("j", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
     kb.add("enter", filter=browsing & ~confirming)(_act_focus(editor.enter))
-    kb.add("escape", filter=browsing & ~confirming, eager=True)(_act(editor.back))
     kb.add("a", filter=browsing & ~confirming)(
         _act(lambda: setattr(editor, "state", st.toggle_show_all(editor.state)))
     )
@@ -608,6 +697,10 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
             editor.close_diff()
         else:
             editor.confirm_save(accept=False)
+
+    @kb.add("escape", filter=browsing & ~confirming, eager=True)
+    def _back(_event: KeyPressEvent) -> None:
+        editor.back()
 
     @kb.add("q", filter=browsing & ~confirming)
     def _quit(event: KeyPressEvent) -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 from prompt_toolkit.output import DummyOutput
 
+from jailbee.config_edit import render
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import read_layers, resolve
 from jailbee.config_edit.schema import repo_specs
@@ -149,6 +150,48 @@ def rendered(tmp_path):
             return output.screen_text()
 
         yield run
+
+
+def _editor(tmp_path, *, repo=None, layer="repo", policy="patch"):
+    """Build an `Editor` directly, bypassing `run_editor`'s `Application`.
+
+    `Editor` is a plain dataclass, so tests that want to call its methods one
+    at a time and inspect `editor.state`/`editor.message` between calls don't
+    need a real terminal or a key-binding loop — that is what the pipe-driven
+    `editor`/`rendered` fixtures above are for, and they stay as they are.
+
+    `repo` is written out as `.jailbee/config.yaml` before the layers are
+    read, so the real schema (`repo_specs()`) resolves origins against it
+    exactly the way `run_editor` would.
+    """
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump(repo or {}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("")
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = repo_specs()
+    return Editor(
+        layer_set=layer_set,
+        state=st.open_editor(layer=layer, specs=specs, origins=resolve(specs, layer_set)),
+        policy=policy,
+    )
+
+
+def _descend(editor, *crumbs):
+    """Walk `editor.state`'s trail down through `crumbs`, bypassing `enter`.
+
+    For tests that want to land on a particular collection or entry without
+    depending on where the cursor happens to sit — `enter` itself, cursor
+    position included, is exercised separately.
+    """
+    for crumb in crumbs:
+        editor.state = st.enter_crumb(editor.state, crumb)
 
 
 def test_q_quits_cleanly_and_writes_nothing(editor):
@@ -673,3 +716,171 @@ def test_n_closes_a_read_only_diff(rendered):
 
     closed = rendered(f"{'j' * idx}\r dn\x03")
     assert "Esc to close" not in closed
+
+
+def test_enter_opens_a_collection_and_then_an_entry(tmp_path):
+    """The one `Enter` key descends section list -> collection -> entry.
+
+    Cursor is moved onto `host_mounts` explicitly rather than relying on it
+    being the first section: `repo_specs()` is the real `Config` schema, and
+    nothing here should depend on its field declaration order.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.move(editor.state, st.sections(editor.state).index("host_mounts"))
+
+    editor.enter()  # section list -> host_mounts (a section of one)
+    assert st.screen(editor.state).kind == "collection"
+
+    editor.enter()  # -> entry 0
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.state.trail == ("host_mounts", 0)
+
+
+def test_escape_out_of_an_invalid_entry_is_refused_once_then_discards(tmp_path):
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web"}]})
+    _descend(editor, "host_ports", 0)
+
+    editor.back()
+    assert st.screen(editor.state).kind == "entry"  # still here
+    assert "port" in editor.message
+
+    editor.back()
+    assert st.screen(editor.state).kind == "collection"
+
+
+def test_discarding_an_existing_invalid_entry_drops_its_staged_edits(tmp_path):
+    """The second `Esc` does not just move the trail: it also drops whatever
+    was staged inside the entry (`discard_under`), not merely leave it
+    dangling under an index the collection screen no longer highlights.
+    """
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web"}]})
+    _descend(editor, "host_ports", 0)
+    editor.state = st.stage(editor.state, ("host_ports", 0, "name"), "typed")
+
+    editor.back()  # first press: still invalid (port is still missing), refused
+    editor.back()  # second press: discards the staged edit and leaves
+
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.state.staged == {}
+
+
+def test_escape_out_of_a_valid_entry_leaves_at_the_first_press(tmp_path):
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web", "port": 8080}]})
+    _descend(editor, "host_ports", 0)
+
+    editor.back()
+
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.message == ""
+
+
+def test_the_footer_changes_on_a_collection_screen(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": []})
+    editor.state = st.move(editor.state, st.sections(editor.state).index("host_mounts"))
+    editor.enter()
+
+    text = "".join(t for _, t in render.footer(editor.state))
+    assert "n new" in text
+
+
+def test_a_real_escape_keypress_refuses_to_leave_a_broken_entry(tmp_path):
+    """The state-level refuse-once behaviour above is exercised on a bare
+    `Editor`, never through a key binding — so it would still pass even if
+    `escape` were never wired to `Editor.back` at all. This is the one test
+    in the file that presses the real key, through the real `Application`,
+    so that hazard cannot slip through.
+    """
+    from prompt_toolkit.input import create_pipe_input
+
+    from jailbee.config_edit.app import run_editor
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text("host_ports:\n  - name: web\n")
+    glob = tmp_path / "global.yaml"
+    glob.write_text("")
+
+    specs = repo_specs()
+    idx = _index_of_section(specs, "host_ports")
+
+    def run(keys: str) -> str:
+        layer_set = read_layers(repo, glob)
+        output = _CapturingOutput()
+        with create_pipe_input() as pipe:
+            pipe.send_text(keys)
+            run_editor(
+                layer="repo",
+                layer_set=layer_set,
+                specs=specs,
+                origins=resolve(specs, layer_set),
+                policy="patch",
+                input=pipe,
+                output=output,
+            )
+        return output.screen_text()
+
+    # host_ports is itself a section of one, like host_mounts in the tests
+    # above: the first Enter lands straight on the collection screen, the
+    # second on its only entry.
+    once = run(f"{'j' * idx}\r\r\x1bq")
+    assert "incomplete" in once
+
+    # A second `Escape` must actually leave to the collection screen — not
+    # merely still show the refusal, which a binding that re-clears the
+    # message before every call to `back` (the pre-task-7 wiring) would also
+    # produce, forever. The collection screen's own footer (`n new`, `x
+    # delete`) is what proves it, since `back`'s own message-based bookkeeping
+    # can't tell the two apart from the outside.
+    twice = run(f"{'j' * idx}\r\r\x1b\x1bq")
+    assert "x delete" in twice
+
+
+def test_typing_into_an_entry_cancels_the_collection_s_pending_reset(tmp_path):
+    """The rule `stage`'s own docstring names but cannot announce itself
+    ("Whether to *say* so belongs to `app.py`; this module is pure"): editing
+    a field inside a collection that has a pending reset staged cancels that
+    reset. `state.py`'s side of it is proven pure and correct directly in
+    `test_config_edit_state.py`; this is the one place the message that
+    reaches the screen is proven to follow it.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+    editor.reset()
+    assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+    editor.state = st.set_query(editor.state, "")
+    _descend(editor, "host_mounts", 0)
+    editor.edit_current()
+    assert editor.prompt is not None
+    editor.prompt.area.text = "/typed"
+    editor.commit_prompt()
+
+    assert "cancels the pending reset of host_mounts" in editor.message
+
+
+def test_resetting_a_collection_discards_pending_edits_inside_it_and_says_so(tmp_path):
+    """The other half of the same rule: resetting a collection that has
+    pending edits inside it discards them.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    _descend(editor, "host_mounts", 0)
+    editor.edit_current()
+    assert editor.prompt is not None
+    editor.prompt.area.text = "/typed"
+    editor.commit_prompt()
+    assert editor.state.staged == {("host_mounts", 0, "host"): "/typed"}
+
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+
+    editor.reset()
+
+    assert "Discarded pending edits inside host_mounts" in editor.message
+    assert editor.state.staged == {("host_mounts",): st.UNSET}

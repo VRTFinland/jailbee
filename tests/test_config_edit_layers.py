@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from jailbee.config import HostPort
 from jailbee.config_edit import layers
-from jailbee.config_edit.schema import repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -438,3 +439,45 @@ def test_validate_leaves_the_in_memory_layers_untouched(opened):
     layers.validate(got, "global", [YamlChange(("defaults", "cpu"), "lots")])
 
     assert got.global_raw == {"defaults": {"cpu": 2}}
+
+
+def test_validate_entry_names_the_missing_required_field():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    error = layers.validate_entry(spec, {"name": "web"})
+
+    assert error is not None
+    assert "port" in error
+
+
+def test_validate_entry_accepts_a_complete_entry():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    assert layers.validate_entry(spec, {"name": "web", "port": 8080}) is None
+
+
+def test_validate_entry_is_none_for_a_spec_with_no_item_model():
+    """A leaf field (never a collection) has nothing to validate against."""
+    spec = FieldSpec(
+        path=("gpg", "enabled"),
+        label="enabled",
+        kind=FieldKind.BOOL,
+        description="",
+        default=False,
+    )
+
+    assert layers.validate_entry(spec, "anything at all") is None
