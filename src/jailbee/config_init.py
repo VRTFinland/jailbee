@@ -47,8 +47,9 @@ _TEMPLATE = """\
 # GUI applications beyond the built-in browsers and JetBrains IDE — an
 # AppImage, a vendor binary, a wrapper script. Each entry launches with
 # `jailbee apps run <name>`, or directly as `jailbee <name>` when
-# `top_level: true` (refused at load time if that name is already a
-# built-in command). See docs/config.md#apps.
+# `top_level: true` (a name colliding with a built-in command is reported
+# by `jailbee config validate` as a config error — not refused at load
+# time). See docs/config.md#apps.
 #
 # apps:
 #   figma:

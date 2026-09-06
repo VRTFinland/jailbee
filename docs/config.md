@@ -27,7 +27,7 @@ Repo-level values overlay user-level values. The effective `Config` Python objec
 | Source type | Rule | How to reset |
 |---|---|---|
 | Scalar (`str`, `int`, `bool`, `Path`, enum) | Repo value replaces user value | `null` in repo clears |
-| List | Repo list appended to user list | `[]` in repo replaces with empty list |
+| List | Repo list appended to user list (exception: `apps.<name>.command` replaces instead — see [`apps` layering](#apps-layering)) | `[]` in repo replaces with empty list |
 | Map / dict | Recursive deep-merge per key | No bulk reset — set an individual key to `null` to clear it (an empty `{}` is a no-op) |
 
 Example: a user-level `host_mounts` entry plus a repo-level one yields two mounts after merge. A repo that needs to *exclude* a user mount must `host_mounts: []` and re-list everything it wants.
