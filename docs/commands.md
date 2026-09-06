@@ -56,7 +56,7 @@
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration. `show`'s effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
-| `jailbee config edit [--global] [--write patch\|regenerate]` | Interactive editor for either config layer, with each field's own help text, its origin (`default`/`global`/`repo`) and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Lists of structured entries (`host_mounts`, `agents`, `autostart` steps, …) and `github.api_tokens` are read-only for now |
+| `jailbee config edit [--global] [--write patch\|regenerate]` | Interactive editor for either config layer, with each field's own help text, its origin (`default`/`global`/`repo`) and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Structured lists (`host_mounts`, `agents`, `autostart` steps, …) open a drill-down screen — `n` new, `x` delete, `J`/`K` reorder, `Enter` to open an entry. `github.api_tokens` can be set but is never displayed |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
 
 ### `jailbee gui` / `jailbee dashboard --gui`
