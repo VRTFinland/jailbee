@@ -1044,7 +1044,9 @@ With the above, `jailbee figma [args…]` launches it in the container this
 branch would attach to, and `jailbee figma --container <container>
 [args…]` names a different one. Both are literally
 `jailbee apps run figma …` — the promotion only drops the `apps run`, and
-everything after the app name is passed through untouched.
+everything after the app name is passed through untouched. Arguments that
+start with a dash need a `--` separator, exactly as `jailbee apps run`
+does: `jailbee figma -- --no-sandbox`.
 
 **`jailbee figma <container>` does not name a container.** `apps run`
 takes the container as an option, not as a positional, so a bare name

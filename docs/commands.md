@@ -68,7 +68,9 @@ An `apps:` entry with `top_level: true` also runs as a bare `jailbee <name>
 [args…]` — equivalent to `jailbee apps run <name> [args…]`, just without
 the `apps run`. Everything after the name is passed through unchanged, so
 another container is named exactly the way `apps run` names one:
-`jailbee <name> --container <container> [args…]`. A bare `jailbee <name>
+`jailbee <name> --container <container> [args…]`, and an argument that
+starts with a dash needs a `--` separator
+(`jailbee <name> -- --some-flag`). A bare `jailbee <name>
 <container>` does **not** work — `apps run` takes the container as an
 option, so the name is appended to the app's own arguments and the app
 starts in the default container instead. A built-in command of the same
