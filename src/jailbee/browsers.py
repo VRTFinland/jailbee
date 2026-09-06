@@ -1,15 +1,67 @@
-"""Browser AppSpecs (stub; replaced in Task 8)."""
+"""Builtin browser specs: Chrome and Firefox as registry entries.
+
+The per-browser differences live here and nowhere else — where the binary
+sits for each `source`, how each one is told to go dark, and which profile
+pool keeps two containers from fighting over one profile directory.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from jailbee.apps import AppSpec
+from jailbee.gui import host_is_wayland
 
 if TYPE_CHECKING:
     from jailbee.config import Config
 
+BROWSER_BINARIES: dict[tuple[str, str], str] = {
+    ("chrome", "host"): "/opt/google/chrome/google-chrome",
+    ("chrome", "image"): "/usr/bin/google-chrome-stable",
+    ("firefox", "host"): "/opt/firefox/firefox",
+    ("firefox", "image"): "/usr/bin/firefox",
+}
+"""Container-side binary per (browser, source).
 
-def builtin_specs(cfg: Config) -> list[AppSpec]:
-    """Placeholder; the real specs land in Task 8 (browsers)."""
-    return []
+A host-sourced browser is reached through its bind-mount target, which is
+fixed by `Config.effective_host_mounts` regardless of where the host install
+actually lives. An image-sourced one is reached through the path its apt
+package installs to.
+"""
+
+BROWSER_POOLS: dict[str, str] = {"chrome": "chrome-profile", "firefox": "firefox-profile"}
+
+
+def builtin_specs(cfg: "Config") -> list[AppSpec]:  # noqa: UP037
+    """One `AppSpec` per enabled browser, in registry order."""
+    specs: list[AppSpec] = []
+    for name in cfg.browsers.enabled_names():
+        browser = getattr(cfg.browsers, name)
+        command = [BROWSER_BINARIES[(name, browser.source)]]
+        env: dict[str, str] = {}
+        if name == "chrome":
+            if host_is_wayland():
+                # Chrome defaults to X11 even with WAYLAND_DISPLAY set; the
+                # Ozone backend has to be named explicitly.
+                command.append("--ozone-platform=wayland")
+            if browser.dark_mode:
+                command += ["--force-dark-mode", "--enable-features=WebContentsForceDark"]
+        elif name == "firefox" and browser.dark_mode:
+            env["GTK_THEME"] = "Adwaita:dark"
+        if browser.url:
+            command.append(browser.url)
+        specs.append(
+            AppSpec(
+                name=name,
+                command=command,
+                cwd="home",
+                env=env,
+                pool=BROWSER_POOLS[name],
+                top_level=True,
+                autostart=browser.autostart,
+                source="builtin",
+                description=f"{name.capitalize()} ({browser.source})",
+                accepts_url=True,
+            )
+        )
+    return specs

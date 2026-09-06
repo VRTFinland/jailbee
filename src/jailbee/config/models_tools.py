@@ -160,6 +160,27 @@ def _backfill_chrome_default_host_path(v: object) -> object:
     return {**v, "host_path": _DEFAULT_CHROME_HOST_PATH}
 
 
+def _backfill_firefox_default_source(v: object) -> object:
+    """Fill in Firefox's default `source` when a raw dict omits it.
+
+    Firefox defaults to `source: "image"` because on Ubuntu, the host's Firefox
+    is a snap and cannot be mounted into a container. This backfill ensures that
+    a partial dict such as `{"enabled": true}` — the ordinary "just turn Firefox
+    on" config — preserves the image source default rather than falling back to
+    the generic BrowserConfig default of "host".
+
+    Similar to `_backfill_chrome_default_host_path`, this compensates for
+    Pydantic's behavior: a submodel field's `default_factory` only fires when
+    the whole key is absent; a partial dict validates straight against
+    BrowserConfig, bypassing the BrowsersConfig.firefox default_factory.
+    """
+    if not isinstance(v, dict):
+        return v
+    if "source" in v:
+        return v
+    return {**v, "source": "image"}
+
+
 class BrowserConfig(BaseModel):
     """One browser inside containers."""
 
@@ -256,6 +277,11 @@ class BrowsersConfig(BaseModel):
     @classmethod
     def _default_chrome_host_path(cls, v: object) -> object:
         return _backfill_chrome_default_host_path(v)
+
+    @field_validator("firefox", mode="before")
+    @classmethod
+    def _default_firefox_source(cls, v: object) -> object:
+        return _backfill_firefox_default_source(v)
 
 
 # Kept as a name for one release so `from jailbee.config import ChromeConfig`

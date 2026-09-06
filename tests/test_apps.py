@@ -30,7 +30,6 @@ def test_registry_order_is_stable_regardless_of_yaml_key_order(tmp_path):
     assert names_a == names_b == ["arc", "zed"]
 
 
-@pytest.mark.xfail(reason="browsers.builtin_specs lands in Task 8", strict=True)
 def test_builtins_come_before_config_apps(tmp_path):
     cfg = make_cfg(
         tmp_path,
@@ -42,12 +41,8 @@ def test_builtins_come_before_config_apps(tmp_path):
 
 
 def test_disabled_browsers_are_not_in_the_registry(tmp_path):
-    # Inert until Task 8: both `browsers.builtin_specs` and `ide.builtin_specs`
-    # are still stubs returning `[]` unconditionally, so this passes today
-    # against any resolve_apps implementation and exercises no disable logic.
-    # It becomes real coverage once Task 8 gives browsers.builtin_specs actual
-    # enable/disable behaviour (see that task's
-    # test_a_disabled_browser_produces_no_spec).
+    # With no browsers enabled in the config, builtin_specs produces nothing,
+    # and the registry is empty. This verifies the disable path works.
     cfg = make_cfg(tmp_path)
     assert [s.name for s in resolve_apps(cfg)] == []
 
