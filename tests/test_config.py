@@ -4626,6 +4626,40 @@ def test_the_two_command_spellings_override_identically(tmp_path, mocker):
     assert as_list["figma"].command == as_string["figma"].command == ["/opt/repo/figma"]
 
 
+def test_mixed_command_spellings_also_override_correctly(tmp_path, mocker):
+    """The two *mixed* spelling pairs — global list + repo string, and global
+    string + repo list — are the two combinations
+    `test_the_two_command_spellings_override_identically` above does not
+    exercise (it only compares list-vs-list against string-vs-string). Both
+    mixed pairs hit `deep_merge`'s type-mismatch branch (list and string are
+    different shapes, so the overlay already wins there) and are then
+    re-forced by `merge_apps_raw`'s per-app override on top — belt and
+    suspenders, currently.
+
+    This would fail if `deep_merge`'s list-append branch were ever
+    generalized to coerce a lone scalar into a single-element list before
+    appending (e.g. to handle "one side is a list, the other a bare string"
+    more "helpfully"), which would turn exactly these mixed pairs into an
+    appended `[/opt/global/figma, /opt/repo/figma]`-style result — the
+    original bug, reintroduced for the one case the list-list and
+    string-string tests above don't cover.
+    """
+    list_then_string = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": ["/opt/global/figma"]}},
+        {"figma": {"command": "/opt/repo/figma"}},
+    )
+    string_then_list = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": "/opt/global/figma"}},
+        {"figma": {"command": ["/opt/repo/figma"]}},
+    )
+    assert list_then_string["figma"].command == ["/opt/repo/figma"]
+    assert string_then_list["figma"].command == ["/opt/repo/figma"]
+
+
 def test_a_repo_command_override_drops_the_global_commands_own_arguments(tmp_path, mocker):
     # A multi-element global `command` must be replaced whole, not have the
     # repo's binary appended to its argument list.
