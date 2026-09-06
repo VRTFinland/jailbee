@@ -19,6 +19,7 @@ from jailbee.config.common import (
     _read_yaml_or_empty,
     _split_host_keys,
     deep_merge,
+    merge_apps_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.models_columns import (
@@ -453,6 +454,13 @@ def load_config_from_layers(
             )
 
     merged = deep_merge(global_for_merge, repo_raw)
+    # `apps:` needs one rule `deep_merge` cannot express: `AppEntry.command`
+    # must be replaced by the repo layer, not appended to (see
+    # `merge_apps_raw`). Only both layers defining `apps:` can hit it.
+    global_apps = global_for_merge.get("apps")
+    repo_apps = repo_raw.get("apps")
+    if isinstance(global_apps, dict) and isinstance(repo_apps, dict):
+        merged["apps"] = merge_apps_raw(global_apps, repo_apps)
     cfg = _build_config_from_dict(merged, path, origin=origin, emit_hint=emit_hint)
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())

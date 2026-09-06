@@ -22,6 +22,7 @@ from jailbee.config.common import (
     SCRATCH_ORIGIN_SUFFIX,
     _split_host_keys,
     deep_merge,
+    merge_apps_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
@@ -175,6 +176,7 @@ __all__ = [
     "load_config_unsanitized",
     "load_repo_config",
     "load_repo_config_unsanitized",
+    "merge_apps_raw",
     "parse_loose_ttl",
     "resolve_agents_raw",
     "resolve_browsers_raw",

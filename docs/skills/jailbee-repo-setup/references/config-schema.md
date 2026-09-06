@@ -410,6 +410,13 @@ deliberate (YAGNI): model an app as a builtin instead if it needs either.
 `jailbee apps ls [<container>]` lists builtins and `apps:` entries
 together, in that order.
 
+`apps:` merges across the two layers per app name and, within one app, per
+key — so a repo can set `autostart: true` on an app defined in
+`~/.config/jailbee/global.yaml` without restating its `command`. Two keys
+differ: a repo's `command` **replaces** the global one (a second binary
+path would otherwise become an argument to the first), while `args`
+**appends** to it, the way every other list-valued config key does.
+
 ## `autostart`
 
 IDE and browser launches are controlled by `jetbrains.autostart` /

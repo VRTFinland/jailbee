@@ -1021,8 +1021,8 @@ per-container profile pool or an auto-mount, model it as a builtin instead.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `command` | list[string] | required | Container-side command to run. A string is split with shell quoting rules; a list is taken as-is. The first element is an absolute container path or a name on the container's `PATH` — never resolved on the host. |
-| `args` | list[string] | `[]` | Extra arguments appended after `command`. Arguments passed on the `jailbee apps run` command line are appended after these. |
+| `command` | list[string] | required | Container-side command to run. A string is split with shell quoting rules; a list is taken as-is. The first element is an absolute container path or a name on the container's `PATH` — never resolved on the host. A repo layer's value **replaces** the global layer's (see [Layering](#apps-layering) below). |
+| `args` | list[string] | `[]` | Extra arguments appended after `command`. Arguments passed on the `jailbee apps run` command line are appended after these. A repo layer's entries **append** to the global layer's. |
 | `cwd` | string | `"repo"` | Working directory inside the container: `repo` (the checkout), `home` (the dev user's home), or an absolute container path. |
 | `env` | map[string, string] | `{}` | Extra environment variables, merged over the GUI environment jailbee already supplies (`HOME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`). |
 | `description` | string | `""` | One-line summary shown in `jailbee apps ls`. |
@@ -1067,6 +1067,17 @@ builtins first, then `apps:` entries, in that order regardless of YAML key
 order. Without a container it is configuration only; name one to add a
 STATUS column that actually probes each app inside it (`present` /
 `missing`).
+
+<a id="apps-layering"></a>
+**Layering.** `apps:` is an ordinary merge-layer key, so an app defined in
+`~/.config/jailbee/global.yaml` merges with a repo's `apps:` per app name,
+and within one app per key — a repo can set `autostart: true` on a
+host-wide app without restating its `command`. One key breaks the general
+["lists append"](#merge-rules) rule on purpose: a repo layer's `command`
+**replaces** the global layer's rather than appending to it, because a
+second binary path would otherwise become an *argument* to the first.
+`args` still appends, which is what lets a repo add one flag to a
+host-wide app.
 
 ### `agents`
 

@@ -60,6 +60,16 @@ CONTAINER_USERNAME = "dev"
 # repo adding a single host to a global agent is the intended use. Don't
 # "fix" the apparent asymmetry with `ls`/`dashboard` by adding it here.
 #
+# `apps` also stays OUT of this set, and for the same reason as `agents` — it
+# is a mapping keyed by app name, so a repo layer adjusting one field of a
+# globally-defined app is the intended layering. But unlike `AgentConfig`,
+# whose `command` is a `str`, `AppEntry.command` is a `list[str]` and so hits
+# the append rule: a repo overriding a global app's binary had its path
+# *appended*, becoming an argument of the very binary it meant to replace.
+# `merge_apps_raw` below is the per-app merge that fixes it; the one caller
+# is `loader.load_config_from_layers`. Do not "simplify" that call site back
+# into the plain `deep_merge`.
+#
 # `claude_credentials` is host-level because it must never reach the Config
 # layer: a group name in a committed `.jailbee/config.yaml` would apply to
 # every teammate. It is resolved to `Config.claude_credentials_dir` on the
@@ -143,6 +153,51 @@ def deep_merge(base: dict[str, object], overlay: dict[str, object]) -> dict[str,
             # Scalar override, type mismatch, or None-clear: overlay wins.
             result[key] = _copy(overlay_value)
     return result
+
+
+_APP_OVERRIDE_KEYS: frozenset[str] = frozenset({"command"})
+"""`apps.<name>` keys a repo layer *replaces* rather than appends to.
+
+`command` names which binary the app is; a second element is an argument to
+the first, never a replacement of it. Every other key keeps `deep_merge`'s
+rules, so `args` still appends — a repo adding one flag to a globally
+defined app is the intended use, exactly as `agents.<name>.egress_allow`
+appends — and `env` still merges per variable.
+"""
+
+
+def merge_apps_raw(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
+    """Merge two config layers' `apps:` blocks, per app name.
+
+    `deep_merge` alone is wrong here. It appends lists, and
+    `AppEntry.command` is a `list[str]`, so
+
+        global: {figma: {command: [/opt/global/figma]}}
+        repo:   {figma: {command: [/opt/repo/figma]}}
+
+    merged to `command: [/opt/global/figma, /opt/repo/figma]` — the repo's
+    override became an *argument* to the global binary. The two legal
+    spellings disagreed as well: `command: /opt/repo/figma` (a string) hits
+    `deep_merge`'s overlay-wins branch and overrode correctly, while the
+    list form appended.
+
+    So: `deep_merge` does the work, then every key in `_APP_OVERRIDE_KEYS`
+    that the overlay sets is forced to the overlay's own value. A string
+    `command` already behaved this way, which is the behaviour the two
+    spellings now share.
+    """
+    merged = deep_merge(base, overlay)
+    for name, entry in overlay.items():
+        if not isinstance(entry, dict):
+            # Not a mapping: `deep_merge` already let the overlay win whole,
+            # and Pydantic will reject it with its own message.
+            continue
+        target = merged.get(name)
+        if not isinstance(target, dict):
+            continue
+        for key in _APP_OVERRIDE_KEYS & entry.keys():
+            target[key] = _copy(entry[key])
+    return merged
 
 
 def _copy(value: object) -> object:

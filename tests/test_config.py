@@ -4571,6 +4571,127 @@ def test_load_config_from_layers_still_applies_the_repo_ban_list(tmp_path, mocke
         )
 
 
+def _layered_apps(tmp_path, mocker, global_apps, repo_apps):
+    """`cfg.apps` for a global/repo pair of `apps:` blocks."""
+    from jailbee.config.loader import load_config_from_layers
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    cfg = load_config_from_layers(
+        {"apps": global_apps},
+        {"apps": repo_apps},
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="<staged>",
+    )
+    return cfg.apps
+
+
+def test_a_repo_layer_replaces_a_global_apps_command(tmp_path, mocker):
+    """`deep_merge` appends lists, and `AppEntry.command` is a list.
+
+    Routed through it unfixed, a repo overriding a globally defined app's
+    binary produced `[/opt/global/figma, /opt/repo/figma]` — the override
+    became an *argument* to the binary it meant to replace, and the app
+    launched from the global path with a stray argument. Remove the
+    `merge_apps_raw` call in `load_config_from_layers` and this fails with
+    exactly that two-element list.
+    """
+    apps = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": ["/opt/global/figma"]}},
+        {"figma": {"command": ["/opt/repo/figma"]}},
+    )
+    assert apps["figma"].command == ["/opt/repo/figma"]
+
+
+def test_the_two_command_spellings_override_identically(tmp_path, mocker):
+    """A string `command` always hit `deep_merge`'s overlay-wins branch and
+    a list always hit the append branch, so the two legal spellings of the
+    same key disagreed about what a repo override even means. They must
+    now agree.
+    """
+    as_list = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": ["/opt/global/figma"]}},
+        {"figma": {"command": ["/opt/repo/figma"]}},
+    )
+    as_string = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": "/opt/global/figma"}},
+        {"figma": {"command": "/opt/repo/figma"}},
+    )
+    assert as_list["figma"].command == as_string["figma"].command == ["/opt/repo/figma"]
+
+
+def test_a_repo_command_override_drops_the_global_commands_own_arguments(tmp_path, mocker):
+    # A multi-element global `command` must be replaced whole, not have the
+    # repo's binary appended to its argument list.
+    apps = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": ["/opt/global/figma", "--global-flag"]}},
+        {"figma": {"command": ["/opt/repo/figma"]}},
+    )
+    assert apps["figma"].command == ["/opt/repo/figma"]
+
+
+def test_a_repo_layer_still_appends_apps_args(tmp_path, mocker):
+    """`args` keeps `deep_merge`'s list rule deliberately: a repo adding one
+    flag to a globally defined app is the intended use, exactly as
+    `agents.<name>.egress_allow` appends. Only `command` is special-cased,
+    and a fix that switched the whole entry to overlay-wins would fail here.
+    """
+    apps = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": "/opt/figma", "args": ["--no-sandbox"]}},
+        {"figma": {"args": ["--enable-features=X"]}},
+    )
+    assert apps["figma"].args == ["--no-sandbox", "--enable-features=X"]
+
+
+def test_a_repo_layer_adjusts_one_field_of_a_global_app(tmp_path, mocker):
+    """The layering `apps:` is kept out of `_HOST_LEVEL_KEYS` for: a repo
+    setting one key must not discard the rest of the global entry.
+    """
+    apps = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": "/opt/figma", "description": "Figma desktop"}},
+        {"figma": {"autostart": True}},
+    )
+    assert apps["figma"].command == ["/opt/figma"]
+    assert apps["figma"].description == "Figma desktop"
+    assert apps["figma"].autostart is True
+
+
+def test_apps_defined_in_only_one_layer_survive(tmp_path, mocker):
+    apps = _layered_apps(
+        tmp_path,
+        mocker,
+        {"figma": {"command": "/opt/figma"}},
+        {"zed": {"command": "/opt/zed"}},
+    )
+    assert sorted(apps) == ["figma", "zed"]
+
+
+def test_merge_apps_raw_does_not_mutate_its_inputs():
+    # `merge_apps_raw` reaches into the merged copy to force `command`. If
+    # that copy ever aliased the caller's dict, the global layer's own raw
+    # block would be rewritten in place — and `config_edit` holds those raw
+    # layers as its live view of the files on disk.
+    from jailbee.config import merge_apps_raw
+
+    base = {"figma": {"command": ["/opt/global/figma"], "args": ["--a"]}}
+    overlay = {"figma": {"command": ["/opt/repo/figma"]}}
+    merge_apps_raw(base, overlay)
+    assert base == {"figma": {"command": ["/opt/global/figma"], "args": ["--a"]}}
+    assert overlay == {"figma": {"command": ["/opt/repo/figma"]}}
+
+
 def test_load_config_from_repo_raw_reads_the_global_file(tmp_path, monkeypatch, mocker):
     """The existing entry point keeps its behaviour: global comes from disk."""
     from jailbee.config.loader import _load_config_from_repo_raw
