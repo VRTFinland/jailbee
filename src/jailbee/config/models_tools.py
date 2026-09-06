@@ -112,54 +112,119 @@ class JetbrainsConfig(BaseModel):
     )
 
 
-# Default host path for the Chrome install. Matches the Debian/Ubuntu
+# Default host path for a host-sourced Chrome. Matches the Debian/Ubuntu
 # google-chrome-stable package layout (binary at
-# /opt/google/chrome/google-chrome). gui.open_chrome hardcodes the
-# container-side path, so the container-side mount target is fixed even
-# when the user changes the source path (e.g. to point at chromium).
+# /opt/google/chrome/google-chrome). The container-side mount target is
+# fixed at /opt/google/chrome even when the source path differs, so
+# `browsers.py` can derive one binary path per source.
 _DEFAULT_CHROME_HOST_PATH = Path("/opt/google/chrome")
 
+BrowserSource = Literal["host", "image"]
+"""Where a browser's binary comes from.
 
-class ChromeConfig(BaseModel):
-    """Chrome integration."""
+`host` RO-bind-mounts an install from the host, the way Chrome has always
+worked. `image` installs the browser during `jailbee base build` — the only
+source that works for Firefox on Ubuntu, where the host's Firefox is a snap.
+"""
+
+
+class BrowserConfig(BaseModel):
+    """One browser inside containers."""
 
     model_config = ConfigDict(extra="forbid")
     enabled: bool = Field(
         default=False,
         description=(
-            "Master switch. Off by default; opt in via ~/.config/jailbee/global.yaml. When "
-            "false, `jailbee chrome` errors out and the autostart launch is suppressed "
-            "regardless of `autostart`."
+            "Master switch for this browser. Off by default; opt in via "
+            "~/.config/jailbee/global.yaml. When false, the browser's command errors "
+            "out, it is hidden from `jailbee apps ls`, and its autostart launch is "
+            "suppressed regardless of `autostart`."
+        ),
+    )
+    source: BrowserSource = Field(
+        default="host",
+        description=(
+            "`host` RO-mounts an existing host install (see `host_path`); `image` "
+            "installs the browser into the golden image during `jailbee base build`, "
+            "which needs no host install at all. Changing this needs "
+            "`jailbee base build` (image) or `jailbee apply` (host) to take effect."
+        ),
+    )
+    host_path: PathExpanded | None = Field(
+        default=None,
+        description=(
+            "Host path RO-mounted into the container when `source: host`. Must be "
+            "null when `source: image`. Chrome defaults to the standard "
+            "google-chrome-stable install path; Firefox has no default because on "
+            "Ubuntu the host's Firefox is a snap and is not usefully mountable."
         ),
     )
     url: str | None = Field(
         default=None,
         description=(
-            "URL Chrome opens on launch. None launches with no URL; "
-            "`jailbee chrome <name> <URL>` overrides this per call."
+            "URL the browser opens on launch. None launches with no URL; passing a "
+            "URL on the command line overrides this per call."
         ),
     )
     dark_mode: bool = Field(
         default=False,
         description=(
-            "Pass --force-dark-mode and --enable-features=WebContentsForceDark so Chrome "
-            "ignores the host's own GTK theme."
+            "Force a dark browser theme. Chrome gets --force-dark-mode and "
+            "--enable-features=WebContentsForceDark, which darkens page content too. "
+            "Firefox has no equivalent flag, so it gets GTK_THEME=Adwaita:dark, which "
+            "darkens the browser UI only — pages stay as the site renders them."
         ),
     )
     autostart: bool = Field(
         default=False,
-        description="Launch Chrome after autostart steps complete. Has no effect when "
-        "`enabled` is false.",
-    )
-    host_path: PathExpanded | None = Field(
-        default_factory=lambda: _DEFAULT_CHROME_HOST_PATH,
         description=(
-            "Host path RO-mounted to /opt/google/chrome (the container-side path is "
-            "hardcoded in gui.open_chrome). Defaults to the standard google-chrome-stable "
-            "install path — point elsewhere for a non-standard install (e.g. chromium), or "
-            "set to null to disable the auto-mount."
+            "Launch this browser after autostart steps complete. Has no effect when "
+            "`enabled` is false."
         ),
     )
+
+
+class BrowsersConfig(BaseModel):
+    """Browsers available inside containers."""
+
+    model_config = ConfigDict(extra="forbid")
+    default: Literal["chrome", "firefox"] | None = Field(
+        default=None,
+        description=(
+            "Which browser `jailbee browser` opens. None (default) resolves at command "
+            "time: the single enabled browser if there is exactly one, otherwise the "
+            "command asks you to set this. Naming a disabled browser is a config error."
+        ),
+    )
+    chrome: BrowserConfig = Field(
+        default_factory=lambda: BrowserConfig(host_path=_DEFAULT_CHROME_HOST_PATH),
+        description=(
+            "Google Chrome. Sourced from a host mount by default, matching the "
+            "standard google-chrome-stable install path."
+        ),
+    )
+    firefox: BrowserConfig = Field(
+        default_factory=lambda: BrowserConfig(source="image"),
+        description=(
+            "Mozilla Firefox. Sourced from the golden image by default, because on "
+            "Ubuntu the host's Firefox is a snap and cannot be mounted into a container."
+        ),
+    )
+
+    def enabled_names(self) -> list[str]:
+        """Enabled browsers in registry order — never in YAML key order.
+
+        `jailbee apps ls`, the dashboard action menu and the implicit
+        `browsers.default` all read this, so the order must not depend on
+        how a user happened to write their YAML.
+        """
+        return [n for n in ("chrome", "firefox") if getattr(self, n).enabled]
+
+
+# Kept as a name for one release so `from jailbee.config import ChromeConfig`
+# keeps working while `chrome:` is still an accepted alias. Retire in 1.4.0
+# together with the alias itself.
+ChromeConfig = BrowserConfig
 
 
 class TerminalKittyConfig(BaseModel):

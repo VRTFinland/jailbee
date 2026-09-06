@@ -62,6 +62,8 @@ from jailbee.config.models_net import (
     LooseAutoRevert,
 )
 from jailbee.config.models_tools import (
+    _DEFAULT_CHROME_HOST_PATH,
+    BrowserConfig,
     ChromeConfig,
     GpgConfig,
     JetbrainsConfig,
@@ -234,7 +236,7 @@ class Config(BaseModel):
         ),
     )
     chrome: ChromeConfig = Field(
-        default=ChromeConfig(),
+        default_factory=lambda: BrowserConfig(host_path=_DEFAULT_CHROME_HOST_PATH),
         description=(
             "Chrome integration: RO-mounts the host's Chrome install and controls what "
             "URL `jailbee chrome` opens. Off by default. Applies to every repo unless a "
@@ -459,6 +461,23 @@ class Config(BaseModel):
             if entry.name in seen:
                 raise ValueError(f"duplicate host_ports name: {entry.name!r}")
             seen.add(entry.name)
+        return v
+
+    @field_validator("chrome", mode="before")
+    @classmethod
+    def _default_chrome_host_path(cls, v: object) -> object:
+        """Fill in the default host_path when a raw dict omits it.
+
+        The `chrome` field's own `default_factory` only fires when the whole
+        `chrome:` key is absent from the source data — a partial dict such as
+        `{"enabled": true}` is validated straight against `BrowserConfig`,
+        whose `host_path` default is `None` (shared with Firefox, which has
+        no host default at all). Fill it in before validation so a config
+        that only sets `enabled` still gets the standard
+        google-chrome-stable path.
+        """
+        if isinstance(v, dict) and "host_path" not in v:
+            return {**v, "host_path": _DEFAULT_CHROME_HOST_PATH}
         return v
 
     @field_validator("agents", mode="before")
