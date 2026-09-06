@@ -53,10 +53,17 @@ def test_each_browser_gets_its_own_profile_pool(tmp_path):
     assert _spec(cfg, "firefox").pool == "firefox-profile"
 
 
-def test_configured_url_is_appended(tmp_path):
+def test_configured_url_becomes_default_url_not_a_baked_in_command_arg(tmp_path):
+    # The URL used to be appended straight into `command`, which meant a
+    # caller-supplied URL at launch time landed *alongside* it instead of
+    # replacing it (apps.launch appended its own args unconditionally,
+    # producing a launched command with the URL twice). `default_url` is
+    # apps.launch's signal to only use it when no explicit args are given.
     cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True, "url": "https://x.test"}})
-    assert _spec(cfg, "firefox").command[-1] == "https://x.test"
-    assert _spec(cfg, "firefox").accepts_url is True
+    spec = _spec(cfg, "firefox")
+    assert spec.default_url == "https://x.test"
+    assert "https://x.test" not in spec.command
+    assert spec.accepts_url is True
 
 
 def test_a_disabled_browser_produces_no_spec(tmp_path):

@@ -58,15 +58,22 @@ def test_log_path_is_per_app(tmp_path):
 
 
 def test_launch_allocates_the_pool_slot_before_starting(tmp_path, mocker):
+    # `allocate.called` alone doesn't establish ordering: a regression that
+    # allocated the slot *after* starting the detached process would pass
+    # unchanged. Both mocks record into one shared list so the actual call
+    # order is asserted.
     from jailbee.apps import get_app, launch
     from jailbee.incus import Incus
 
     cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True}})
-    allocate = mocker.patch("jailbee.pool.allocate")
+    calls: list[str] = []
+    mocker.patch("jailbee.pool.allocate", side_effect=lambda *a, **k: calls.append("allocate"))
     mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.gui.launch_detached")
+    mocker.patch(
+        "jailbee.gui.launch_detached", side_effect=lambda *a, **k: calls.append("launch_detached")
+    )
     launch(cfg, Incus(), "c1", get_app(cfg, "firefox"))
-    assert allocate.called
+    assert calls == ["allocate", "launch_detached"]
 
 
 def test_launch_appends_call_args_after_configured_args(tmp_path, mocker):
@@ -101,16 +108,19 @@ def test_probe_reports_missing_when_the_binary_is_absent(tmp_path, mocker):
     assert probe(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"])) == "missing"
 
 
-def test_probe_never_raises_on_a_nonzero_command(tmp_path, mocker):
-    # The probe must answer for a container where the binary is absent,
-    # which is the normal case right after enabling a browser. A raising
-    # probe would make `jailbee apps ls` fail exactly when it is most useful.
+def test_probe_treats_any_non_present_output_as_missing(tmp_path, mocker):
+    # The container script is meant to only ever print "present" or
+    # "missing", but probe's own contract is narrower and safer than that:
+    # anything that is not exactly "present" reads as absent. Malformed
+    # stdout (a stray shell warning on the first line, a truncated read)
+    # must not be misread as "present" by an implementation that, say,
+    # checks `"present" in out` instead of equality.
     from jailbee.apps import AppSpec, probe
     from jailbee.incus import Incus
 
     cfg = make_cfg(tmp_path)
-    mocker.patch.object(Incus, "exec", return_value="present\n")
-    assert probe(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"])) == "present"
+    mocker.patch.object(Incus, "exec", return_value="garbage\n")
+    assert probe(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"])) == "missing"
 
 
 def test_probe_runs_as_the_container_user_not_root(tmp_path, mocker):
@@ -128,6 +138,34 @@ def test_probe_runs_as_the_container_user_not_root(tmp_path, mocker):
     probe(cfg, Incus(), "c1", AppSpec(name="x", command=["/bin/x"]))
     assert exec_mock.call_args.kwargs["uid"] == 1234
     assert exec_mock.call_args.kwargs["gid"] == 5678
+
+
+def test_launch_appends_default_url_when_no_args_given(tmp_path, mocker):
+    from jailbee.apps import AppSpec, launch
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    spec = AppSpec(name="x", command=["/bin/x"], default_url="https://cfg.test")
+    launch(cfg, Incus(), "c1", spec)
+    assert detached.call_args.args[3].split()[-1] == "https://cfg.test"
+
+
+def test_launch_prefers_explicit_args_over_default_url(tmp_path, mocker):
+    # The regression this guards: browsers.py used to bake `default_url`
+    # into `command` unconditionally, so a caller-supplied URL landed
+    # *alongside* the configured one instead of replacing it (both ended up
+    # on the launched argv). Assert the exact count, not containment — a
+    # substring check can't tell one URL from two of the same string.
+    from jailbee.apps import AppSpec, launch
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+    spec = AppSpec(name="x", command=["/bin/x"], default_url="https://cfg.test")
+    launch(cfg, Incus(), "c1", spec, ["https://override.test"])
+    inner = detached.call_args.args[3]
+    assert inner.split() == ["/bin/x", "https://override.test"]
 
 
 def test_autostart_launches_only_apps_that_asked_for_it(tmp_path, mocker):

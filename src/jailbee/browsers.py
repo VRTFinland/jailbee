@@ -48,8 +48,6 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 command += ["--force-dark-mode", "--enable-features=WebContentsForceDark"]
         elif name == "firefox" and browser.dark_mode:
             env["GTK_THEME"] = "Adwaita:dark"
-        if browser.url:
-            command.append(browser.url)
         specs.append(
             AppSpec(
                 name=name,
@@ -62,6 +60,10 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 source="builtin",
                 description=f"{name.capitalize()} ({browser.source})",
                 accepts_url=True,
+                # Not baked into `command`: `apps.launch` appends this only
+                # when no explicit URL is given at launch time, so a caller
+                # who does pass one replaces it instead of joining it.
+                default_url=browser.url,
             )
         )
     return specs

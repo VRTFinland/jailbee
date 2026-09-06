@@ -8,6 +8,7 @@ visible, missing libs, crash on startup, etc.).
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,21 @@ def _popen_bash_command(popen_mock) -> str:
     argv = popen_mock.call_args.args[0]
     # argv is: ["incus", "exec", container, ..., "--", "bash", "-c", "<script>"]
     return argv[-1]
+
+
+def _launched_argv(popen_mock) -> list[str]:
+    """The launched app's own argv, e.g. ["/opt/.../google-chrome", "--flag", url].
+
+    `_popen_bash_command` returns the outer `setsid bash -c '<inner>' </dev/null
+    >log 2>&1 &` wrapper as one string; the app's actual command line is the
+    single (shell-quoted) argument to that inner `-c`, so it has to be
+    unquoted and re-split to inspect as individual words — a plain substring
+    check on the outer script can't distinguish one occurrence of a token
+    from two.
+    """
+    outer = shlex.split(_popen_bash_command(popen_mock))
+    inner_cmd = outer[outer.index("-c") + 1]
+    return shlex.split(inner_cmd)
 
 
 def test_open_ide_redirects_to_log_file_not_dev_null(mocker):
@@ -97,6 +113,26 @@ def test_open_ide_announces_log_path_in_info_message(mocker, capsys):
     assert "/tmp/jailbee-app-ide.log" in out
 
 
+def test_open_ide_passes_uid_and_gid_to_resolve_launcher(mocker):
+    """Regression guard: nothing else in this test module asserts on the
+    uid/gid the shim forwards to `resolve_launcher`, so a future edit that
+    drops or swaps either kwarg would go unnoticed. Distinct uid/gid so
+    dropping or swapping either one fails.
+    """
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    cfg = cfg.model_copy(
+        update={"container_user": cfg.container_user.model_copy(update={"uid": 1234, "gid": 5678})}
+    )
+    incus = Incus()
+    resolve = mocker.patch("jailbee.ide.resolve_launcher", return_value=["/opt/x/bin/idea"])
+    mocker.patch("jailbee.gui.subprocess.Popen")
+
+    open_ide(cfg, incus, "feat-smoke", "idea")
+
+    assert resolve.call_args.kwargs["uid"] == 1234
+    assert resolve.call_args.kwargs["gid"] == 5678
+
+
 def test_open_ide_skips_launch_when_no_launcher_found(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
@@ -140,16 +176,44 @@ def test_open_chrome_announces_log_path_in_info_message(mocker, capsys):
 
 
 def test_open_chrome_passes_url_when_provided(mocker):
+    """An explicit URL must *replace* `browsers.chrome.url`, not join it.
+
+    `full_config.yaml` (used by every test in this module) already sets
+    `browsers.chrome.url: https://example.com` — passing that same string
+    here would pass whether it appears once or twice on the argv, which is
+    exactly the bug this regressed on before (both the configured default
+    and the explicit call argument landing in the launched command). Use a
+    different URL and assert the exact URL-bearing argv, not a substring,
+    so one-vs-two occurrences is distinguishable.
+    """
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
     mocker.patch("jailbee.pool.ensure_pool_dirs")
     mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
 
-    open_chrome(cfg, incus, "feat-smoke", "https://example.com")
+    open_chrome(cfg, incus, "feat-smoke", "https://override.test")
 
-    script = _popen_bash_command(popen)
-    assert "https://example.com" in script
+    urls = [a for a in _launched_argv(popen) if a.startswith("https://")]
+    assert urls == ["https://override.test"]
+
+
+def test_open_chrome_falls_back_to_the_configured_url_when_none_given(mocker):
+    """A direct `open_chrome(..., None)` call — the guard the function's own
+    docstring calls out, for a caller that isn't `cli.chrome_cmd` — must still
+    open exactly the configured `browsers.chrome.url`: not zero URLs, and
+    not two.
+    """
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = Incus()
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
+    popen = mocker.patch("jailbee.gui.subprocess.Popen")
+
+    open_chrome(cfg, incus, "feat-smoke", None)
+
+    urls = [a for a in _launched_argv(popen) if a.startswith("https://")]
+    assert urls == ["https://example.com"]
 
 
 def _popen_env_args(popen_mock) -> dict[str, str]:

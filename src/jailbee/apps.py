@@ -35,6 +35,12 @@ class AppSpec:
     source: AppSource = "config"
     description: str = ""
     accepts_url: bool = False
+    default_url: str | None = None
+    """The URL to open when `launch` is called with no explicit `args`.
+
+    Kept out of `command` itself so a caller-supplied URL *replaces* it
+    instead of both ending up on the argv — see `launch`.
+    """
     resolve_command: Callable[[Incus, str], list[str]] | None = None
     """Container-side lookup for a command whose path is not fixed.
 
@@ -120,8 +126,12 @@ def probe(
     check can report "missing" for an app that is present and working.
 
     Deliberately shaped so the container command always exits 0 — the
-    answer is on stdout, not in the exit status — so no probe can raise
-    and take the whole listing down with it.
+    answer is on stdout, not in the exit status — so an absent binary is
+    reported as "missing" rather than raised as a nonzero exit. This does
+    *not* guarantee `probe` never raises: a stopped container or a broken
+    Incus daemon still surfaces as whatever `incus.exec` itself raises,
+    and that is deliberately not swallowed here — turning "the daemon is
+    down" into a cheerful "missing" would hide a real failure.
     """
     import shlex as _shlex
 
@@ -166,7 +176,14 @@ def launch(
         argv = [*spec.resolve_command(incus, container), *spec.command[1:]]
     else:
         argv = list(spec.command)
-    argv += list(args or [])
+
+    call_args = list(args or [])
+    if call_args:
+        argv += call_args
+    elif spec.default_url:
+        # No explicit args: fall back to the configured URL. Never both —
+        # an explicit URL must replace the configured one, not join it.
+        argv.append(spec.default_url)
 
     cwd = _container_cwd(cfg, incus, container, spec.cwd)
     log_path = app_log_path(spec.name)
