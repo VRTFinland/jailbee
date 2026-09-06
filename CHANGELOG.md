@@ -71,12 +71,15 @@
   login. Parking and switching now only trust a container's config home
   when it is an *authoritative* member of the group in question.
 - **A submodule created inside a container now lands on the host in git's
-  normal layout.** Cloning a sub-repo out of a container over `ext::` used to
-  leave a legacy `.git` directory instead of git's usual gitdir-file-plus-
-  `.git/modules/<name>` layout. It is now absorbed into
+  normal layout, as of the next `jailbee git pull`/`checkout`.** Cloning a
+  sub-repo out of a container over `ext::` used to leave a legacy `.git`
+  directory instead of git's usual gitdir-file-plus-`.git/modules/<name>`
+  layout. `jailbee git pull`/`checkout` now absorbs it into
   `<repo>/.git/modules/<name>` between `submodule update --init` and branch
   placement; sub-repos cloned by earlier versions are healed the same way on
-  the next `jailbee git pull`/`checkout`.
+  their next `jailbee git pull`/`checkout`. `jailbee submodule pr` does not
+  run this step, so a submodule it first materialises on the host keeps the
+  legacy layout until the following `jailbee git pull`/`checkout`.
 - **Such a submodule's `origin` is no longer left pointing at the dead
   `ext::incus exec …` transport URL**, which would have pushed the host's
   commits into a container that no longer exists. The upstream now comes
@@ -342,8 +345,10 @@
   container (even when there is only one), offers a picker over every
   submodule instead of erroring when several are ahead, and confirms a plan
   block before transporting or publishing anything. `--yes` skips the
-  confirmation but not the pickers. `--open` is unaffected. Off a TTY every
-  message and exit code is unchanged.
+  confirmation but not the pickers. `--open` is unaffected. Off a TTY nothing
+  is asked and no exit code changes; the several-ahead listing gains
+  `[dirty]`/`[gitlink stale]`/`[detached]` flags from the same rendering the
+  new picker uses, so a script grepping that listing sees more than before.
 
 ## 1.2.2 - 2026-08-28
 

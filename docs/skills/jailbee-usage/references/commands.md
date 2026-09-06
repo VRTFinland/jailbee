@@ -769,8 +769,10 @@ ahead of their base), and a plan block (base, head, commit count) is shown
 for confirmation before anything is transported or published. `--yes` skips
 only that last confirmation — it does not skip the pickers. Naming NAME/PATH
 still skips the corresponding picker. `--open` is unaffected: it never asks
-anything. Off a TTY, none of this applies — every message and exit code is
-exactly as documented above.
+anything. Off a TTY, none of this applies — nothing is asked and no exit code
+changes — but the several-ahead table above now renders through the same
+code the picker uses, so it gains `[dirty]`/`[gitlink stale]`/`[detached]`
+flags; a script grepping that table sees more than before.
 
 The candidate signal is deliberately the submodule's **own**
 `refs/jailbee/base/<super-base>` anchor (seeded at container creation), not

@@ -838,8 +838,11 @@ when there is only one, offers a picker over every submodule instead of
 erroring when several are ahead, and shows a plan block to confirm before
 anything is transported or published — `--yes` skips that confirmation but
 not the pickers. Naming NAME/PATH skips the corresponding picker. Off a TTY
-none of this applies: the auto-targeting and several-ahead behaviour above,
-and every message and exit code, are exactly as before.
+none of this applies: the auto-targeting and several-ahead behaviour above
+still runs and no exit code changes, but the several-ahead listing now
+renders through the same code the picker uses, so it gains
+`[dirty]`/`[gitlink stale]`/`[detached]` flags — a script grepping that
+listing sees more than before.
 
 The key thing to know: the signal is the submodule's **own** base anchor
 (pinned when the container was created), not the superproject's gitlink diff
