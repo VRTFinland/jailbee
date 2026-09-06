@@ -134,6 +134,38 @@ def test_image_source_with_host_path_is_an_error(tmp_path):
     assert any("host_path" in i and "image" in i for i in cfg.validate_runtime())
 
 
+def test_host_source_with_no_host_path_is_an_error(tmp_path):
+    """Firefox has no default `host_path` (see
+    `test_firefox_defaults_to_the_golden_image`), so `source: host` with no
+    `host_path` is the natural way a user asks for a host Firefox and lands
+    directly on this branch — distinct from the missing-directory branch
+    below, so it must name `host_path is null` specifically, not just any
+    non-empty issue."""
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True, "source": "host"}})
+    assert any(
+        "browsers.firefox.source is `host` but host_path is null" in i
+        for i in cfg.validate_runtime()
+    )
+
+
+def test_host_path_pointing_at_a_missing_directory_is_an_error(tmp_path):
+    """Distinct from the null-host_path branch: here `host_path` is set but
+    points nowhere, so the message must name `host_path does not exist`
+    specifically."""
+    from tests.conftest import make_cfg
+
+    missing = tmp_path / "no-such-chrome-install"
+    cfg = make_cfg(
+        tmp_path,
+        browsers={"chrome": {"enabled": True, "source": "host", "host_path": str(missing)}},
+    )
+    assert any(
+        f"browsers.chrome.host_path does not exist: {missing}" in i for i in cfg.validate_runtime()
+    )
+
+
 def test_legacy_chrome_block_still_loads(tmp_path, capsys):
     from jailbee.config.loader import resolve_browsers_raw
 
@@ -149,11 +181,13 @@ def test_legacy_chrome_block_warns_where_it_moved(capsys):
     from jailbee.config.loader import resolve_browsers_raw
 
     resolve_browsers_raw({"chrome": {"enabled": True}})
-    # `tui.warn` prints to stdout, not stderr (see
-    # test_tui.test_warn_plain_keeps_bracketed_text_verbatim) — so the
-    # deprecation notice is read from `.out`.
-    out = capsys.readouterr().out
-    assert "chrome:" in out and "browsers.chrome" in out
+    # `resolve_browsers_raw` uses `tui.hint`, not `tui.warn`: this runs on
+    # every config load, and `warn` prints to stdout, which is exactly
+    # where `jailbee ls --format json` puts script-parsed output. `hint`
+    # goes to stderr for that reason (see its own docstring), so the
+    # deprecation notice is read from `.err`, not `.out`.
+    err = capsys.readouterr().err
+    assert "chrome:" in err and "browsers.chrome" in err
 
 
 def test_an_explicit_browsers_block_wins_over_the_legacy_one():
@@ -169,7 +203,7 @@ def test_no_warning_when_there_is_no_legacy_block(capsys):
     from jailbee.config.loader import resolve_browsers_raw
 
     resolve_browsers_raw({"browsers": {"chrome": {"enabled": True}}})
-    assert "chrome:" not in capsys.readouterr().out
+    assert "chrome:" not in capsys.readouterr().err
 
 
 def test_legacy_chrome_block_loads_through_the_real_loader(tmp_path):

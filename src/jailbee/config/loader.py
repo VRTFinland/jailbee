@@ -42,7 +42,7 @@ from jailbee.config.retired import (
 from jailbee.config.root import Config
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
-from jailbee.tui import warn
+from jailbee.tui import hint
 
 if TYPE_CHECKING:
     # Runtime import would be a cycle: `global_config` imports from
@@ -202,13 +202,21 @@ def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
     An explicit `browsers:` block wins, so a half-migrated config behaves the
     way the newer spelling says. The legacy block predates `source:`, so it
     resolves to `source: host` — the behaviour it has always had.
+
+    The notice goes out via `tui.hint` (stderr), not `tui.warn` (stdout):
+    this runs on every config load, and stdout is where `jailbee ls --format
+    json` and friends put script-parsed output. `warn` would inject
+    `⚠ ...` ahead of that payload for any host with a legacy `chrome:`
+    block. See `hint`'s own docstring for the same reasoning.
     """
     legacy = raw.get("chrome")
     if not isinstance(legacy, dict):
         return raw
-    warn(
-        "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
-        "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+    hint(
+        [
+            "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+            "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+        ]
     )
     merged = deep_merge({"source": "host", **legacy}, {})
     browsers = raw.get("browsers")

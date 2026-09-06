@@ -222,12 +222,14 @@ GLOBAL_SEED: dict[str, object] = {
         "autostart": False,
         "toolbox_host_path": "~/.local/share/JetBrains/Toolbox",
     },
-    "chrome": {
-        "enabled": True,
-        "url": None,
-        "dark_mode": False,
-        "autostart": False,
-        "host_path": "/opt/google/chrome",
+    "browsers": {
+        "chrome": {
+            "enabled": True,
+            "url": None,
+            "dark_mode": False,
+            "autostart": False,
+            "host_path": "/opt/google/chrome",
+        },
     },
     "terminal": {"kitty": {"enabled": "auto", "host_terminfo_path": None}},
     # `agents.claude` is the one exercised in production; enabling it here
