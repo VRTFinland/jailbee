@@ -1039,9 +1039,7 @@ def test_a_structural_op_on_a_collection_inside_a_staged_structure_folds_in():
     assert _prefix_pairs(got) == []
     assert crumb == 1
     assert got.staged == {("autostart",): {"on_create": [{"name": "a"}, {}]}}
-    assert st.changes(got, {}) == (
-        YamlChange(("autostart",), {"on_create": [{"name": "a"}, {}]}),
-    )
+    assert st.changes(got, {}) == (YamlChange(("autostart",), {"on_create": [{"name": "a"}, {}]}),)
 
 
 def test_deleting_the_entry_the_trail_stands_in_does_not_move_the_trail():

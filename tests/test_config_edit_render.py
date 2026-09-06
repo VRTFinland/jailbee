@@ -449,9 +449,7 @@ def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collecti
     `_entry_pending` comparing against the saved layer directly, this test
     fails with neither row painted `class:staged` at all.
     """
-    layers = _layers(
-        tmp_path, repo_text="host_mounts:\n  - host: /old\n    container: /old\n"
-    )
+    layers = _layers(tmp_path, repo_text="host_mounts:\n  - host: /old\n    container: /old\n")
     state = _collection_state([{"host": "/old", "container": "/old"}])
     state, crumb = st.add_entry(state, _HOST_MOUNTS_SPEC)
     state = st.enter_crumb(state, crumb)

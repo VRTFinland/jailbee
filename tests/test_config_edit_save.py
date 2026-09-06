@@ -128,7 +128,9 @@ def test_secret_values_includes_a_staged_token_not_yet_on_disk():
         )
     ]
     raw = {"github": {"api_tokens": {"old": "ghp_onthedisk"}}}
-    staged = [YamlChange(("github", "api_tokens"), {"old": "ghp_onthedisk", "new": "ghp_typedjustnow"})]
+    staged = [
+        YamlChange(("github", "api_tokens"), {"old": "ghp_onthedisk", "new": "ghp_typedjustnow"})
+    ]
 
     got = secret_values(raw, specs, staged)
 

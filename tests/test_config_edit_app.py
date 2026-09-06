@@ -227,9 +227,7 @@ def _masking_enabled(area) -> bool:
     every keystroke.
     """
     for proc in area.control.input_processors:
-        if isinstance(proc, ConditionalProcessor) and isinstance(
-            proc.processor, PasswordProcessor
-        ):
+        if isinstance(proc, ConditionalProcessor) and isinstance(proc.processor, PasswordProcessor):
             return bool(proc.filter())
     raise AssertionError("no PasswordProcessor on this TextArea at all")
 

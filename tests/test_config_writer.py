@@ -6,6 +6,7 @@ a terminal, a container or a real config file.
 
 from __future__ import annotations
 
+import re
 import stat
 from pathlib import Path
 
@@ -138,7 +139,7 @@ def test_patch_yaml_replaces_a_whole_list_when_the_path_names_the_key():
 def test_patch_yaml_rejects_an_index_that_is_not_there():
     text = "host_mounts:\n  - host: /a\n    container: /a\n"
 
-    with pytest.raises(ValueError, match="host_mounts.4"):
+    with pytest.raises(ValueError, match=re.escape("host_mounts.4")):
         patch_yaml(text, [YamlChange(("host_mounts", 4, "readonly"), True)])
 
 
@@ -164,7 +165,7 @@ def test_patch_yaml_deletes_one_list_entry_and_keeps_its_neighbour():
 def test_patch_yaml_rejects_deleting_an_index_that_is_not_there():
     text = "host_mounts:\n  - host: /a\n    container: /a\n"
 
-    with pytest.raises(ValueError, match="host_mounts.4"):
+    with pytest.raises(ValueError, match=re.escape("host_mounts.4")):
         patch_yaml(text, [YamlChange(("host_mounts", 4), DELETE)])
 
 
