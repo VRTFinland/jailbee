@@ -93,8 +93,10 @@ reorder, `Enter` opens the entry under the cursor. An entry's form is
 generated from its model the same way the top-level fields are, and the
 nesting is recursive — an agent's `shared` mounts are reachable from inside
 its own entry. Leaving an entry validates it against its model; a second
-`Esc` on one that fails and that `n` just created discards it outright rather
-than leaving it half-made. A map (`agents`, `optional_mounts`) asks for the
+`Esc` on one that fails discards it outright if `n` just created it this
+session, or, on a pre-existing entry merely edited into an invalid state,
+discards only its staged edits and keeps the entry itself. A map (`agents`,
+`optional_mounts`) asks for the
 new key's name before creating the entry. Editing one field of one entry
 addresses that entry's content by index, so the other entries and any
 comments between them are preserved — but a save re-emits the file with
