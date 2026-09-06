@@ -27,6 +27,21 @@ def test_gui_env_sets_home_for_the_container_user(tmp_path):
     assert env["HOME"] == f"/home/{CONTAINER_USERNAME}"
 
 
+def test_gui_env_sets_user_and_logname_for_the_container_user(tmp_path):
+    """`incus exec --user <uid>` runs the process directly, not through
+    `login`/PAM, so nothing else sets USER/LOGNAME — a GUI app or plain
+    shell command reading either sees it empty without this. `profiles.py`'s
+    base profile injects the display vars but never these two, so `gui_env`
+    is the only place that can supply them.
+    """
+    from jailbee.config import CONTAINER_USERNAME
+    from tests.conftest import make_cfg
+
+    env = gui_env(make_cfg(tmp_path))
+    assert env["USER"] == CONTAINER_USERNAME
+    assert env["LOGNAME"] == CONTAINER_USERNAME
+
+
 def test_launch_detached_passes_env_as_incus_env_flags(mocker):
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
     launch_detached("c1", 1000, {"HOME": "/home/dev", "DISPLAY": ":0"}, "/bin/true", "/tmp/x.log")

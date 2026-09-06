@@ -9810,13 +9810,30 @@ def exec_cmd(
     env = gui_env(cfg)
 
     if detach:
+        import uuid
         from datetime import datetime
 
         from jailbee.gui import launch_detached
 
-        log_path = f"/tmp/jailbee-exec-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+        # A timestamp alone has one-second resolution and launch_detached
+        # opens the log with `>` (truncate) — two `-d` execs against the
+        # same container inside one wall-clock second (a scripted loop, a
+        # double-launch) would silently clobber each other's output. The
+        # uuid suffix makes every invocation's path distinct regardless of
+        # timing.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        log_path = f"/tmp/jailbee-exec-{stamp}-{uuid.uuid4().hex[:8]}.log"
         # A login shell in both paths, so `~/.local/bin` is on PATH whether
-        # or not the caller detached.
+        # or not the caller detached. Here that PATH-fixing `cd` happens
+        # implicitly via `--cwd` on the outer `incus exec` (launch_detached's
+        # `cwd=` param), not via an explicit `cd` in the inner shell like the
+        # foreground path below. The two are equivalent today only because
+        # none of this repo's /etc/profile.d snippets (local-bin.sh,
+        # jailbee-claude.sh, jailbee-env.sh) ever `cd`; the foreground path's
+        # explicit `cd` runs after profile sourcing so it always wins
+        # regardless, but this path would silently diverge if a future
+        # profile.d snippet changed directory. Don't "fix" this asymmetry
+        # without re-checking that.
         launch_detached(
             resolved,
             cfg.container_user.uid,

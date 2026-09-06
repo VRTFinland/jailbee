@@ -17,14 +17,20 @@ from jailbee.config import CONTAINER_USERNAME, Config
 def gui_env(cfg: Config) -> dict[str, str]:
     """Environment vars for GUI apps inside the container.
 
-    HOME must be set explicitly: ``incus exec --user <uid>`` doesn't read
-    /etc/passwd to derive it, so without this apps see ``HOME=`` and
-    fail (Chrome can't write its profile, JetBrains can't find its
-    config, etc.).
+    HOME, USER and LOGNAME must all be set explicitly: ``incus exec
+    --user <uid>`` runs the process directly rather than through
+    ``login``/PAM, so none of the usual mechanisms that would derive
+    them from ``/etc/passwd`` ever run. Without HOME, apps see ``HOME=``
+    and fail (Chrome can't write its profile, JetBrains can't find its
+    config, etc.); USER/LOGNAME are just as real a dependency — a GUI
+    app (or a plain shell command) reading ``$USER`` sees it empty
+    otherwise.
     """
     uid = cfg.container_user.uid
     return {
         "HOME": f"/home/{CONTAINER_USERNAME}",
+        "USER": CONTAINER_USERNAME,
+        "LOGNAME": CONTAINER_USERNAME,
         "WAYLAND_DISPLAY": host_wayland_socket(),
         "XDG_RUNTIME_DIR": f"/run/user/{uid}",
         "DISPLAY": os.environ.get("DISPLAY", ":0"),
