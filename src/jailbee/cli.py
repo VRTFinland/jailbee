@@ -3896,20 +3896,29 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
 
 
 def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
-    """Print a submodule-PR plan and, on a TTY, ask whether to go ahead.
+    """On a TTY, show a submodule-PR plan and ask whether to go ahead.
 
     ``markup=False`` because branch names and commit subjects are user data
-    and may contain Rich markup characters. Off a TTY nothing is asked — a
-    confirmation that is on by default must not break scripts. Declining
-    raises ``typer.Abort()``; nothing has been mutated at that point, which is
-    why this runs before the transport rather than after it.
+    and may contain Rich markup characters. Declining raises
+    ``typer.Abort()``; nothing has been mutated at that point, which is why
+    this runs before the transport rather than after it.
+
+    Off a TTY this prints *nothing* and returns — deliberately unlike
+    :func:`_confirm_bridge_plan`, which shows its block either way and skips
+    only the prompt. `jailbee submodule pr` is specified to leave every
+    behaviour, message and exit code unchanged off a TTY, so that a script
+    parsing its output does not suddenly find a new block in it. Nothing is
+    lost: the plan block is a confirmation artifact, there is no one to
+    confirm, and the facts that matter (a dirty submodule, a stale gitlink, an
+    unresolved commit count) are still reported by the command's own
+    ``warn``/``info`` calls further down. Do not "fix" this back.
     """
     from jailbee.lifecycle import _stdin_is_interactive
     from jailbee.tui import console, render_submodule_pr_plan
 
-    console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not _stdin_is_interactive():
         return
+    console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not typer.confirm("Continue?", default=True):
         raise typer.Abort()
 

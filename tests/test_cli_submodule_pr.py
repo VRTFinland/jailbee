@@ -668,6 +668,30 @@ def test_off_a_tty_an_unknown_path_still_exits_2_when_there_are_no_submodules(mo
     assert "lib/nope" in result.output
 
 
+def test_off_a_tty_the_plan_block_is_not_printed_at_all(mocker, tmp_path):
+    """The block is a confirmation artifact; off a TTY there is no one to ask.
+
+    `jailbee submodule pr` must leave every message off a TTY unchanged, so a
+    script parsing its output does not suddenly find a new block in it —
+    deliberately unlike `_confirm_bridge_plan`, which prints either way.
+    Nothing is lost: the warnings that carry the facts still print, which is
+    what the `uncommitted` assertion pins.
+    """
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a", dirty=True)])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    confirm = mocker.patch("typer.confirm")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    confirm.assert_not_called()
+    assert "Submodule PR" not in result.output
+    assert "resolved once the submodule is on the host" not in result.output
+    # …but the pre-existing warning that carries the same fact still does.
+    assert "uncommitted" in result.output.lower()
+
+
 def test_on_a_tty_the_picker_runs_for_a_single_candidate(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
     _happy(mocker)
