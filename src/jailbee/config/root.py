@@ -32,6 +32,7 @@ from jailbee.config.models_agents import (
     DockerRegistryMirrorRepoConfig,
     GithubConfig,
 )
+from jailbee.config.models_apps import APP_NAME_RE, AppEntry
 from jailbee.config.models_behaviour import (
     BootConfig,
     ConfirmConfig,
@@ -62,14 +63,12 @@ from jailbee.config.models_net import (
     LooseAutoRevert,
 )
 from jailbee.config.models_tools import (
-    _DEFAULT_CHROME_HOST_PATH,
     BrowserConfig,
-    ChromeConfig,
+    BrowsersConfig,
     GpgConfig,
     JetbrainsConfig,
     SshConfig,
     TerminalConfig,
-    _backfill_chrome_default_host_path,
     _kitty_terminfo_candidates,
     resolve_kitty_terminfo_path,
 )
@@ -236,12 +235,21 @@ class Config(BaseModel):
             "overrides it."
         ),
     )
-    chrome: ChromeConfig = Field(
-        default_factory=lambda: BrowserConfig(host_path=_DEFAULT_CHROME_HOST_PATH),
+    browsers: BrowsersConfig = Field(
+        default=BrowsersConfig(),
         description=(
-            "Chrome integration: RO-mounts the host's Chrome install and controls what "
-            "URL `jailbee chrome` opens. Off by default. Applies to every repo unless a "
-            "repo overrides it."
+            "Browsers inside containers: which are enabled, where each one's binary "
+            "comes from (a host mount or the golden image), and what `jailbee browser` "
+            "opens. All off by default. Applies to every repo unless a repo overrides it."
+        ),
+    )
+    apps: dict[str, AppEntry] = Field(
+        default_factory=dict,
+        description=(
+            "User-defined GUI applications, keyed by app name — an AppImage, a vendor "
+            "binary outside PATH, a wrapper script. Launch with `jailbee apps run <name>`, "
+            "or directly as `jailbee <name>` when the entry sets `top_level: true`. "
+            "Applies to every repo unless a repo overrides it."
         ),
     )
     agents: dict[str, AgentConfig] = Field(
@@ -464,20 +472,6 @@ class Config(BaseModel):
             seen.add(entry.name)
         return v
 
-    @field_validator("chrome", mode="before")
-    @classmethod
-    def _default_chrome_host_path(cls, v: object) -> object:
-        """Fill in the default host_path when a raw dict omits it.
-
-        See `models_tools._backfill_chrome_default_host_path` for why this
-        is needed (a submodel field's own `default_factory` does not cover
-        a partial dict) and why it skips the backfill under `source:
-        image`. `BrowsersConfig.chrome` carries the same before-validator;
-        this one goes away with the `chrome:` field itself once `browsers:`
-        replaces it.
-        """
-        return _backfill_chrome_default_host_path(v)
-
     @field_validator("agents", mode="before")
     @classmethod
     def _validate_agents(cls, v: object) -> dict[str, AgentConfig]:
@@ -535,6 +529,32 @@ class Config(BaseModel):
             return entry
         return ClaudeAgentConfig(command="claude")
 
+    @property
+    def chrome(self) -> BrowserConfig:
+        """`browsers.chrome`, under its pre-1.3.0 name.
+
+        A property, not a field: `cfg.model_copy(update={"chrome": ...})`
+        is therefore silently ignored, exactly as it is for `Config.claude`
+        (see `tests/conftest.py`). Build `browsers=` instead. Removed in
+        1.4.0 together with the `chrome:` YAML alias.
+        """
+        return self.browsers.chrome
+
+    def resolve_default_browser(self) -> str | None:
+        """Which browser `jailbee browser` opens with no explicit choice.
+
+        `browsers.default` wins when set, even if it names a disabled
+        browser — `validate_runtime` reports that combination as an error
+        separately, this method just echoes the raw setting. Otherwise,
+        the single enabled browser is the implicit default; with zero or
+        two-or-more enabled browsers there is no implicit default and this
+        returns None, same as an explicit unset `browsers.default`.
+        """
+        if self.browsers.default is not None:
+            return self.browsers.default
+        enabled = self.browsers.enabled_names()
+        return enabled[0] if len(enabled) == 1 else None
+
     def effective_egress_allow(self) -> list[str]:
         """User's `egress_allow` plus any feature-driven auto-additions.
 
@@ -585,10 +605,11 @@ class Config(BaseModel):
         the integration auto-adds. Then each enabled agent's mounts are
         folded in (see `agents.enabled_agent_specs`) — for `claude` this is
         `claude` + `claude-install` — followed by `chrome-profile` when
-        `chrome.enabled`, then `jetbrains-config` + `jetbrains-data` when
-        `jetbrains.enabled`. Finally each entry's `pool` is resolved per
-        `pooled_caches` / `POOL_PRESETS` (see `_resolve_pool`) before the
-        list is returned.
+        `browsers.chrome.enabled` and `firefox-profile` when
+        `browsers.firefox.enabled`, then `jetbrains-config` +
+        `jetbrains-data` when `jetbrains.enabled`. Finally each entry's
+        `pool` is resolved per `pooled_caches` / `POOL_PRESETS` (see
+        `_resolve_pool`) before the list is returned.
         """
         from jailbee.agents import enabled_agent_specs
 
@@ -604,13 +625,23 @@ class Config(BaseModel):
         _extend(self.golden.stacks.shared_caches())
         for spec in enabled_agent_specs(self):
             _extend(list(spec.shared))
-        if self.chrome.enabled:
+        if self.browsers.chrome.enabled:
             _extend(
                 [
                     SharedCache(
                         name="chrome-profile",
                         host_subpath="chrome-pool",
                         container_path="~/.config/google-chrome",
+                    )
+                ]
+            )
+        if self.browsers.firefox.enabled:
+            _extend(
+                [
+                    SharedCache(
+                        name="firefox-profile",
+                        host_subpath="firefox-pool",
+                        container_path="~/.mozilla/firefox",
                     )
                 ]
             )
@@ -695,14 +726,15 @@ class Config(BaseModel):
                     readonly=True,
                 )
             )
-        if self.chrome.enabled and self.chrome.host_path is not None:
-            auto.append(
-                HostMount(
-                    host=self.chrome.host_path,
-                    container="/opt/google/chrome",
-                    readonly=True,
+        for name, container_path in (
+            ("chrome", "/opt/google/chrome"),
+            ("firefox", "/opt/firefox"),
+        ):
+            browser = getattr(self.browsers, name)
+            if browser.enabled and browser.source == "host" and browser.host_path is not None:
+                auto.append(
+                    HostMount(host=browser.host_path, container=container_path, readonly=True)
                 )
-            )
         kitty = self.terminal.kitty
         if kitty.enabled and (
             resolved := resolve_kitty_terminfo_path(explicit=kitty.host_terminfo_path)
@@ -798,12 +830,39 @@ class Config(BaseModel):
                     f"{self.jetbrains.toolbox_host_path}. Install JetBrains "
                     f"Toolbox or set jetbrains.toolbox_host_path: null."
                 )
-        if self.chrome.enabled and self.chrome.host_path is not None:
-            if not self.chrome.host_path.is_dir():
+        for name in ("chrome", "firefox"):
+            browser = getattr(self.browsers, name)
+            if not browser.enabled:
+                continue
+            if browser.source == "image" and browser.host_path is not None:
                 issues.append(
-                    f"chrome.host_path does not exist: {self.chrome.host_path}. "
-                    f"Install google-chrome-stable or set chrome.host_path: null."
+                    f"browsers.{name}.host_path is set but source is `image`. "
+                    f"An image-installed browser is not mounted from the host — "
+                    f"set host_path: null, or switch to source: host."
                 )
+            if browser.source == "host":
+                if browser.host_path is None:
+                    issues.append(
+                        f"browsers.{name}.source is `host` but host_path is null. "
+                        f"Point host_path at the host install, or switch to "
+                        f"source: image to install it into the golden image."
+                    )
+                elif not browser.host_path.is_dir():
+                    issues.append(
+                        f"browsers.{name}.host_path does not exist: {browser.host_path}. "
+                        f"Install it on the host, switch to source: image, or set "
+                        f"browsers.{name}.enabled: false."
+                    )
+        if (
+            self.browsers.default is not None
+            and not getattr(self.browsers, self.browsers.default).enabled
+        ):
+            issues.append(
+                f"browsers.default is `{self.browsers.default}` but "
+                f"browsers.{self.browsers.default}.enabled is false. Enable it, or "
+                f"clear browsers.default."
+            )
+        issues.extend(self._validate_apps())
         kitty = self.terminal.kitty
         if kitty.enabled:
             if kitty.host_terminfo_path is not None and not kitty.host_terminfo_path.exists():
@@ -904,4 +963,42 @@ class Config(BaseModel):
                 "settings the first time you open that dashboard after upgrading. "
                 "This repo-level block can be deleted."
             )
+        return issues
+
+    def _validate_apps(self) -> list[str]:
+        """Name and collision checks for `apps:` entries."""
+        issues: list[str] = []
+        top_level = [n for n, a in self.apps.items() if a.top_level]
+        for name in self.apps:
+            if not APP_NAME_RE.match(name):
+                issues.append(
+                    f"apps.{name}: invalid app name. Use lowercase letters, digits, "
+                    f"and `.`, `-`, `_`, starting with a letter or digit."
+                )
+        if top_level:
+            import typer.core
+            import typer.main
+
+            from jailbee.cli import app as cli_app
+
+            cli_command = typer.main.get_command(cli_app)
+            # `get_command` is typed as plain `_click.Command` (typer's
+            # vendored click fork — the real `click` package isn't even a
+            # jailbee dependency), whose base class has no `commands` —
+            # only a `TyperGroup` does, which is what `get_command` actually
+            # builds for a multi-command app like jailbee's. The isinstance
+            # check lets mypy --strict narrow it rather than asserting that
+            # with a cast.
+            commands = (
+                set(cli_command.commands)
+                if isinstance(cli_command, typer.core.TyperGroup)
+                else set()
+            )
+            for name in top_level:
+                if name in commands:
+                    issues.append(
+                        f"apps.{name}.top_level is true but `jailbee {name}` is already a "
+                        f"built-in command. Rename the app, or set top_level: false and "
+                        f"launch it with `jailbee apps run {name}`."
+                    )
         return issues

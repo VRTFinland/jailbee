@@ -305,7 +305,8 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("ssh", "enabled"),
         ("jetbrains", "enabled"),
         ("jetbrains", "ide"),
-        ("chrome", "enabled"),
+        ("browsers", "chrome", "enabled"),
+        ("browsers", "firefox", "enabled"),
         # Agents and startup.
         ("agents",),
         ("autostart", "on_create"),

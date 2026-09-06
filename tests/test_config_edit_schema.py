@@ -197,7 +197,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """78 leaves under Config, 15 under GlobalConfig, as measured.
+    """86 leaves under Config, 15 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -207,12 +207,18 @@ def test_build_specs_covers_every_config_leaf():
     turning it from an excluded computed attribute into an editable leaf
     and adding exactly one to the count: 76 + 1 = 77. The gui-apps plan's
     Task 2 then added a `source` field to the (Chrome-turned-)Browser
-    config model, adding one more: 77 + 1 = 78. `GlobalConfig`'s 15
-    includes the `config_edit.write_policy` added in Task 1.
+    config model, adding one more: 77 + 1 = 78. Task 4 then replaced the
+    `chrome: BrowserConfig` field (a SUBMODEL recursed into 6 leaves) with
+    `browsers: BrowsersConfig` (`default` + `chrome` + `firefox`, each of
+    the latter two a 6-leaf `BrowserConfig`, so 1 + 6 + 6 = 13 leaves) and
+    added `apps: dict[str, AppEntry]`, a MODEL_MAP that stays a single
+    leaf rather than being recursed into: 78 - 6 + 13 + 1 = 86.
+    `GlobalConfig`'s 15 includes the `config_edit.write_policy` added in
+    Task 1.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 78
+    assert len(build_specs(Config)) == 86
     assert len(build_specs(GlobalConfig)) == 15
 
 

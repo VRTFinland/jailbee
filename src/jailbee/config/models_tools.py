@@ -144,8 +144,12 @@ def _backfill_chrome_default_host_path(v: object) -> object:
     or runtime validation would reject the config for setting `host_path`
     under `source: image`.
 
-    Shared by `BrowsersConfig.chrome`'s before-validator and (for one
-    release, until the `chrome:` field is retired) `Config.chrome`'s.
+    Called from `BrowsersConfig.chrome`'s before-validator — its only
+    caller now that `Config` no longer has a `chrome:` field of its own
+    (see `Config.chrome`, now a read-only property delegating to
+    `browsers.chrome`). Kept as a standalone function rather than folded
+    into the validator so a future caller could reuse it without needing
+    a `BrowsersConfig` instance.
     """
     if not isinstance(v, dict):
         return v

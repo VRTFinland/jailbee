@@ -49,3 +49,24 @@ def test_command_empty_list_is_rejected():
     # Empty list reaches _command_not_empty directly without split.
     with pytest.raises(ValidationError):
         AppEntry.model_validate({"command": []})
+
+
+def test_top_level_app_colliding_with_a_real_command_is_an_error(tmp_path):
+    import typer.main
+
+    from jailbee.cli import app as cli_app
+    from tests.conftest import make_cfg
+
+    # Assert against the live Typer command list, not a hardcoded copy:
+    # a command added later must not silently stop colliding.
+    existing = sorted(typer.main.get_command(cli_app).commands)
+    victim = existing[0]
+    cfg = make_cfg(tmp_path, apps={victim: {"command": "/bin/true", "top_level": True}})
+    assert any(victim in i for i in cfg.validate_runtime())
+
+
+def test_illegal_app_name_is_an_error(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, apps={"My App": {"command": "/bin/true"}})
+    assert any("My App" in i for i in cfg.validate_runtime())
