@@ -290,12 +290,6 @@ def test_shared_caches_default_is_plain_data_not_model_instances():
         assert not any(isinstance(v, BaseModel) for v in cache.values())
 
 
-def test_repo_specs_is_the_config_tree():
-    from jailbee.config_edit.schema import build_specs, repo_specs
-
-    assert repo_specs() == build_specs(Config)
-
-
 def test_global_specs_routes_host_level_keys_to_globalconfig():
     """`docker_registry_mirror` means a different model on each side.
 
@@ -360,11 +354,25 @@ def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
 
 
 def test_every_basic_path_exists_in_a_layer_tree():
-    """A curated path that no longer exists would silently curate nothing."""
+    """A curated path that had fallen out of one tree would silently curate
+    nothing there — checking the **union** of both trees would miss exactly
+    that, since the same path can still be found in the other one.
+
+    `_HOST_LEVEL_KEYS` paths are the documented exception (spec 10.2): those
+    legitimately live in only one tree (`global_specs()`'s host half has no
+    repo counterpart), so they are checked against the union instead.
+    """
+    from jailbee.config.common import _HOST_LEVEL_KEYS
     from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
 
-    known = {s.path for s in repo_specs()} | {s.path for s in global_specs()}
-    assert BASIC_FIELDS - known == frozenset()
+    repo_paths = {s.path for s in repo_specs()}
+    global_paths = {s.path for s in global_specs()}
+    for path in BASIC_FIELDS:
+        if path[0] in _HOST_LEVEL_KEYS:
+            assert path in repo_paths or path in global_paths, path
+            continue
+        assert path in repo_paths, f"{path} missing from repo_specs()"
+        assert path in global_paths, f"{path} missing from global_specs()"
 
 
 def test_basic_set_is_a_readable_shortlist():

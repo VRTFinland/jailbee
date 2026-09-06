@@ -82,9 +82,9 @@ def read_layers(repo_config_path: Path, global_path: Path) -> LayerSet:
     )
 
 
-def raw_for(layers: LayerSet, layer: LayerName) -> dict[str, object]:
+def raw_for(layer_set: LayerSet, layer: LayerName) -> dict[str, object]:
     """The raw mapping of the layer being edited."""
-    return layers.repo_raw if layer == "repo" else layers.global_raw
+    return layer_set.repo_raw if layer == "repo" else layer_set.global_raw
 
 
 def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
@@ -116,7 +116,7 @@ def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     return True, node
 
 
-def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[KeyPath, Origin]:
+def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Origin]:
     """Where each spec's value comes from: repo, else global, else the default.
 
     Independent of which layer is open. A repo-layer editor still marks an
@@ -125,11 +125,11 @@ def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[KeyPath, Origi
     """
     out: dict[KeyPath, Origin] = {}
     for spec in specs:
-        present, value = lookup(layers.repo_raw, spec.path)
+        present, value = lookup(layer_set.repo_raw, spec.path)
         if present:
             out[spec.path] = Origin("repo", value)
             continue
-        present, value = lookup(layers.global_raw, spec.path)
+        present, value = lookup(layer_set.global_raw, spec.path)
         if present:
             out[spec.path] = Origin("global", value)
             continue
@@ -170,7 +170,7 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     return None
 
 
-def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tuple[object, ...]:
+def inherited_entries(spec: FieldSpec, layer_set: LayerSet, layer: LayerName) -> tuple[object, ...]:
     """Global list entries the repo layer's own entries will be appended to.
 
     `deep_merge` appends lists, so a repo-level `egress_allow` adds to the
@@ -203,12 +203,12 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
         # Split out before deep_merge ever runs; global.yaml's block is a
         # separate object merged field-wise by Config._effective_columns.
         return ()
-    repo_present, repo_value = lookup(layers.repo_raw, spec.path)
+    repo_present, repo_value = lookup(layer_set.repo_raw, spec.path)
     if repo_present and not (isinstance(repo_value, list) and repo_value):
         # [] resets, null and any non-list hit deep_merge's overlay-wins
         # branch; only a non-empty repo list appends.
         return ()
-    present, value = lookup(layers.global_raw, spec.path)
+    present, value = lookup(layer_set.global_raw, spec.path)
     if not present or not isinstance(value, list):
         return ()
     return tuple(value)
@@ -282,7 +282,7 @@ by construction.
 """
 
 
-def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
+def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
     """The error a save would produce, or `None` if the staged layer loads.
 
     Runs the *real* loader over the staged mapping (spec 3.5 step 2), so
@@ -320,22 +320,22 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
     retired keys and sees both layers for the cross-layer rules), so its
     diagnosis is the more general one when both would fire.
     """
-    global_raw = layers.global_raw
-    repo_raw = layers.repo_raw
+    global_raw = layer_set.global_raw
+    repo_raw = layer_set.repo_raw
     if layer == "repo":
         repo_raw = apply_changes(repo_raw, changes)
     else:
         global_raw = apply_changes(global_raw, changes)
-        if not layers.repo_path.exists() and not (
+        if not layer_set.repo_path.exists() and not (
             lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]
         ):
             repo_raw = {**repo_raw, "container_prefix": _PLACEHOLDER_PREFIX}
     try:
         load_config_from_layers(
-            global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)
+            global_raw, repo_raw, layer_set.repo_path, origin=str(layer_set.repo_path)
         )
         if layer == "global":
-            validate_global_raw(global_raw, layers.global_path)
+            validate_global_raw(global_raw, layer_set.global_path)
     except ConfigError as e:
         return str(e)
     return None
