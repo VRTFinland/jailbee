@@ -7933,6 +7933,158 @@ def port_ls_cmd(
     )
 
 
+apps_app = typer.Typer(
+    name="apps",
+    help="GUI applications a container can launch.",
+    no_args_is_help=True,
+)
+app.add_typer(apps_app)
+
+
+@apps_app.command("ls")
+def apps_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="Container to probe. Omitted, the listing shows configuration only.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help=(
+                "Comma-separated fields: name, source, command, top_level, "
+                "status (status only available when a container is named)."
+            ),
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List the GUI apps this repo's containers can launch.
+
+    Without a container, this is configuration only: every app `apps:` and
+    the enabled browsers/IDE declare, whether or not any of it is actually
+    installed in a given container's image. Name a container to add a STATUS
+    column probing each app for real.
+    """
+    from rich.markup import escape
+
+    from jailbee.apps import AppSpec, probe, resolve_apps
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    specs = resolve_apps(cfg)
+
+    status: dict[str, str] = {}
+    if name is not None:
+        incus, resolved = _resolve_attachable(cfg, name, attach_cmd="apps ls")
+        status = {s.name: probe(cfg, incus, resolved, s) for s in specs}
+
+    all_fields: list[table_format.FieldSpec[AppSpec]] = [
+        table_format.FieldSpec(
+            name="name",
+            header="NAME",
+            cell=lambda s: escape(s.name),
+            json=lambda s: s.name,
+        ),
+        table_format.FieldSpec(
+            name="source",
+            header="SOURCE",
+            cell=lambda s: s.source,
+            json=lambda s: s.source,
+        ),
+        table_format.FieldSpec(
+            name="command",
+            header="COMMAND",
+            cell=lambda s: escape(" ".join(s.command)),
+            json=lambda s: " ".join(s.command),
+        ),
+        table_format.FieldSpec(
+            name="top_level",
+            header="TOP-LEVEL",
+            cell=lambda s: "yes" if s.top_level else "",
+            json=lambda s: s.top_level,
+        ),
+    ]
+    if status:
+        all_fields.append(
+            table_format.FieldSpec(
+                name="status",
+                header="STATUS",
+                cell=lambda s: status[s.name],
+                json=lambda s: status[s.name],
+            )
+        )
+
+    table_format.emit(
+        specs,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title="GUI apps" if fmt == "table" else None,
+        empty_message=(
+            "No GUI apps configured. Enable a browser under `browsers:` "
+            "or define one under `apps:` — see docs/config.md."
+        ),
+    )
+
+
+@apps_app.command("run")
+def apps_run_cmd(
+    app_name: Annotated[
+        str | None,
+        typer.Argument(help="App to launch.", autocompletion=completion.complete_app_name),
+    ] = None,
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(help="Extra arguments appended to the app's command line."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Don't ask for confirmation when the container's background "
+            "job failed or is still unfinished — launch straight away.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Launch a GUI app in the container.
+
+    APP_NAME is required and comes first — see `jailbee apps ls` for what is
+    available. CONTAINER is optional, like every other attach command.
+    """
+    from jailbee.apps import get_app, launch
+
+    cfg = _load_or_exit(config)
+    if app_name is None:
+        error("Which app? Run `jailbee apps ls` to see what is available.")
+        raise typer.Exit(2)
+    try:
+        spec = get_app(cfg, app_name)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+    incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd="apps run")
+    launch(cfg, incus, resolved, spec, list(args or []))
+
+
 # ---- GUI launcher commands ----
 
 
