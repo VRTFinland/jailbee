@@ -464,17 +464,55 @@ def _materialised(state: EditorState, prefix: KeyPath) -> list[object] | dict[st
 
 
 def _stage_structure(state: EditorState, path: KeyPath, value: object) -> EditorState:
-    """Stage a whole structure, dropping the staged paths now folded into it.
+    """Stage a value at `path`, dropping every staged path inside it.
 
-    Half of the invariant `stage` documents. Leaving the leaves behind would
-    hand `changes` paths whose integer segments address the list that just
-    stopped existing — `_superseded` would drop them, losing edits the user can
-    still read back out of the structure. Any `UNSET` at `path` itself is
-    overwritten, which is what makes an edit inside a collection cancel a
-    pending reset of it.
+    `stage`'s private tail, and with `_stage_reset` the only place a key is
+    ever added to `staged` — so the invariant is enforced in two small
+    functions rather than at each of the six transitions. The guiding rule,
+    which both directions of it follow from:
+
+        The later, more explicit instruction wins. Editing inside a collection
+        cancels a pending reset of it; resetting a collection discards pending
+        edits inside it. Either way, a leaf and its own staged ancestor never
+        coexist.
+
+    Dropping the descendants is not a detail. Left behind, they would hand
+    `changes` paths whose integer segments address the list that just stopped
+    existing — `_superseded` would drop them, losing edits the user can still
+    read back out of the structure. Anything already at `path`, `UNSET`
+    included, is overwritten: that is what makes an edit inside a collection
+    cancel a pending reset of it.
+
+    Callers that want the old descendants *preserved* rather than discarded
+    fold them into `value` first, with `_materialised`.
     """
     staged = {key: val for key, val in state.staged.items() if not _under(key, path)}
     staged[path] = value
+    return replace(state, staged=staged)
+
+
+def _stage_reset(state: EditorState, path: KeyPath, *, present: bool) -> EditorState:
+    """Stage a reset of `path`, discarding every staged edit inside it.
+
+    The mirror of the `UNSET`-ancestor case in `stage`, and the other half of
+    the rule quoted in `_stage_structure`. The user has just said "delete this
+    whole key from this layer"; edits inside it are then meaningless, so
+    discarding them honours the instruction rather than losing work. Keeping
+    them would be the forbidden pair — and `changes` would emit the delete
+    alone, so they would be discarded anyway, just silently and one layer
+    further down where nothing could explain it.
+
+    `present` is whether the open layer's file actually has the key. When it
+    does not there is nothing to delete, so no `UNSET` is staged and any edit
+    to the key is simply dropped (spec 4.3) — the descendants go all the same,
+    because "reset this collection" cannot sensibly leave edits pending inside
+    the collection it just reset.
+    """
+    staged = {key: val for key, val in state.staged.items() if not _under(key, path)}
+    if present:
+        staged[path] = UNSET
+    else:
+        staged.pop(path, None)
     return replace(state, staged=staged)
 
 
@@ -502,7 +540,12 @@ def stage(state: EditorState, path: KeyPath, value: object) -> EditorState:
     """
     ancestor = _staged_ancestor(state, path)
     if ancestor is None:
-        return replace(state, staged={**state.staged, path: value})
+        # Through `_stage_structure`, not a bare dict write: `path` may itself
+        # have staged descendants — write the whole of a collection whose entry
+        # you edited a moment ago and they would be the forbidden pair the
+        # other way up. A leaf has no descendants, so for the common case this
+        # is the same dict write it always was.
+        return _stage_structure(state, path, value)
     folded = _materialised(state, ancestor)
     if folded is None or not _plant(folded, path[len(ancestor) :], value):
         # Loud, not silent. Falling back to staging the bare leaf would rebuild
@@ -533,6 +576,12 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
     keeps following jailbee's own. When the key is not in this layer at
     all there is nothing to delete, so any staged edit to it is simply
     discarded.
+
+    Resetting a *collection* discards the pending edits inside it as well —
+    see `_stage_reset` for why that is honouring the instruction rather than
+    losing work. The cursor reaches a collection's own row from the section
+    list and from a search hit, neither of which needs a collection screen, so
+    this is not a corner case.
     """
     spec = current(state)
     if spec is None:
@@ -557,14 +606,9 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
             # whatever the cursor happens to be on, and a hand-broken file must
             # not crash the TUI. Nothing is staged, so the invariant holds.
             return state
-        return _stage_structure(state, ancestor, pruned)
+        return stage(state, ancestor, pruned)
     present, _ = lookup(layer_raw, spec.path)
-    staged: dict[KeyPath, object] = dict(state.staged)
-    if present:
-        staged[spec.path] = UNSET
-    else:
-        staged.pop(spec.path, None)
-    return replace(state, staged=staged)
+    return _stage_reset(state, spec.path, present=present)
 
 
 def _collection_value(state: EditorState, spec: FieldSpec) -> list[object] | dict[str, object]:
@@ -600,15 +644,20 @@ def add_entry(
 
     The whole collection is staged, not just the new entry: adding is
     structural, so the integer segments of any path under it move.
+
+    Staged through `stage` rather than written straight into `staged`, so that
+    a collection which is *itself* nested inside an already-staged structure
+    gets folded into it instead of becoming its descendant. `delete_entry` and
+    `move_entry` go the same way, for the same reason.
     """
     value = _collection_value(state, spec)
     if isinstance(value, dict):
         if key is None:
             raise ValueError("a model-map entry needs a key name")
         value[key] = {}
-        return _stage_structure(state, spec.path, value), key
+        return stage(state, spec.path, value), key
     value.append({})
-    return _stage_structure(state, spec.path, value), len(value) - 1
+    return stage(state, spec.path, value), len(value) - 1
 
 
 def delete_entry(state: EditorState, spec: FieldSpec, crumb: Crumb) -> EditorState:
@@ -617,6 +666,11 @@ def delete_entry(state: EditorState, spec: FieldSpec, crumb: Crumb) -> EditorSta
     A crumb that addresses nothing is a no-op: staging a collection identical
     to the one already there would light up the `modified` counter for an edit
     that does not exist.
+
+    Note that this does **not** move the trail. A caller that deletes the entry
+    the trail is standing in must walk out of it first: `stage` now raises
+    rather than silently losing an edit written to an index that no longer
+    exists.
     """
     value = _collection_value(state, spec)
     if isinstance(value, dict):
@@ -627,7 +681,7 @@ def delete_entry(state: EditorState, spec: FieldSpec, crumb: Crumb) -> EditorSta
         del value[crumb]
     else:
         return state
-    return _stage_structure(state, spec.path, value)
+    return stage(state, spec.path, value)
 
 
 def move_entry(state: EditorState, spec: FieldSpec, index: int, delta: int) -> EditorState:
@@ -644,7 +698,7 @@ def move_entry(state: EditorState, spec: FieldSpec, index: int, delta: int) -> E
     if not (0 <= index < len(value) and 0 <= target < len(value)):
         return state
     value[index], value[target] = value[target], value[index]
-    return _stage_structure(state, spec.path, value)
+    return stage(state, spec.path, value)
 
 
 def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:

@@ -882,3 +882,138 @@ def test_resetting_under_a_broken_ancestor_is_a_no_op_not_a_raise():
     )
 
     assert st.reset_current(state, SAVED) == state
+
+
+# -- resetting a collection that has pending edits inside it --------------
+
+
+def _prefix_pairs(state):
+    """Every pair in `staged` where one path is a strict prefix of another.
+
+    The invariant, stated as an assertion instead of prose: this must always be
+    empty. Two rounds of review each found a hole by composing public calls, so
+    the composition tests below check the shape of `staged` directly rather than
+    only the outcome of the one sequence they walk.
+    """
+    keys = list(state.staged)
+    return [(a, b) for a in keys for b in keys if len(a) < len(b) and b[: len(a)] == a]
+
+
+def test_resetting_a_collection_found_by_search_discards_edits_inside_it():
+    """The mirror of round 1's hole: ancestor staged *after* a descendant.
+
+    `reset_current`'s bottom branch used to stage `UNSET` at `spec.path`
+    without looking for staged descendants, leaving
+    `{("host_mounts", 0, "host"): "/typed", ("host_mounts",): UNSET}` — the
+    forbidden pair. `changes` emitted the delete alone and `/typed` was lost
+    silently. Search puts the cursor on the collection's own row, so this
+    needed no collection screen and was reachable in the shipped UI.
+    """
+    state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/typed")
+    state = st.set_query(state, "host_mounts")
+    assert st.current(state) is COLLECTION
+
+    got = st.reset_current(state, SAVED)
+
+    assert _prefix_pairs(got) == []
+    assert got.staged == {("host_mounts",): st.UNSET}
+    assert st.changes(got, SAVED) == (YamlChange(("host_mounts",), DELETE),)
+
+
+def test_resetting_a_collection_reached_from_the_section_list_does_the_same():
+    """The other route to a collection's own row, which reaches `current`
+    differently: search builds the row list from `state.specs`, while the
+    section list walks the trail through `screen`. A guard on one route would
+    miss the other.
+
+    It takes the *nested* collection, because that is the only shape where the
+    two routes differ. `host_mounts` is top-level, so entering it from the
+    section list lands on the collection screen, where `visible_specs` is empty
+    and `current` is `None` — `r` there is already a no-op. `autostart` is a
+    real section, so `autostart.on_create` is a row in its field list.
+    """
+    saved = {"autostart": {"on_create": [{"name": "a"}]}}
+    origins = {("autostart", "on_create"): Origin("repo", [{"name": "a"}])}
+    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+    state = st.stage(state, ("autostart", "on_create", 0, "name"), "/typed")
+
+    state = st.enter_crumb(state, "autostart")
+    assert st.current(state) is not None
+    assert st.current(state).path == ("autostart", "on_create")
+
+    got = st.reset_current(state, saved)
+
+    assert _prefix_pairs(got) == []
+    assert got.staged == {("autostart", "on_create"): st.UNSET}
+    assert st.changes(got, saved) == (YamlChange(("autostart", "on_create"), DELETE),)
+
+
+def test_resetting_a_collection_absent_from_the_layer_drops_edits_inside_it():
+    """Nothing to delete, so no `UNSET` — but the pending inner edits still go.
+
+    Leaving them would make `r` look like it did nothing while the collection
+    stayed dirty.
+    """
+    state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/typed")
+    state = st.set_query(state, "host_mounts")
+
+    got = st.reset_current(state, {})
+
+    assert got.staged == {}
+    assert st.changes(got, {}) == ()
+
+
+def test_staging_a_whole_collection_discards_the_entry_edits_beneath_it():
+    """`stage` at a path with staged descendants, the same rule one level up.
+
+    Not reachable from the shipped UI today — `app.edit_current` refuses a
+    `MODEL_LIST`/`MODEL_MAP` row ("`model_list` fields are not editable here"),
+    so nothing calls `stage` with a collection path. `stage` is public and this
+    is the same class of hole, so it is closed and pinned rather than argued
+    about.
+    """
+    state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/typed")
+
+    got = st.stage(state, ("host_mounts",), [{"host": "/whole"}])
+
+    assert _prefix_pairs(got) == []
+    assert got.staged == {("host_mounts",): [{"host": "/whole"}]}
+
+
+def test_a_structural_op_on_a_collection_inside_a_staged_structure_folds_in():
+    """The hole the composition search found: `add`/`delete`/`move` checked for
+    staged *descendants* of the collection but not for a staged *ancestor*.
+
+    They staged at `spec.path` directly, so a collection nested inside an
+    already-staged structure became its descendant — the forbidden pair, with
+    `changes` dropping the collection edit as superseded. They now go through
+    `stage`, which folds into the ancestor.
+
+    Reachable whenever a collection sits under something else that is staged:
+    an item model containing a list of its own, `n` on the outer collection,
+    then `n` on the inner one.
+    """
+    state = st.stage(_open(), ("autostart",), {"on_create": [{"name": "a"}]})
+
+    got, crumb = st.add_entry(state, NESTED)
+
+    assert _prefix_pairs(got) == []
+    assert crumb == 1
+    assert got.staged == {("autostart",): {"on_create": [{"name": "a"}, {}]}}
+    assert st.changes(got, {}) == (
+        YamlChange(("autostart",), {"on_create": [{"name": "a"}, {}]}),
+    )
+
+
+def test_deleting_the_entry_the_trail_stands_in_does_not_move_the_trail():
+    """A hazard for whoever wires `d` up in `app.py`, pinned so it is not a
+    surprise: `delete_entry` changes the collection but leaves `trail` alone,
+    and `stage` now *raises* on an index that no longer exists rather than
+    silently losing the edit. The caller must walk out of the entry first.
+    """
+    state = st.enter_crumb(st.enter_crumb(_staged(staged={}), "host_mounts"), 1)
+    state = st.delete_entry(state, COLLECTION, 1)
+
+    assert state.trail == ("host_mounts", 1)
+    with pytest.raises(ValueError, match=r"host_mounts\.1\.host"):
+        st.stage(state, ("host_mounts", 1, "host"), "/typed")
