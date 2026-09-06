@@ -2,20 +2,22 @@
 # 60-gui-libs — install GUI application runtime libraries (JetBrains IDEs,
 # browsers, and anything launched through `jailbee apps`) and fonts.
 # Env: (none)
-# Installs: ~30 apt packages needed for JBR + Chrome to render via the
-#           host's Wayland/X11 socket bind-mount.
+# Installs: ~30 apt packages needed for JBR, Chrome, Firefox, and any
+#           other GUI app to render via the host's Wayland/X11 socket
+#           bind-mount.
 set -euo pipefail
 
 echo "==> Installing GUI client runtime libraries"
-# Required for JetBrains IDEs (JBR) and Chrome to render via the host's
-# Wayland/X11 socket bind-mount. Without these the base image only
-# contains the libc shipped with Ubuntu minimal and JBR's libawt_xawt.so
-# fails to load at startup with "libXi.so.6: cannot open shared object".
+# Required for JetBrains IDEs (JBR), browsers, and any other GUI app
+# launched through `jailbee apps` to render via the host's Wayland/X11
+# socket bind-mount. Without these the base image only contains the libc
+# shipped with Ubuntu minimal and JBR's libawt_xawt.so fails to load at
+# startup with "libXi.so.6: cannot open shared object".
 #
 # libegl1 + libegl-mesa0 + libgles2 + libgl1-mesa-dri provide the
 # system EGL loader and Mesa drivers needed for hardware-accelerated
-# rendering. Without them Chrome falls back to software rendering with
-# "libEGL.so.1: cannot open shared object" errors.
+# rendering. Without them Chrome and Firefox fall back to software
+# rendering with "libEGL.so.1: cannot open shared object" errors.
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libxi6 libxtst6 libxrender1 libxrandr2 libxext6 libxxf86vm1 \
     libxcomposite1 libxdamage1 libxcursor1 libxss1 libxinerama1 \

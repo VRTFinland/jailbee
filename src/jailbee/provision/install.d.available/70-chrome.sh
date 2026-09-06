@@ -13,6 +13,19 @@
 # nothing.
 set -euo pipefail
 
+# Google ships no linux/arm64 .deb for Chrome — the `arch=amd64` below is
+# not a placeholder, it's the only value Google ever publishes. On an
+# arm64 build host, apt-get install below would otherwise die minutes in
+# with a generic "no installation candidate" that names neither the cause
+# nor the way out. Fail immediately and name both.
+build_arch="$(dpkg --print-architecture)"
+if [ "${build_arch}" != "amd64" ]; then
+    echo "70-chrome: Google Chrome has no linux/${build_arch} apt package." >&2
+    echo "70-chrome: set browsers.chrome.source: host and RO-mount a host install instead," >&2
+    echo "70-chrome: or use Firefox (browsers.firefox.source: image) — it ships arm64." >&2
+    exit 1
+fi
+
 echo "==> Installing Google Chrome"
 install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
@@ -23,3 +36,5 @@ deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google
 EOF
 apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable
+
+google-chrome-stable --version

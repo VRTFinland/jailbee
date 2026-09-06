@@ -1,6 +1,7 @@
 """Unit tests for resolve_snippets."""
 
 import importlib.resources
+import re
 from pathlib import Path
 
 import pytest
@@ -296,6 +297,44 @@ def test_github_cli_script_uses_cli_github_com_keyring():
     assert "set -euo pipefail" in script
     assert "cli.github.com/packages/githubcli-archive-keyring.gpg" in script
     assert "DEBIAN_FRONTEND=noninteractive apt-get install -y gh" in script
+
+
+def test_chrome_snippet_signed_by_matches_written_keyring():
+    """A mismatch here (e.g. a typo in one of the two paths) is otherwise
+    found only by a human running a real build: apt-get update would fail
+    with an oblique "NOSPLIT"/"NO_PUBKEY" error that names neither file.
+    """
+    script = (
+        importlib.resources.files("jailbee.provision")
+        .joinpath("install.d.available/70-chrome.sh")
+        .read_text()
+    )
+    m = re.search(r"signed-by=(\S+?)\]", script)
+    assert m, "no signed-by= path found in the chrome apt source entry"
+    keyring_path = m.group(1)
+    assert f"-o {keyring_path}" in script, (
+        f"gpg --dearmor writes somewhere other than {keyring_path}, which the "
+        "sources.list.d entry's signed-by= names"
+    )
+    assert "google-chrome-stable --version" in script
+
+
+def test_firefox_snippet_signed_by_matches_written_keyring_and_has_pin():
+    script = (
+        importlib.resources.files("jailbee.provision")
+        .joinpath("install.d.available/70-firefox.sh")
+        .read_text()
+    )
+    m = re.search(r"signed-by=(\S+?)\]", script)
+    assert m, "no signed-by= path found in the firefox apt source entry"
+    keyring_path = m.group(1)
+    assert f"-o {keyring_path}" in script, (
+        f"curl writes somewhere other than {keyring_path}, which the "
+        "sources.list.d entry's signed-by= names"
+    )
+    assert "Pin: origin packages.mozilla.org" in script
+    assert "Pin-Priority: 1000" in script
+    assert "firefox --version" in script
 
 
 def test_slim_install_sh_does_not_install_toolchain():
