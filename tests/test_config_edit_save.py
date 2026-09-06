@@ -16,7 +16,7 @@ from jailbee.config_edit.save import (
     resolve_policy,
     secret_values,
 )
-from jailbee.config_edit.schema import global_specs, repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -113,6 +113,44 @@ def test_secret_values_feeds_redact_in_an_order_that_masks_containment_whole(tmp
     secrets = secret_values(layers.global_raw, global_specs())
     masked = redact("ghp_abcdef and ghp_abc", secrets)
     assert masked == "******** and ********"
+
+
+def test_secret_values_includes_a_staged_token_not_yet_on_disk():
+    """A token typed this session is not in `raw`, and must still be redacted."""
+    specs = [
+        FieldSpec(
+            path=("github", "api_tokens"),
+            label="api_tokens",
+            kind=FieldKind.STR_MAP,
+            description="",
+            default={},
+            secret=True,
+        )
+    ]
+    raw = {"github": {"api_tokens": {"old": "ghp_onthedisk"}}}
+    staged = [YamlChange(("github", "api_tokens"), {"old": "ghp_onthedisk", "new": "ghp_typedjustnow"})]
+
+    got = secret_values(raw, specs, staged)
+
+    assert "ghp_typedjustnow" in got
+    assert "ghp_onthedisk" in got
+
+
+def test_secret_values_reads_a_staged_scalar_secret_and_ignores_a_delete():
+    """A whole-key DELETE carries no string, and must not crash the scan."""
+    specs = [
+        FieldSpec(
+            path=("github", "api_tokens"),
+            label="api_tokens",
+            kind=FieldKind.STR_MAP,
+            description="",
+            default={},
+            secret=True,
+        )
+    ]
+    staged = [YamlChange(("github", "api_tokens"), DELETE)]
+
+    assert secret_values({}, specs, staged) == ()
 
 
 def test_a_token_never_reaches_the_diff(tmp_path):

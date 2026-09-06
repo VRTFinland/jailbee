@@ -21,6 +21,7 @@ import yaml
 
 from jailbee.config_edit.layers import LayerName, apply_changes, lookup, raw_for
 from jailbee.config_writer import (
+    DELETE,
     patch_yaml,
     render_documented,
     render_global_yaml,
@@ -106,29 +107,49 @@ def configured_policy(global_path: Path) -> str:
     return gcfg.config_edit.write_policy
 
 
-def secret_values(raw: dict[str, object], specs: Sequence[FieldSpec]) -> tuple[str, ...]:
-    """Every secret string stored in `raw`, longest first.
+def secret_values(
+    raw: dict[str, object],
+    specs: Sequence[FieldSpec],
+    staged: Sequence[YamlChange] = (),
+) -> tuple[str, ...]:
+    """Every secret string this save could expose, longest first.
 
-    Used to redact the diff preview. Reading the values out of the file rather
-    than pattern-matching the diff text is what makes the redaction exact: the
-    strings to hide are known, so a token cannot be missed because it happened
-    to be quoted or folded differently.
+    Two sources, and both are needed. The strings **on disk** are what the
+    "before" half of the diff quotes; the strings **staged** are what the
+    "after" half will. Reading them out of the data rather than pattern-matching
+    the diff text is what makes the redaction exact: the strings to hide are
+    known, so a token cannot be missed because it happened to be quoted or
+    folded differently.
+
+    Until `github.api_tokens` became editable (spec 11.9) the staged half could
+    not exist, and this function took the disk half alone. It is not a
+    defensive addition: without it, a token typed in this session is painted
+    into the mandatory diff preview the first time the user presses `d`.
 
     Longest first so a token that contains a shorter one is masked whole rather
     than leaving a tail behind.
     """
     out: set[str] = set()
+    secret_paths = {spec.path for spec in specs if spec.secret}
     for spec in specs:
         if not spec.secret:
             continue
         present, value = lookup(raw, spec.path)
-        if not present:
-            continue
-        if isinstance(value, dict):
-            out.update(v for v in value.values() if isinstance(v, str) and v)
-        elif isinstance(value, str) and value:
-            out.add(value)
+        if present:
+            out.update(_secret_strings(value))
+    for change in staged:
+        if change.path in secret_paths and change.value is not DELETE:
+            out.update(_secret_strings(change.value))
     return tuple(sorted(out, key=len, reverse=True))
+
+
+def _secret_strings(value: object) -> set[str]:
+    """The non-empty strings inside one secret field's value."""
+    if isinstance(value, dict):
+        return {v for v in value.values() if isinstance(v, str) and v}
+    if isinstance(value, str) and value:
+        return {value}
+    return set()
 
 
 def redact(text: str, secrets: Sequence[str]) -> str:
@@ -183,9 +204,10 @@ def build_plan(
 ) -> SavePlan:
     """What saving `changes` into `layer` would produce. Writes nothing.
 
-    The diff is redacted against the secrets *already on disk*. Staged secrets
-    cannot exist: `render.edit_block` refuses to open an editor on a secret
-    field, so nothing in `changes` can carry one.
+    The diff is redacted against the secrets on disk **and** the ones staged in
+    this session: `github.api_tokens` is editable (spec 11.9), so a token that
+    exists only in `changes` is exactly the one the "after" half of the diff
+    would quote.
 
     Raises `RenderedYamlError` if what was rendered will not parse back. That
     check is defence in depth and belongs here rather than in
@@ -197,7 +219,7 @@ def build_plan(
     path = layer_set.repo_path if layer == "repo" else layer_set.global_path
     old_text = path.read_text(encoding="utf-8") if path.exists() else ""
     raw = raw_for(layer_set, layer)
-    secrets = secret_values(raw, specs)
+    secrets = secret_values(raw, specs, changes)
     if policy == "patch":
         new_text = patch_yaml(old_text, changes)
     else:
