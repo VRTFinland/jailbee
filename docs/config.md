@@ -961,6 +961,17 @@ Chrome and Firefox as registry entries — see [`apps`](#apps) below for the
 umbrella both feed into, and [Provisioning snippets](#provisioning-snippets-installd)
 above for how `source: image` reaches the golden image.
 
+**Turning on a browser for the first time needs `jailbee base build` too,
+not only a later `source` change.** Under the default `source: image`
+(Firefox), setting `enabled: true` alone does nothing to an already-built
+image — the browser is only installed by `jailbee base build`. `jailbee
+<browser>` on a container from an older image starts, prints its usual
+"Launching …" line, and exits 0: the launch is detached, so a missing
+binary fails silently *inside the container*, visible only in
+`/tmp/jailbee-app-<name>.log` or as `missing` in `jailbee apps ls
+<container>`. Run `jailbee base build` after enabling, the same as after
+changing `source` to `image`.
+
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `default` | `chrome` \| `firefox` \| `null` | `null` | Which browser `jailbee browser` opens. `null` resolves at command time: the single enabled browser if exactly one is, otherwise the command asks you to set this or name one directly (`jailbee chrome` / `jailbee firefox`). Naming a disabled browser here is a config error. |

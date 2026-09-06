@@ -98,8 +98,9 @@ a config file that stops that layer being used at all. Run `jailbee config
 init` there first, or edit the global layer, where those settings live.
 
 Not editable here yet: lists of structured entries (`host_mounts`,
-`host_ports`, `host_devices`, `shared_caches`, `agents`, `optional_mounts`,
-`autostart.on_create`, `autostart.on_start`) have no drill-down screen.
+`host_ports`, `host_devices`, `shared_caches`, `agents`, `apps`,
+`optional_mounts`, `autostart.on_create`, `autostart.on_start`) have no
+drill-down screen.
 Secrets are never editable, but the reason shown differs by layer: at the
 repo layer (plain `jailbee config edit`), `github.api_tokens` is blocked
 because the whole `github` block is host-local and rejected in a repo config

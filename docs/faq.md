@@ -479,7 +479,10 @@ per-container from their own profile pool (`jailbee pool ls/prune
 chrome-profile` / `firefox-profile`, or the deprecated `jailbee chrome-pool
 ls/prune` alias for the Chrome one). Beyond the two built-in browsers, an
 `apps:` entry (an AppImage, a vendor binary, a wrapper script) launches with
-`jailbee apps run <name>` — see [`apps`](config.md#apps).
+`jailbee apps run <name>` — see [`apps`](config.md#apps). Firefox defaults
+to `browsers.firefox.source: image`, so turning it on for the first time
+also needs a `jailbee base build` before it's actually in the image — not
+only when later changing `source`.
 
 → [Limitations](security.md#limitations),
 [Configuration reference](config.md)
