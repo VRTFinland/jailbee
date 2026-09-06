@@ -130,3 +130,46 @@ def test_alias_is_hidden_from_submodule_help():
     result = runner.invoke(app, ["submodule", "--help"])
     assert result.exit_code == 0
     assert "checkout" not in result.output
+
+
+def test_submodules_only_with_container_is_a_usage_error(mocker, tmp_path):
+    _cfg(mocker, tmp_path)
+    inside = mocker.patch("jailbee.sync.checkout_submodules_in_container")
+    resolve = mocker.patch("jailbee.cli._resolve_existing")
+
+    result = runner.invoke(app, ["branch", "master", "--container", "feat-foo", "--submodules-only"])
+
+    assert result.exit_code == 2, result.output
+    inside.assert_not_called()
+    resolve.assert_not_called()  # rejected before anything is resolved
+    assert "--submodules-only" in (result.output or "") + (result.stderr or "")
+
+
+def test_alias_rejects_the_same_combination(mocker, tmp_path):
+    _cfg(mocker, tmp_path)
+    inside = mocker.patch("jailbee.sync.checkout_submodules_in_container")
+
+    result = runner.invoke(app, ["submodule", "checkout", "feat-foo", "--submodules-only"])
+
+    assert result.exit_code == 2, result.output
+    inside.assert_not_called()
+
+
+def test_alias_container_form_with_branch_override(mocker, tmp_path):
+    """The alias's positional is the CONTAINER and -b is the branch — the
+    inverse of `jailbee branch`'s shape. This is the combination most likely
+    to be wired backwards."""
+    cfg_mock = _cfg(mocker, tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat-foo"))
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    host = mocker.patch("jailbee.sync.checkout_submodules_on_host")
+    inside = mocker.patch(
+        "jailbee.sync.checkout_submodules_in_container", return_value=("master", [])
+    )
+
+    result = runner.invoke(app, ["submodule", "checkout", "feat-foo", "-b", "master"])
+
+    assert result.exit_code == 0, result.output
+    host.assert_not_called()
+    inside.assert_called_once_with(cfg_mock, incus, "feat-foo", branch="master")

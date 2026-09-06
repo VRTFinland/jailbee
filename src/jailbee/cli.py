@@ -5500,6 +5500,17 @@ def _align_tree_to_branch(
     from jailbee import sync
     from jailbee.lifecycle import short_name
 
+    if submodules_only and container is not None:
+        # A container's branch is never switched here, so there is nothing for
+        # --submodules-only to opt out of. Reject rather than ignore: a
+        # silently-discarded explicit flag leaves the user believing something
+        # happened.
+        error(
+            "--submodules-only applies to the host repo only; a container's "
+            "branch is never switched, so there is nothing to skip."
+        )
+        raise typer.Exit(2)
+
     try:
         if container is None:
             resolved, report = sync.checkout_submodules_on_host(
