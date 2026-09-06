@@ -2321,18 +2321,21 @@ if TYPE_CHECKING:
 def _resolve_existing(
     cfg: "Config",
     name: str | None,
+    *,
+    always_prompt: bool = False,
 ) -> tuple["IncusType", str]:
     """Resolve a container name, prompting interactively if omitted.
 
     See lifecycle.resolve_container_for_interactive for the behavior
-    matrix. ValueError is translated to typer.Exit(1).
+    matrix. ValueError is translated to typer.Exit(1). ``always_prompt``
+    shows the picker on a TTY even for a single container.
     """
     from jailbee.incus import Incus
     from jailbee.lifecycle import resolve_container_for_interactive
 
     incus = Incus()
     try:
-        resolved = resolve_container_for_interactive(cfg, incus, name)
+        resolved = resolve_container_for_interactive(cfg, incus, name, always_prompt=always_prompt)
     except ValueError as e:
         error(str(e))
         raise typer.Exit(1) from e

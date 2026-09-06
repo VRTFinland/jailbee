@@ -4728,6 +4728,87 @@ def test_stdin_is_interactive_respects_env_and_tty(monkeypatch):
     assert _stdin_is_interactive() is False
 
 
+def test_resolver_always_prompt_shows_picker_for_a_single_container(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
+    picker = MagicMock(return_value="myrepo-feat-only")
+
+    result = resolve_container_for_interactive_detailed(
+        cfg, incus, None, picker=picker, is_interactive=lambda: True, always_prompt=True
+    )
+
+    picker.assert_called_once()
+    assert result.name == "myrepo-feat-only"
+    assert result.auto_selected is False  # the user saw it and chose it
+
+
+def test_resolver_always_prompt_is_inert_off_a_tty(make_cfg, tmp_path):
+    """Scripts must not hang: off a TTY a single container is still auto-picked."""
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
+    picker = MagicMock()
+
+    result = resolve_container_for_interactive_detailed(
+        cfg, incus, None, picker=picker, is_interactive=lambda: False, always_prompt=True
+    )
+
+    picker.assert_not_called()
+    assert result.name == "myrepo-feat-only"
+    assert result.auto_selected is True
+
+
+def test_resolver_always_prompt_does_not_affect_a_named_container(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    incus = MagicMock()
+    incus.exists.side_effect = lambda n: n == "myrepo-feat-foo"
+    picker = MagicMock()
+
+    result = resolve_container_for_interactive_detailed(
+        cfg, incus, "feat-foo", picker=picker, is_interactive=lambda: True, always_prompt=True
+    )
+
+    picker.assert_not_called()
+    assert result.name == "myrepo-feat-foo"
+
+
+def test_resolver_always_prompt_cancel_raises(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
+
+    with pytest.raises(ValueError, match="cancelled"):
+        resolve_container_for_interactive_detailed(
+            cfg,
+            incus,
+            None,
+            picker=MagicMock(return_value=None),
+            is_interactive=lambda: True,
+            always_prompt=True,
+        )
+
+
+def test_resolver_default_still_auto_picks_a_single_container(make_cfg, tmp_path):
+    """The regression guard: every other caller keeps today's behaviour."""
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
+    picker = MagicMock()
+
+    result = resolve_container_for_interactive_detailed(
+        cfg, incus, None, picker=picker, is_interactive=lambda: True
+    )
+
+    picker.assert_not_called()
+    assert result.auto_selected is True
+
+
 # ---- resolve_container_for_interactive_detailed (auto_selected reporting) ----
 
 
