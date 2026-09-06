@@ -88,3 +88,106 @@ def get_app(cfg: Config, name: str) -> AppSpec:
             return spec
     available = ", ".join(s.name for s in specs) or "none"
     raise ValueError(f"Unknown app: {name}. Available: {available}.")
+
+
+def _container_cwd(cfg: Config, incus: Incus, container: str, cwd: str) -> str:
+    """Resolve a spec's `cwd` keyword to a container path."""
+    from jailbee.config import CONTAINER_USERNAME
+
+    if cwd == "home":
+        return f"/home/{CONTAINER_USERNAME}"
+    if cwd == "repo":
+        from jailbee.lifecycle import container_repo_dir
+
+        return container_repo_dir(cfg, incus, container)
+    return cwd
+
+
+def probe(
+    cfg: Config, incus: Incus, container: str, spec: AppSpec
+) -> Literal["present", "missing"]:
+    """Is this app's binary actually in this container?
+
+    The question `jailbee apps ls` exists to answer: a browser enabled in
+    config but absent from an image built before it was enabled looks
+    identical to a working one until you try to launch it.
+
+    Runs as the container user, not root: `profiles.py` maps only the dev
+    user's uid/gid identically between host and container
+    (`raw.idmap: uid <uid> <uid>`), so container root is an unprivileged
+    subuid with no rights over host-owned files. Browsers and the JetBrains
+    Toolbox arrive as read-only bind mounts from the host, so a root-run
+    check can report "missing" for an app that is present and working.
+
+    Deliberately shaped so the container command always exits 0 — the
+    answer is on stdout, not in the exit status — so no probe can raise
+    and take the whole listing down with it.
+    """
+    import shlex as _shlex
+
+    binary = _shlex.quote(spec.command[0])
+    script = (
+        f"if command -v {binary} >/dev/null 2>&1 || test -x {binary}; "
+        f"then echo present; else echo missing; fi"
+    )
+    out = incus.exec(
+        container,
+        ["bash", "-lc", script],
+        uid=cfg.container_user.uid,
+        gid=cfg.container_user.gid,
+    ).strip()
+    return "present" if out == "present" else "missing"
+
+
+def launch(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    spec: AppSpec,
+    args: list[str] | None = None,
+) -> None:
+    """Start `spec` in `container`, detached, logging inside the container."""
+    import shlex as _shlex
+
+    from jailbee.gui import gui_env, launch_detached
+    from jailbee.tui import info
+
+    if spec.pool is not None:
+        from jailbee.pool import allocate as pool_allocate
+        from jailbee.pool import ensure_pool_dirs
+        from jailbee.pool import get as pool_get
+
+        handle = pool_get(cfg, spec.pool)
+        if handle is not None:
+            ensure_pool_dirs(cfg, handle)
+            pool_allocate(cfg, incus, handle, container)
+
+    if spec.resolve_command is not None:
+        argv = [*spec.resolve_command(incus, container), *spec.command[1:]]
+    else:
+        argv = list(spec.command)
+    argv += list(args or [])
+
+    cwd = _container_cwd(cfg, incus, container, spec.cwd)
+    log_path = app_log_path(spec.name)
+    info(f"Launching {spec.name} in {container} (background, logs in container: {log_path})")
+    launch_detached(
+        container,
+        cfg.container_user.uid,
+        {**gui_env(cfg), **spec.env},
+        " ".join(_shlex.quote(a) for a in argv),
+        log_path,
+        cwd=cwd,
+    )
+
+
+def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
+    """Start every app whose config asked to be started after autostart.
+
+    Lives here rather than in `cli.py` so the two call sites (container
+    create, container boot) share one implementation and `cli.py` stays a
+    delegation layer.
+    """
+    for spec in resolve_apps(cfg):
+        if spec.autostart:
+            launch(cfg, incus, container, spec)

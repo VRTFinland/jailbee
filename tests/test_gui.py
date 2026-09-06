@@ -50,7 +50,7 @@ def test_open_ide_redirects_to_log_file_not_dev_null(mocker):
 
     script = _popen_bash_command(popen)
     # stdout+stderr go to the log, not to /dev/null
-    assert ">/tmp/jailbee-ide-idea.log" in script
+    assert ">/tmp/jailbee-app-ide.log" in script
     assert "2>&1" in script
     assert ">/dev/null" not in script
     # stdin is closed (</dev/null) and the inner process is setsid-detached
@@ -61,7 +61,11 @@ def test_open_ide_redirects_to_log_file_not_dev_null(mocker):
     assert script.rstrip().endswith("&")
 
 
-def test_open_ide_uses_app_specific_log_for_webstorm(mocker):
+def test_open_ide_uses_the_generic_ide_log_regardless_of_launcher(mocker):
+    """The registry has one "ide" app regardless of which JetBrains launcher
+    `cfg.jetbrains.ide` resolves to (idea, webstorm, ...) — the log path is
+    the shared `jailbee-app-ide.log`, not one per launcher name.
+    """
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = Incus()
     mocker.patch.object(
@@ -74,8 +78,7 @@ def test_open_ide_uses_app_specific_log_for_webstorm(mocker):
     open_ide(cfg, incus, "feat-smoke", "webstorm")
 
     script = _popen_bash_command(popen)
-    assert "/tmp/jailbee-ide-webstorm.log" in script
-    assert "/tmp/jailbee-ide-idea.log" not in script
+    assert "/tmp/jailbee-app-ide.log" in script
 
 
 def test_open_ide_announces_log_path_in_info_message(mocker, capsys):
@@ -91,7 +94,7 @@ def test_open_ide_announces_log_path_in_info_message(mocker, capsys):
     open_ide(cfg, incus, "feat-smoke", "idea")
 
     out = capsys.readouterr().out
-    assert "/tmp/jailbee-ide-idea.log" in out
+    assert "/tmp/jailbee-app-ide.log" in out
 
 
 def test_open_ide_skips_launch_when_no_launcher_found(mocker):
@@ -115,7 +118,7 @@ def test_open_chrome_redirects_to_log_file_not_dev_null(mocker):
     open_chrome(cfg, incus, "feat-smoke", None)
 
     script = _popen_bash_command(popen)
-    assert ">/tmp/jailbee-chrome.log" in script
+    assert ">/tmp/jailbee-app-chrome.log" in script
     assert "2>&1" in script
     assert ">/dev/null" not in script
     assert "</dev/null" in script
@@ -133,7 +136,7 @@ def test_open_chrome_announces_log_path_in_info_message(mocker, capsys):
     open_chrome(cfg, incus, "feat-smoke", "https://example.com")
 
     out = capsys.readouterr().out
-    assert "/tmp/jailbee-chrome.log" in out
+    assert "/tmp/jailbee-app-chrome.log" in out
 
 
 def test_open_chrome_passes_url_when_provided(mocker):
@@ -367,9 +370,10 @@ def test_open_ide_supports_additional_jetbrains_launchers(mocker, ide_name):
     find_argv = exec_mock.call_args.args[1]
     find_cmd = " ".join(find_argv)
     assert f"-name '{ide_name}'" in find_cmd
-    # And the launched process logs to a per-IDE log path.
+    # The launched process logs to the shared generic "ide" app log,
+    # regardless of which JetBrains launcher was resolved.
     script = _popen_bash_command(popen)
-    assert f"/tmp/jailbee-ide-{ide_name}.log" in script
+    assert "/tmp/jailbee-app-ide.log" in script
 
 
 def test_open_ide_rejects_unknown_app_name(mocker):

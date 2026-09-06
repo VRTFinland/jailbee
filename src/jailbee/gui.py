@@ -8,7 +8,7 @@ import subprocess
 
 from jailbee.config import CONTAINER_USERNAME, Config
 from jailbee.incus import Incus
-from jailbee.tui import error, info
+from jailbee.tui import error
 
 
 def gui_env(cfg: Config) -> dict[str, str]:
@@ -110,74 +110,26 @@ def launch_detached(
 
 
 def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
-    """Launch a JetBrains IDE from /opt/jetbrains-toolbox.
+    """Deprecated shim: use `apps.launch(cfg, incus, container, apps.get_app(cfg, "ide"))`.
 
-    Toolbox apps live at ``/opt/jetbrains-toolbox/apps/<app-id>/bin/<launcher>``.
-    The <app-id> can vary across Toolbox versions and edition flavours
-    (e.g. ``intellij-idea-ultimate``, ``pycharm-professional``), but the
-    launcher binary is always the IDE's short name — so we match by launcher
-    name, not by app-id.
+    Removed once `cli.py` reads the registry directly (Task 14).
     """
+    from jailbee.apps import AppSpec, launch
     from jailbee.ide import resolve_launcher
-    from jailbee.lifecycle import container_repo_dir
 
     try:
-        launcher_argv = resolve_launcher(
+        argv = resolve_launcher(
             incus, container, app, uid=cfg.container_user.uid, gid=cfg.container_user.gid
         )
-        result = launcher_argv[0]
     except ValueError as e:
         error(str(e))
         return
 
-    repo_dir = container_repo_dir(cfg, incus, container)
-    log_path = f"/tmp/jailbee-ide-{app}.log"
-    info(f"Launching {app} in {container} (background, logs in container: {log_path})")
-    launch_detached(
-        container,
-        cfg.container_user.uid,
-        gui_env(cfg),
-        f"{shlex.quote(result)} {shlex.quote(repo_dir)}",
-        log_path,
-        cwd=repo_dir,
-    )
+    launch(cfg, incus, container, AppSpec(name="ide", command=argv, cwd="repo", source="builtin"))
 
 
 def open_chrome(cfg: Config, incus: Incus, container: str, url: str | None) -> None:
-    """Launch Chrome inside the container, optionally to a URL.
+    """Deprecated shim: use `apps.launch(...)` with the `chrome` spec."""
+    from jailbee.apps import get_app, launch
 
-    Allocates a slot from the generic chrome-profile pool before
-    launching, so each container has its own Chrome profile dir and
-    they don't collide on Chrome's SingletonLock.
-    """
-    from jailbee.pool import allocate as pool_allocate
-    from jailbee.pool import ensure_pool_dirs
-    from jailbee.pool import get as pool_get
-
-    # None only when chrome.enabled is false, which cli.chrome_cmd has
-    # already rejected before reaching here — this guard is for direct
-    # callers of open_chrome.
-    chrome_pool_handle = pool_get(cfg, "chrome-profile")
-    if chrome_pool_handle is not None:
-        ensure_pool_dirs(cfg, chrome_pool_handle)
-        pool_allocate(cfg, incus, chrome_pool_handle, container)
-
-    args = ["/opt/google/chrome/google-chrome"]
-    if host_is_wayland():
-        # Chrome 2025 defaults to X11 even with WAYLAND_DISPLAY set; force
-        # the Ozone Wayland backend explicitly.
-        args.append("--ozone-platform=wayland")
-    if cfg.chrome.dark_mode:
-        args += ["--force-dark-mode", "--enable-features=WebContentsForceDark"]
-    if url:
-        args.append(url)
-
-    log_path = "/tmp/jailbee-chrome.log"
-    info(f"Launching Chrome in {container} (background, logs in container: {log_path})")
-    launch_detached(
-        container,
-        cfg.container_user.uid,
-        gui_env(cfg),
-        " ".join(shlex.quote(a) for a in args),
-        log_path,
-    )
+    launch(cfg, incus, container, get_app(cfg, "chrome"), [url] if url else None)
