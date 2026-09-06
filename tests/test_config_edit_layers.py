@@ -112,18 +112,17 @@ def test_ordinary_fields_are_never_disabled():
     assert layers.disabled_reason(_spec("gpg.enabled"), "global") is None
 
 
-def test_the_opaque_scratch_overlay_is_disabled_in_both_layers():
-    """`scratch.config` is free-form: there is no form to render for it."""
+def test_disabled_reason_no_longer_refuses_an_opaque_field():
+    """`scratch.config` is global-only, so it is only real in `global_specs()`.
+
+    Since Task 10 it is editable as raw YAML in the multiline prompt, so
+    `disabled_reason` no longer carves out a `FieldKind.OPAQUE` branch for it.
+    """
     from jailbee.config_edit.schema import global_specs
 
     spec = next(s for s in global_specs() if s.path == ("scratch", "config"))
-    # Test both layers as the name promises
-    reason_global = layers.disabled_reason(spec, "global")
-    assert reason_global is not None
-    assert "by hand" in reason_global
-    reason_repo = layers.disabled_reason(spec, "repo")
-    assert reason_repo is not None
-    assert "by hand" in reason_repo
+    assert spec.kind is FieldKind.OPAQUE
+    assert layers.disabled_reason(spec, "global") is None
 
 
 def test_repo_layer_shows_the_global_list_entries_it_will_append_to(tmp_path):

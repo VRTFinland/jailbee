@@ -162,10 +162,6 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     expect a fourth key to silence a repo-layer setting that has no visible
     `repo_specs()` entry.
     """
-    if spec.kind is FieldKind.OPAQUE:
-        return (
-            "Free-form overlay with no schema — edit it by hand in ~/.config/jailbee/global.yaml."
-        )
     if layer == "repo" and spec.path[0] in GLOBAL_ONLY_KEYS:
         return (
             f"`{spec.path[0]}` is host-local and is rejected in a repo config — "

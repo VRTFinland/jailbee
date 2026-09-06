@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+import yaml
+
 from jailbee.config_edit.schema import FieldKind
 
 if TYPE_CHECKING:
@@ -206,3 +208,33 @@ def parse_map(spec: FieldSpec, text: str) -> tuple[dict[str, object] | None, str
         else:
             out[key] = value
     return out, None
+
+
+def opaque_to_text(value: object) -> str:
+    """A free-form block as YAML text — the seed for an `OPAQUE` editor.
+
+    `yaml.safe_dump` with `sort_keys=False`, so the user's own key order comes
+    back the way they left it rather than alphabetised behind their back.
+    """
+    if not isinstance(value, dict) or not value:
+        return ""
+    return str(yaml.safe_dump(value, sort_keys=False, default_flow_style=False))
+
+
+def parse_opaque(text: str) -> tuple[dict[str, object] | None, str | None]:
+    """`(mapping, error)` for an `OPAQUE` block. Exactly one half is `None`.
+
+    An empty block is an empty mapping, not an error: clearing the overlay is a
+    thing a user means to do. Anything that parses to a non-mapping is refused
+    here rather than at save time, where the loader's message would name a key
+    path the user never typed.
+    """
+    if not text.strip():
+        return {}, None
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        return None, f"Not valid YAML: {e}"
+    if not isinstance(parsed, dict):
+        return None, f"Expected a mapping of keys, got {type(parsed).__name__}."
+    return parsed, None

@@ -13,6 +13,8 @@ also records what got painted, and assert on that.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from prompt_toolkit.layout.processors import ConditionalProcessor, PasswordProcessor
 from prompt_toolkit.output import DummyOutput
@@ -196,6 +198,17 @@ def _descend(editor, *crumbs):
     """
     for crumb in crumbs:
         editor.state = st.enter_crumb(editor.state, crumb)
+
+
+def _cursor_to(editor, label):
+    """Set `editor.state.index` to the visible row whose `spec.label` matches.
+
+    For tests that want the cursor on a specific field without depending on
+    its position among its section's other fields.
+    """
+    rows = st.visible_specs(editor.state)
+    index = next(i for i, spec in enumerate(rows) if spec.label == label)
+    editor.state = replace(editor.state, index=index)
 
 
 def _masking_enabled(area) -> bool:
@@ -1331,3 +1344,78 @@ def test_n_x_j_k_are_wired_through_the_real_application(tmp_path):
     assert "/b" in text
     assert "/a" not in text
     assert "J/K move" in text  # the footer of a live collection screen
+
+
+def test_editing_scratch_config_stages_the_parsed_mapping(tmp_path):
+    """`scratch.config` (`FieldKind.OPAQUE`) is global-only — absent from
+    `repo_specs()` entirely, not merely disabled there — so this cannot use
+    the shared `_editor` helper, which always builds its state from
+    `repo_specs()`. Built by hand instead, the same way `_editor` itself does,
+    but with `global_specs()`.
+    """
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump({}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text(
+        yaml.safe_dump({"scratch": {"config": {"memory": "4GiB"}}}, sort_keys=False)
+    )
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = global_specs()
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(layer="global", specs=specs, origins=resolve(specs, layer_set)),
+        policy="patch",
+    )
+    editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
+    _descend(editor, "scratch")
+    _cursor_to(editor, "config")
+
+    editor.edit_current()
+    assert editor.prompt is not None
+    assert editor.prompt.multiline is True
+    editor.prompt.area.text = "memory: 8GiB\n"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("scratch", "config")] == {"memory": "8GiB"}
+
+
+def test_editing_scratch_config_keeps_the_prompt_open_on_a_parse_error(tmp_path):
+    """A parse failure must not silently drop what was typed."""
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump({}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text(
+        yaml.safe_dump({"scratch": {"config": {"memory": "4GiB"}}}, sort_keys=False)
+    )
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = global_specs()
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(layer="global", specs=specs, origins=resolve(specs, layer_set)),
+        policy="patch",
+    )
+    editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
+    _descend(editor, "scratch")
+    _cursor_to(editor, "config")
+
+    editor.edit_current()
+    editor.prompt.area.text = "just a string\n"
+    editor.commit_prompt()
+
+    assert editor.prompt is not None
+    assert "mapping" in editor.message
+    assert editor.state.staged == {}

@@ -394,6 +394,8 @@ class Editor:
             self._open_prompt(spec, values.list_to_text(value), multiline=True)
         elif spec.kind in _MAP_KINDS:
             self._open_prompt(spec, values.map_to_text(value), multiline=True)
+        elif spec.kind is FieldKind.OPAQUE:
+            self._open_prompt(spec, values.opaque_to_text(value), multiline=True)
         elif spec.kind in _TEXT_KINDS:
             self._open_prompt(spec, values.to_text(spec, value), multiline=False)
         elif spec.kind is FieldKind.BOOL:
@@ -547,6 +549,8 @@ class Editor:
             parsed, error = values.parse_list(spec, text)
         elif spec.kind in _MAP_KINDS:
             parsed, error = values.parse_map(spec, text)
+        elif spec.kind is FieldKind.OPAQUE:
+            parsed, error = values.parse_opaque(text)
         else:
             parsed, error = values.parse_value(spec, text)
         if error is not None:

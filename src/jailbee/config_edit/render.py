@@ -103,16 +103,20 @@ def edit_block(spec: FieldSpec, layer: LayerName) -> str | None:
 
     The editor's single gate: `app.py` refuses to open an editor when this
     returns a string, and `field_pane` greys the row and shows the reason.
-    Two causes: a config rule (`layers.disabled_reason`: an `OPAQUE` free-form
-    block, a key the loader bans from a repo config) and a deliberate refusal
-    (a secret with no drill-down screen of its own — a scalar secret has
-    nowhere safe to be edited, so it stays refused). A collection of models
-    used to be a third cause; it now has its own drill-down screen
-    (`collection_pane`/`body_pane`, spec 11.2/11.7), so it is no longer
-    refused here. A secret **map** (`github.api_tokens`) follows the same
-    path since Task 9: `is_drilldown` is true for it too, so this falls
-    through to `None` and `app.Editor.enter` opens the map's own screen
-    instead — masked keys, a hidden-input prompt, never a value on screen.
+    Two causes: a config rule (`layers.disabled_reason`: a key the loader bans
+    from a repo config) and a deliberate refusal (a secret with no drill-down
+    screen of its own — a scalar secret has nowhere safe to be edited, so it
+    stays refused). A collection of models used to be a third cause; it now
+    has its own drill-down screen (`collection_pane`/`body_pane`, spec
+    11.2/11.7), so it is no longer refused here. A secret **map**
+    (`github.api_tokens`) follows the same path since Task 9: `is_drilldown`
+    is true for it too, so this falls through to `None` and
+    `app.Editor.enter` opens the map's own screen instead — masked keys, a
+    hidden-input prompt, never a value on screen. `OPAQUE` (`scratch.config`)
+    used to be a config-rule cause too; since Task 10 it is edited in the
+    plain multiline prompt like a `STR_LIST`/`STR_MAP`, so `disabled_reason`
+    no longer refuses it and it never reaches this function's own check
+    either — it just falls through to `None`.
     """
     reason = disabled_reason(spec, layer)
     if reason is not None:
