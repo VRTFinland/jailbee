@@ -196,10 +196,12 @@
   than at save time. The nesting is recursive, so an agent's `shared` mounts
   are reachable too.
 
-  Editing one field of one entry rewrites one line: the writer addresses list
-  entries by index, so the other entries and any comments among them survive a
-  save untouched. Adding, deleting or reordering rewrites the list, because
-  those change what the indices mean.
+  Editing one field of one entry addresses that entry's content by index, so
+  the other entries and any comments among them are preserved — but a save
+  re-emits the file with jailbee's own block-sequence indentation, so a
+  config written with indented sequences (`  - `) is normalised on its first
+  save. Adding, deleting or reordering rewrites the list, because those
+  change what the indices mean.
 
   `github.api_tokens` can now be set from the editor. Values are never
   displayed — the key list shows a fixed mask, the input is hidden, and a

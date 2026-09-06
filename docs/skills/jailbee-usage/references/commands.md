@@ -96,10 +96,11 @@ its own entry. Leaving an entry validates it against its model; a second
 `Esc` on one that fails and that `n` just created discards it outright rather
 than leaving it half-made. A map (`agents`, `optional_mounts`) asks for the
 new key's name before creating the entry. Editing one field of one entry
-rewrites only that entry's line in the file — entries are addressed by
-index, so the others and any comments between them survive untouched — but
-add, delete and reorder rewrite the whole list, since those change what the
-indices mean.
+addresses that entry's content by index, so the other entries and any
+comments between them are preserved — but a save re-emits the file with
+jailbee's own block-sequence indentation, so a config written with indented
+sequences (`  - `) is normalised on its first save. Add, delete and reorder
+rewrite the whole list, since those change what the indices mean.
 
 Two staging rules worth knowing: typing into an entry cancels a pending reset
 of its collection, and resetting a collection discards any pending edits
