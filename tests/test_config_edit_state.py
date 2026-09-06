@@ -7,6 +7,10 @@ terminal.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from jailbee.config import AutostartStep, HostMount
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import Origin
@@ -215,7 +219,16 @@ def test_a_staged_whole_collection_wins_over_the_saved_one_for_entry_reads():
     assert st.effective(state, ("host_mounts", 0, "host")) == "/new"
 
 
-def test_a_staged_entry_field_wins_over_the_staged_collection_it_sits_in():
+def test_a_staged_entry_field_wins_over_the_saved_collection_it_sits_in():
+    """Renamed from `..._over_the_staged_collection_it_sits_in`.
+
+    That name described a collision this fixture never set up — only the leaf
+    is staged, so there was no staged collection for it to win over, and the
+    test proved nothing beyond the saved-layer read below it. The scenario the
+    old name claimed is now impossible by construction anyway: `stage` folds a
+    leaf into a staged ancestor instead of letting the two coexist, which the
+    next test covers.
+    """
     origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
     state = st.EditorState(
         layer="repo",
@@ -225,6 +238,72 @@ def test_a_staged_entry_field_wins_over_the_staged_collection_it_sits_in():
     )
 
     assert st.effective(state, ("host_mounts", 0, "host")) == "/edited"
+
+
+def test_staging_a_field_under_a_staged_collection_folds_it_into_the_collection():
+    """The invariant: a leaf and a staged ancestor of it never coexist.
+
+    `changes` drops a leaf under a staged ancestor as superseded, so a leaf
+    left standing here would be silently discarded at save time while
+    `effective` went on showing it. `stage` writes into the collection instead.
+    """
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts",): [{"host": "/a"}]},
+    )
+
+    got = st.stage(state, ("host_mounts", 0, "host"), "/edited")
+
+    assert ("host_mounts", 0, "host") not in got.staged
+    assert got.staged[("host_mounts",)] == [{"host": "/edited"}]
+    assert st.effective(got, ("host_mounts", 0, "host")) == "/edited"
+
+
+def test_folding_a_field_in_does_not_mutate_the_state_it_came_from():
+    """`replace` shares staged structures between states; a fold must copy.
+
+    Without the copy, staging an edit would reach back and rewrite the value
+    every earlier state holds — including the one the quit confirmation
+    compares against.
+    """
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
+    before = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts",): [{"host": "/a"}]},
+    )
+
+    st.stage(before, ("host_mounts", 0, "host"), "/edited")
+
+    assert before.staged[("host_mounts",)] == [{"host": "/a"}]
+
+
+def test_resetting_a_field_under_a_staged_collection_removes_it_from_the_entry():
+    """`r` inside a staged entry prunes the key rather than staging `UNSET`.
+
+    A staged `UNSET` leaf would sit under a staged ancestor and be dropped as
+    superseded, so the reset would appear to do nothing at all.
+    """
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}])}
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts",): [{"host": "/a", "readonly": True}]},
+        trail=("host_mounts", 0),
+        index=2,
+    )
+    assert st.current(state).path == ("host_mounts", 0, "readonly")
+
+    got = st.reset_current(state, {"host_mounts": [{"host": "/a", "readonly": True}]})
+
+    assert got.staged[("host_mounts",)] == [{"host": "/a"}]
+    assert ("host_mounts", 0, "readonly") not in got.staged
+    assert st.entry_origin(got, ("host_mounts", 0, "readonly")) == "default"
 
 
 def test_entry_origin_says_set_only_when_the_key_is_in_the_entry():
@@ -467,3 +546,224 @@ def test_an_entry_of_a_nested_collection_takes_three_crumbs():
         ("autostart", "on_create", 0, "timeout"),
         ("autostart", "on_create", 0, "continue_on_error"),
     ]
+
+
+# -- adding, deleting and reordering entries ------------------------------
+
+
+def _staged(**kw):
+    """A state whose repo layer already holds two host mounts."""
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}, {"host": "/b"}])}
+    return st.EditorState(layer="repo", specs=SPECS, origins=origins, **kw)
+
+
+SAVED = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+"""The layer file `_staged` describes, for the `changes` calls below."""
+
+
+def test_a_new_list_entry_is_an_empty_mapping_at_the_end():
+    """Empty, not defaults written out: a written-out default freezes (spec 4.3)."""
+    state, crumb = st.add_entry(_staged(staged={}), COLLECTION)
+
+    assert crumb == 2
+    assert state.staged[("host_mounts",)] == [{"host": "/a"}, {"host": "/b"}, {}]
+
+
+def test_a_new_map_entry_needs_a_key_and_a_list_entry_refuses_one():
+    """A map has no next index to invent, so the caller must name the key."""
+    origins = {("agents",): Origin("repo", {"claude": {}})}
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+
+    got, crumb = st.add_entry(state, spec, "codex")
+
+    assert crumb == "codex"
+    assert got.staged[("agents",)] == {"claude": {}, "codex": {}}
+    with pytest.raises(ValueError, match="key name"):
+        st.add_entry(state, spec)
+
+
+def test_deleting_an_entry_stages_the_remaining_list():
+    state = st.delete_entry(_staged(staged={}), COLLECTION, 0)
+
+    assert state.staged[("host_mounts",)] == [{"host": "/b"}]
+
+
+def test_deleting_a_crumb_that_addresses_nothing_is_a_no_op():
+    """Staging an identical collection would light up `modified` for no edit."""
+    assert st.delete_entry(_staged(staged={}), COLLECTION, 7).staged == {}
+
+
+def test_deleting_a_map_entry_removes_that_key():
+    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+
+    got = st.delete_entry(state, spec, "codex")
+
+    assert got.staged[("agents",)] == {"claude": {}}
+    assert st.delete_entry(state, spec, "gemini").staged == {}
+
+
+def test_moving_an_entry_swaps_it_with_its_neighbour():
+    state = st.move_entry(_staged(staged={}), COLLECTION, 0, 1)
+
+    assert state.staged[("host_mounts",)] == [{"host": "/b"}, {"host": "/a"}]
+
+
+def test_moving_past_either_end_is_a_no_op():
+    state = st.move_entry(_staged(staged={}), COLLECTION, 0, -1)
+
+    assert ("host_mounts",) not in state.staged
+
+
+def test_a_map_has_no_order_so_moving_one_of_its_entries_does_nothing():
+    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+
+    assert st.move_entry(state, spec, 0, 1) == state
+
+
+def test_a_structural_change_carries_a_staged_field_along_with_its_entry():
+    """The brief expected the leaf *superseded*; folding it in is strictly better.
+
+    Its index addresses the list that stops existing, so it cannot survive as a
+    leaf — but the edit itself can. `_collection_value` replays it onto the old
+    list *before* the delete, so it travels with the entry it was made on
+    instead of being thrown away (or, worse, landing on whichever entry
+    inherited index 1).
+    """
+    state = _staged(staged={("host_mounts", 1, "host"): "/edited"})
+
+    state = st.delete_entry(state, COLLECTION, 0)
+
+    assert ("host_mounts", 1, "host") not in state.staged
+    got = st.changes(state, SAVED)
+    assert [c.path for c in got] == [("host_mounts",)]
+    assert got[0].value == [{"host": "/edited"}]
+
+
+def test_filling_in_a_new_entry_after_adding_it_reaches_the_save():
+    """add-then-edit. The bug this whole invariant exists to stop.
+
+    `n` stages the whole collection; each field then filled in would be a leaf
+    under it, and `changes` would drop every one of them as superseded — the
+    save would write the new entry as `{}` and the user's typing would be gone
+    with nothing on screen to say so.
+    """
+    state, crumb = st.add_entry(_staged(staged={}), COLLECTION)
+    state = st.stage(state, ("host_mounts", crumb, "host"), "/new")
+    state = st.stage(state, ("host_mounts", crumb, "container"), "/in")
+
+    got = st.changes(state, SAVED)
+
+    assert [c.path for c in got] == [("host_mounts",)]
+    assert got[0].value == [
+        {"host": "/a"},
+        {"host": "/b"},
+        {"host": "/new", "container": "/in"},
+    ]
+
+
+def test_adding_an_entry_keeps_an_edit_made_before_it():
+    """edit-then-add, the mirror case.
+
+    Here the leaf is staged first, so `effective` — which resolves from the
+    nearest staged *ancestor* — cannot see it when `add_entry` rebuilds the
+    list. `_collection_value` has to replay the staged leaves itself, or the
+    earlier edit disappears the moment the user presses `n`.
+    """
+    state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/edited")
+    state, _ = st.add_entry(state, COLLECTION)
+
+    got = st.changes(state, SAVED)
+
+    assert [c.path for c in got] == [("host_mounts",)]
+    assert got[0].value == [{"host": "/edited"}, {"host": "/b"}, {}]
+
+
+def test_a_reset_made_before_a_structural_change_survives_it():
+    """`UNSET` under the collection prunes the key rather than being replayed."""
+    state = _staged(staged={("host_mounts", 0, "host"): st.UNSET})
+
+    state = st.move_entry(state, COLLECTION, 0, 1)
+
+    assert state.staged[("host_mounts",)] == [{"host": "/b"}, {}]
+
+
+def test_changes_survives_an_index_and_a_key_at_the_same_depth():
+    """What `_sort_key` actually buys: plain `sorted` raises `TypeError` here.
+
+    The brief claimed the numeric test below would raise. It does not — every
+    path there has an `int` in the same position, so tuple comparison never
+    reaches an int-versus-str pair. Only a *shape clash* under one prefix does,
+    which is a hand-broken file (`host_mounts` written as a list in one place
+    and keyed in another). That must not blow up the save path, so the case is
+    pinned here rather than left to a user to discover.
+    """
+    state = _staged(staged={("host_mounts", 0, "host"): "/x", ("host_mounts", "note"): "hi"})
+
+    got = st.changes(state, SAVED)
+
+    assert [c.path for c in got] == [("host_mounts", 0, "host"), ("host_mounts", "note")]
+
+
+def test_changes_orders_indices_numerically_not_as_text():
+    """`host_mounts.10` follows `host_mounts.2`, so a save is reproducible.
+
+    Plain `sorted` would pass this too (see the test above); it is pinned
+    because `_sort_key` keeps `int` segments as ints, and a stringifying
+    variant of it — the obvious way to dodge the `TypeError` — would order
+    these 0, 10, 2.
+    """
+    state = _staged(
+        staged={
+            ("host_mounts", 0, "host"): "/x",
+            ("host_mounts", 10, "host"): "/y",
+            ("host_mounts", 2, "host"): "/z",
+        }
+    )
+    layer_raw = {"host_mounts": [{"host": "/a"}] * 11}
+
+    got = st.changes(state, layer_raw)
+
+    assert [c.path[1] for c in got] == [0, 2, 10]
+
+
+def test_changes_drops_a_leaf_that_somehow_shares_staged_with_an_ancestor():
+    """`_superseded`'s belt-and-braces net, reached only by hand-built state.
+
+    No transition can produce this pair any more — `stage` folds and
+    `_stage_collection` prunes — so the state is constructed directly. The net
+    stays because the failure it prevents is a wrong write, not a crash.
+    """
+    state = _staged(
+        staged={
+            ("host_mounts",): [{"host": "/kept"}],
+            ("host_mounts", 4, "host"): "/stale",
+        }
+    )
+
+    assert [c.path for c in st.changes(state, SAVED)] == [("host_mounts",)]
+
+
+def test_entries_reports_map_keys_in_order():
+    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+
+    assert st.entries(state, spec) == ("claude", "codex")
+
+
+def test_move_counts_a_collections_rows_with_entries():
+    """Step 5 of the brief, already shipped: `move` asks `entries`, not `specs`.
+
+    A collection screen draws no `FieldSpec` rows at all, so a row count taken
+    from `view.specs` would pin the cursor to row 0 on every list in the
+    editor.
+    """
+    state = st.enter_crumb(_staged(staged={}), "host_mounts")
+
+    assert st.screen(state).specs == ()
+    assert st.move(state, 99).index == 1

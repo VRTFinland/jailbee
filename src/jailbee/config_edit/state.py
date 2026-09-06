@@ -9,6 +9,7 @@ search, staging, reset — be tested without a terminal.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -276,6 +277,70 @@ def _dig(value: object, path: KeyPath) -> tuple[bool, object]:
     return True, node
 
 
+def _plant(root: object, path: KeyPath, value: object) -> bool:
+    """Write `value` at `path` inside an already-loaded structure, in place.
+
+    The write twin of `_dig`, and the half of the "a leaf and a staged ancestor
+    of it never coexist" invariant that `stage` and `_collection_value` lean
+    on: an edit under a staged structure is folded *into* that structure rather
+    than kept as a staged key of its own.
+
+    Missing mapping levels are created on the way down. A missing **list
+    index** is not — inventing one would shift every entry after it — so the
+    walk gives up and returns `False`, leaving the caller to fall back. `root`
+    is mutated, so hand it a copy.
+    """
+    if not path:
+        return False
+    node: object = root
+    for depth, key in enumerate(path[:-1]):
+        fresh: dict[str, object] | None = None if isinstance(path[depth + 1], int) else {}
+        child: object
+        if isinstance(key, int):
+            if not isinstance(node, list) or not 0 <= key < len(node):
+                return False
+            child = node[key]
+            if not isinstance(child, (dict, list)):
+                if fresh is None:
+                    return False
+                node[key] = child = fresh
+        else:
+            if not isinstance(node, dict):
+                return False
+            child = node.get(key)
+            if not isinstance(child, (dict, list)):
+                if fresh is None:
+                    return False
+                node[key] = child = fresh
+        node = child
+    last = path[-1]
+    if isinstance(last, int):
+        if not isinstance(node, list) or not 0 <= last < len(node):
+            return False
+        node[last] = value
+        return True
+    if not isinstance(node, dict):
+        return False
+    node[last] = value
+    return True
+
+
+def _uproot(root: object, path: KeyPath) -> bool:
+    """Remove `path` from an already-loaded structure, in place.
+
+    Only a mapping key is removable. Dropping a **list index** renumbers every
+    entry after it — that is `delete_entry`'s job, not a field reset's — so a
+    path ending in an index is refused rather than quietly reinterpreted.
+    """
+    if not path or isinstance(path[-1], int):
+        return False
+    present, holder = _dig(root, path[:-1])
+    if not present or not isinstance(holder, dict):
+        return False
+    holder.pop(path[-1], None)
+    return True
+
+
 def effective(state: EditorState, path: KeyPath) -> object:
     """The value the user currently sees for `path`.
 
@@ -331,8 +396,39 @@ def entry_origin(state: EditorState, path: KeyPath) -> Literal["set", "default"]
     return "default"
 
 
+def _staged_ancestor(state: EditorState, path: KeyPath) -> KeyPath | None:
+    """The nearest strict ancestor of `path` staged as a real value, if any.
+
+    `UNSET` does not count: it means "delete this key", so there is no
+    structure under it to fold an edit into.
+    """
+    for i in range(len(path) - 1, 0, -1):
+        if path[:i] in state.staged and state.staged[path[:i]] is not UNSET:
+            return path[:i]
+    return None
+
+
 def stage(state: EditorState, path: KeyPath, value: object) -> EditorState:
-    """Record an edit to `path`. Does not validate — that happens at save."""
+    """Record an edit to `path`. Does not validate — that happens at save.
+
+    **A leaf and a staged ancestor of it never coexist in `staged`.** `changes`
+    drops a leaf that sits under a staged ancestor (`_superseded`), so keeping
+    both would throw the edit away at save time while the screen still shows
+    it — `effective` reads the leaf back happily. That is not hypothetical: `n`
+    on a collection stages the *whole* collection, so every field the user then
+    fills in on the new entry would be a leaf under it.
+
+    So when an ancestor is already staged the value is written into a copy of
+    it and the ancestor is re-staged; only when nothing above is staged does
+    `path` get a key of its own. The copy is not optional: `replace` hands the
+    same staged objects to every state derived from this one, so mutating one
+    in place would rewrite the history the app still holds.
+    """
+    ancestor = _staged_ancestor(state, path)
+    if ancestor is not None:
+        folded = deepcopy(state.staged[ancestor])
+        if _plant(folded, path[len(ancestor) :], value):
+            return replace(state, staged={**state.staged, ancestor: folded})
     return replace(state, staged={**state.staged, path: value})
 
 
@@ -356,6 +452,18 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
     spec = current(state)
     if spec is None:
         return state
+    ancestor = _staged_ancestor(state, spec.path)
+    if ancestor is not None:
+        # The key does not live in the file, it lives inside a structure that
+        # is already staged — a collection staged by `n`/`d`/reorder, say. So
+        # "reset" here is removing it from that structure, which drops the
+        # entry back to the item model's default. Staging `UNSET` at the leaf
+        # would break the invariant `stage` maintains and be dropped as
+        # superseded, making `r` silently do nothing.
+        pruned = deepcopy(state.staged[ancestor])
+        if not _uproot(pruned, spec.path[len(ancestor) :]):
+            return state
+        return replace(state, staged={**state.staged, ancestor: pruned})
     present, _ = lookup(layer_raw, spec.path)
     staged: dict[KeyPath, object] = dict(state.staged)
     if present:
@@ -363,6 +471,147 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
     else:
         staged.pop(spec.path, None)
     return replace(state, staged=staged)
+
+
+def _sort_key(path: KeyPath) -> tuple[tuple[int, str | int], ...]:
+    """A total order over paths that mix mapping keys with list indices.
+
+    Plain `sorted` raises `TypeError` the moment one path has an `int` where
+    another has a `str`. Indices sort before keys at the same depth and among
+    themselves numerically, so `host_mounts.10` follows `host_mounts.2` rather
+    than preceding it the way a stringified sort would.
+    """
+    return tuple((0, seg) if isinstance(seg, int) else (1, seg) for seg in path)
+
+
+def _under(path: KeyPath, prefix: KeyPath) -> bool:
+    """Whether `path` is a strict descendant of `prefix`."""
+    return len(path) > len(prefix) and path[: len(prefix)] == prefix
+
+
+def _collection_value(state: EditorState, spec: FieldSpec) -> list[object] | dict[str, object]:
+    """This collection as it stands now: staged leaves folded in, and copied.
+
+    **Copied** because the caller mutates it, and both `state.staged` and
+    `state.origins` hold structures shared with every other state.
+
+    **Folded** because the caller is about to stage the whole collection, and
+    `changes` treats a leaf under a staged ancestor as superseded: a leaf edit
+    left outside would be silently dropped from the save while the screen went
+    on showing it. `effective` cannot do this for us — it resolves from the
+    nearest staged *ancestor* and so never sees the leaves below one. Together
+    with `_stage_collection` (which drops those leaves) and `stage` (which
+    never creates one under a staged ancestor) this is the invariant that keeps
+    a user's typing alive across a structural edit.
+
+    The fold happens **before** the structural change, so an edit travels with
+    its entry: editing entry 1 and then deleting entry 0 saves that edit on
+    what is now entry 0, rather than on whichever entry inherited index 1.
+    """
+    value = effective(state, spec.path)
+    out: list[object] | dict[str, object]
+    if isinstance(value, list):
+        out = deepcopy(value)
+    elif isinstance(value, dict):
+        out = deepcopy(value)
+    else:
+        out = [] if spec.kind is FieldKind.MODEL_LIST else {}
+    for path in sorted((p for p in state.staged if _under(p, spec.path)), key=_sort_key):
+        rest = path[len(spec.path) :]
+        if state.staged[path] is UNSET:
+            _uproot(out, rest)
+        else:
+            _plant(out, rest, state.staged[path])
+    return out
+
+
+def _stage_collection(state: EditorState, path: KeyPath, value: object) -> EditorState:
+    """Stage a whole collection, dropping the staged leaves now folded into it.
+
+    The other half of the invariant `stage` documents. Leaving the leaves
+    behind would hand `changes` paths whose integer segments address the list
+    that just stopped existing — `_superseded` would drop them, losing edits
+    the user can still read back out of the collection.
+    """
+    staged = {key: val for key, val in state.staged.items() if not _under(key, path)}
+    staged[path] = value
+    return replace(state, staged=staged)
+
+
+def add_entry(
+    state: EditorState, spec: FieldSpec, key: str | None = None
+) -> tuple[EditorState, Crumb]:
+    """Append an empty entry and return the crumb that addresses it.
+
+    Empty rather than the item model's defaults written out: a written-out
+    default freezes at today's value while an absent key keeps following
+    jailbee's own (spec 4.3), and the entry form shows every default anyway,
+    marked `(default)`. Required fields therefore start empty, and `Esc`
+    refuses to leave until they are filled (spec 11.8).
+
+    The whole collection is staged, not just the new entry: adding is
+    structural, so the integer segments of any path under it move.
+    """
+    value = _collection_value(state, spec)
+    if isinstance(value, dict):
+        if key is None:
+            raise ValueError("a model-map entry needs a key name")
+        value[key] = {}
+        return _stage_collection(state, spec.path, value), key
+    value.append({})
+    return _stage_collection(state, spec.path, value), len(value) - 1
+
+
+def delete_entry(state: EditorState, spec: FieldSpec, crumb: Crumb) -> EditorState:
+    """Remove one entry, staging the collection that remains.
+
+    A crumb that addresses nothing is a no-op: staging a collection identical
+    to the one already there would light up the `modified` counter for an edit
+    that does not exist.
+    """
+    value = _collection_value(state, spec)
+    if isinstance(value, dict):
+        if str(crumb) not in value:
+            return state
+        del value[str(crumb)]
+    elif isinstance(crumb, int) and 0 <= crumb < len(value):
+        del value[crumb]
+    else:
+        return state
+    return _stage_collection(state, spec.path, value)
+
+
+def move_entry(state: EditorState, spec: FieldSpec, index: int, delta: int) -> EditorState:
+    """Swap a list entry with its neighbour. A no-op past either end.
+
+    Offered on every list, not only `autostart` (spec 11.7): a YAML list is
+    ordered whether or not the loader cares, and it is the same three lines.
+    A model map has no order to change, so this returns the state untouched.
+    """
+    value = _collection_value(state, spec)
+    if not isinstance(value, list):
+        return state
+    target = index + delta
+    if not (0 <= index < len(value) and 0 <= target < len(value)):
+        return state
+    value[index], value[target] = value[target], value[index]
+    return _stage_collection(state, spec.path, value)
+
+
+def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:
+    """Whether a strict ancestor of `path` is staged, making `path` moot.
+
+    Belt and braces: with `stage`, `_collection_value` and `_stage_collection`
+    all upholding the invariant that a leaf never shares `staged` with an
+    ancestor of itself, this can no longer fire from any transition the editor
+    offers. It stays because the consequence of a future transition forgetting
+    the invariant is a wrong write, not a crash: the leaf's integer segments
+    would address the list that stopped existing, and the edit would land on
+    whichever entry happened to inherit that index. Dropping it here is the
+    safe failure. If this ever does fire, the transition that staged the pair
+    is the bug — not this line.
+    """
+    return any(path[:i] in staged for i in range(1, len(path)))
 
 
 def changes(state: EditorState, layer_raw: dict[str, object]) -> tuple[YamlChange, ...]:
@@ -374,10 +623,14 @@ def changes(state: EditorState, layer_raw: dict[str, object]) -> tuple[YamlChang
     twice and saving would produce a diff — and `patch_yaml`'s
     byte-identical guarantee would be unreachable in practice.
 
-    Sorted by path so two identical edit sessions write identical files.
+    Sorted by path so two identical edit sessions write identical files —
+    through `_sort_key`, because a path into a collection mixes indices with
+    keys and plain `sorted` cannot compare those.
     """
     out: list[YamlChange] = []
-    for path in sorted(state.staged):
+    for path in sorted(state.staged, key=_sort_key):
+        if _superseded(path, state.staged):
+            continue
         value = state.staged[path]
         present, existing = lookup(layer_raw, path)
         if value is UNSET:
