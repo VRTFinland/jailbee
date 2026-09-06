@@ -151,6 +151,12 @@ def _ctx(**kw: object) -> dashboard.MenuContext:
     return dashboard.MenuContext(**fields)
 
 
+def _apps(*verbs: str) -> list[dashboard.AppMenuEntry]:
+    """``AppMenuEntry`` list where each label defaults to its own verb — the
+    description-less fallback most tests don't care to distinguish from."""
+    return [dashboard.AppMenuEntry(v, v) for v in verbs]
+
+
 def _dirty(**kw: str) -> GitStatus:
     """A GitStatus with committed work and a dirty tree unless overridden."""
     fields: dict[str, str] = {
@@ -657,7 +663,7 @@ def test_menu_actions_running_default_hides_ide_and_chrome():
 
 
 def test_menu_actions_running_ide_enabled_only():
-    actions = dashboard.menu_actions(_ctx(app_names=["ide"]))
+    actions = dashboard.menu_actions(_ctx(apps=_apps("ide")))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -671,7 +677,7 @@ def test_menu_actions_running_ide_enabled_only():
 
 
 def test_menu_actions_running_chrome_enabled_only():
-    actions = dashboard.menu_actions(_ctx(app_names=["chrome"]))
+    actions = dashboard.menu_actions(_ctx(apps=_apps("chrome")))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -685,7 +691,7 @@ def test_menu_actions_running_chrome_enabled_only():
 
 
 def test_menu_actions_running_both_enabled():
-    actions = dashboard.menu_actions(_ctx(app_names=["ide", "chrome"]))
+    actions = dashboard.menu_actions(_ctx(apps=_apps("ide", "chrome")))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -699,9 +705,9 @@ def test_menu_actions_running_both_enabled():
 
 
 def test_action_menu_lists_every_registry_app():
-    """`menu_actions` renders whatever `app_names` it is handed, in order —
+    """`menu_actions` renders whatever `ctx.apps` it is handed, in order —
     not just the two builtins that used to have their own booleans."""
-    actions = dashboard.menu_actions(_ctx(app_names=["firefox", "figma"]))
+    actions = dashboard.menu_actions(_ctx(apps=_apps("firefox", "figma")))
     verbs = [verb for _label, verb in actions]
     assert "firefox" in verbs
     assert "figma" in verbs
@@ -709,8 +715,23 @@ def test_action_menu_lists_every_registry_app():
     assert ("Launch figma", "figma") in actions
 
 
+def test_action_menu_renders_a_builtins_description_as_its_label():
+    """A builtin's `AppSpec.description` (e.g. "JetBrains idea") is real,
+    user-facing English — the bare verb the earlier lowercase labels used is
+    not what the registry actually carries."""
+    actions = dashboard.menu_actions(_ctx(apps=[dashboard.AppMenuEntry("ide", "JetBrains idea")]))
+    assert ("Launch JetBrains idea", "ide") in actions
+
+
+def test_action_menu_falls_back_to_the_verb_when_description_is_empty():
+    """A user's `apps:` entry that never set `description` must still render
+    something readable, not a blank label."""
+    actions = dashboard.menu_actions(_ctx(apps=[dashboard.AppMenuEntry("figma", "figma")]))
+    assert ("Launch figma", "figma") in actions
+
+
 def test_action_menu_has_no_apps_when_none_are_configured():
-    actions = dashboard.menu_actions(_ctx(app_names=[]))
+    actions = dashboard.menu_actions(_ctx(apps=[]))
     verbs = [verb for _label, verb in actions]
     assert "chrome" not in verbs and "ide" not in verbs
 
@@ -725,7 +746,7 @@ def test_menu_actions_orphan_disabled():
 
 
 def test_menu_actions_orphan_disabled_regardless_of_flags():
-    assert dashboard.menu_actions(_ctx(has_repo=False, app_names=["ide", "chrome"])) == []
+    assert dashboard.menu_actions(_ctx(has_repo=False, apps=_apps("ide", "chrome"))) == []
 
 
 def test_menu_actions_unknown_state_only_destroy():
@@ -760,7 +781,7 @@ def test_menu_actions_orphan_disabled_even_with_network():
 
 
 def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
-    actions = dashboard.menu_actions(_ctx(app_names=["ide", "chrome"]))
+    actions = dashboard.menu_actions(_ctx(apps=_apps("ide", "chrome")))
     assert _session_verbs(actions) == [
         "tmux",
         "shell",
@@ -1073,19 +1094,6 @@ def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
     assert "--force" not in run.call_args[0][0]
 
 
-def test_attach_verbs_includes_configured_apps(tmp_path, make_cfg):
-    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/f"}})
-    assert "figma" in dashboard.attach_verbs(cfg)
-    assert {"shell", "tmux"} <= dashboard.attach_verbs(cfg)
-
-
-def test_attach_verbs_excludes_apps_not_in_this_config(tmp_path, make_cfg):
-    """`attach_verbs` is config-aware — an app name unique to some other
-    repo's config must not leak in."""
-    cfg = make_cfg(tmp_path)
-    assert "figma" not in dashboard.attach_verbs(cfg)
-
-
 def test_qtui_still_imports_the_constant():
     # qtui/actions.py derives _ASSUME_YES_VERBS from ATTACH_VERBS at import
     # time, before any Config exists — it must stay a plain module constant.
@@ -1158,7 +1166,7 @@ def test_every_printing_verb_is_a_real_menu_verb():
             for _label, verb in dashboard.menu_actions(
                 _ctx(
                     state=state,
-                    app_names=["ide", "chrome"],
+                    apps=_apps("ide", "chrome"),
                     pr_number=7,
                     job_clearable=True,
                     has_job=True,
@@ -1338,16 +1346,22 @@ def test_actions_for_container_matches_menu_actions():
             "/repo",
             Path("/repo/.jailbee/config.yaml"),
             [running],
-            app_names=["ide"],
+            apps=_apps("ide"),
         )
     ]
-    expected = menu_actions(_ctx(app_names=["ide"]))
+    expected = menu_actions(_ctx(apps=_apps("ide")))
     assert actions_for_container(groups, "p-foo") == expected
     assert actions_for_container(groups, "nope") == []
     assert actions_for_container(groups, None) == []
 
 
-def test_gather_rows_sets_app_names_from_config(tmp_path, mocker, make_cfg):
+def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
+    """Covers both registry order and the label fallback in one pass: `ide`
+    (a builtin, `jetbrains.enabled`) carries a real description ("JetBrains
+    idea"); `figma` (a bare `apps:` entry with no `description` set) falls
+    back to its own name. `apps:` sorts before `jetbrains` alphabetically, so
+    if `gather_rows` read YAML/dict key order instead of delegating to
+    `resolve_apps`, `figma` would come first here."""
     cfg = make_cfg(
         tmp_path / "alpha",
         jetbrains={"enabled": True},
@@ -1363,12 +1377,13 @@ def test_gather_rows_sets_app_names_from_config(tmp_path, mocker, make_cfg):
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
     groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     group = next(g for g in groups if g.prefix == "alpha")
-    # Registry order (builtins first, then `apps:` alphabetically) — not
-    # YAML key order, which here would put `figma` before `ide`.
-    assert group.app_names == ["ide", "figma"]
+    assert group.apps == [
+        dashboard.AppMenuEntry("ide", "JetBrains idea"),
+        dashboard.AppMenuEntry("figma", "figma"),
+    ]
 
 
-def test_gather_rows_orphan_groups_have_no_app_names(tmp_path, mocker, make_cfg):
+def test_gather_rows_orphan_groups_have_no_apps(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
@@ -1381,7 +1396,7 @@ def test_gather_rows_orphan_groups_have_no_app_names(tmp_path, mocker, make_cfg)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
     groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
-    assert orphan.app_names == []
+    assert orphan.apps == []
 
 
 def test_visible_fields_excludes_hidden_and_respects_default_table():
@@ -2405,7 +2420,7 @@ def test_every_quick_action_verb_is_a_real_menu_verb():
             for _label, verb in dashboard.menu_actions(
                 _ctx(
                     state=state,
-                    app_names=["ide", "chrome"],
+                    apps=_apps("ide", "chrome"),
                     pr_number=7,
                     job_clearable=True,
                     has_job=True,
@@ -2447,13 +2462,13 @@ def test_quick_verb_is_none_when_the_action_is_not_offered(tmp_path):
     assert dashboard.quick_verb([running], "alpha-x", "refresh") is None  # not an action key
 
 
-def test_quick_verb_follows_the_repos_app_names(tmp_path):
+def test_quick_verb_follows_the_repos_apps(tmp_path):
     group = dashboard.RepoGroup(
         "alpha",
         str(tmp_path),
         tmp_path / "c.yaml",
         [_ci("alpha-x", "alpha")],
-        app_names=["ide", "chrome"],
+        apps=_apps("ide", "chrome"),
     )
 
     assert dashboard.quick_verb([group], "alpha-x", "action:ide") == "ide"

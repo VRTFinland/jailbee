@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TextIO
+from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -94,6 +94,21 @@ carried by implication and this one has to say outright.
 """
 
 
+class AppMenuEntry(NamedTuple):
+    """One registry app as the action menu needs it: a dispatch verb plus
+    the text to show for it.
+
+    ``verb`` is the bare `AppSpec.name` — what ``jailbee <verb> <container>``
+    dispatches. ``label`` is `AppSpec.description` when the repo's config set
+    one (JetBrains sets ``"JetBrains idea"``, a browser sets ``"Chrome
+    (host)"``); it falls back to ``verb`` for a user's ``apps:`` entry that
+    left ``description`` empty, so the menu never renders a blank label.
+    """
+
+    verb: str
+    label: str
+
+
 @dataclass
 class RepoGroup:
     """One repo's containers. ``repo_root`` is None for orphan groups
@@ -102,12 +117,13 @@ class RepoGroup:
     that has no ``.jailbee/config.yaml`` of its own, whose config is
     synthesized — so it gates nothing on its own: it says only whether a child
     is addressed with ``--config`` or by its cwd (see :class:`RepoTarget`).
-    ``app_names`` mirrors the repo's GUI app registry (`apps.resolve_apps`,
+    ``apps`` mirrors the repo's GUI app registry (`apps.resolve_apps`,
     builtins and `apps:` entries alike) in registry order, and drives the
     corresponding action-menu entries; orphan groups keep it empty. It
     replaces what used to be two separate booleans (``ide_enabled``,
     ``chrome_enabled``) — the registry can hold any number of apps, not just
-    those two.
+    those two, and each carries its own display label (see
+    :class:`AppMenuEntry`).
     ``loose_ttl_default`` is the repo's effective ``loose_auto_revert.after``
     as prompt-ready text — what the GUI's duration dialog pre-selects — or
     None when auto-revert is disabled, which tells the GUI not to ask at all
@@ -121,7 +137,7 @@ class RepoGroup:
     repo_root: str | None
     config_path: Path | None
     containers: list[ContainerInfo]
-    app_names: list[str] = field(default_factory=list)
+    apps: list[AppMenuEntry] = field(default_factory=list)
     loose_ttl_default: str | None = None
     push_action_default: str = "ask"
     push_source_default: str = "base"
@@ -330,7 +346,10 @@ def gather_rows(
                     str(cfg.repo_root),
                     repo_config_path(root),
                     containers,
-                    app_names=[spec.name for spec in resolve_apps(cfg)],
+                    apps=[
+                        AppMenuEntry(spec.name, spec.description or spec.name)
+                        for spec in resolve_apps(cfg)
+                    ],
                     loose_ttl_default=_loose_ttl_default(cfg, gcfg),
                     push_action_default=cfg.push.default_action,
                     push_source_default=cfg.push.default_source,
@@ -509,15 +528,15 @@ class MenuContext:
     already does: False is a container built from someone else's PR (a review),
     True one whose PR jailbee opened from the container's own branch.
 
-    ``app_names`` mirrors the repo's GUI app registry (sourced from
-    ``RepoGroup.app_names``) rather than two integration switches — one
-    "Launch <app>" entry appears per name, in order.
+    ``apps`` mirrors the repo's GUI app registry (sourced from
+    ``RepoGroup.apps``) rather than two integration switches — one
+    "Launch <label>" entry appears per :class:`AppMenuEntry`, in order.
     """
 
     state: str
     has_repo: bool
     mode: str = "clone"
-    app_names: list[str] = field(default_factory=list)
+    apps: list[AppMenuEntry] = field(default_factory=list)
     current_network: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
@@ -562,11 +581,11 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
 
     Empty for orphan rows (no repo root ⇒ nothing to address a child at, see
     :meth:`RepoTarget.of`); a repo with no config file of its own is *not* one
-    of those and gets the full menu. One "Launch <app>" entry appears per name
-    in ``ctx.app_names`` (sourced from ``RepoGroup.app_names``, itself
-    `apps.resolve_apps`) — offering only apps the repo's own config actually
-    registers, since dispatching `jailbee <app>` for one that is not would
-    just fail.
+    of those and gets the full menu. One "Launch <label>" entry appears per
+    :class:`AppMenuEntry` in ``ctx.apps`` (sourced from ``RepoGroup.apps``,
+    itself `apps.resolve_apps`) — offering only apps the repo's own config
+    actually registers, since dispatching `jailbee <verb>` for one that is not
+    would just fail.
 
     For running containers, one "Network: <mode>" entry appears per mode
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
@@ -615,8 +634,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
             ("Attach tmux", "tmux"),
             ("Open shell", "shell"),
         ]
-        for app_name in ctx.app_names:
-            actions.append((f"Launch {app_name}", app_name))
+        for app in ctx.apps:
+            actions.append((f"Launch {app.label}", app.verb))
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
                 actions.append((f"Network: {mode}", f"net {mode}"))
@@ -1229,7 +1248,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
             state=container.state,
             has_repo=RepoTarget.of(group) is not None,
             mode=container.mode,
-            app_names=group.app_names,
+            apps=group.apps,
             current_network=container.network,
             pr_number=container.pr_number,
             pr_author=container.pr_author,
@@ -1408,23 +1427,14 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
 # row — hence both dispatch these with `--force`. Shared rather than copied, for
 # the same reason as :data:`PRINTING_VERBS` (`qtui/actions.py` imports this).
 #
-# The config-independent core: `qtui/actions.py` derives `_ASSUME_YES_VERBS`
-# from this at import time, before any `Config` exists, so it must stay a
-# plain module-level constant rather than becoming a function. A repo's own
-# `apps:` entries are not in it — see :func:`attach_verbs` for those.
+# `qtui/actions.py` derives `_ASSUME_YES_VERBS` from this at import time,
+# before any `Config` exists, so it must stay a plain module-level constant.
+# The one place that decides `--force` at runtime (`_dispatch_action`, below)
+# takes a `RepoTarget` — repo_root/config_path, no loaded `Config` — so it too
+# reads this constant rather than a repo's own `apps:` entries. A config-aware
+# version would need a real call site with a `Config` in hand before it is
+# worth adding.
 ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome", "firefox", "browser"})
-
-
-def attach_verbs(cfg: Config) -> frozenset[str]:
-    """Verbs that attach to a container, including every configured app.
-
-    `ATTACH_VERBS` stays as the config-independent core because
-    `qtui/actions.py` derives `_ASSUME_YES_VERBS` from it at import time,
-    where no `Config` exists yet.
-    """
-    from jailbee.apps import resolve_apps
-
-    return ATTACH_VERBS | {spec.name for spec in resolve_apps(cfg)}
 
 
 # Verbs whose whole point is the text they print, rather than the state they
