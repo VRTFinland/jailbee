@@ -767,3 +767,118 @@ def test_move_counts_a_collections_rows_with_entries():
 
     assert st.screen(state).specs == ()
     assert st.move(state, 99).index == 1
+
+
+# -- a pending reset of a collection, and editing inside one --------------
+
+
+def test_typing_into_an_entry_cancels_a_pending_reset_of_its_collection():
+    """The reviewer's sequence, through the public API only.
+
+    Search `host_mounts` → `r` (stages `UNSET` at the collection) → walk into
+    the entry list, which still renders because `effective` falls through an
+    `UNSET` to what the layers say → type into a field.
+
+    While `_staged_ancestor` skipped `UNSET`, that left the leaf and the
+    `UNSET` collection in `staged` together: the screen showed the typed value
+    and `changes` emitted the delete alone, discarding it. `app.reset` has no
+    collection guard, so it was reachable in the shipped UI.
+
+    The ruling: editing inside a collection *materialises* it — the pending
+    reset is dropped and the collection the user is looking at is staged with
+    the edit in it. The reset is invisible at that depth, so the edit is the
+    more recent and more specific instruction.
+    """
+    state = st.set_query(_staged(staged={}), "host_mounts")
+    assert st.current(state) is COLLECTION
+
+    state = st.reset_current(state, SAVED)
+    assert state.staged == {("host_mounts",): st.UNSET}
+
+    state = st.enter_crumb(st.enter_crumb(state, "host_mounts"), 0)
+    state = st.stage(state, ("host_mounts", 0, "host"), "/typed")
+
+    assert st.effective(state, ("host_mounts", 0, "host")) == "/typed"
+    assert st.changes(state, SAVED) == (
+        YamlChange(("host_mounts",), [{"host": "/typed"}, {"host": "/b"}]),
+    )
+
+
+def test_resetting_an_entry_field_cancels_a_pending_reset_of_its_collection():
+    """The same ruling for `r` rather than typing: it is still an edit *inside*.
+
+    A leaf `UNSET` under a collection `UNSET` would be superseded exactly like
+    the typed value, so the inner reset would appear to do nothing.
+    """
+    origins = {("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}])}
+    saved = {"host_mounts": [{"host": "/a", "readonly": True}]}
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins=origins,
+        staged={("host_mounts",): st.UNSET},
+        trail=("host_mounts", 0),
+        index=2,
+    )
+    assert st.current(state).path == ("host_mounts", 0, "readonly")
+
+    got = st.reset_current(state, saved)
+
+    assert got.staged == {("host_mounts",): [{"host": "/a"}]}
+    assert st.changes(got, saved) == (YamlChange(("host_mounts",), [{"host": "/a"}]),)
+
+
+def test_a_pending_reset_of_a_collection_is_cancelled_by_adding_an_entry_too():
+    """`n` materialises the same way `stage` does — one rule, not two."""
+    state = _staged(staged={("host_mounts",): st.UNSET})
+
+    got, crumb = st.add_entry(state, COLLECTION)
+
+    assert crumb == 2
+    assert got.staged == {("host_mounts",): [{"host": "/a"}, {"host": "/b"}, {}]}
+
+
+def test_resetting_a_collection_and_leaving_it_alone_still_deletes_it():
+    """The cancellation is not a refusal: an untouched pending reset still saves."""
+    state = st.set_query(_staged(staged={}), "host_mounts")
+
+    state = st.reset_current(state, SAVED)
+
+    assert st.changes(state, SAVED) == (YamlChange(("host_mounts",), DELETE),)
+
+
+def test_staging_where_the_ancestor_has_no_room_raises_instead_of_losing_it():
+    """`_plant` failing must be loud. Falling back to the bare leaf would
+    rebuild the forbidden pair and drop the edit at save time in silence.
+
+    Reachable here with a list too short for the index — the index addresses an
+    entry that is not there, and inventing one would shift the rest.
+    """
+    state = _staged(staged={("host_mounts",): []})
+
+    with pytest.raises(ValueError, match=r"host_mounts\.0\.host"):
+        st.stage(state, ("host_mounts", 0, "host"), "/x")
+
+
+def test_staging_under_a_scalar_ancestor_raises_too():
+    """`_materialised` returns `None` for a value that is neither list nor map."""
+    state = _staged(staged={("host_mounts",): "not a collection"})
+
+    with pytest.raises(ValueError, match="host_mounts"):
+        st.stage(state, ("host_mounts", 0, "host"), "/x")
+
+
+def test_resetting_under_a_broken_ancestor_is_a_no_op_not_a_raise():
+    """Asymmetric with `stage` on purpose: `r` is a keystroke on whatever the
+    cursor is on, and a hand-broken file must not crash the TUI. Nothing is
+    staged, so the invariant holds either way."""
+    state = st.EditorState(
+        layer="repo",
+        specs=SPECS,
+        origins={("host_mounts",): Origin("repo", [{"host": "/a"}])},
+        staged={("host_mounts",): "not a collection"},
+        trail=("host_mounts", 0),
+        index=2,
+    )
+
+    assert st.reset_current(state, SAVED) == state
