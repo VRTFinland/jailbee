@@ -122,7 +122,9 @@ def open_ide(cfg: Config, incus: Incus, container: str, app: str) -> None:
     from jailbee.lifecycle import container_repo_dir
 
     try:
-        launcher_argv = resolve_launcher(incus, container, app)
+        launcher_argv = resolve_launcher(
+            incus, container, app, uid=cfg.container_user.uid, gid=cfg.container_user.gid
+        )
         result = launcher_argv[0]
     except ValueError as e:
         error(str(e))

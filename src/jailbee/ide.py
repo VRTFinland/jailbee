@@ -26,7 +26,7 @@ Resolved once at import time so the two cannot drift.
 """
 
 
-def resolve_launcher(incus: Incus, container: str, app: str) -> list[str]:
+def resolve_launcher(incus: Incus, container: str, app: str, uid: int, gid: int) -> list[str]:
     """The container-side path to `app`'s launcher, as a one-element argv."""
     if app not in SUPPORTED_LAUNCHERS:
         supported = ", ".join(sorted(SUPPORTED_LAUNCHERS))
@@ -34,7 +34,7 @@ def resolve_launcher(incus: Incus, container: str, app: str) -> list[str]:
     find_cmd = (
         f"find /opt/jetbrains-toolbox/apps -maxdepth 4 -type f -name '{app}' -executable | head -1"
     )
-    found = incus.exec(container, ["bash", "-c", find_cmd]).strip()
+    found = incus.exec(container, ["bash", "-c", find_cmd], uid=uid, gid=gid).strip()
     if not found:
         raise ValueError(f"No {app} launcher found in /opt/jetbrains-toolbox/apps")
     return [found]
@@ -45,6 +45,8 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
     if not cfg.jetbrains.enabled:
         return []
     app = cfg.jetbrains.ide
+    uid = cfg.container_user.uid
+    gid = cfg.container_user.gid
     return [
         AppSpec(
             name="ide",
@@ -54,6 +56,8 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
             autostart=cfg.jetbrains.autostart,
             source="builtin",
             description=f"JetBrains {app}",
-            resolve_command=lambda incus, container: resolve_launcher(incus, container, app),
+            resolve_command=lambda incus, container: resolve_launcher(
+                incus, container, app, uid=uid, gid=gid
+            ),
         )
     ]

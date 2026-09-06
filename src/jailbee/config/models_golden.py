@@ -291,8 +291,8 @@ class Golden(BaseModel):
 # Supported JetBrains Toolbox launcher names. The Toolbox lays each app out as
 # /opt/jetbrains-toolbox/apps/<id>/bin/<launcher>, where the launcher binary
 # uses the IDE's short name (e.g. `pycharm` for pycharm-professional, `idea`
-# for intellij-idea-ultimate, `studio` for android-studio). gui.open_ide() uses
-# this value directly as the `find -name` pattern.
+# for intellij-idea-ultimate, `studio` for android-studio). ide.resolve_launcher()
+# uses this value directly as the `find -name` pattern.
 IdeName = Literal[
     "idea",
     "webstorm",
