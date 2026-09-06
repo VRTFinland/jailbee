@@ -34,18 +34,18 @@ from prompt_toolkit.widgets import TextArea
 
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import lookup, raw_for, validate_entry
+from jailbee.config_edit.layers import lookup, validate_entry
 from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from prompt_toolkit.formatted_text import StyleAndTextTuples
     from prompt_toolkit.input import Input
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
     from prompt_toolkit.output import Output
 
-    from jailbee.config_edit.layers import LayerName, LayerSet, Origin
+    from jailbee.config_edit.layers import LayerName, LayerSet
     from jailbee.config_edit.save import SavePlan, WritePolicy
     from jailbee.config_edit.schema import FieldSpec
     from jailbee.config_writer import KeyPath
@@ -209,7 +209,7 @@ class Editor:
             return
         view = st.screen(self.state)
         if view.kind == "entry" and view.collection is not None:
-            error = validate_entry(view.collection, st.effective(self.state, view.entry_path))
+            error = validate_entry(view.collection, st.own(self.state, view.entry_path))
             if error is not None and not self.message.startswith(_ENTRY_INVALID):
                 self.notice(f"{_ENTRY_INVALID}{error}", style="class:error")
                 return
@@ -357,7 +357,7 @@ class Editor:
         discarding = any(
             len(p) > len(spec.path) and p[: len(spec.path)] == spec.path for p in self.state.staged
         )
-        self.state = st.reset_current(self.state, raw_for(self.layer_set, self.state.layer))
+        self.state = st.reset_current(self.state)
         if discarding:
             self.notice(f"Discarded pending edits inside {dotted(spec.path)}.")
 
@@ -457,7 +457,7 @@ class Editor:
             # not "as if `n` had never been pressed". Drop the staged key
             # outright in that case so a layer with nothing to begin with
             # ends up with nothing staged, not an empty one.
-            present, _ = lookup(raw_for(self.layer_set, self.state.layer), spec.path)
+            present, _ = lookup(self.state.layer_raw, spec.path)
             if not present and self.state.staged.get(spec.path) == {}:
                 staged = dict(self.state.staged)
                 del staged[spec.path]
@@ -492,7 +492,11 @@ class Editor:
                     style="class:error",
                 )
                 return
-            current = st.effective(self.state, prompt.spec.path)
+            # `own`, not `effective`: this map is about to be staged back
+            # into the open layer, so it must start from that layer's own
+            # value. Seeding it from the merged one would copy another
+            # layer's tokens into this file.
+            current = st.own(self.state, prompt.spec.path)
             updated = dict(current) if isinstance(current, dict) else {}
             updated[prompt.secret_key] = token
             self.state = st.stage(self.state, prompt.spec.path, updated)
@@ -524,7 +528,7 @@ class Editor:
                 # fill it in — there is no entry form to descend into, and
                 # the placeholder is never shown (`cancel_prompt` removes it
                 # again if that second prompt is abandoned).
-                current = st.effective(self.state, spec.path)
+                current = st.own(self.state, spec.path)
                 updated = dict(current) if isinstance(current, dict) else {}
                 updated[key] = ""
                 self.state = st.stage(self.state, spec.path, updated)
@@ -599,10 +603,10 @@ class Editor:
         3.5's last line of defence — `validate` sees the mapping, never the
         text). Every one of them keeps the session and the staged edits alive.
         """
-        from jailbee.config_edit.layers import raw_for, validate
+        from jailbee.config_edit.layers import validate
         from jailbee.config_edit.save import RenderedYamlError, build_plan
 
-        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
+        edits = st.changes(self.state)
         if not edits:
             self.notice(nothing_staged)
             return None
@@ -646,13 +650,14 @@ class Editor:
         flag survive: the user's place in a tree of eighty-odd fields is
         expensive to find again.
         """
-        from jailbee.config_edit.layers import read_layers, resolve
+        from jailbee.config_edit.layers import raw_for, read_layers, resolve
 
         self.layer_set = read_layers(self.layer_set.repo_path, self.layer_set.global_path)
         fresh = st.open_editor(
             layer=self.state.layer,
             specs=self.state.specs,
             origins=resolve(self.state.specs, self.layer_set),
+            layer_raw=raw_for(self.layer_set, self.state.layer),
         )
         self.state = replace(
             fresh,
@@ -675,9 +680,7 @@ class Editor:
         self.diff_open = False
 
     def dirty(self) -> bool:
-        from jailbee.config_edit.layers import raw_for
-
-        return st.is_dirty(self.state, raw_for(self.layer_set, self.state.layer))
+        return st.is_dirty(self.state)
 
 
 def run_editor(
@@ -685,20 +688,30 @@ def run_editor(
     layer: LayerName,
     layer_set: LayerSet,
     specs: Sequence[FieldSpec],
-    origins: Mapping[KeyPath, Origin],
     policy: WritePolicy,
     input: Input | None = None,
     output: Output | None = None,
 ) -> int:
     """Run the editor until the user quits. Returns a process exit code.
 
+    Origins and the open layer's raw mapping are both derived from `layer_set`
+    here rather than taken as arguments, so a caller cannot hand the session an
+    `origins` that describes one set of layers and a file that is another.
+
     `input`/`output` exist for the tests, which drive a real `Application`
     through `create_pipe_input()` and a `DummyOutput` — the same idiom
     `tests/test_tui.py` uses for the forked questionary checkbox.
     """
+    from jailbee.config_edit.layers import raw_for, resolve
+
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer=layer, specs=specs, origins=origins),
+        state=st.open_editor(
+            layer=layer,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, layer),
+        ),
         policy=policy,
     )
     application = _build_application(editor, input=input, output=output)

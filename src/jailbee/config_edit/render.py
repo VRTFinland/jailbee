@@ -21,15 +21,15 @@ from typing import TYPE_CHECKING, Final
 
 from prompt_toolkit.styles import Style
 
-from jailbee.config_edit.layers import disabled_reason, inherited_entries, lookup, raw_for
+from jailbee.config_edit.layers import disabled_reason, inherited_entries, lookup
 from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 from jailbee.config_edit.state import (
     UNSET,
     changes,
     current,
-    effective,
     entries,
     entry_origin,
+    own,
     screen,
     sections,
     visible_specs,
@@ -129,12 +129,12 @@ def edit_block(spec: FieldSpec, layer: LayerName) -> str | None:
     return None
 
 
-def _pending(state: EditorState, layer_set: LayerSet) -> frozenset[KeyPath]:
+def _pending(state: EditorState) -> frozenset[KeyPath]:
     """Paths whose staged value would actually alter the file."""
-    return frozenset(c.path for c in changes(state, raw_for(layer_set, state.layer)))
+    return frozenset(c.path for c in changes(state))
 
 
-def _entry_pending(state: EditorState, layer_set: LayerSet, spec: FieldSpec) -> bool:
+def _entry_pending(state: EditorState, spec: FieldSpec) -> bool:
     """Whether one entry field differs from what the open layer's file holds.
 
     `_pending` is `changes()`'s own paths, and `changes()` folds a leaf to its
@@ -148,14 +148,19 @@ def _entry_pending(state: EditorState, layer_set: LayerSet, spec: FieldSpec) -> 
 
     This asks the same question directly, at leaf granularity, against the
     open layer's raw file rather than against `changes()`'s folded output —
-    `effective` already resolves the nearest staged ancestor (materialised or
-    not) the same way the screen does, so comparing it to what is actually on
-    disk at this exact path is enough; no separate "is this row inside a
-    staged collection" case is needed.
+    `own` already resolves the nearest staged ancestor (materialised or not)
+    the same way the screen does, so comparing it to what is actually on disk
+    at this exact path is enough; no separate "is this row inside a staged
+    collection" case is needed.
+
+    `own`, not `effective`: an entry only ever belongs to the open layer
+    (`state.entries` reports no other), and `effective` would answer from
+    `state.origins` — which resolves the repo layer first whichever layer is
+    open, so a global-layer session would compare against a repo entry and
+    mark every row of a global entry modified.
     """
-    raw = raw_for(layer_set, state.layer)
-    present, saved = lookup(raw, spec.path)
-    return effective(state, spec.path) != (saved if present else None)
+    present, saved = lookup(state.layer_raw, spec.path)
+    return own(state, spec.path) != (saved if present else None)
 
 
 def _row_name(state: EditorState, spec: FieldSpec) -> str:
@@ -178,7 +183,7 @@ def _staged_suffix(state: EditorState, spec: FieldSpec) -> str:
 def title_bar(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
     """Which file is open, how deep the trail has gone, and what is pending."""
     path = layer_set.repo_path if state.layer == "repo" else layer_set.global_path
-    count = len(changes(state, raw_for(layer_set, state.layer)))
+    count = len(changes(state))
     trail = " ▸ ".join(str(crumb) for crumb in state.trail[1:])
     where = f"   {state.trail[0]} ▸ {trail}" if len(state.trail) > 1 else ""
     return [
@@ -218,7 +223,7 @@ def section_pane(state: EditorState) -> Pane:
     return Pane(fragments, row)
 
 
-def field_pane(state: EditorState, layer_set: LayerSet) -> Pane:
+def field_pane(state: EditorState) -> Pane:
     """The fields on screen: value as saved, origin, and any staged change.
 
     An entry screen's row reads its value and its modified-ness from
@@ -239,17 +244,16 @@ def field_pane(state: EditorState, layer_set: LayerSet) -> Pane:
         )
         return Pane([("class:dim", note)], 0)
     is_entry = screen(state).kind == "entry"
-    pending = _pending(state, layer_set)
+    pending = _pending(state)
     width = max(len(_row_name(state, spec)) for spec in rows)
     fragments: StyleAndTextTuples = []
     for i, spec in enumerate(rows):
         cursor = "▸" if i == state.index else " "
-        modified = _entry_pending(state, layer_set, spec) if is_entry else spec.path in pending
+        modified = _entry_pending(state, spec) if is_entry else spec.path in pending
         mark = "●" if modified else " "
         # No separate "as saved" to contrast against on an entry screen (an
         # entry's own row is the collection's — see `collection_pane`), so
-        # `_now` reads through `effective` there instead of a saved-layer
-        # origin.
+        # `_now` reads through `own` there instead of a saved-layer origin.
         value = format_value(spec, _now(state, spec))
         suffix = "" if is_entry else (_staged_suffix(state, spec) if modified else "")
         line = (
@@ -282,14 +286,15 @@ def _now(state: EditorState, spec: FieldSpec) -> object:
 
     An entry has no saved-layer origin of its own (`state.origins` is
     resolved once in `open_editor` and deliberately holds no entry-level
-    keys — spec 11.4), so this reads through `effective` there instead,
-    exactly as `field_pane`'s row does. Everywhere else it is the
+    keys — spec 11.4), so this reads through `own` there instead, exactly as
+    `field_pane`'s row does — the open layer's own value, since that is the
+    only layer whose entries are on screen at all. Everywhere else it is the
     saved-layer origin, falling back to the item model's default. Used by
     both `field_pane` and `help_pane` so the row and the pane beneath it
     can never show two different answers for "what is this set to".
     """
     if screen(state).kind == "entry":
-        return effective(state, spec.path)
+        return own(state, spec.path)
     origin = state.origins.get(spec.path)
     return origin.value if origin is not None else spec.default
 
@@ -297,10 +302,16 @@ def _now(state: EditorState, spec: FieldSpec) -> object:
 def collection_pane(state: EditorState, layer_set: LayerSet) -> Pane:
     """One row per entry, with the inherited ones read-only above them.
 
-    The inherited block is not addressable: `entries()` does not report it,
-    so the cursor cannot reach a row the repo layer has no way to change (spec
-    11.2). It is drawn all the same, because a list that silently showed half
-    its effective contents would be worse than one that explains the rule.
+    The inherited block is not addressable: `entries()` reports the **open
+    layer's own** entries and nothing else, so the cursor cannot reach a row
+    the repo layer has no way to change (spec 11.2). It is drawn all the same,
+    because a list that silently showed half its effective contents would be
+    worse than one that explains the rule.
+
+    The two blocks are therefore disjoint by construction, including the case
+    that used to draw every global entry twice — once dimmed here and once as
+    a cursor row — a repo config with no key of its own, where `state.origins`
+    reports global's list and `entries()` used to read it.
     """
     view = screen(state)
     spec = view.collection
@@ -331,8 +342,13 @@ def collection_pane(state: EditorState, layer_set: LayerSet) -> Pane:
 
 
 def _dig_entry(state: EditorState, spec: FieldSpec, crumb: Crumb) -> object:
-    """One entry's own value, resolved the same way its fields are: through `effective`."""
-    return effective(state, (*spec.path, crumb))
+    """One entry's own value, resolved the same way its fields are: through `own`.
+
+    `entries()` only ever hands back crumbs the open layer has, so reading
+    reading through `effective` here would answer out of whichever layer
+    `state.origins` resolved to, which need not be the one the row came from.
+    """
+    return own(state, (*spec.path, crumb))
 
 
 def _entry_summary(entry: object) -> str:
@@ -353,7 +369,7 @@ def body_pane(state: EditorState, layer_set: LayerSet) -> Pane:
     """The middle pane: entries when a collection is open, fields otherwise."""
     if screen(state).kind == "collection":
         return collection_pane(state, layer_set)
-    return field_pane(state, layer_set)
+    return field_pane(state)
 
 
 def help_pane(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:

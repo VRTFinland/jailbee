@@ -8,12 +8,13 @@ terminal.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from jailbee.config import AutostartStep, HostMount
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import Origin
+from jailbee.config_edit.layers import LayerSet, raw_for, resolve
 from jailbee.config_edit.schema import FieldKind, FieldSpec
 from jailbee.config_writer import DELETE, YamlChange
 
@@ -69,9 +70,44 @@ SPECS = (
 )
 
 
-def _open():
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    return st.open_editor(layer="repo", specs=SPECS, origins=origins)
+def _layers(repo_raw=None, global_raw=None):
+    """A `LayerSet` with no filesystem behind it — the raw mappings are the point.
+
+    `LayerSet` is a frozen dataclass of two paths and two already-parsed
+    mappings, so a test can build one without touching disk. The paths are
+    never opened here; only `layers.validate` (which no test in this module
+    calls) reads them.
+    """
+    return LayerSet(
+        repo_path=Path("repo/.jailbee/config.yaml"),
+        global_path=Path("global.yaml"),
+        repo_raw=repo_raw if repo_raw is not None else {},
+        global_raw=global_raw if global_raw is not None else {},
+    )
+
+
+def _open(repo_raw=None, *, global_raw=None, layer="repo", specs=SPECS, **kw):
+    """An editor over one `LayerSet`, so `origins` and `layer_raw` cannot disagree.
+
+    Both come from `layers.resolve`/`layers.raw_for` over the same layers
+    rather than being written out by hand. A state that pairs a hand-built
+    `origins` with an unrelated view of the open layer describes a session
+    `run_editor` cannot produce — and a fixture of exactly that shape is what
+    let a repo-layer collection screen treat global's entries as its own all
+    the way to a release.
+
+    `kw` is applied with `dataclasses.replace`, so `staged=`, `trail=` and
+    `index=` read the way they did when these tests built `EditorState`
+    directly.
+    """
+    layer_set = _layers(repo_raw, global_raw)
+    base = st.open_editor(
+        layer=layer,
+        specs=specs,
+        origins=resolve(specs, layer_set),
+        layer_raw=raw_for(layer_set, layer),
+    )
+    return replace(base, **kw) if kw else base
 
 
 def test_sections_are_the_top_level_keys_in_declaration_order():
@@ -198,21 +234,15 @@ def test_effective_prefers_a_staged_value_over_the_resolved_origin():
 
 
 def test_effective_reads_an_entry_field_out_of_the_saved_collection():
-    origins = {
-        ("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}]),
-    }
-    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+    state = _open({"host_mounts": [{"host": "/a", "readonly": True}]})
 
     assert st.effective(state, ("host_mounts", 0, "readonly")) is True
     assert st.effective(state, ("host_mounts", 0, "container")) is None
 
 
 def test_a_staged_whole_collection_wins_over_the_saved_one_for_entry_reads():
-    origins = {("host_mounts",): Origin("repo", [{"host": "/old"}])}
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    state = _open(
+        {"host_mounts": [{"host": "/old"}]},
         staged={("host_mounts",): [{"host": "/new"}]},
     )
 
@@ -229,11 +259,8 @@ def test_a_staged_entry_field_wins_over_the_saved_collection_it_sits_in():
     leaf into a staged ancestor instead of letting the two coexist, which the
     next test covers.
     """
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    state = _open(
+        {"host_mounts": [{"host": "/a"}]},
         staged={("host_mounts", 0, "host"): "/edited"},
     )
 
@@ -247,11 +274,8 @@ def test_staging_a_field_under_a_staged_collection_folds_it_into_the_collection(
     left standing here would be silently discarded at save time while
     `effective` went on showing it. `stage` writes into the collection instead.
     """
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    state = _open(
+        {"host_mounts": [{"host": "/a"}]},
         staged={("host_mounts",): [{"host": "/a"}]},
     )
 
@@ -269,11 +293,8 @@ def test_folding_a_field_in_does_not_mutate_the_state_it_came_from():
     every earlier state holds — including the one the quit confirmation
     compares against.
     """
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
-    before = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    before = _open(
+        {"host_mounts": [{"host": "/a"}]},
         staged={("host_mounts",): [{"host": "/a"}]},
     )
 
@@ -288,18 +309,15 @@ def test_resetting_a_field_under_a_staged_collection_removes_it_from_the_entry()
     A staged `UNSET` leaf would sit under a staged ancestor and be dropped as
     superseded, so the reset would appear to do nothing at all.
     """
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}])}
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    state = _open(
+        {"host_mounts": [{"host": "/a", "readonly": True}]},
         staged={("host_mounts",): [{"host": "/a", "readonly": True}]},
         trail=("host_mounts", 0),
         index=2,
     )
     assert st.current(state).path == ("host_mounts", 0, "readonly")
 
-    got = st.reset_current(state, {"host_mounts": [{"host": "/a", "readonly": True}]})
+    got = st.reset_current(state)
 
     assert got.staged[("host_mounts",)] == [{"host": "/a"}]
     assert ("host_mounts", 0, "readonly") not in got.staged
@@ -307,8 +325,7 @@ def test_resetting_a_field_under_a_staged_collection_removes_it_from_the_entry()
 
 
 def test_entry_origin_says_set_only_when_the_key_is_in_the_entry():
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}])}
-    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+    state = _open({"host_mounts": [{"host": "/a"}]})
 
     assert st.entry_origin(state, ("host_mounts", 0, "host")) == "set"
     assert st.entry_origin(state, ("host_mounts", 0, "readonly")) == "default"
@@ -332,17 +349,15 @@ def test_changes_drops_a_staged_value_equal_to_what_the_file_holds():
 
     Toggling a value and toggling it back must produce no diff at all.
     """
-    raw = {"gpg": {"enabled": False}}
-    got = st.stage(_open(), ("gpg", "enabled"), False)
-    assert st.changes(got, raw) == ()
-    assert st.is_dirty(got, raw) is False
+    got = st.stage(_open({"gpg": {"enabled": False}}), ("gpg", "enabled"), False)
+    assert st.changes(got) == ()
+    assert st.is_dirty(got) is False
 
 
 def test_changes_emits_a_real_edit():
-    raw = {"gpg": {"enabled": False}}
-    got = st.stage(_open(), ("gpg", "enabled"), True)
-    assert st.changes(got, raw) == (YamlChange(("gpg", "enabled"), True),)
-    assert st.is_dirty(got, raw) is True
+    got = st.stage(_open({"gpg": {"enabled": False}}), ("gpg", "enabled"), True)
+    assert st.changes(got) == (YamlChange(("gpg", "enabled"), True),)
+    assert st.is_dirty(got) is True
 
 
 def test_reset_deletes_the_key_from_this_layer():
@@ -351,32 +366,28 @@ def test_reset_deletes_the_key_from_this_layer():
     A written-out default freezes at today's value; an inherited one keeps
     following jailbee's own.
     """
-    raw = {"gpg": {"enabled": True}}
-    got = st.toggle_show_all(st.enter_crumb(_open(), "gpg"))
-    got = st.reset_current(got, raw)
-    assert st.changes(got, raw) == (YamlChange(("gpg", "enabled"), DELETE),)
+    got = st.toggle_show_all(st.enter_crumb(_open({"gpg": {"enabled": True}}), "gpg"))
+    got = st.reset_current(got)
+    assert st.changes(got) == (YamlChange(("gpg", "enabled"), DELETE),)
 
 
 def test_reset_on_an_inherited_key_stages_nothing():
     """The key is not in this layer, so deleting it would be a no-op diff."""
-    raw: dict[str, object] = {}
     got = st.toggle_show_all(st.enter_crumb(_open(), "gpg"))
-    got = st.reset_current(got, raw)
-    assert st.changes(got, raw) == ()
+    got = st.reset_current(got)
+    assert st.changes(got) == ()
 
 
 def test_reset_discards_a_staged_edit_to_the_same_field():
-    raw: dict[str, object] = {}
     got = st.stage(_open(), ("gpg", "enabled"), True)
     got = st.toggle_show_all(st.enter_crumb(got, "gpg"))
-    assert st.changes(st.reset_current(got, raw), raw) == ()
+    assert st.changes(st.reset_current(got)) == ()
 
 
 def test_changes_are_ordered_by_path_so_a_save_is_reproducible():
-    raw: dict[str, object] = {}
     got = st.stage(_open(), ("ssh", "enabled"), True)
     got = st.stage(got, ("gpg", "enabled"), True)
-    assert [c.path for c in st.changes(got, raw)] == [
+    assert [c.path for c in st.changes(got)] == [
         ("gpg", "enabled"),
         ("ssh", "enabled"),
     ]
@@ -384,9 +395,8 @@ def test_changes_are_ordered_by_path_so_a_save_is_reproducible():
 
 def test_an_explicit_null_is_a_real_change_not_a_reset():
     """`chrome.url: null` must reach the file as null, not as a deletion."""
-    raw: dict[str, object] = {}
     got = st.stage(_open(), ("chrome", "url"), None)
-    assert st.changes(got, raw) == (YamlChange(("chrome", "url"), None),)
+    assert st.changes(got) == (YamlChange(("chrome", "url"), None),)
 
 
 def test_a_top_level_collection_is_its_own_screen_one_step_in():
@@ -551,14 +561,13 @@ def test_an_entry_of_a_nested_collection_takes_three_crumbs():
 # -- adding, deleting and reordering entries ------------------------------
 
 
-def _staged(**kw):
-    """A state whose repo layer already holds two host mounts."""
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a"}, {"host": "/b"}])}
-    return st.EditorState(layer="repo", specs=SPECS, origins=origins, **kw)
-
-
 SAVED = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
-"""The layer file `_staged` describes, for the `changes` calls below."""
+"""The repo layer's file for the fixtures below."""
+
+
+def _staged(**kw):
+    """A state whose repo layer already holds the two host mounts in `SAVED`."""
+    return _open(SAVED, **kw)
 
 
 def test_a_new_list_entry_is_an_empty_mapping_at_the_end():
@@ -571,9 +580,8 @@ def test_a_new_list_entry_is_an_empty_mapping_at_the_end():
 
 def test_a_new_map_entry_needs_a_key_and_a_list_entry_refuses_one():
     """A map has no next index to invent, so the caller must name the key."""
-    origins = {("agents",): Origin("repo", {"claude": {}})}
     spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
-    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+    state = _open({"agents": {"claude": {}}}, specs=(spec,))
 
     got, crumb = st.add_entry(state, spec, "codex")
 
@@ -595,9 +603,8 @@ def test_deleting_a_crumb_that_addresses_nothing_is_a_no_op():
 
 
 def test_deleting_a_map_entry_removes_that_key():
-    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
     spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
-    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+    state = _open({"agents": {"claude": {}, "codex": {}}}, specs=(spec,))
 
     got = st.delete_entry(state, spec, "codex")
 
@@ -618,9 +625,8 @@ def test_moving_past_either_end_is_a_no_op():
 
 
 def test_a_map_has_no_order_so_moving_one_of_its_entries_does_nothing():
-    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
     spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
-    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+    state = _open({"agents": {"claude": {}, "codex": {}}}, specs=(spec,))
 
     assert st.move_entry(state, spec, 0, 1) == state
 
@@ -639,7 +645,7 @@ def test_a_structural_change_carries_a_staged_field_along_with_its_entry():
     state = st.delete_entry(state, COLLECTION, 0)
 
     assert ("host_mounts", 1, "host") not in state.staged
-    got = st.changes(state, SAVED)
+    got = st.changes(state)
     assert [c.path for c in got] == [("host_mounts",)]
     assert got[0].value == [{"host": "/edited"}]
 
@@ -656,7 +662,7 @@ def test_filling_in_a_new_entry_after_adding_it_reaches_the_save():
     state = st.stage(state, ("host_mounts", crumb, "host"), "/new")
     state = st.stage(state, ("host_mounts", crumb, "container"), "/in")
 
-    got = st.changes(state, SAVED)
+    got = st.changes(state)
 
     assert [c.path for c in got] == [("host_mounts",)]
     assert got[0].value == [
@@ -677,7 +683,7 @@ def test_adding_an_entry_keeps_an_edit_made_before_it():
     state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/edited")
     state, _ = st.add_entry(state, COLLECTION)
 
-    got = st.changes(state, SAVED)
+    got = st.changes(state)
 
     assert [c.path for c in got] == [("host_mounts",)]
     assert got[0].value == [{"host": "/edited"}, {"host": "/b"}, {}]
@@ -692,43 +698,43 @@ def test_a_reset_made_before_a_structural_change_survives_it():
     assert state.staged[("host_mounts",)] == [{"host": "/b"}, {}]
 
 
-def test_adding_a_shared_cache_entry_over_the_default_produces_writable_yaml():
-    """The crash `schema._default_of`'s `_to_raw` normalisation fixes,
-    followed all the way to the YAML writer.
+def test_adding_to_a_collection_this_layer_does_not_have_writes_only_the_new_entry():
+    """`n` on an untouched `shared_caches` stages `[{}]`, not the default plus it.
 
-    `shared_caches` is the schema's only collection whose default (nothing
-    saved in either layer) is non-empty: `_default_shared_caches()` returns
-    one built-in `SharedCache`. Before `_default_of` normalised it, that
-    default was a real model instance rather than a plain dict. `add_entry`
-    on the untouched collection folds `effective(state, spec.path)` — which
-    resolves straight to that default, since nothing is staged and nothing
-    saved — into the staged value (`_collection_value`/`_materialised`), so
-    `n` on a fresh `shared_caches` staged `[SharedCache(...), {}]`. `changes()`
-    reports that verbatim (a `YamlChange` is not the place to validate
-    shape), and `config_writer.patch_yaml` cannot represent a pydantic model
-    at all — `RepresenterError: cannot represent an object`. This uses the
-    real schema spec (`schema.build_specs(Config)`), not a synthetic one like
-    `COLLECTION` above, so a regression in `_default_of` would be caught here
-    even if a narrower unit test on it were wrong.
+    `shared_caches` is the schema's only collection with a non-empty default:
+    `_default_shared_caches()` returns one built-in `SharedCache`. `add_entry`
+    reads the collection through `own`, which sees the *open layer's* file and
+    nothing else — the default is not this layer's content, so `n` appends to
+    an empty list.
+
+    That is spec 4.3 applied to a collection: writing the default out would
+    freeze it at today's value, while leaving it absent keeps it following
+    jailbee's own. It is also what the screen shows — `entries()` reads the
+    same `own`, so a collection screen with no rows cannot stage a list with
+    rows in it.
+
+    `patch_yaml` runs over the result because the older behaviour folded the
+    default in as real `SharedCache` instances, which `config_writer` cannot
+    represent at all (`RepresenterError: cannot represent an object`).
+    `_default_of`'s `_to_raw` normalisation is what fixed that, and is pinned
+    directly in
+    `test_config_edit_schema.py::test_shared_caches_default_is_plain_data_not_model_instances`;
+    this keeps the writer on the path in case any value ever reaches it again.
     """
     from jailbee.config import Config
     from jailbee.config_edit.schema import build_specs
     from jailbee.config_writer import patch_yaml
 
     spec = next(s for s in build_specs(Config) if s.path == ("shared_caches",))
-    state = st.EditorState(
-        layer="repo",
-        specs=(spec,),
-        origins={spec.path: Origin("default", spec.default)},
-        staged={},
-    )
+    state = _open(specs=(spec,))
+    assert st.entries(state, spec) == ()
 
-    state, _crumb = st.add_entry(state, spec)
-    got = st.changes(state, {})
+    state, crumb = st.add_entry(state, spec)
+    got = st.changes(state)
 
-    text = patch_yaml("", got)  # must not raise RepresenterError
-
-    assert "ssh" in text
+    assert crumb == 0
+    assert got == (YamlChange(("shared_caches",), [{}]),)
+    patch_yaml("", got)  # must not raise RepresenterError
 
 
 def test_changes_survives_an_index_and_a_key_at_the_same_depth():
@@ -743,7 +749,7 @@ def test_changes_survives_an_index_and_a_key_at_the_same_depth():
     """
     state = _staged(staged={("host_mounts", 0, "host"): "/x", ("host_mounts", "note"): "hi"})
 
-    got = st.changes(state, SAVED)
+    got = st.changes(state)
 
     assert [c.path for c in got] == [("host_mounts", 0, "host"), ("host_mounts", "note")]
 
@@ -756,16 +762,16 @@ def test_changes_orders_indices_numerically_not_as_text():
     variant of it — the obvious way to dodge the `TypeError` — would order
     these 0, 10, 2.
     """
-    state = _staged(
+    state = _open(
+        {"host_mounts": [{"host": "/a"}] * 11},
         staged={
             ("host_mounts", 0, "host"): "/x",
             ("host_mounts", 10, "host"): "/y",
             ("host_mounts", 2, "host"): "/z",
-        }
+        },
     )
-    layer_raw = {"host_mounts": [{"host": "/a"}] * 11}
 
-    got = st.changes(state, layer_raw)
+    got = st.changes(state)
 
     assert [c.path[1] for c in got] == [0, 2, 10]
 
@@ -784,13 +790,12 @@ def test_changes_drops_a_leaf_that_somehow_shares_staged_with_an_ancestor():
         }
     )
 
-    assert [c.path for c in st.changes(state, SAVED)] == [("host_mounts",)]
+    assert [c.path for c in st.changes(state)] == [("host_mounts",)]
 
 
 def test_entries_reports_map_keys_in_order():
-    origins = {("agents",): Origin("repo", {"claude": {}, "codex": {}})}
     spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
-    state = st.EditorState(layer="repo", specs=(spec,), origins=origins, staged={})
+    state = _open({"agents": {"claude": {}, "codex": {}}}, specs=(spec,))
 
     assert st.entries(state, spec) == ("claude", "codex")
 
@@ -831,14 +836,14 @@ def test_typing_into_an_entry_cancels_a_pending_reset_of_its_collection():
     state = st.set_query(_staged(staged={}), "host_mounts")
     assert st.current(state) is COLLECTION
 
-    state = st.reset_current(state, SAVED)
+    state = st.reset_current(state)
     assert state.staged == {("host_mounts",): st.UNSET}
 
     state = st.enter_crumb(st.enter_crumb(state, "host_mounts"), 0)
     state = st.stage(state, ("host_mounts", 0, "host"), "/typed")
 
     assert st.effective(state, ("host_mounts", 0, "host")) == "/typed"
-    assert st.changes(state, SAVED) == (
+    assert st.changes(state) == (
         YamlChange(("host_mounts",), [{"host": "/typed"}, {"host": "/b"}]),
     )
 
@@ -849,22 +854,18 @@ def test_resetting_an_entry_field_cancels_a_pending_reset_of_its_collection():
     A leaf `UNSET` under a collection `UNSET` would be superseded exactly like
     the typed value, so the inner reset would appear to do nothing.
     """
-    origins = {("host_mounts",): Origin("repo", [{"host": "/a", "readonly": True}])}
-    saved = {"host_mounts": [{"host": "/a", "readonly": True}]}
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins=origins,
+    state = _open(
+        {"host_mounts": [{"host": "/a", "readonly": True}]},
         staged={("host_mounts",): st.UNSET},
         trail=("host_mounts", 0),
         index=2,
     )
     assert st.current(state).path == ("host_mounts", 0, "readonly")
 
-    got = st.reset_current(state, saved)
+    got = st.reset_current(state)
 
     assert got.staged == {("host_mounts",): [{"host": "/a"}]}
-    assert st.changes(got, saved) == (YamlChange(("host_mounts",), [{"host": "/a"}]),)
+    assert st.changes(got) == (YamlChange(("host_mounts",), [{"host": "/a"}]),)
 
 
 def test_a_pending_reset_of_a_collection_is_cancelled_by_adding_an_entry_too():
@@ -881,9 +882,9 @@ def test_resetting_a_collection_and_leaving_it_alone_still_deletes_it():
     """The cancellation is not a refusal: an untouched pending reset still saves."""
     state = st.set_query(_staged(staged={}), "host_mounts")
 
-    state = st.reset_current(state, SAVED)
+    state = st.reset_current(state)
 
-    assert st.changes(state, SAVED) == (YamlChange(("host_mounts",), DELETE),)
+    assert st.changes(state) == (YamlChange(("host_mounts",), DELETE),)
 
 
 def test_staging_where_the_ancestor_has_no_room_raises_instead_of_losing_it():
@@ -911,16 +912,14 @@ def test_resetting_under_a_broken_ancestor_is_a_no_op_not_a_raise():
     """Asymmetric with `stage` on purpose: `r` is a keystroke on whatever the
     cursor is on, and a hand-broken file must not crash the TUI. Nothing is
     staged, so the invariant holds either way."""
-    state = st.EditorState(
-        layer="repo",
-        specs=SPECS,
-        origins={("host_mounts",): Origin("repo", [{"host": "/a"}])},
+    state = _open(
+        {"host_mounts": [{"host": "/a"}]},
         staged={("host_mounts",): "not a collection"},
         trail=("host_mounts", 0),
         index=2,
     )
 
-    assert st.reset_current(state, SAVED) == state
+    assert st.reset_current(state) == state
 
 
 # -- resetting a collection that has pending edits inside it --------------
@@ -952,11 +951,11 @@ def test_resetting_a_collection_found_by_search_discards_edits_inside_it():
     state = st.set_query(state, "host_mounts")
     assert st.current(state) is COLLECTION
 
-    got = st.reset_current(state, SAVED)
+    got = st.reset_current(state)
 
     assert _prefix_pairs(got) == []
     assert got.staged == {("host_mounts",): st.UNSET}
-    assert st.changes(got, SAVED) == (YamlChange(("host_mounts",), DELETE),)
+    assert st.changes(got) == (YamlChange(("host_mounts",), DELETE),)
 
 
 def test_resetting_a_collection_reached_from_the_section_list_does_the_same():
@@ -971,20 +970,18 @@ def test_resetting_a_collection_reached_from_the_section_list_does_the_same():
     and `current` is `None` — `r` there is already a no-op. `autostart` is a
     real section, so `autostart.on_create` is a row in its field list.
     """
-    saved = {"autostart": {"on_create": [{"name": "a"}]}}
-    origins = {("autostart", "on_create"): Origin("repo", [{"name": "a"}])}
-    state = st.EditorState(layer="repo", specs=SPECS, origins=origins, staged={})
+    state = _open({"autostart": {"on_create": [{"name": "a"}]}})
     state = st.stage(state, ("autostart", "on_create", 0, "name"), "/typed")
 
     state = st.enter_crumb(state, "autostart")
     assert st.current(state) is not None
     assert st.current(state).path == ("autostart", "on_create")
 
-    got = st.reset_current(state, saved)
+    got = st.reset_current(state)
 
     assert _prefix_pairs(got) == []
     assert got.staged == {("autostart", "on_create"): st.UNSET}
-    assert st.changes(got, saved) == (YamlChange(("autostart", "on_create"), DELETE),)
+    assert st.changes(got) == (YamlChange(("autostart", "on_create"), DELETE),)
 
 
 def test_resetting_a_collection_absent_from_the_layer_drops_edits_inside_it():
@@ -993,13 +990,13 @@ def test_resetting_a_collection_absent_from_the_layer_drops_edits_inside_it():
     Leaving them would make `r` look like it did nothing while the collection
     stayed dirty.
     """
-    state = st.stage(_staged(staged={}), ("host_mounts", 0, "host"), "/typed")
+    state = st.stage(_open(staged={}), ("host_mounts", 0, "host"), "/typed")
     state = st.set_query(state, "host_mounts")
 
-    got = st.reset_current(state, {})
+    got = st.reset_current(state)
 
     assert got.staged == {}
-    assert st.changes(got, {}) == ()
+    assert st.changes(got) == ()
 
 
 def test_staging_a_whole_collection_discards_the_entry_edits_beneath_it():
@@ -1039,7 +1036,7 @@ def test_a_structural_op_on_a_collection_inside_a_staged_structure_folds_in():
     assert _prefix_pairs(got) == []
     assert crumb == 1
     assert got.staged == {("autostart",): {"on_create": [{"name": "a"}, {}]}}
-    assert st.changes(got, {}) == (YamlChange(("autostart",), {"on_create": [{"name": "a"}, {}]}),)
+    assert st.changes(got) == (YamlChange(("autostart",), {"on_create": [{"name": "a"}, {}]}),)
 
 
 def test_deleting_the_entry_the_trail_stands_in_does_not_move_the_trail():
@@ -1070,9 +1067,17 @@ there is no form its own entries could resolve to."""
 
 
 def _secret_state(value):
-    origins = {s.path: Origin("default", s.default) for s in (*SPECS, SECRET_MAP)}
-    origins[SECRET_MAP.path] = Origin("global", value)
-    return st.open_editor(layer="global", specs=(*SPECS, SECRET_MAP), origins=origins)
+    """A *global*-layer editor whose `global.yaml` holds `value` at the map.
+
+    Global, because `github` is one of `GLOBAL_ONLY_KEYS` and a repo config
+    carrying it would be rejected by the loader — so the map's entries can only
+    ever be the global layer's own.
+    """
+    return _open(
+        global_raw={"github": {"api_tokens": value}},
+        layer="global",
+        specs=(*SPECS, SECRET_MAP),
+    )
 
 
 def test_a_secret_map_resolves_to_its_own_collection_screen():
@@ -1101,3 +1106,104 @@ def test_a_secret_maps_trail_cannot_go_past_the_map_itself():
 
     assert screen.kind == "collection"
     assert screen.collection is SECRET_MAP
+
+
+# -- what a layer owns, versus what it merely inherits ---------------------
+
+
+INHERITED = {"host_mounts": [{"host": "/g1"}, {"host": "/g2"}]}
+"""A `global.yaml` with two host mounts, for the repo layer to inherit."""
+
+
+def test_a_repo_layer_collection_does_not_claim_the_entries_it_inherits():
+    """The rule spec 11.2 rests on: inherited entries are not this layer's rows.
+
+    `deep_merge` appends lists, so a repo config with no `host_mounts:` of its
+    own gets global's two whole — and has no way to express "those two, minus
+    one". `entries()` used to read `effective`, which falls through to
+    `state.origins`, and `layers.resolve` writes `Origin("global", <the global
+    list>)` for exactly this case. The collection screen therefore believed the
+    two global entries were its own: it drew them twice (once dimmed as
+    inherited, once as cursor rows) and offered `Enter`, `x` and `J`/`K` on
+    them.
+    """
+    state = _open(global_raw=INHERITED)
+
+    assert st.effective(state, ("host_mounts",)) == INHERITED["host_mounts"]  # the merged row
+    assert st.own(state, ("host_mounts",)) is None
+    assert st.entries(state, COLLECTION) == ()
+
+
+def test_deleting_an_inherited_entry_stages_nothing_at_all():
+    """`x` on an inherited row used to stage "global's list minus that one".
+
+    Which `deep_merge` then *appends* to global's list on load: the deleted
+    entry comes back and every other one is duplicated. There is no crumb to
+    delete now, so the keystroke is a no-op and `app.delete_entry_here` says so.
+    """
+    state = _open(global_raw=INHERITED)
+
+    assert st.delete_entry(state, COLLECTION, 0).staged == {}
+    assert st.move_entry(state, COLLECTION, 0, 1).staged == {}
+
+
+def test_adding_to_a_collection_the_repo_inherits_stages_only_the_new_entry():
+    """`n` must not copy global's entries into the repo file to append to them.
+
+    Folding the inherited list in would write it out verbatim — and then
+    `deep_merge` appends it to global's own, so every inherited entry lands in
+    the container twice.
+    """
+    state = _open(global_raw=INHERITED)
+
+    got, crumb = st.add_entry(state, COLLECTION)
+
+    assert crumb == 0
+    assert got.staged == {("host_mounts",): [{}]}
+
+
+def test_a_model_map_inherits_the_same_way_a_list_does():
+    """The `agents` shape of the same bug: a `MODEL_MAP` reached through
+    `effective` reported global's keys as the repo layer's own entries."""
+    spec = replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+    state = _open(global_raw={"agents": {"claude": {}}}, specs=(spec,))
+
+    assert st.entries(state, spec) == ()
+    assert st.delete_entry(state, spec, "claude").staged == {}
+
+
+def test_a_global_layer_session_reads_global_even_when_the_repo_sets_the_key():
+    """Why `state.origins` cannot answer "does the open layer have this key".
+
+    `layers.resolve` consults the repo layer first *whichever layer is open*,
+    so with both layers setting `host_mounts` a global-layer session is told
+    `source == "repo"`. Reading entries out of that origin would put the repo
+    file's entries on a screen that saves to `global.yaml`.
+    """
+    state = _open(
+        {"host_mounts": [{"host": "/repo-a"}, {"host": "/repo-b"}]},
+        global_raw={"host_mounts": [{"host": "/global-only"}]},
+        layer="global",
+    )
+
+    assert state.origins[("host_mounts",)].source == "repo"
+    assert st.entries(state, COLLECTION) == (0,)
+    assert st.own(state, ("host_mounts", 0, "host")) == "/global-only"
+    assert st.entry_origin(state, ("host_mounts", 0, "host")) == "set"
+
+
+def test_the_field_row_still_reads_through_to_global_for_an_inherited_collection():
+    """`effective` is deliberately left alone.
+
+    The `host_mounts` *row* answers "what is this set to", which for a repo
+    config with no key of its own is global's two entries, marked `(global)` —
+    the same answer every other inherited field's row gives. Only the
+    collection screen, which is about what this layer can edit, narrows to
+    `own`. The two coexisting is the point: the row says 2, the screen lists
+    none of them as editable, and the dimmed inherited block explains why.
+    """
+    state = _open(global_raw=INHERITED)
+
+    assert state.origins[("host_mounts",)].source == "global"
+    assert st.effective(state, ("host_mounts",)) == INHERITED["host_mounts"]
+    assert st.entries(state, COLLECTION) == ()

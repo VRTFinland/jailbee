@@ -45,11 +45,30 @@ class EditorState:
     `staged` holds only the paths the user has changed, keyed the same way
     `FieldSpec.path` and `YamlChange.path` are, so the three never need
     translating between each other.
+
+    `origins` and `layer_raw` are the two layer facts the session carries, both
+    resolved once when the editor opens and rebuilt together after a save
+    (`app.Editor._reload`). They answer different questions and are not
+    interchangeable:
+
+    * `origins` is the **resolved** view — repo, else global, else the
+      default, whichever layer supplies the value — and is what a field row's
+      value and origin marker show.
+    * `layer_raw` is the **open layer's own file**, and is what every question
+      about what this layer holds, and what a save would write to it, reads:
+      `own`, `changes`, `reset_current`, and through `own` every collection
+      screen and every structural edit on one (spec 11.2).
+
+    Reaching for `origins` to answer the second question is the mistake that
+    `own`'s docstring spells out: `layers.resolve` consults the repo layer
+    first whichever layer is open, so it cannot say whether *this* layer has
+    a key.
     """
 
     layer: LayerName
     specs: tuple[FieldSpec, ...]
     origins: Mapping[KeyPath, Origin]
+    layer_raw: dict[str, object]
     staged: Mapping[KeyPath, object]
     trail: tuple[Crumb, ...] = ()
     index: int = 0
@@ -96,9 +115,20 @@ def open_editor(
     layer: LayerName,
     specs: Sequence[FieldSpec],
     origins: Mapping[KeyPath, Origin],
+    layer_raw: dict[str, object],
 ) -> EditorState:
-    """A fresh editor on the section list with nothing staged."""
-    return EditorState(layer=layer, specs=tuple(specs), origins=origins, staged={})
+    """A fresh editor on the section list with nothing staged.
+
+    `origins` and `layer_raw` must describe the same `LayerSet` —
+    `layers.resolve(specs, layer_set)` and `layers.raw_for(layer_set, layer)`.
+    They are taken separately rather than derived from a `LayerSet` here so
+    this module keeps no opinion on how the layers were read, but a fixture
+    that pairs a hand-built `origins` with an unrelated `layer_raw` is
+    describing a session that cannot exist.
+    """
+    return EditorState(
+        layer=layer, specs=tuple(specs), origins=origins, layer_raw=layer_raw, staged={}
+    )
 
 
 def sections(state: EditorState) -> tuple[str, ...]:
@@ -165,12 +195,20 @@ def screen(state: EditorState) -> Screen:
 
 
 def entries(state: EditorState, spec: FieldSpec) -> tuple[Crumb, ...]:
-    """The crumbs addressing `spec`'s own entries, in document order.
+    """The crumbs addressing `spec`'s entries **in the open layer**, in order.
 
     Indices for a `MODEL_LIST`, keys for a `MODEL_MAP`, nothing for a value
     that is neither — a hand-broken file must not crash the read path.
+
+    Through `own`, not `effective`: these crumbs are what the cursor addresses
+    and what `add_entry`/`delete_entry`/`move_entry` renumber, and none of that
+    is expressible for an entry the open layer does not have. A repo layer with
+    no `host_mounts:` of its own inherits the global list whole, and `deep_merge`
+    appends — so there is no repo-layer way to say "those two, minus one" (spec
+    11.2). The inherited entries are shown, read-only and unaddressable, by
+    `render.collection_pane` from `layers.inherited_entries`.
     """
-    value = effective(state, spec.path)
+    value = own(state, spec.path)
     if isinstance(value, list):
         return tuple(range(len(value)))
     if isinstance(value, dict):
@@ -346,13 +384,33 @@ def _uproot(root: object, path: KeyPath) -> bool:
     return True
 
 
+def _staged_at(state: EditorState, path: KeyPath) -> tuple[bool, object]:
+    """`(resolved, value)` for `path` from the nearest staged ancestor, if any.
+
+    The half `effective` and `own` share: both resolve a staged value the same
+    way and differ only in what they fall through to. `resolved` is `False`
+    both when nothing at or above `path` is staged and when the nearest staged
+    ancestor is `UNSET` — a pending deletion has no value to report, so the
+    caller falls through to whatever it reads as "saved".
+    """
+    for i in range(len(path), 0, -1):
+        if path[:i] not in state.staged:
+            continue
+        staged = state.staged[path[:i]]
+        if staged is UNSET:
+            return False, None
+        present, value = _dig(staged, path[i:])
+        return True, (value if present else None)
+    return False, None
+
+
 def effective(state: EditorState, path: KeyPath) -> object:
-    """The value the user currently sees for `path`.
+    """The value a field row shows for `path`, from whichever layer supplies it.
 
     Resolved from the nearest staged ancestor, then from the saved layers. The
-    nearest-ancestor rule is what makes an entry read correct in all three
-    cases that can hold at once: the field itself staged, the whole collection
-    staged around it, or neither.
+    nearest-ancestor rule is what makes a field read correct in all three cases
+    that can hold at once: the field itself staged, a structure staged around
+    it, or neither.
 
     A staged `UNSET` at any level means "this will be deleted", so the reader
     falls through to what the layers say — the same fall-through the top-level
@@ -361,44 +419,76 @@ def effective(state: EditorState, path: KeyPath) -> object:
     `state.origins` reports the layers **as saved** (spec 10.1 option b) and is
     resolved once in `open_editor`. That is unchanged: this function walks
     *into* an origin's value, it never adds a key to the map.
+
+    Reading through to another layer is right here and only here: a repo-layer
+    `host_mounts` row with no repo key of its own should say "2 entries
+    (global)", the same way every other inherited field's row does. Every
+    question about what *this layer* holds — which is every collection screen
+    and every structural edit on one — goes through `own` instead.
     """
-    for i in range(len(path), 0, -1):
-        if path[:i] not in state.staged:
-            continue
-        staged = state.staged[path[:i]]
-        if staged is UNSET:
-            break
-        present, value = _dig(staged, path[i:])
-        return value if present else None
+    resolved, value = _staged_at(state, path)
+    if resolved:
+        return value
     for i in range(len(path), 0, -1):
         origin = state.origins.get(path[:i])
         if origin is None:
             continue
-        present, value = _dig(origin.value, path[i:])
-        return value if present else None
+        present, found = _dig(origin.value, path[i:])
+        return found if present else None
     return None
+
+
+def own(state: EditorState, path: KeyPath) -> object:
+    """The value the **open layer** has at `path`, staged edits folded in.
+
+    `effective`'s sibling; the whole difference is the fall-through. Where
+    `effective` drops into `state.origins` — repo, else global, else the
+    default — this drops into the open layer's own file and nothing else.
+    They agree whenever the open layer supplies the value and differ exactly
+    when it does not.
+
+    That distinction is spec 11.2 in one function. `deep_merge` appends lists,
+    so a repo layer with no `host_mounts:` of its own still *sees* global's
+    entries — but it cannot address one, edit one, or delete one: there is no
+    repo-layer expression for "global's list minus that entry". A collection
+    screen that listed them as its own rows would be offering exactly the
+    operations the merge cannot express, and `changes` would then emit paths
+    into a list this layer does not have (`apply_changes` raises "index out of
+    range" on the first save).
+
+    `state.origins` cannot answer this question, however tempting the
+    shortcut: `layers.resolve` consults the repo layer first whichever layer
+    is open, so a global-layer session on a key the repo config also sets
+    would be told `source == "repo"` and handed the repo's entries.
+    """
+    resolved, value = _staged_at(state, path)
+    if resolved:
+        return value
+    present, found = lookup(state.layer_raw, path)
+    return found if present else None
 
 
 def entry_origin(state: EditorState, path: KeyPath) -> Literal["set", "default"]:
     """Whether an entry actually carries this key, or falls back to the model.
 
     The three-layer marker (`repo`/`global`/`default`) does not apply inside an
-    entry: the entry as a whole came from one layer, so the only question left
-    is whether the key is written in it (spec 11.4).
+    entry: the entry as a whole came from one layer — the open one, since that
+    is the only layer whose entries `entries()` reports — so the only question
+    left is whether the key is written in it (spec 11.4).
+
+    Which is why the saved-layer half reads `state.layer_raw` rather than
+    `state.origins`: an entry that exists on this screen is this layer's, and
+    `origins` would answer for the repo layer even in a global-layer session.
     """
-    for i in range(len(path) - 1, 0, -1):
-        if path[:i] in state.staged and state.staged[path[:i]] is not UNSET:
-            present, _ = _dig(state.staged[path[:i]], path[i:])
-            return "set" if present else "default"
-    if path in state.staged and state.staged[path] is not UNSET:
-        return "set"
-    for i in range(len(path) - 1, 0, -1):
-        origin = state.origins.get(path[:i])
-        if origin is None:
+    for i in range(len(path), 0, -1):
+        if path[:i] not in state.staged:
             continue
-        present, _ = _dig(origin.value, path[i:])
+        if state.staged[path[:i]] is UNSET:
+            break
+        present, _ = _dig(state.staged[path[:i]], path[i:])
         return "set" if present else "default"
-    return "default"
+    present, _ = lookup(state.layer_raw, path)
+    return "set" if present else "default"
 
 
 def _staged_ancestor(state: EditorState, path: KeyPath) -> KeyPath | None:
@@ -408,8 +498,8 @@ def _staged_ancestor(state: EditorState, path: KeyPath) -> KeyPath | None:
     deletion has no structure to fold an edit into — but that left the exact
     pair the invariant forbids reachable from the shipped UI: search
     `host_mounts`, press `r` (staging `UNSET` at the collection), walk into the
-    entry list (which still renders, because `effective` falls through an
-    `UNSET` to what the layers say) and type into a field. The leaf and the
+    entry list (which still renders, because `own` falls through an `UNSET`
+    to what the open layer's file says) and type into a field. The leaf and the
     `UNSET` collection then sat in `staged` together, the screen showed the
     typed value, and `changes` emitted the delete alone.
 
@@ -440,22 +530,28 @@ def _sort_key(path: KeyPath) -> tuple[tuple[int, str | int], ...]:
 
 
 def _materialised(state: EditorState, prefix: KeyPath) -> list[object] | dict[str, object] | None:
-    """The structure at `prefix` as the screen shows it: copied, self-contained.
+    """The structure at `prefix` as the open layer would save it: copied, whole.
 
-    Starts from `effective`, which resolves the nearest staged ancestor and
-    falls through an `UNSET` to what the layers say — so this is literally the
-    value the user is looking at. Then every staged path strictly under
-    `prefix` is replayed onto it, because `effective` resolves from the nearest
-    staged *ancestor* and so never sees the leaves below one.
+    Starts from `own`, which resolves the nearest staged ancestor and falls
+    through an `UNSET` to what the **open layer's file** says. Then every
+    staged path strictly under `prefix` is replayed onto it, because `own`
+    resolves from the nearest staged *ancestor* and so never sees the leaves
+    below one.
+
+    `own` rather than `effective`, and that is load-bearing: every caller is
+    about to stage the result back into this layer, so an inherited entry
+    folded in here would be written into the file as if the user had typed it
+    (spec 11.2). It is also the value a collection screen draws, so the two
+    cannot disagree.
 
     `None` when the value is neither a list nor a mapping: there is nothing to
     plant into, and inventing a shape would overwrite a hand-broken file's
     content with a guess.
 
-    Copied because the caller mutates it, and both `state.staged` and
-    `state.origins` hold structures shared with every other state.
+    Copied because the caller mutates it, and `state.staged` and
+    `state.layer_raw` both hold structures shared with every other state.
     """
-    value = effective(state, prefix)
+    value = own(state, prefix)
     if not isinstance(value, (list, dict)):
         return None
     out: list[object] | dict[str, object] = deepcopy(value)
@@ -573,7 +669,7 @@ def toggle_current(state: EditorState) -> EditorState:
     return stage(state, spec.path, not bool(effective(state, spec.path)))
 
 
-def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorState:
+def reset_current(state: EditorState) -> EditorState:
     """Reset the field under the cursor to whatever it inherits.
 
     Stages a deletion rather than writing the default out (spec 4.3): a
@@ -612,7 +708,7 @@ def reset_current(state: EditorState, layer_raw: dict[str, object]) -> EditorSta
             # not crash the TUI. Nothing is staged, so the invariant holds.
             return state
         return stage(state, ancestor, pruned)
-    present, _ = lookup(layer_raw, spec.path)
+    present, _ = lookup(state.layer_raw, spec.path)
     return _stage_reset(state, spec.path, present=present)
 
 
@@ -621,8 +717,10 @@ def _collection_value(state: EditorState, spec: FieldSpec) -> list[object] | dic
 
     `_materialised` does the work — the same value `stage` folds an edit into,
     which is the value the screen is showing. The only thing added here is the
-    empty fallback for a collection whose effective value is neither a list nor
-    a mapping (absent, or a hand-broken file): `spec.kind` says which empty.
+    empty fallback for a collection the open layer's own value of which is
+    neither a list nor a mapping — absent (the repo layer inherits global's
+    entries whole and has none of its own), or a hand-broken file:
+    `spec.kind` says which empty.
 
     The fold happens **before** the caller's structural change, so an edit
     travels with its entry: editing entry 1 and then deleting entry 0 saves
@@ -740,7 +838,7 @@ def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:
     return any(path[:i] in staged for i in range(1, len(path)))
 
 
-def changes(state: EditorState, layer_raw: dict[str, object]) -> tuple[YamlChange, ...]:
+def changes(state: EditorState) -> tuple[YamlChange, ...]:
     """The staged edits that would actually alter the open layer's file.
 
     Two kinds of no-op are dropped here rather than left for the writer: a
@@ -758,7 +856,7 @@ def changes(state: EditorState, layer_raw: dict[str, object]) -> tuple[YamlChang
         if _superseded(path, state.staged):
             continue
         value = state.staged[path]
-        present, existing = lookup(layer_raw, path)
+        present, existing = lookup(state.layer_raw, path)
         if value is UNSET:
             if present:
                 out.append(YamlChange(path, DELETE))
@@ -769,6 +867,6 @@ def changes(state: EditorState, layer_raw: dict[str, object]) -> tuple[YamlChang
     return tuple(out)
 
 
-def is_dirty(state: EditorState, layer_raw: dict[str, object]) -> bool:
+def is_dirty(state: EditorState) -> bool:
     """Whether saving would write anything. Drives the quit confirmation."""
-    return bool(changes(state, layer_raw))
+    return bool(changes(state))

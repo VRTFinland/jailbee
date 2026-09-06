@@ -7,9 +7,13 @@ the flattened text, so they survive a restyling.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import yaml
+
 from jailbee.config import HostMount
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import Origin, read_layers, resolve
+from jailbee.config_edit.layers import raw_for, read_layers, resolve
 from jailbee.config_edit.render import (
     _SECRET_MASK,
     body_pane,
@@ -62,39 +66,54 @@ def _layers(tmp_path, repo_text="", global_text=""):
     return read_layers(repo, glob)
 
 
-def _state(layer="repo", origins=None, **kwargs):
+def _state(layer_set, layer="repo", specs=SPECS, **kwargs):
+    """A state over `layer_set` — the same one the renderer under test is given.
+
+    `origins` and `layer_raw` both come from it (`layers.resolve` /
+    `layers.raw_for`), so the merged view a row shows and the open layer a
+    collection screen edits can never describe two different files. That is
+    why `layer_set` is required rather than defaulted: the fixture this
+    replaced took a hand-built `origins` and let the caller hand the renderer
+    an unrelated `LayerSet` alongside it, and advertised the decoupling as a
+    feature. No test could then pair a collection with `Origin("global", ...)`,
+    which is exactly the state a repo config with no key of its own produces —
+    and the collection screen drew global's entries as its own rows all the way
+    to a release.
+    """
     base = st.open_editor(
         layer=layer,
-        specs=SPECS,
-        origins=origins or {s.path: Origin("default", s.default) for s in SPECS},
+        specs=specs,
+        origins=resolve(specs, layer_set),
+        layer_raw=raw_for(layer_set, layer),
     )
-    return st.EditorState(**{**base.__dict__, **kwargs})
+    return replace(base, **kwargs) if kwargs else base
 
 
 _HOST_MOUNTS_SPEC = next(s for s in SPECS if s.path == ("host_mounts",))
 
 
-def _collection_state(entries, layer="repo", **kwargs):
-    """A state on the `host_mounts` collection screen.
+def _mounts(entries):
+    """`host_mounts:` YAML for `entries`, for `_layers`'s `repo_text`/`global_text`."""
+    return yaml.safe_dump({"host_mounts": entries}, sort_keys=False)
 
-    `entries` is the collection's own current (unstaged) contents — what
-    `state.origins` reports it holds, independent of whatever a `LayerSet`
-    passed alongside this state says (that is only ever consulted for the
-    *inherited* block, through `layers.inherited_entries`).
+
+def _collection_state(layer_set, layer="repo", **kwargs):
+    """A state on the `host_mounts` collection screen over `layer_set`.
+
+    The collection's contents are whatever `layer_set` holds for the open
+    layer — there is no separate `entries` argument, because there is no
+    honest way for one to exist: what a collection screen lists is the open
+    layer's own value at that path and nothing else (spec 11.2).
     """
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("host_mounts",)] = Origin(layer, entries)
-    return _state(layer=layer, origins=origins, trail=("host_mounts",), **kwargs)
+    return _state(layer_set, layer=layer, trail=("host_mounts",), **kwargs)
 
 
-def _entry_state(entry, layer="repo", **kwargs):
-    """A state on entry `0` of `host_mounts`, `entry` as its own unstaged value."""
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("host_mounts",)] = Origin(layer, [entry])
-    return _state(layer=layer, origins=origins, trail=("host_mounts", 0), **kwargs)
+def _entry_state(layer_set, layer="repo", **kwargs):
+    """A state on entry `0` of `host_mounts`, over `layer_set`."""
+    return _state(layer_set, layer=layer, trail=("host_mounts", 0), **kwargs)
 
 
-def test_the_fixture_schema_yields_the_same_screen_shapes_the_real_one_does():
+def test_the_fixture_schema_yields_the_same_screen_shapes_the_real_one_does(tmp_path):
     """`host_mounts` here carries a real `item_model`, as `repo_specs()` does.
 
     Without it `state.screen` never takes its collection branch and every test
@@ -103,12 +122,13 @@ def test_the_fixture_schema_yields_the_same_screen_shapes_the_real_one_does():
     fixture itself, not on any renderer: what a collection screen *draws* is
     `collection_pane`'s, which does not exist yet.
     """
-    assert st.screen(_state(trail=("host_mounts",))).kind == "collection"
-    assert st.screen(_state(trail=("gpg",))).kind == "fields"
+    layers = _layers(tmp_path)
+    assert st.screen(_state(layers, trail=("host_mounts",))).kind == "collection"
+    assert st.screen(_state(layers, trail=("gpg",))).kind == "fields"
 
 
-def test_section_pane_lists_every_top_level_key_once():
-    pane = section_pane(_state())
+def test_section_pane_lists_every_top_level_key_once(tmp_path):
+    pane = section_pane(_state(_layers(tmp_path)))
     tokens = _text(pane.fragments).split()
     names = [tok for tok in tokens if tok not in {"▸", "·"}]
     assert names == ["gpg", "ssh", "egress_allow", "host_mounts", "github"]
@@ -116,9 +136,8 @@ def test_section_pane_lists_every_top_level_key_once():
 
 
 def test_field_pane_shows_the_saved_value_and_its_origin(tmp_path):
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("gpg", "enabled")] = Origin("global", True)
-    pane = field_pane(_state(trail=("gpg",), origins=origins), _layers(tmp_path))
+    layers = _layers(tmp_path, global_text="gpg:\n  enabled: true\n")
+    pane = field_pane(_state(layers, trail=("gpg",)))
     text = _text(pane.fragments)
     assert "enabled" in text
     assert "true" in text
@@ -127,17 +146,15 @@ def test_field_pane_shows_the_saved_value_and_its_origin(tmp_path):
 
 def test_the_default_view_hides_advanced_fields_until_a_is_pressed(tmp_path):
     layers = _layers(tmp_path)
-    assert "agent_forward" not in _text(field_pane(_state(trail=("gpg",)), layers).fragments)
-    shown = field_pane(_state(trail=("gpg",), show_all=True), layers)
+    assert "agent_forward" not in _text(field_pane(_state(layers, trail=("gpg",))).fragments)
+    shown = field_pane(_state(layers, trail=("gpg",), show_all=True))
     assert "agent_forward" in _text(shown.fragments)
 
 
 def test_a_staged_edit_is_marked_and_says_what_will_happen(tmp_path):
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: false\n")
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("gpg", "enabled")] = Origin("repo", False)
-    state = st.stage(_state(trail=("gpg",), origins=origins), ("gpg", "enabled"), True)
-    text = _text(field_pane(state, layers).fragments)
+    state = st.stage(_state(layers, trail=("gpg",)), ("gpg", "enabled"), True)
+    text = _text(field_pane(state).fragments)
     before, arrow, after = text.partition("→")
     assert arrow, "no staged edit was marked at all"
     # The value column must still show what is saved (false), not what the
@@ -151,40 +168,36 @@ def test_a_staged_edit_is_marked_and_says_what_will_happen(tmp_path):
 
 def test_a_staged_reset_says_reset_rather_than_the_old_value(tmp_path):
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: true\n")
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("gpg", "enabled")] = Origin("repo", True)
-    state = st.reset_current(_state(trail=("gpg",), origins=origins), layers.repo_raw)
-    assert "→ reset" in _text(field_pane(state, layers).fragments)
+    state = st.reset_current(_state(layers, trail=("gpg",)))
+    assert "→ reset" in _text(field_pane(state).fragments)
 
 
 def test_a_no_op_edit_is_not_marked(tmp_path):
     """The marker and the `modified` counter come from the same change list."""
     layers = _layers(tmp_path, repo_text="gpg:\n  enabled: true\n")
-    origins = {s.path: Origin("default", s.default) for s in SPECS}
-    origins[("gpg", "enabled")] = Origin("repo", True)
-    state = st.stage(_state(trail=("gpg",), origins=origins), ("gpg", "enabled"), True)
-    assert "→" not in _text(field_pane(state, layers).fragments)
+    state = st.stage(_state(layers, trail=("gpg",)), ("gpg", "enabled"), True)
+    assert "→" not in _text(field_pane(state).fragments)
     assert "modified: 0" in _text(title_bar(state, layers))
 
 
 def test_search_rows_are_named_by_their_full_path(tmp_path):
-    state = _state(query="enabled")
-    text = _text(field_pane(state, _layers(tmp_path)).fragments)
+    state = _state(_layers(tmp_path), query="enabled")
+    text = _text(field_pane(state).fragments)
     assert "gpg.enabled" in text
     assert "ssh.enabled" in text
 
 
 def test_title_bar_names_the_layer_the_file_and_the_pending_count(tmp_path):
     layers = _layers(tmp_path)
-    text = _text(title_bar(_state(), layers))
+    text = _text(title_bar(_state(layers), layers))
     assert "repo" in text
     assert str(layers.repo_path) in text
     assert "modified: 0" in text
 
 
 def test_help_pane_carries_the_description_and_the_default(tmp_path):
-    state = _state(trail=("gpg",))
-    text = _text(help_pane(state, _layers(tmp_path)))
+    layers = _layers(tmp_path)
+    text = _text(help_pane(_state(layers, trail=("gpg",)), layers))
     assert "gpg.enabled" in text
     assert "what gpg.enabled does" in text
     assert "Default" in text
@@ -197,50 +210,39 @@ def test_help_pane_shows_inherited_list_context_for_an_appending_key(tmp_path):
         repo_text="egress_allow:\n  - repo.example\n",
         global_text="egress_allow:\n  - global.example\n",
     )
-    rows = [s for s in SPECS]
-    state = st.EditorState(
-        layer="repo",
-        specs=tuple(rows),
-        origins={s.path: Origin("default", s.default) for s in rows},
-        staged={},
-        trail=("egress_allow",),
-    )
-    text = _text(help_pane(state, layers))
+    text = _text(help_pane(_state(layers, trail=("egress_allow",)), layers))
     assert "global.example" in text
 
 
 _API_TOKENS_SPEC = _spec("github.api_tokens", kind=FieldKind.STR_MAP, secret=True)
 
 
-def _secret_map_state(entries, layer="global"):
-    """A state on `github.api_tokens`'s own collection screen.
+def _secret_map_layers(tmp_path, entries):
+    """`global.yaml` holding `entries` under `github.api_tokens`.
+
+    Global, because `github` is one of `GLOBAL_ONLY_KEYS`: a repo config
+    carrying it is rejected by the loader, so the map's entries can only ever
+    belong to the global layer.
+    """
+    return _layers(
+        tmp_path, global_text=yaml.safe_dump({"github": {"api_tokens": entries}}, sort_keys=False)
+    )
+
+
+def _secret_map_state(layer_set, layer="global"):
+    """A state on `github.api_tokens`'s own collection screen over `layer_set`.
 
     A secret map has no `item_model`, so this — trail pointing at the map
     itself — is as deep as the trail can go (`state.screen`'s guard).
-    `entries` is the map's current (unstaged) `key -> token` contents.
     """
-    specs = (*SPECS, _API_TOKENS_SPEC)
-    origins = {s.path: Origin("default", s.default) for s in specs}
-    origins[_API_TOKENS_SPEC.path] = Origin(layer, entries)
-    return st.EditorState(
-        layer=layer,
-        specs=specs,
-        origins=origins,
-        staged={},
-        trail=_API_TOKENS_SPEC.path,
+    return _state(
+        layer_set, layer=layer, specs=(*SPECS, _API_TOKENS_SPEC), trail=_API_TOKENS_SPEC.path
     )
 
 
-def _egress_state(staged):
+def _egress_state(layer_set, staged):
     """A repo-layer state on the `egress_allow` section with `staged` applied."""
-    rows = list(SPECS)
-    return st.EditorState(
-        layer="repo",
-        specs=tuple(rows),
-        origins={s.path: Origin("default", s.default) for s in rows},
-        staged=staged,
-        trail=("egress_allow",),
-    )
+    return _state(layer_set, staged=staged, trail=("egress_allow",))
 
 
 def test_help_pane_warns_when_a_staged_empty_list_would_discard_the_inherited_entries(tmp_path):
@@ -256,7 +258,7 @@ def test_help_pane_warns_when_a_staged_empty_list_would_discard_the_inherited_en
         repo_text="egress_allow:\n  - repo.example\n",
         global_text="egress_allow:\n  - global.example\n",
     )
-    text = _text(help_pane(_egress_state({("egress_allow",): []}), layers))
+    text = _text(help_pane(_egress_state(layers, {("egress_allow",): []}), layers))
     assert "global.example" not in text
     assert "added to these" not in text
     assert "discards" in text
@@ -270,7 +272,7 @@ def test_help_pane_keeps_the_inherited_entries_for_a_staged_non_empty_list(tmp_p
         repo_text="egress_allow:\n  - repo.example\n",
         global_text="egress_allow:\n  - global.example\n",
     )
-    text = _text(help_pane(_egress_state({("egress_allow",): ["other.example"]}), layers))
+    text = _text(help_pane(_egress_state(layers, {("egress_allow",): ["other.example"]}), layers))
     assert "global.example" in text
     assert "discards" not in text
 
@@ -284,7 +286,7 @@ def test_help_pane_keeps_the_inherited_entries_for_a_staged_reset(tmp_path):
         repo_text="egress_allow:\n  - repo.example\n",
         global_text="egress_allow:\n  - global.example\n",
     )
-    text = _text(help_pane(_egress_state({("egress_allow",): st.UNSET}), layers))
+    text = _text(help_pane(_egress_state(layers, {("egress_allow",): st.UNSET}), layers))
     assert "global.example" in text
     assert "discards" not in text
 
@@ -306,9 +308,10 @@ def test_edit_block_lets_a_collection_through():
 
 
 def test_collection_pane_lists_entries_with_a_one_line_summary(tmp_path):
-    state = _collection_state([{"host": "/a", "container": "/data"}])
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/a", "container": "/data"}]))
+    state = _collection_state(layers)
 
-    got = collection_pane(state, _layers(tmp_path))
+    got = collection_pane(state, layers)
 
     text = _text(got.fragments)
     assert "[0]" in text
@@ -319,8 +322,12 @@ def test_collection_pane_shows_inherited_entries_above_and_marks_them(tmp_path):
     """Repo-layer lists append to the global one; the global entries cannot be
     removed here (spec 11.2), so they must not look like rows the cursor owns.
     """
-    state = _collection_state([{"host": "/mine"}], layer="repo")
-    layer_set = _layers(tmp_path, global_text="host_mounts:\n  - host: /inherited\n")
+    layer_set = _layers(
+        tmp_path,
+        repo_text=_mounts([{"host": "/mine"}]),
+        global_text="host_mounts:\n  - host: /inherited\n",
+    )
+    state = _collection_state(layer_set)
 
     text = _text(collection_pane(state, layer_set).fragments)
 
@@ -329,17 +336,18 @@ def test_collection_pane_shows_inherited_entries_above_and_marks_them(tmp_path):
 
 
 def test_collection_pane_says_so_when_the_collection_is_empty(tmp_path):
-    state = _collection_state([])
+    layers = _layers(tmp_path)
+    state = _collection_state(layers)
 
-    text = _text(collection_pane(state, _layers(tmp_path)).fragments)
+    text = _text(collection_pane(state, layers).fragments)
 
     assert "press `n`" in text
 
 
 def test_field_pane_marks_an_entry_field_that_is_not_set(tmp_path):
-    state = _entry_state({"host": "/a"})
+    state = _entry_state(_layers(tmp_path, repo_text=_mounts([{"host": "/a"}])))
 
-    text = _text(field_pane(state, _layers(tmp_path)).fragments)
+    text = _text(field_pane(state).fragments)
 
     assert "(set)" in text  # host
     assert "(default)" in text  # readonly
@@ -353,9 +361,10 @@ def test_help_pane_matches_the_row_for_an_unedited_entry_field(tmp_path):
     entry-level keys at all (spec 11.4) — so it fell back to `spec.default`
     and reported `Now: — (default)` under a row that said the opposite.
     """
-    state = _entry_state({"host": "/home/dev/data"})  # index 0 is "host"
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/home/dev/data"}]))
+    state = _entry_state(layers)  # index 0 is "host"
 
-    text = _text(help_pane(state, _layers(tmp_path)))
+    text = _text(help_pane(state, layers))
 
     assert "Now: /home/dev/data (set)" in text
 
@@ -369,10 +378,11 @@ def test_help_pane_matches_the_row_for_a_toggled_entry_field(tmp_path):
     The "Default:" half must still name the model's own default (`false`),
     not the entry's staged value — only "Now:" and the origin follow the row.
     """
-    state = _entry_state({"host": "/a"}, index=2)  # index 2 is "readonly"
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/a"}]))
+    state = _entry_state(layers, index=2)  # index 2 is "readonly"
     state = st.stage(state, (*state.trail, "readonly"), True)
 
-    text = _text(help_pane(state, _layers(tmp_path)))
+    text = _text(help_pane(state, layers))
 
     assert "Default: false" in text
     assert "Now: true (set)" in text
@@ -380,9 +390,10 @@ def test_help_pane_matches_the_row_for_a_toggled_entry_field(tmp_path):
 
 
 def test_title_bar_shows_the_trail_once_inside_a_collection(tmp_path):
-    state = _entry_state({"host": "/a"})
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/a"}]))
+    state = _entry_state(layers)
 
-    text = _text(title_bar(state, _layers(tmp_path)))
+    text = _text(title_bar(state, layers))
 
     assert "host_mounts ▸ 0" in text
 
@@ -391,9 +402,10 @@ def test_body_pane_dispatches_to_the_collection_pane_on_a_collection_screen(tmp_
     """`app.py` calls only `body_pane`; this pins that it actually reaches
     `collection_pane` rather than falling through to the (empty) field pane.
     """
-    state = _collection_state([{"host": "/a"}])
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/a"}]))
+    state = _collection_state(layers)
 
-    text = _text(body_pane(state, _layers(tmp_path)).fragments)
+    text = _text(body_pane(state, layers).fragments)
 
     assert "[0]" in text
     assert "/a" in text
@@ -415,28 +427,29 @@ def test_body_pane_draws_every_real_collection_section_the_bare_field_pane_used_
     real schema still classifies every one of them the same way.
     """
     specs = repo_specs()
-    layers = _layers(tmp_path)
-    origins = resolve(specs, layers)
-    # `shared_caches` alone ships a non-empty default (one `ssh` entry, from
-    # `_default_shared_caches`) — the other five default to `[]`/`{}`.
-    empty_by_default = ("host_mounts", "host_devices", "host_ports", "optional_mounts", "agents")
-    for section in (*empty_by_default, "shared_caches"):
-        state = st.EditorState(
-            layer="repo", specs=specs, origins=origins, staged={}, trail=(section,)
-        )
+    layers = _layers(tmp_path, repo_text=_mounts([{"host": "/a"}]))
+    sections = (
+        "host_mounts",
+        "host_devices",
+        "host_ports",
+        "optional_mounts",
+        "agents",
+        "shared_caches",
+    )
+    for section in sections:
+        state = _state(layers, specs=specs, trail=(section,))
         assert st.screen(state).kind == "collection", section
         text = _text(body_pane(state, layers).fragments)
         assert "press `a`" not in text, section
-        if section in empty_by_default:
-            assert "press `n`" in text, section
-        else:
-            # `shared_caches`'s one built-in default (`_default_shared_caches`)
-            # is now plain data (`schema._default_of`'s `_to_raw`
-            # normalisation) — the real summary, not the "(empty)" fallback
-            # a raw `SharedCache` model instance used to produce.
+        if section == "host_mounts":
             assert "[0]" in text, section
-            assert "name=ssh" in text, section
-            assert "(empty" not in text, section
+            assert "host=/a" in text, section
+        else:
+            # Every other collection is absent from this repo layer, so the
+            # screen lists nothing — `shared_caches` included, whose one
+            # built-in default belongs to no layer and so is not this layer's
+            # to edit (spec 4.3: a written-out default freezes).
+            assert "press `n`" in text, section
 
 
 def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collection(tmp_path):
@@ -450,14 +463,14 @@ def test_field_pane_marks_an_entry_field_edited_under_an_already_staged_collecti
     fails with neither row painted `class:staged` at all.
     """
     layers = _layers(tmp_path, repo_text="host_mounts:\n  - host: /old\n    container: /old\n")
-    state = _collection_state([{"host": "/old", "container": "/old"}])
+    state = _collection_state(layers)
     state, crumb = st.add_entry(state, _HOST_MOUNTS_SPEC)
     state = st.enter_crumb(state, crumb)
     entry_specs = st.screen(state).specs
     host_spec = next(s for s in entry_specs if s.path[-1] == "host")
     state = st.stage(state, host_spec.path, "/new")
 
-    pane = field_pane(state, layers)
+    pane = field_pane(state)
     staged_lines = [text for style, text in pane.fragments if style == "class:staged"]
 
     host_line = next(line for line in staged_lines if "host" in line)
@@ -498,9 +511,10 @@ def test_edit_block_lets_a_secret_map_through():
 def test_a_secret_maps_keys_are_listed_and_its_values_are_not(tmp_path):
     """The whole point of Task 9's screen: keys are listable, tokens are not
     — not even a masked stand-in sized to the real value."""
-    state = _secret_map_state({"gisgro": "ghp_realtoken", "personal": "ghp_other"})
+    layers = _secret_map_layers(tmp_path, {"gisgro": "ghp_realtoken", "personal": "ghp_other"})
+    state = _secret_map_state(layers)
 
-    text = "".join(t for _, t in collection_pane(state, _layers(tmp_path)).fragments)
+    text = "".join(t for _, t in collection_pane(state, layers).fragments)
 
     assert "gisgro" in text
     assert "personal" in text
@@ -515,9 +529,10 @@ def test_a_secret_maps_mask_is_fixed_not_sized_to_the_value(tmp_path):
     the mask must be a fixed string, and two entries with wildly different
     token lengths must render byte-identical value columns.
     """
-    state = _secret_map_state({"short": "a", "long": "a" * 97})
+    layers = _secret_map_layers(tmp_path, {"short": "a", "long": "a" * 97})
+    state = _secret_map_state(layers)
 
-    pane = collection_pane(state, _layers(tmp_path))
+    pane = collection_pane(state, layers)
     rows = [t for _, t in pane.fragments if "short" in t or "long" in t]
 
     assert len(rows) == 2
@@ -529,20 +544,49 @@ def test_a_secret_maps_mask_is_fixed_not_sized_to_the_value(tmp_path):
     assert masks[0] == masks[1] == f"{_SECRET_MASK}\n"
 
 
-def test_footer_names_every_action_the_editor_offers():
+def test_footer_names_every_action_the_editor_offers(tmp_path):
     """The footer text itself, not the bindings — `_bindings` lives in
     `app.py` and nothing here reads it. What this pins is that no action
     quietly drops out of the one line the user is told to read.
     """
-    text = _text(footer(_state()))
+    text = _text(footer(_state(_layers(tmp_path))))
     for key in ("search", "toggle", "edit", "reset", "show all", "save", "quit"):
         assert key in text
 
 
-def test_footer_names_the_collection_actions_on_a_collection_screen():
+def test_footer_names_the_collection_actions_on_a_collection_screen(tmp_path):
     """`footer` now takes the state, so it can offer different keys for a
     collection screen (`n`/`x`/`J`/`K`) instead of the section/field ones,
     which make no sense there (there is nothing to search or toggle)."""
-    text = _text(footer(_collection_state([])))
+    text = _text(footer(_collection_state(_layers(tmp_path))))
     for key in ("new", "delete", "move", "open", "save", "quit"):
         assert key in text
+
+
+# -- a repo layer that inherits a whole collection from global -------------
+
+
+_INHERITED_TEXT = "host_mounts:\n  - host: /g1\n  - host: /g2\n"
+
+
+def test_collection_pane_draws_the_inherited_entries_once_and_only_dimmed(tmp_path):
+    """The Critical: `entries()` used to report global's list as this layer's.
+
+    With no `host_mounts:` in the repo config, `layers.resolve` marks the path
+    `Origin("global", <global's list>)` — and `entries()` read that through
+    `effective`, so `/g1` and `/g2` were drawn *twice*: dimmed under "Inherited
+    from global", then again as cursor-addressable rows that `Enter`, `x` and
+    `J`/`K` all acted on. This pins the pane's own docstring: the inherited
+    block is read-only and the editable block is empty.
+    """
+    layers = _layers(tmp_path, global_text=_INHERITED_TEXT)
+    state = _collection_state(layers)
+
+    pane = collection_pane(state, layers)
+    text = _text(pane.fragments)
+
+    assert text.count("/g1") == 1
+    assert text.count("/g2") == 1
+    assert "press `n`" in text  # nothing here is this layer's to edit
+    addressable = [chunk for style, chunk, *_ in pane.fragments if style != "class:dim"]
+    assert addressable == []

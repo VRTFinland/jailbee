@@ -513,7 +513,7 @@ def config_edit_cmd(
 ) -> None:
     """Edit configuration interactively, with per-option help."""
     from jailbee.config_edit.app import run_editor
-    from jailbee.config_edit.layers import read_layers, resolve
+    from jailbee.config_edit.layers import read_layers
     from jailbee.config_edit.save import WritePolicy, configured_policy, resolve_policy
     from jailbee.config_edit.schema import global_specs, repo_specs
     from jailbee.paths import repo_config_dir_name
@@ -562,7 +562,6 @@ def config_edit_cmd(
             layer=layer,
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy=policy,
         )
     )

@@ -21,7 +21,7 @@ from prompt_toolkit.output import DummyOutput
 
 from jailbee.config_edit import render
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import read_layers, resolve
+from jailbee.config_edit.layers import raw_for, read_layers, resolve
 from jailbee.config_edit.schema import repo_specs
 
 # A miscounted keystroke sequence in this file doesn't fail an assertion — it
@@ -77,7 +77,7 @@ class _CapturingOutput(DummyOutput):
 
 def _index_of_section(specs, name: str) -> int:
     """How many `j` presses from the top of the section list reach `name`."""
-    state = st.open_editor(layer="repo", specs=specs, origins={})
+    state = st.open_editor(layer="repo", specs=specs, origins={}, layer_raw={})
     return st.sections(state).index(name)
 
 
@@ -104,7 +104,6 @@ def editor(tmp_path):
                 layer=layer,
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy=policy,
                 input=pipe,
                 output=DummyOutput(),
@@ -145,7 +144,6 @@ def rendered(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=output,
@@ -184,7 +182,12 @@ def _editor(tmp_path, *, repo=None, global_=None, layer="repo", policy="patch"):
     specs = repo_specs()
     return Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer=layer, specs=specs, origins=resolve(specs, layer_set)),
+        state=st.open_editor(
+            layer=layer,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, layer),
+        ),
         policy=policy,
     )
 
@@ -313,7 +316,6 @@ def test_the_editor_survives_a_missing_repo_config(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=DummyOutput(),
@@ -492,7 +494,6 @@ def test_an_invalid_value_is_refused_before_anything_is_written(tmp_path):
             layer="repo",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="patch",
             input=pipe,
             output=DummyOutput(),
@@ -530,7 +531,6 @@ def test_a_regenerate_over_a_commented_file_needs_a_confirmation(tmp_path):
             layer="global",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="regenerate",
             input=pipe,
             output=DummyOutput(),
@@ -571,7 +571,6 @@ def test_y_accepts_the_regenerate_confirmation_and_writes_it(tmp_path):
             layer="global",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="regenerate",
             input=pipe,
             output=DummyOutput(),
@@ -643,7 +642,7 @@ def test_the_confirmation_prints_the_comment_lines_it_would_drop(tmp_path):
     layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=(), origins={}),
+        state=st.open_editor(layer="global", specs=(), origins={}, layer_raw={}),
         policy="regenerate",
         confirm=plan,
     )
@@ -672,7 +671,7 @@ def test_the_confirmation_summarises_a_flood_of_dropped_comments(tmp_path):
     layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=(), origins={}),
+        state=st.open_editor(layer="global", specs=(), origins={}, layer_raw={}),
         policy="regenerate",
         confirm=plan,
     )
@@ -850,7 +849,6 @@ def test_a_real_escape_keypress_refuses_to_leave_a_broken_entry(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=output,
@@ -1322,7 +1320,6 @@ def test_n_x_j_k_are_wired_through_the_real_application(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=output,
@@ -1368,7 +1365,12 @@ def test_editing_scratch_config_stages_the_parsed_mapping(tmp_path):
     specs = global_specs()
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=specs, origins=resolve(specs, layer_set)),
+        state=st.open_editor(
+            layer="global",
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, "global"),
+        ),
         policy="patch",
     )
     editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
@@ -1403,7 +1405,12 @@ def test_editing_scratch_config_keeps_the_prompt_open_on_a_parse_error(tmp_path)
     specs = global_specs()
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=specs, origins=resolve(specs, layer_set)),
+        state=st.open_editor(
+            layer="global",
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, "global"),
+        ),
         policy="patch",
     )
     editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
@@ -1417,3 +1424,56 @@ def test_editing_scratch_config_keeps_the_prompt_open_on_a_parse_error(tmp_path)
     assert editor.prompt is not None
     assert "mapping" in editor.message
     assert editor.state.staged == {}
+
+
+# -- inherited collections, and the drill-down gate -----------------------
+
+
+_INHERITED = {"host_mounts": [{"host": "/g1"}, {"host": "/g2"}]}
+"""A `global.yaml` the repo layer inherits whole, having no key of its own."""
+
+
+def test_enter_on_an_inherited_collection_offers_nothing_to_open(tmp_path):
+    """The uncaught `ValueError` this used to end in, cut off at the source.
+
+    `Enter` on one of the inherited rows opened an entry form marked `(set)`;
+    editing a field staged `("host_mounts", 0, "readonly")`, and `s` then took
+    `layers.apply_changes` down a path with no `host_mounts` in the repo file at
+    all — `ValueError: host_mounts.0.readonly: index out of range`, raised
+    straight out of the key handler, killing prompt_toolkit and every staged
+    edit with it. There are no rows to open now, so the sequence cannot start.
+    """
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.enter()
+
+    assert editor.state.trail == ("host_mounts",)  # did not descend into an entry
+    assert "press `n`" in editor.message
+    assert editor.state.staged == {}
+
+
+def test_x_on_an_inherited_collection_says_there_is_nothing_to_delete(tmp_path):
+    """`x` used to stage "global's list minus that entry" as the repo's own —
+    which `deep_merge` then appends back to global's, so the deleted entry
+    survives and the others duplicate."""
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged == {}
+    assert editor.message == "Nothing to delete here."
+
+
+def test_n_on_an_inherited_collection_stages_only_the_new_entry(tmp_path):
+    """And saving it is a legal repo config, which is the end-to-end proof: the
+    old fold wrote global's two entries into the repo file, and the loader then
+    saw all four."""
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.new_entry_here()
+
+    assert editor.state.staged == {("host_mounts",): [{}]}
+    assert editor.state.trail == ("host_mounts", 0)

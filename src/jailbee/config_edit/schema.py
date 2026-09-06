@@ -224,13 +224,17 @@ def _to_raw(value: object) -> object:
     `SharedCache`) is the only case in the schema today, but every consumer
     of `FieldSpec.default` assumes the YAML-compatible shape: `state._dig`
     walks it with `isinstance(node, dict)` checks that a model instance
-    fails, `render.collection_pane`/`_entry_summary` do the same, and a
-    structural edit with nothing yet saved (`add_entry` on an empty
-    collection, i.e. `n` on a fresh `shared_caches`) folds this very default
-    into what `changes()` stages — so an unnormalised model instance can
-    reach `config_writer.patch_yaml` and blow up there
-    (`RepresenterError: cannot represent an object: SharedCache(...)`)
-    rather than anywhere closer to the cause. Fixed once, generally, here —
+    fails, and `render.collection_pane`/`_entry_summary` do the same.
+
+    A structural edit used to fold this very default into what `changes()`
+    stages (`add_entry` on an empty collection, i.e. `n` on a fresh
+    `shared_caches`), so an unnormalised model instance could reach
+    `config_writer.patch_yaml` and blow up there (`RepresenterError: cannot
+    represent an object: SharedCache(...)`) rather than anywhere closer to the
+    cause. `state.own` closed that particular route — a structural edit now
+    starts from the open layer's own value, and a default belongs to no layer —
+    but the display paths above still walk `.default` directly. Fixed once,
+    generally, here —
     a bare model, one nested in a list, one nested in a dict — rather than
     in each place that might otherwise dig into a default.
     """
