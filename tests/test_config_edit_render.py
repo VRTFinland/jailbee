@@ -7,6 +7,7 @@ the flattened text, so they survive a restyling.
 
 from __future__ import annotations
 
+from jailbee.config import HostMount
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import Origin, read_layers
 from jailbee.config_edit.render import (
@@ -42,7 +43,7 @@ SPECS = (
     _spec("gpg.agent_forward", advanced=True),
     _spec("ssh.enabled"),
     _spec("egress_allow", kind=FieldKind.STR_LIST, default=[]),
-    _spec("host_mounts", kind=FieldKind.MODEL_LIST, default=[]),
+    _spec("host_mounts", kind=FieldKind.MODEL_LIST, default=[], item_model=HostMount),
     _spec("github.enabled"),
 )
 
@@ -65,6 +66,19 @@ def _state(layer="repo", origins=None, **kwargs):
         origins=origins or {s.path: Origin("default", s.default) for s in SPECS},
     )
     return st.EditorState(**{**base.__dict__, **kwargs})
+
+
+def test_the_fixture_schema_yields_the_same_screen_shapes_the_real_one_does():
+    """`host_mounts` here carries a real `item_model`, as `repo_specs()` does.
+
+    Without it `state.screen` never takes its collection branch and every test
+    in this module would be asserting against a state shape the real schema can
+    no longer produce — passing on a fiction. This test is the guard on the
+    fixture itself, not on any renderer: what a collection screen *draws* is
+    `collection_pane`'s, which does not exist yet.
+    """
+    assert st.screen(_state(trail=("host_mounts",))).kind == "collection"
+    assert st.screen(_state(trail=("gpg",))).kind == "fields"
 
 
 def test_section_pane_lists_every_top_level_key_once():
@@ -235,7 +249,9 @@ def test_edit_block_names_a_global_only_key():
 
 
 def test_edit_block_refuses_a_model_collection_for_now():
-    reason = edit_block(_spec("host_mounts", kind=FieldKind.MODEL_LIST), "repo")
+    reason = edit_block(
+        _spec("host_mounts", kind=FieldKind.MODEL_LIST, item_model=HostMount), "repo"
+    )
     assert reason is not None
     assert "by hand" in reason
 

@@ -320,14 +320,24 @@ def test_an_entry_screen_names_the_collection_it_belongs_to():
     assert got.entry_path == ("host_mounts", 0)
 
 
-def test_an_entry_form_shows_every_field_without_show_all():
-    """`advanced` is meaningless inside an entry (spec 11.3 rule 2)."""
+def test_an_entry_form_is_not_subject_to_the_show_all_filter():
+    """`screen`'s entry branch returns its rows unfiltered — `a` changes nothing.
+
+    Named for what it actually verifies. It does *not* prove `rebase` clears
+    `advanced` (spec 11.3 rule 2): because this branch never consults
+    `show_all`, the count would still be 3 if `rebase` forgot the flag. That
+    rule is pinned where it is decided —
+    `test_config_edit_schema.py::test_rebase_prefixes_every_path_and_clears_the_advanced_filter`.
+    The two guards are independent and each needs its own test; asserting rule 2
+    from here would only fail once *both* were broken.
+    """
     state = _open()
     for crumb in ("host_mounts", 0):
         state = st.enter_crumb(state, crumb)
 
     assert state.show_all is False
     assert len(st.visible_specs(state)) == 3
+    assert len(st.visible_specs(st.toggle_show_all(state))) == 3
 
 
 def test_leaving_an_entry_returns_to_the_collection():
@@ -385,3 +395,33 @@ def test_move_is_clamped_against_a_collections_entry_list():
 
     assert st.move(state, 99).index == 1
     assert st.move(state, -1).index == 0
+
+
+def test_an_entry_of_a_nested_collection_takes_three_crumbs():
+    """The two shapes composed: a section, its collection, then one entry.
+
+    This is where `screen`'s `i += 2` would show an off-by-one — the section
+    crumb is consumed singly and the collection/entry pair together, so a walk
+    that advanced by the wrong amount would still resolve the two-crumb case
+    and fail only here.
+    """
+    state = _open()
+    for crumb in ("autostart", "on_create", 0):
+        state = st.enter_crumb(state, crumb)
+
+    got = st.screen(state)
+
+    assert got.kind == "entry"
+    assert got.collection is NESTED
+    assert got.entry_path == ("autostart", "on_create", 0)
+    assert [s.path for s in got.specs] == [
+        ("autostart", "on_create", 0, "name"),
+        ("autostart", "on_create", 0, "run"),
+        ("autostart", "on_create", 0, "network"),
+        ("autostart", "on_create", 0, "mounts"),
+        ("autostart", "on_create", 0, "env"),
+        ("autostart", "on_create", 0, "working_dir"),
+        ("autostart", "on_create", 0, "background"),
+        ("autostart", "on_create", 0, "timeout"),
+        ("autostart", "on_create", 0, "continue_on_error"),
+    ]
