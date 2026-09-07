@@ -238,13 +238,27 @@ GLOBAL_SEED: dict[str, object] = {
         "autostart": False,
         "toolbox_host_path": "~/.local/share/JetBrains/Toolbox",
     },
+    # Every browser the schema defines is spelled out, not just the enabled
+    # one: the generated file is the documentation a user reads before they
+    # know a browser exists, so an omitted block is an undiscoverable feature
+    # (the same reason `github` below ships present-but-disabled). Firefox
+    # stays off — it defaults to `source: image`, so enabling it here would
+    # promise a browser no golden image has installed yet.
     "browsers": {
+        "default": None,
         "chrome": {
             "enabled": True,
             "url": None,
             "dark_mode": False,
             "autostart": False,
             "host_path": "/opt/google/chrome",
+        },
+        "firefox": {
+            "enabled": False,
+            "source": "image",
+            "url": None,
+            "dark_mode": False,
+            "autostart": False,
         },
     },
     "terminal": {"kitty": {"enabled": "auto", "host_terminfo_path": None}},

@@ -620,3 +620,35 @@ def test_generated_global_documents_the_host_level_claude_credentials_block():
     assert info.description
     first_line = " ".join(info.description.strip().splitlines()[0].split())
     assert first_line in _flattened_comment_text(text)
+
+
+def test_global_template_documents_every_browser_the_schema_defines():
+    """Every `BrowsersConfig` field reaches the generated file.
+
+    The seed is hand-written while the *comments* come from the schema, so
+    a browser added to the model does not appear here on its own — Firefox
+    was missing for exactly that reason. Derived from the model rather than
+    hard-coding two names, so a third browser fails this instead of being
+    silently undocumented.
+    """
+    from jailbee.config.models_tools import BrowsersConfig
+
+    parsed = yaml.safe_load(render_global_template())
+    assert set(parsed["browsers"]) == set(BrowsersConfig.model_fields)
+
+
+def test_global_template_firefox_is_present_but_disabled():
+    """Same rule the `github` block follows: ship it off, ship it documented.
+
+    Firefox defaults to `source: image`, so enabling it in a fresh file would
+    promise a browser no golden image has installed yet.
+    """
+    parsed = yaml.safe_load(render_global_template())
+    assert parsed["browsers"]["firefox"]["enabled"] is False
+
+
+def test_global_template_browsers_default_is_unset():
+    """`browsers.default` ships null: with one browser enabled the command
+    resolves it implicitly, and naming a disabled browser is a config error."""
+    parsed = yaml.safe_load(render_global_template())
+    assert parsed["browsers"]["default"] is None
