@@ -871,13 +871,14 @@ PlaceStatus = Literal[
     "fast-forwarded",
     "diverged",
     "forced",
+    "checked-out",
     "failed",
 ]
 """What `place_branch` did to one `refs/heads/<branch>`.
 
 The single vocabulary for a ref-only branch placement, wherever the repo is:
 `submodules.PlacementStatus` and `sync.HostPlacementStatus` extend it with the
-one extra outcome each of them has, rather than restating these six.
+one extra outcome each of them has, rather than restating these seven.
 """
 
 
@@ -889,15 +890,32 @@ def place_branch(
     Returns `(status, old_oid)`, where `old_oid` is the ref's value before the
     call and None when the ref did not exist. Ref writes only: HEAD, the index
     and the working tree are never touched, so this is safe to run while the
-    repo sits on another branch — and, by the same token, it is *not* safe to
-    call for the branch that is currently checked out (a caller that might be
-    in that position has to handle it first; see `sync._place_host_branch`).
+    repo sits on another branch.
+
+    It is equally safe when the repo sits *on* `branch`, because a write that
+    would move the ref is then refused outright and reported as
+    `"checked-out"`. Moving `refs/heads/<branch>` under its own checkout —
+    even by a fast-forward — leaves the index and working tree describing the
+    old commit, so `git status` reports the new commit's changes as
+    uncommitted reversions and committing would revert them for real. No
+    commits are lost, which is why this is a refusal and not a failure: a
+    caller that wants the branch advanced in place has to do what a checkout
+    does (see `sync._place_host_branch`, which fast-forward-merges instead),
+    and a caller that must not touch the working tree
+    (`submodules.place_branches_from_commit`) wants exactly this refusal.
+
+    Only a *moving* write is refused: creating an absent `refs/heads/<branch>`
+    while HEAD already points at an unborn `branch`, and finding the ref
+    already at `new_oid`, behave identically on and off HEAD's branch. Both
+    are correct there and both are common.
 
     A fast-forward uses `update_ref`'s compare-and-swap form, so a commit
     written between the read below and the write loses the race instead of
     being clobbered. `force` drops the guard, which is the whole point of it.
     A non-fast-forward without `force` writes nothing and reports
-    `"diverged"`.
+    `"diverged"`. `force` does **not** override the checked-out refusal:
+    forcing a ref out from under a live index is the one destructive thing
+    this does not do.
 
     The one ladder for this, shared by the superproject and every submodule:
     two copies drift, and a drifted copy of "may I move this ref?" loses
@@ -910,6 +928,10 @@ def place_branch(
         return ("created" if ok else "failed", None)
     if old_oid == new_oid:
         return ("up-to-date", old_oid)
+    if get_current_branch(repo_root) == branch:
+        # Asked before the ancestor probe: whether the move would be a
+        # fast-forward is moot when no move is permitted at all.
+        return ("checked-out", old_oid)
     ancestor, _ = run_capture(str(repo_root), ["merge-base", "--is-ancestor", old_oid, new_oid])
     if not ancestor:
         if not force:

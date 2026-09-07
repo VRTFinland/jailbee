@@ -181,10 +181,17 @@ HostPlacementStatus = git.PlaceStatus | Literal["checked-out-ff", "refused"]
 Named `Host...` on purpose: `submodules.PlacementStatus` is a different
 vocabulary for a different question, and the two must not be confused.
 
-`git.PlaceStatus`'s six ref-only outcomes plus the two that exist only because
-the host has a working tree: `"checked-out-ff"` (the branch was HEAD's own and
-had to be advanced by a fast-forward merge) and `"refused"` (it was HEAD's own
-and could not be advanced that way).
+`git.PlaceStatus`'s seven ref-only outcomes plus the two that exist only
+because the host has a working tree: `"checked-out-ff"` (the branch was HEAD's
+own and had to be advanced by a fast-forward merge) and `"refused"` (it was
+HEAD's own and could not be advanced that way).
+
+`"checked-out"` is inherited from the shared ladder and is all but unreachable
+here — `_place_host_branch` intercepts HEAD's own branch and does the merge
+instead, so the ladder's refusal is a backstop, and reaching it means the repo
+changed under us between two reads. Kept in the vocabulary because that is
+still a possible answer, and because subtracting one literal from a composed
+alias would mean restating the other seven.
 
 Distinct from `FfStatus`, which describes a *container's* ref.
 """
@@ -1306,13 +1313,18 @@ def _place_host_branch(
     """Move `refs/heads/<target>` to `new_oid`, checked-out branch included.
 
     `git.place_branch` holds the ladder and is shared with the submodule
-    placement; this adds the one case a submodule ref never has. When `target`
-    is HEAD's own branch and already has a *different* OID, an `update-ref` is
-    illegal: it would leave the index and working tree describing a commit the
-    branch no longer points at, i.e. a repo that reports every file as changed.
-    The only legal move there is the fast-forward merge a checkout would run —
-    and if that is not possible, nothing at all. Forcing a ref out from under a
-    live index is the one destructive thing this command will not do.
+    placement; what this adds is the *recovery* for one case the ladder can
+    only refuse. When `target` is HEAD's own branch and already has a
+    *different* OID, an `update-ref` is illegal: it would leave the index and
+    working tree describing a commit the branch no longer points at, i.e. a
+    repo that reports every file as changed. `place_branch` therefore declines
+    it (`"checked-out"`), and only a caller allowed to touch the working tree
+    can do better — here, the fast-forward merge a checkout would run, and if
+    that is not possible, nothing at all. `submodules.place_branches_from_commit`
+    is *not* such a caller and takes the refusal as its answer.
+
+    Forcing a ref out from under a live index is the one destructive thing this
+    command will not do, which is why `force` does not reach this branch.
 
     The ordering matters: an absent ref and an already-current one must behave
     the same whether or not `target` is the current branch — creating
@@ -1321,6 +1333,15 @@ def _place_host_branch(
     `place_branch` and never the special case.
     """
     ref = f"refs/heads/{target}"
+    # Read twice: once here to decide the case, and again inside
+    # `place_branch`. Deliberate. The theoretical hazard is a ref created
+    # between the two reads while HEAD is on `target` — the special case below
+    # would not fire and the ladder would be asked for a moving write on the
+    # checked-out branch. Nothing here is concurrent (one process, one thread,
+    # no callbacks between the reads), and since `place_branch` grew its own
+    # checked-out refusal the ladder declines that write anyway. Passing
+    # `old_oid` down instead would put a parameter on the shared helper that
+    # only this caller could ever use.
     old_oid = git.rev_parse(cfg.repo_root, ref)
     moving_an_existing_ref = old_oid is not None and old_oid != new_oid
     if moving_an_existing_ref and git.get_current_branch(cfg.repo_root) == target:

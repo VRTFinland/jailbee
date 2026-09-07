@@ -873,13 +873,18 @@ def test_update_ref_returns_false_when_the_swap_loses(mocker, tmp_path):
     assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is False
 
 
-def _place_branch_mocks(mocker, *, old_oid, ancestor=True, wrote=True):
+def _place_branch_mocks(mocker, *, old_oid, ancestor=True, wrote=True, current="other"):
     """Mock every helper `place_branch` reaches, so no real git is invoked.
+
+    `current` is the repo's checked-out branch; the default is deliberately
+    not the branch the tests place, so only the tests that opt in reach the
+    checked-out refusal.
 
     Returns the `update_ref` and `run_capture` mocks — the two the assertions
     care about.
     """
     mocker.patch("jailbee.git.rev_parse", return_value=old_oid)
+    mocker.patch("jailbee.git.get_current_branch", return_value=current)
     run_capture = mocker.patch("jailbee.git.run_capture", return_value=(ancestor, ""))
     update_ref = mocker.patch("jailbee.git.update_ref", return_value=wrote)
     return update_ref, run_capture
@@ -939,6 +944,54 @@ def test_place_branch_forces_over_divergence_unconditionally(mocker, tmp_path):
     # A forced write cannot use the swap guard: the whole point is to move a
     # ref whose current value the caller has decided not to respect.
     update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_refuses_to_move_the_checked_out_branch(mocker, tmp_path):
+    from jailbee import git
+
+    # A clean fast-forward — refused anyway, because "x" is checked out here.
+    update_ref, run_capture = _place_branch_mocks(
+        mocker, old_oid="old", ancestor=True, current="x"
+    )
+
+    assert git.place_branch(tmp_path, "x", "new") == ("checked-out", "old")
+    # Moving the ref would leave this repo's index and working tree describing
+    # `old`, so `git status` would report `new`'s changes as uncommitted
+    # reversions and a commit would revert them for real.
+    update_ref.assert_not_called()
+    # Whether it *would* have been a fast-forward is moot when no move is allowed.
+    run_capture.assert_not_called()
+
+
+def test_place_branch_refuses_the_checked_out_branch_even_under_force(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False, current="x")
+
+    assert git.place_branch(tmp_path, "x", "new", force=True) == ("checked-out", "old")
+    # `force` overrides divergence, never a live index.
+    update_ref.assert_not_called()
+
+
+def test_place_branch_creates_an_absent_ref_head_already_points_at(mocker, tmp_path):
+    from jailbee import git
+
+    # HEAD on an unborn "x": creating the ref is correct and must not be
+    # mistaken for moving one out from under a checkout.
+    update_ref, _ = _place_branch_mocks(mocker, old_oid=None, current="x")
+
+    assert git.place_branch(tmp_path, "x", "new") == ("created", None)
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_up_to_date_is_not_a_refusal_on_the_checked_out_branch(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="new", current="x")
+
+    # A no-op is a no-op wherever HEAD is; only a *moving* write is refused.
+    assert git.place_branch(tmp_path, "x", "new") == ("up-to-date", "new")
+    update_ref.assert_not_called()
 
 
 def test_place_branch_reports_failed_when_the_write_is_refused(mocker, tmp_path):

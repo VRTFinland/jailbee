@@ -298,9 +298,14 @@ def _gitlink_at(run: GitRun, repo_dir: str, commit: str, path: str) -> str | Non
 PlacementStatus = git.PlaceStatus | Literal["unreachable"]
 """What happened to one submodule's `refs/heads/<branch>`.
 
-`git.PlaceStatus`'s six outcomes plus the one only a submodule can have:
+`git.PlaceStatus`'s seven outcomes plus the one only a submodule can have:
 `"unreachable"`, a sub-repo that is not on disk at all. Composed rather than
 restated, so the vocabularies cannot drift apart.
+
+`"checked-out"` is reachable here and matters: host submodules are *not*
+always detached — `update_submodules_on_host` deliberately puts them on
+`<branch>` — so a sub-repo already sitting on the target branch is a normal
+state, and one this module reports rather than writes.
 """
 
 
@@ -319,19 +324,31 @@ def place_branches_from_commit(
 ) -> list[SubBranchPlacement]:
     """Point every submodule's `refs/heads/<branch>` at the gitlink `commit` records.
 
-    Ref writes only: no submodule HEAD, index or working tree is touched, so
-    this is safe to run while the superproject sits on another branch. That is
-    the whole reason it exists — `update_submodules_on_host` needs the
-    superproject checked out and reads each submodule's *current HEAD* as the
-    gitlink, and both of those assumptions are exactly what the no-checkout
-    caller (a host branch placed from a container fetch, without moving the
-    working tree) lacks. `.gitmodules` is likewise read from `commit`'s blob
-    (`_gitmodules_paths_at`), never from the working tree, for the same reason.
+    Ref writes only: no submodule HEAD, index or working tree is touched. The
+    guarantee is about **both** repos, and each half is load-bearing:
 
-    Fast-forward by default; `force` overwrites a diverged branch. A sub-repo
-    that is not there on disk is reported as `"unreachable"` rather than
-    skipped — a silent skip is what made an earlier nested-submodule report
-    misdescribe a missing checkout as "detached".
+    * *The superproject* need not be checked out on `branch`, or on anything —
+      the gitlinks come from `commit`'s trees (`_gitlink_at`) and `.gitmodules`
+      from `commit`'s blob (`_gitmodules_paths_at`), never from the working
+      tree. That is the whole reason this exists:
+      `update_submodules_on_host` needs the superproject checked out and reads
+      each submodule's *current HEAD* as the gitlink, and both assumptions are
+      exactly what the no-checkout caller (a host branch placed from a
+      container fetch, without moving the working tree) lacks.
+    * *A sub-repo* keeps its own HEAD, index and working tree. Host submodules
+      are frequently sitting on a branch rather than detached —
+      `update_submodules_on_host` puts them there — so a sub-repo already
+      checked out on `branch` is a normal state, and `git.place_branch`
+      refuses to move the ref under it: the outcome is reported as
+      `"checked-out"`, not written and not merged. Advancing it would need a
+      checkout's worth of index and tree work, which this function is defined
+      not to do.
+
+    Fast-forward otherwise; `force` overwrites a diverged branch (but never a
+    checked-out one). A sub-repo that is not there on disk is reported as
+    `"unreachable"` rather than skipped — a silent skip is what made an
+    earlier nested-submodule report misdescribe a missing checkout as
+    "detached".
     """
     out: list[SubBranchPlacement] = []
 

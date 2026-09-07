@@ -763,6 +763,9 @@ def test_sync_refs_refuses_to_force_the_checked_out_branch(mocker, make_cfg, tmp
     # dirty-tree short-circuit.
     mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
     mocker.patch("jailbee.sync.git.merge_ref", side_effect=sync.git.GitError("not a ff"))
+    # Mocked although the code path must not reach it: an implementation that
+    # fell through to the ref ladder would otherwise shell out to real git.
+    mocker.patch("jailbee.sync.git.run_capture", return_value=(False, ""))
     update = mocker.patch("jailbee.sync.git.update_ref")
     mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
 
@@ -785,6 +788,7 @@ def test_sync_refs_refuses_the_checked_out_branch_when_the_tree_is_dirty(
     mocker.patch("jailbee.sync.git.rev_parse", return_value="oldsha")
     mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=True)
     merge = mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.git.run_capture", return_value=(False, ""))
     update = mocker.patch("jailbee.sync.git.update_ref")
     mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
 
@@ -804,6 +808,7 @@ def test_sync_refs_fast_forwards_the_checked_out_branch_in_place(mocker, make_cf
     mocker.patch("jailbee.sync.git.rev_parse", return_value="oldsha")
     mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
     merge = mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.git.run_capture", return_value=(False, ""))
     update = mocker.patch("jailbee.sync.git.update_ref")
     mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
 
@@ -861,7 +866,7 @@ def test_sync_refs_uses_the_pr_branch_label_as_the_target(mocker, make_cfg, tmp_
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
-    incus, _ = _sync_refs_setup(mocker, cfg)
+    incus, full = _sync_refs_setup(mocker, cfg)
     incus.config_get.return_value = "author/pr-head"
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
     mocker.patch("jailbee.sync.git.rev_parse", return_value=None)
@@ -873,6 +878,9 @@ def test_sync_refs_uses_the_pr_branch_label_as_the_target(mocker, make_cfg, tmp_
     # Same target rule as checkout_from_container, so fetch-then-switch lands
     # exactly where a checkout would have.
     assert result.target == "author/pr-head"
+    # Pin the key: a MagicMock answers every key with the same value, so
+    # without this the test would pass on a label read from the wrong one.
+    incus.config_get.assert_called_with(full, "user.jailbee.pr_branch")
 
 
 def test_sync_refs_as_name_wins_over_the_pr_branch_label(mocker, make_cfg, tmp_path):

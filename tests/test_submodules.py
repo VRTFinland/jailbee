@@ -1702,6 +1702,8 @@ def test_place_branches_from_commit_reports_divergence_without_writing(mocker, t
     )
     mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
     mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    # Detached sub-repo, so the placement is not refused for being checked out.
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
     # old is NOT an ancestor of new
     mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
     update = mocker.patch("jailbee.git.update_ref")
@@ -1720,6 +1722,7 @@ def test_place_branches_from_commit_forces_over_divergence(mocker, tmp_path):
     )
     mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
     mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
     mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
     update = mocker.patch("jailbee.git.update_ref", return_value=True)
 
@@ -1727,6 +1730,52 @@ def test_place_branches_from_commit_forces_over_divergence(mocker, tmp_path):
 
     assert result[0].status == "forced"
     update.assert_called_once_with(tmp_path / "sub", "refs/heads/x", "subsha", old_oid=None)
+
+
+def test_place_branches_from_commit_refuses_a_subrepo_on_the_target_branch(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="oldsha")
+    # Host submodules are routinely ON the branch, not detached:
+    # `update_submodules_on_host` puts them there, which is what
+    # `jailbee branch <x>` does before a fetch refreshes the same branch.
+    mocker.patch("jailbee.git.get_current_branch", return_value="x")
+    # A clean fast-forward, and still refused.
+    run_capture = mocker.patch("jailbee.git.run_capture", return_value=(True, ""))
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    # Reported, not written: moving the ref would leave the sub-repo's index
+    # and working tree describing `oldsha`, and this function is defined never
+    # to touch a submodule's HEAD, index or working tree — so it cannot fix
+    # that up the way a checkout would.
+    assert [(p.path, p.status, p.old_oid) for p in result] == [("sub", "checked-out", "oldsha")]
+    update.assert_not_called()
+    run_capture.assert_not_called()
+
+
+def test_place_branches_from_commit_refuses_a_checked_out_subrepo_under_force(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="oldsha")
+    mocker.patch("jailbee.git.get_current_branch", return_value="x")
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x", force=True)
+
+    # `--force` buys past divergence, not past a live index.
+    assert result[0].status == "checked-out"
+    update.assert_not_called()
 
 
 def test_place_branches_from_commit_reports_a_missing_subrepo_loudly(mocker, tmp_path):
