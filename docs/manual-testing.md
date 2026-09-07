@@ -509,6 +509,51 @@ Requires a container created by a pre-removal `jailbee`.
 5. `jailbee net loose feat-x` and `jailbee net strict feat-x` both succeed — proving
    the container has a recognised net profile again.
 
+## Container-scope egress reaches the bridge chain
+
+Verifies the `<repo>-container-extras` union ACL. Needs a real daemon: the
+unit suite can only assert which Incus calls are made, never that a packet
+gets out. Pick a host that is *not* in `egress_allow` (below: `example.com`)
+and a strict container.
+
+```bash
+CT=myrepo-feat                      # a strict container of this repo
+jailbee net egress add example.com:443 feat
+jailbee net egress ls feat          # → example.com:443 | container
+
+# 1. The union ACL exists and is on the bridge — this is the fix.
+incus network acl list | grep container-extras          # myrepo-container-extras
+incus network get incusbr0 security.acls | tr ',' '\n' | grep container-extras
+
+# 2. It is on NO container's NIC. Per-container isolation depends on this.
+incus config show "$CT" --expanded | grep security.acls
+# → myrepo-allowlist,myrepo-feat-extra     (no -container-extras)
+
+# 3. The destination is in BOTH nftables families. Before the fix it was
+#    only in `table bridge incus`, and that was the whole bug.
+IP=$(getent ahostsv4 example.com | head -1 | cut -d' ' -f1)
+sudo nft list table bridge incus | grep "$IP"           # was already there
+sudo nft list table inet incus | grep "$IP"             # must not be empty
+
+# 4. The packet actually gets out.
+incus exec "$CT" -- curl -4 -sS -o /dev/null -w '%{http_code}\n' \
+  "https://example.com/"
+# A `curl: (7) ... after 0 ms` here means the network chain rejected it:
+# the union ACL is missing from incusbr0's security.acls.
+
+# 5. Teardown removes it again, in the right order (Incus refuses to delete
+#    an ACL a network still references).
+jailbee net egress rm example.com:443 feat
+incus network get incusbr0 security.acls | grep -c container-extras   # 0
+incus network acl list | grep -c container-extras                     # 0
+```
+
+Also worth exercising once: a second container with a *different* override
+(the union must carry both), `jailbee net loose feat` (the container leaves
+the union), `jailbee destroy feat` (same), and `jailbee apply` on a repo
+whose containers already have overrides — that is the upgrade path, and the
+only thing that wires up a fleet created before this fix.
+
 ## `jailbee git push` smoke test
 
 > **Host-only:** this recipe cannot be exercised from inside a `jailbee shell`

@@ -113,6 +113,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
+        version=(1, 2, 3),
+        actions=frozenset({"apply"}),
+        reason=(
+            "container-scope egress grants reach incusbr0's ACL chain via a new "
+            "`<repo>-container-extras` ACL — before this they were silently rejected"
+        ),
+    ),
+    UpgradeNote(
         version=(1, 3, 0),
         actions=frozenset({"base_build"}),
         reason=(

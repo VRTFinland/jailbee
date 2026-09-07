@@ -551,10 +551,12 @@ def _bridge_acls(incus: Incus) -> list[str]:
 def attach_acl_to_bridge(incus: Incus, name: str) -> bool:
     """Add `name` to `incusbr0`'s `security.acls`. Returns True when changed.
 
-    Quiet and idempotent — the reporting variants are
-    `ensure_acl_attached_to_bridge` (the repo ACL, part of `init`/`apply`
-    output) and `egress_scope.sync_bridge_extras` (the union ACL, silent).
-    Preserves entries from other jailbee-managed repos that share the bridge.
+    Quiet and idempotent. Two callers: `ensure_acl_attached_to_bridge`, which
+    wraps this for the repo ACL and reports the outcome as part of
+    `init`/`apply` output, and `egress_scope.sync_bridge_extras`, which
+    attaches the union ACL silently — it runs on every container operation,
+    and a line per run would be noise. Preserves entries from other
+    jailbee-managed repos that share the bridge.
     """
     attached = _bridge_acls(incus)
     if name in attached:

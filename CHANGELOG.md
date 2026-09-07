@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- **`jailbee net egress add <host> <container>` actually opens the hole
+  now.** The default (container) scope reported success, stored the label,
+  wrote a correct `<container>-extra` ACL and produced correct nftables
+  rules — and the destination stayed unreachable, failing instantly with
+  `curl: (7) Could not connect`. A strict container's egress passes two
+  independent filters and both must allow the packet: the per-NIC chain in
+  `table bridge incus`, and the per-network chain `acl.incusbr0` in `table
+  inet incus`, which ends in a reject and which bridge-forwarded packets
+  traverse anyway because `bridge-nf-call-iptables=1` (the kernel default,
+  required by Docker). Only the repo ACL was ever attached to the bridge,
+  so container-scope grants were rejected at the network chain before the
+  NIC chain's allow could match. `--repo` scope was unaffected, because it
+  writes into the repo ACL. Fixed with one union ACL per repo,
+  `<repo>-container-extras`, attached to the bridge network and never to a
+  NIC — the bridge chain does not distinguish containers anyway, and
+  per-container isolation still comes from the NIC chain. Run `jailbee
+  apply` once per repo after upgrading to wire up existing containers.
+
 - **The first `jailbee new` in a scratch directory no longer dies with
   "Network ACL not found".** A scratch directory has never run
   `jailbee init`, so `jailbee new` bootstraps its profiles through
