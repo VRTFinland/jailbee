@@ -175,6 +175,41 @@ class LocalBranchUpdate:
     new_oid: str
 
 
+HostPlacementStatus = git.PlaceStatus | Literal["checked-out-ff", "refused"]
+"""What `sync_refs_from_container` did to a host branch.
+
+Named `Host...` on purpose: `submodules.PlacementStatus` is a different
+vocabulary for a different question, and the two must not be confused.
+
+`git.PlaceStatus`'s six ref-only outcomes plus the two that exist only because
+the host has a working tree: `"checked-out-ff"` (the branch was HEAD's own and
+had to be advanced by a fast-forward merge) and `"refused"` (it was HEAD's own
+and could not be advanced that way).
+
+Distinct from `FfStatus`, which describes a *container's* ref.
+"""
+
+
+@dataclass(frozen=True)
+class BranchPlacement:
+    """Where one host ref was asked to go, and what happened."""
+
+    name: str  # full ref, e.g. "refs/heads/feat/foo"
+    status: HostPlacementStatus
+    old_oid: str | None
+    new_oid: str
+
+
+@dataclass(frozen=True)
+class SyncRefsResult:
+    """Outcome of `sync_refs_from_container` — refs moved, working tree not."""
+
+    fetch: FetchResult
+    target: str
+    superproject: BranchPlacement
+    submodules: tuple[submodules.SubBranchPlacement, ...]
+
+
 @dataclass(frozen=True)
 class PushResult:
     """Outcome of `push_to_container` — transport only.
@@ -1200,6 +1235,107 @@ def _container_pr_branch(incus: Incus, full_name: str) -> str | None:
     """Return the container's external PR branch name (user.jailbee.pr_branch), or None."""
     value = incus.config_get(full_name, "user.jailbee.pr_branch")
     return value if isinstance(value, str) and value else None
+
+
+def sync_refs_from_container(
+    cfg: Config,
+    incus: Incus,
+    short: str,
+    *,
+    branch: str | None = None,
+    as_name: str | None = None,
+    force: bool = False,
+) -> SyncRefsResult:
+    """Bring container `short`'s state onto the host as refs, without a checkout.
+
+    Everything `checkout_from_container` does except moving the working tree:
+    the fetch, the submodule object transport, the host branch, and a
+    `refs/heads/<target>` in every submodule pointing at the gitlink the
+    fetched commit records. Switching to it afterwards is then a purely local
+    operation.
+
+    This is a layer *above* `fetch_from_container`, not a change to it:
+    `merge_from_container` and the pull path both call that function for pure
+    transport into `refs/jailbee/<short>/<branch>` and must keep getting
+    exactly that — a fetch that started placing host branches would move refs
+    under callers that never asked for it. What was missing is the step
+    between: after a bare fetch there is nothing to switch *to*, because the
+    host branch is absent or stale and the submodule objects are still in the
+    container.
+
+    The host branch is chosen by the same rule `checkout_from_container` uses —
+    `as_name`, else the container's PR head label, else the container's branch —
+    so fetch-then-switch lands exactly where a checkout would have; a second
+    rule here would silently split one container's history across two host
+    branch names depending on which command the user reached for.
+
+    Non-fast-forward leaves the branch alone and reports `"diverged"`; `force`
+    overwrites it, **except** when it is the checked-out branch, where the
+    result is `"refused"`: an `update-ref` there would leave the index and
+    working tree describing a commit the branch no longer points at.
+    """
+    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+
+    full_name = resolve_container_name(cfg, incus, short)
+    repo_dir = container_repo_dir(cfg, incus, full_name)
+    # Objects first: the submodule refs placed below name commits that have to
+    # already exist in the host sub-repos.
+    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+
+    target = as_name or _container_pr_branch(incus, full_name) or fetch_result.branch
+    fetched_ref = f"refs/jailbee/{short}/{fetch_result.branch}"
+    placement = _place_host_branch(
+        cfg, target=target, new_oid=fetch_result.new_oid, fetched_ref=fetched_ref, force=force
+    )
+    sub_placements = submodules.place_branches_from_commit(
+        cfg.repo_root, fetch_result.new_oid, target, force=force
+    )
+    return SyncRefsResult(
+        fetch=fetch_result,
+        target=target,
+        superproject=placement,
+        submodules=tuple(sub_placements),
+    )
+
+
+def _place_host_branch(
+    cfg: Config, *, target: str, new_oid: str, fetched_ref: str, force: bool
+) -> BranchPlacement:
+    """Move `refs/heads/<target>` to `new_oid`, checked-out branch included.
+
+    `git.place_branch` holds the ladder and is shared with the submodule
+    placement; this adds the one case a submodule ref never has. When `target`
+    is HEAD's own branch and already has a *different* OID, an `update-ref` is
+    illegal: it would leave the index and working tree describing a commit the
+    branch no longer points at, i.e. a repo that reports every file as changed.
+    The only legal move there is the fast-forward merge a checkout would run —
+    and if that is not possible, nothing at all. Forcing a ref out from under a
+    live index is the one destructive thing this command will not do.
+
+    The ordering matters: an absent ref and an already-current one must behave
+    the same whether or not `target` is the current branch — creating
+    `refs/heads/<target>` while HEAD points at an unborn `target` is both
+    correct and the common case for a fresh container — so those two reach
+    `place_branch` and never the special case.
+    """
+    ref = f"refs/heads/{target}"
+    old_oid = git.rev_parse(cfg.repo_root, ref)
+    moving_an_existing_ref = old_oid is not None and old_oid != new_oid
+    if moving_an_existing_ref and git.get_current_branch(cfg.repo_root) == target:
+        if git.host_tree_dirty(cfg.repo_root):
+            return BranchPlacement(ref, "refused", old_oid, new_oid)
+        try:
+            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+        except git.GitError:
+            # `force` cannot help here, so say "refused" rather than let the
+            # caller think a retry with --force would land it.
+            return BranchPlacement(ref, "refused" if force else "diverged", old_oid, new_oid)
+        return BranchPlacement(ref, "checked-out-ff", old_oid, new_oid)
+
+    status, placed_old = git.place_branch(cfg.repo_root, target, new_oid, force=force)
+    return BranchPlacement(ref, status, placed_old, new_oid)
 
 
 def publish_branch_from_container(
