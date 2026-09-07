@@ -1,7 +1,7 @@
 """A pipe-driven smoke test of the real Application.
 
 Deliberately thin — the interaction model is `state.py`'s and the drawing is
-`render.py`'s, both tested directly (every transition `move`, `enter_section`,
+`render.py`'s, both tested directly (every transition `move`, `enter_crumb`,
 `toggle_show_all` and friends can produce is exhaustively covered in
 `test_config_edit_state.py`). What is left here, and what nothing else can
 cover, is the wiring: that a keypress actually reaches its transition. The
@@ -13,11 +13,15 @@ also records what got painted, and assert on that.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
+from prompt_toolkit.layout.processors import ConditionalProcessor, PasswordProcessor
 from prompt_toolkit.output import DummyOutput
 
+from jailbee.config_edit import render
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import read_layers, resolve
+from jailbee.config_edit.layers import raw_for, read_layers, resolve
 from jailbee.config_edit.schema import repo_specs
 
 # A miscounted keystroke sequence in this file doesn't fail an assertion — it
@@ -73,7 +77,7 @@ class _CapturingOutput(DummyOutput):
 
 def _index_of_section(specs, name: str) -> int:
     """How many `j` presses from the top of the section list reach `name`."""
-    state = st.open_editor(layer="repo", specs=specs, origins={})
+    state = st.open_editor(layer="repo", specs=specs, origins={}, layer_raw={})
     return st.sections(state).index(name)
 
 
@@ -100,7 +104,6 @@ def editor(tmp_path):
                 layer=layer,
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy=policy,
                 input=pipe,
                 output=DummyOutput(),
@@ -141,7 +144,6 @@ def rendered(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=output,
@@ -149,6 +151,88 @@ def rendered(tmp_path):
             return output.screen_text()
 
         yield run
+
+
+def _editor(tmp_path, *, repo=None, global_=None, layer="repo", policy="patch"):
+    """Build an `Editor` directly, bypassing `run_editor`'s `Application`.
+
+    `Editor` is a plain dataclass, so tests that want to call its methods one
+    at a time and inspect `editor.state`/`editor.message` between calls don't
+    need a real terminal or a key-binding loop — that is what the pipe-driven
+    `editor`/`rendered` fixtures above are for, and they stay as they are.
+
+    `repo` is written out as `.jailbee/config.yaml` before the layers are
+    read, so the real schema (`repo_specs()`) resolves origins against it
+    exactly the way `run_editor` would. `global_` is the same for
+    `global.yaml`, defaulting to empty — needed by any test that checks how a
+    repo-layer collection interacts with entries inherited from the global
+    layer (`inherited_entries`, spec's append-not-replace rule for lists).
+    """
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump(repo or {}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text(yaml.safe_dump(global_ or {}, sort_keys=False))
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = repo_specs()
+    return Editor(
+        layer_set=layer_set,
+        state=st.open_editor(
+            layer=layer,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, layer),
+        ),
+        policy=policy,
+    )
+
+
+def _descend(editor, *crumbs):
+    """Walk `editor.state`'s trail down through `crumbs`, bypassing `enter`.
+
+    For tests that want to land on a particular collection or entry without
+    depending on where the cursor happens to sit — `enter` itself, cursor
+    position included, is exercised separately.
+    """
+    for crumb in crumbs:
+        editor.state = st.enter_crumb(editor.state, crumb)
+
+
+def _cursor_to(editor, label):
+    """Set `editor.state.index` to the visible row whose `spec.label` matches.
+
+    For tests that want the cursor on a specific field without depending on
+    its position among its section's other fields.
+    """
+    rows = st.visible_specs(editor.state)
+    index = next(i for i, spec in enumerate(rows) if spec.label == label)
+    editor.state = replace(editor.state, index=index)
+
+
+def _masking_enabled(area) -> bool:
+    """Whether `area`'s widget actually hides its input, not just what it was
+    asked to do.
+
+    `_Prompt.password` only mirrors the `password=` `_open_prompt` passed to
+    `TextArea`'s constructor — it is bookkeeping, not proof. A test built on
+    it alone stays green even if the `password=` argument itself is dropped
+    from the `TextArea(...)` call, because nothing then re-derives `password`
+    from the widget (confirmed: that exact mutation passed 230/230 before
+    this helper existed). `TextArea(password=...)` actually works by putting
+    a `ConditionalProcessor(PasswordProcessor, filter=Always()/Never())` into
+    `area.control.input_processors` — this walks that list and reads the
+    filter directly, the same thing prompt_toolkit's renderer consults on
+    every keystroke.
+    """
+    for proc in area.control.input_processors:
+        if isinstance(proc, ConditionalProcessor) and isinstance(proc.processor, PasswordProcessor):
+            return bool(proc.filter())
+    raise AssertionError("no PasswordProcessor on this TextArea at all")
 
 
 def test_q_quits_cleanly_and_writes_nothing(editor):
@@ -232,7 +316,6 @@ def test_the_editor_survives_a_missing_repo_config(tmp_path):
                 layer="repo",
                 layer_set=layer_set,
                 specs=specs,
-                origins=resolve(specs, layer_set),
                 policy="patch",
                 input=pipe,
                 output=DummyOutput(),
@@ -411,7 +494,6 @@ def test_an_invalid_value_is_refused_before_anything_is_written(tmp_path):
             layer="repo",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="patch",
             input=pipe,
             output=DummyOutput(),
@@ -449,7 +531,6 @@ def test_a_regenerate_over_a_commented_file_needs_a_confirmation(tmp_path):
             layer="global",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="regenerate",
             input=pipe,
             output=DummyOutput(),
@@ -490,7 +571,6 @@ def test_y_accepts_the_regenerate_confirmation_and_writes_it(tmp_path):
             layer="global",
             layer_set=layer_set,
             specs=specs,
-            origins=resolve(specs, layer_set),
             policy="regenerate",
             input=pipe,
             output=DummyOutput(),
@@ -562,7 +642,7 @@ def test_the_confirmation_prints_the_comment_lines_it_would_drop(tmp_path):
     layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=(), origins={}),
+        state=st.open_editor(layer="global", specs=(), origins={}, layer_raw={}),
         policy="regenerate",
         confirm=plan,
     )
@@ -591,7 +671,7 @@ def test_the_confirmation_summarises_a_flood_of_dropped_comments(tmp_path):
     layer_set = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer="global", specs=(), origins={}),
+        state=st.open_editor(layer="global", specs=(), origins={}, layer_raw={}),
         policy="regenerate",
         confirm=plan,
     )
@@ -673,3 +753,849 @@ def test_n_closes_a_read_only_diff(rendered):
 
     closed = rendered(f"{'j' * idx}\r dn\x03")
     assert "Esc to close" not in closed
+
+
+def test_enter_opens_a_collection_and_then_an_entry(tmp_path):
+    """The one `Enter` key descends section list -> collection -> entry.
+
+    Cursor is moved onto `host_mounts` explicitly rather than relying on it
+    being the first section: `repo_specs()` is the real `Config` schema, and
+    nothing here should depend on its field declaration order.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.move(editor.state, st.sections(editor.state).index("host_mounts"))
+
+    editor.enter()  # section list -> host_mounts (a section of one)
+    assert st.screen(editor.state).kind == "collection"
+
+    editor.enter()  # -> entry 0
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.state.trail == ("host_mounts", 0)
+
+
+def test_escape_out_of_an_invalid_entry_is_refused_once_then_discards(tmp_path):
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web"}]})
+    _descend(editor, "host_ports", 0)
+
+    editor.back()
+    assert st.screen(editor.state).kind == "entry"  # still here
+    assert "port" in editor.message
+
+    editor.back()
+    assert st.screen(editor.state).kind == "collection"
+
+
+def test_discarding_an_existing_invalid_entry_drops_its_staged_edits(tmp_path):
+    """The second `Esc` does not just move the trail: it also drops whatever
+    was staged inside the entry (`discard_under`), not merely leave it
+    dangling under an index the collection screen no longer highlights.
+    """
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web"}]})
+    _descend(editor, "host_ports", 0)
+    editor.state = st.stage(editor.state, ("host_ports", 0, "name"), "typed")
+
+    editor.back()  # first press: still invalid (port is still missing), refused
+    editor.back()  # second press: discards the staged edit and leaves
+
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.state.staged == {}
+
+
+def test_escape_out_of_a_valid_entry_leaves_at_the_first_press(tmp_path):
+    editor = _editor(tmp_path, repo={"host_ports": [{"name": "web", "port": 8080}]})
+    _descend(editor, "host_ports", 0)
+
+    editor.back()
+
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.message == ""
+
+
+def test_the_footer_changes_on_a_collection_screen(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": []})
+    editor.state = st.move(editor.state, st.sections(editor.state).index("host_mounts"))
+    editor.enter()
+
+    text = "".join(t for _, t in render.footer(editor.state))
+    assert "n new" in text
+
+
+def test_a_real_escape_keypress_refuses_to_leave_a_broken_entry(tmp_path):
+    """The state-level refuse-once behaviour above is exercised on a bare
+    `Editor`, never through a key binding — so it would still pass even if
+    `escape` were never wired to `Editor.back` at all. This is the one test
+    in the file that presses the real key, through the real `Application`,
+    so that hazard cannot slip through.
+    """
+    from prompt_toolkit.input import create_pipe_input
+
+    from jailbee.config_edit.app import run_editor
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text("host_ports:\n  - name: web\n")
+    glob = tmp_path / "global.yaml"
+    glob.write_text("")
+
+    specs = repo_specs()
+    idx = _index_of_section(specs, "host_ports")
+
+    def run(keys: str) -> str:
+        layer_set = read_layers(repo, glob)
+        output = _CapturingOutput()
+        with create_pipe_input() as pipe:
+            pipe.send_text(keys)
+            run_editor(
+                layer="repo",
+                layer_set=layer_set,
+                specs=specs,
+                policy="patch",
+                input=pipe,
+                output=output,
+            )
+        return output.screen_text()
+
+    # host_ports is itself a section of one, like host_mounts in the tests
+    # above: the first Enter lands straight on the collection screen, the
+    # second on its only entry.
+    once = run(f"{'j' * idx}\r\r\x1bq")
+    assert "incomplete" in once
+
+    # A second `Escape` must actually leave to the collection screen — not
+    # merely still show the refusal, which a binding that re-clears the
+    # message before every call to `back` (the pre-task-7 wiring) would also
+    # produce, forever. The collection screen's own footer (`n new`, `x
+    # delete`) is what proves it, since `back`'s own message-based bookkeeping
+    # can't tell the two apart from the outside.
+    twice = run(f"{'j' * idx}\r\r\x1b\x1bq")
+    assert "x delete" in twice
+
+
+def test_typing_into_an_entry_cancels_the_collection_s_pending_reset(tmp_path):
+    """The rule `stage`'s own docstring names but cannot announce itself
+    ("Whether to *say* so belongs to `app.py`; this module is pure"): editing
+    a field inside a collection that has a pending reset staged cancels that
+    reset. `state.py`'s side of it is proven pure and correct directly in
+    `test_config_edit_state.py`; this is the one place the message that
+    reaches the screen is proven to follow it.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+    editor.reset()
+    assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+    editor.state = st.set_query(editor.state, "")
+    _descend(editor, "host_mounts", 0)
+    editor.edit_current()
+    assert editor.prompt is not None
+    editor.prompt.area.text = "/typed"
+    editor.commit_prompt()
+
+    assert "cancels the pending reset of host_mounts" in editor.message
+
+
+def test_enter_on_a_boolean_field_also_cancels_the_collection_s_pending_reset(tmp_path):
+    """`Enter` reaches a bool field through `edit_current`'s own `BOOL`
+    branch, not through `toggle`'s `Space` binding — both must say the same
+    thing when they cancel a pending reset, not just the one bound to `Space`.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+    editor.reset()
+    assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+    editor.state = st.set_query(editor.state, "")
+    _descend(editor, "host_mounts", 0)
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.label == "readonly")
+    )
+
+    editor.edit_current()  # a bool field toggles directly, no prompt opens
+
+    assert editor.prompt is None
+    assert "cancels the pending reset of host_mounts" in editor.message
+
+
+def test_resetting_a_collection_discards_pending_edits_inside_it_and_says_so(tmp_path):
+    """The other half of the same rule: resetting a collection that has
+    pending edits inside it discards them.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a", "container": "/data"}]})
+    _descend(editor, "host_mounts", 0)
+    editor.edit_current()
+    assert editor.prompt is not None
+    editor.prompt.area.text = "/typed"
+    editor.commit_prompt()
+    assert editor.state.staged == {("host_mounts", 0, "host"): "/typed"}
+
+    editor.state = st.set_query(editor.state, "host_mounts")
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.path == ("host_mounts",))
+    )
+
+    editor.reset()
+
+    assert "Discarded pending edits inside host_mounts" in editor.message
+    assert editor.state.staged == {("host_mounts",): st.UNSET}
+
+
+def test_n_adds_an_entry_and_opens_its_form(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": []})
+    _descend(editor, "host_mounts")
+
+    editor.new_entry_here()
+
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.state.trail == ("host_mounts", 0)
+    assert editor.new_entry == ("host_mounts", 0)
+
+
+def test_n_on_a_map_asks_for_the_key_first(tmp_path):
+    editor = _editor(tmp_path, repo={"agents": {}})
+    _descend(editor, "agents")
+
+    editor.new_entry_here()
+
+    assert editor.prompt is not None
+    assert st.screen(editor.state).kind == "collection"  # not yet created
+    editor.prompt.area.text = "codex"
+    editor.commit_prompt()
+    assert editor.state.trail == ("agents", "codex")
+
+
+def test_n_leaves_an_invalid_new_entry_removed_not_merely_discarded(tmp_path):
+    """`n` then an invalid entry then two `Esc`: the entry `n` created this
+    session must be removed outright, not merely have its (nonexistent)
+    staged edits dropped and the entry left half-made. Until this task wired
+    `n`, `new_entry` was always `None` and `_discard_entry`'s "remove it"
+    branch had never run.
+    """
+    editor = _editor(tmp_path, repo={"host_ports": []})
+    _descend(editor, "host_ports")
+
+    editor.new_entry_here()
+    assert st.screen(editor.state).kind == "entry"
+    assert editor.new_entry == ("host_ports", 0)
+
+    editor.back()  # first Esc: entry is invalid (no name/port), refused
+    assert st.screen(editor.state).kind == "entry"
+
+    editor.back()  # second Esc: discards it outright
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.new_entry is None
+    assert editor.state.staged[("host_ports",)] == []
+
+
+def test_x_deletes_the_entry_under_the_cursor(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}]
+
+
+def test_x_refuses_an_inherited_entry(tmp_path):
+    """A repo list appends to the global one; the global entries are not ours."""
+    editor = _editor(
+        tmp_path,
+        repo={"host_mounts": [{"host": "/mine"}]},
+        global_={"host_mounts": [{"host": "/theirs"}]},
+    )
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == []  # only /mine was ours
+
+
+def test_x_re_clamps_the_cursor_past_the_new_end(tmp_path):
+    """Deleting the last entry must move the cursor back onto the new last
+    one rather than leaving it pointing past the end of the shorter list.
+    """
+    editor = _editor(
+        tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}, {"host": "/c"}]}
+    )
+    _descend(editor, "host_mounts")
+    editor.state = st.move(editor.state, 2)  # cursor on the last entry
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/a"}, {"host": "/b"}]
+    assert editor.state.index == 1  # clamped onto the new last entry
+
+
+def test_x_does_nothing_on_a_field_screen(tmp_path):
+    editor = _editor(tmp_path, repo={})
+    _descend(editor, "defaults")
+
+    editor.delete_entry_here()
+
+    assert "collection" in editor.message.casefold()
+
+
+def test_shift_j_moves_an_entry_down(tmp_path):
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.move_entry_here(1)
+
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}, {"host": "/a"}]
+    assert editor.state.index == 1  # the cursor follows the entry it moved
+
+
+def test_a_rejected_move_past_the_end_does_not_move_the_cursor(tmp_path):
+    """`move_entry` is a no-op past either end and stages nothing then, so
+    the cursor must not move either — even though the collection is already
+    staged from the first, successful `J` a moment earlier. That is exactly
+    the case that trips up a predicate based on `staged.get(spec.path) is
+    not None` rather than whether *this particular call* changed anything:
+    the collection was already staged going in, so such a predicate would
+    read the second, rejected move as having moved and drag the cursor one
+    past the last entry.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    _descend(editor, "host_mounts")
+
+    editor.move_entry_here(1)  # stages the collection; cursor now on index 1
+    assert editor.state.index == 1
+
+    editor.move_entry_here(1)  # index 1 is the last entry: a second J is a no-op
+
+    assert editor.state.index == 1  # unchanged — the second move was rejected
+    assert editor.state.staged[("host_mounts",)] == [{"host": "/b"}, {"host": "/a"}]
+
+
+def test_j_on_a_map_says_it_has_no_order(tmp_path):
+    editor = _editor(tmp_path, repo={"agents": {"codex": {}}})
+    _descend(editor, "agents")
+
+    editor.move_entry_here(1)
+
+    assert "no order" in editor.message
+
+
+def test_the_collection_keys_do_nothing_on_a_field_screen(tmp_path):
+    editor = _editor(tmp_path, repo={})
+    _descend(editor, "defaults")
+
+    editor.new_entry_here()
+
+    assert editor.prompt is None
+    assert "collection" in editor.message.casefold()
+
+
+def test_setting_a_token_uses_a_hidden_input_and_stages_the_whole_map(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.enter()
+
+    assert editor.prompt is not None
+    assert editor.prompt.password is True
+    assert _masking_enabled(editor.prompt.area)  # the widget itself, not just the bookkeeping
+    # Never seeded with the stored token (spec 3.4): the prompt opens empty,
+    # and the token appears nowhere on it — text or label.
+    assert editor.prompt.area.text == ""
+    assert "ghp_old" not in editor.prompt.area.text
+    assert "ghp_old" not in editor.prompt.label
+    editor.prompt.area.text = "ghp_new"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_new"}
+
+
+def test_a_staged_token_is_masked_in_the_diff(tmp_path):
+    """The whole point of Task 1, asserted end to end."""
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()
+    editor.prompt.area.text = "ghp_brandnew"
+    editor.commit_prompt()
+
+    editor.show_diff()
+
+    assert editor.confirm is not None
+    assert "ghp_brandnew" not in editor.confirm.diff
+    assert "ghp_old" not in editor.confirm.diff
+
+
+def test_the_prompt_label_names_the_key_but_never_the_value(tmp_path):
+    """`_Prompt.label` is painted on every redraw while the prompt is open —
+    the exact kind of place the one rule (never paint a token) has to hold.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.enter()
+
+    assert editor.prompt is not None
+    assert "github.api_tokens.gisgro" in editor.prompt.label
+    assert "ghp_old" not in editor.prompt.label
+
+
+def test_an_empty_token_refuses_and_says_so(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()
+
+    editor.prompt.area.text = "   "
+    editor.commit_prompt()
+
+    assert editor.prompt is not None  # kept open, nothing staged
+    assert "token is required" in editor.message.casefold()
+    assert ("github", "api_tokens") not in editor.state.staged
+
+
+def test_n_on_a_secret_map_asks_for_the_key_then_hides_the_value(tmp_path):
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+
+    editor.new_entry_here()
+    assert editor.prompt is not None
+    assert editor.prompt.password is False  # this prompt names the key, not a token
+    assert not _masking_enabled(editor.prompt.area)
+    editor.prompt.area.text = "personal"
+    editor.commit_prompt()
+
+    # The key exists (with a placeholder), and a *second*, hidden prompt is
+    # now open on its value rather than any entry form.
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old", "personal": ""}
+    assert editor.prompt is not None
+    assert editor.prompt.password is True
+    assert _masking_enabled(editor.prompt.area)
+    assert editor.prompt.secret_key == "personal"
+    assert editor.prompt.area.text == ""
+    assert "ghp_old" not in editor.prompt.area.text
+    assert "ghp_old" not in editor.prompt.label
+
+    editor.prompt.area.text = "ghp_brandnew"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("github", "api_tokens")] == {
+        "gisgro": "ghp_old",
+        "personal": "ghp_brandnew",
+    }
+
+
+def test_esc_on_a_freshly_created_secret_entry_removes_the_empty_placeholder(tmp_path):
+    """`n` on a secret map stages `{key: ""}` before the value is even typed
+    (there is no form to hold it meanwhile) — abandoning the value prompt
+    must not leave that placeholder behind as if it were a real, empty
+    token.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.new_entry_here()
+    editor.prompt.area.text = "personal"
+    editor.commit_prompt()
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old", "personal": ""}
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": "ghp_old"}
+
+
+def test_esc_on_a_freshly_created_secret_entry_in_a_previously_absent_map_stages_nothing(
+    tmp_path,
+):
+    """The stronger case: when `github.api_tokens` did not exist on this
+    layer's file at all, cancelling the only entry `n` just created must
+    leave *nothing* staged — not `{}`. A staged `{}` still writes an empty
+    `api_tokens: {}` on save, which is not "as if `n` had never been
+    pressed" for a layer that had nothing to begin with.
+    """
+    editor = _editor(tmp_path, global_={}, layer="global")
+    _descend(editor, "github", "api_tokens")
+    editor.new_entry_here()
+    editor.prompt.area.text = "gisgro"
+    editor.commit_prompt()
+    assert editor.state.staged[("github", "api_tokens")] == {"gisgro": ""}
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert ("github", "api_tokens") not in editor.state.staged
+    assert not editor.dirty()
+
+
+def test_esc_on_an_existing_secret_entry_leaves_it_untouched(tmp_path):
+    """The removal above is scoped to the entry `n` just created — cancelling
+    a prompt opened on an *existing* key must not delete that key."""
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_old"}}}, layer="global"
+    )
+    _descend(editor, "github", "api_tokens")
+    editor.enter()  # opens the hidden prompt on the existing "gisgro" key
+
+    editor.cancel_prompt()
+
+    assert editor.prompt is None
+    assert ("github", "api_tokens") not in editor.state.staged
+
+
+def test_edit_current_refuses_a_secret_map_directly_rather_than_leaking_it(tmp_path):
+    """`enter()` is the only route the shipped UI takes to a drill-down row,
+    and it never calls `edit_current` for one — but `edit_current` is public
+    and takes nothing from `enter()` about how it got called, so it must
+    refuse a secret map on its own rather than trust that invariant. Without
+    its own `is_drilldown` guard, `edit_block` (which now lets a secret map
+    through) plus `spec.kind in _MAP_KINDS` matching `STR_MAP` would hand
+    `values.map_to_text` — every token in the map — to a plain multiline
+    prompt. Found by direct call during this task's leak audit.
+    """
+    editor = _editor(
+        tmp_path, global_={"github": {"api_tokens": {"gisgro": "ghp_REALSECRET"}}}, layer="global"
+    )
+    editor.state = st.toggle_show_all(st.enter_crumb(editor.state, "github"))
+    rows = st.visible_specs(editor.state)
+    editor.state = st.move(
+        editor.state, next(i for i, s in enumerate(rows) if s.label == "api_tokens")
+    )
+
+    editor.edit_current()
+
+    assert editor.prompt is None
+    assert "not editable here" in editor.message.casefold()
+
+
+def test_n_x_j_k_are_wired_through_the_real_application(tmp_path):
+    """Presses the real keys through a real `Application`, so a binding that
+    is never wired cannot pass its unit test — `_editor` calls `Editor`'s
+    methods directly and would not catch that.
+
+    `host_mounts` is a section of one, so the first `Enter` lands straight on
+    its collection screen. `n` appends an entry and opens its form; typing
+    `host`/`container` and Enter/Tab-Enter fills the two required fields (the
+    entry form validates on the way out, so it must be complete before the
+    Escape that leaves it counts as valid). Back on the collection screen with
+    one real entry, `n` again appends a second, which is then deleted with
+    `x`; `J`/`K` are exercised on the two entries that remain from the first
+    fixture-seeded row plus the one just added.
+    """
+    from prompt_toolkit.input import create_pipe_input
+
+    from jailbee.config_edit.app import run_editor
+
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text(
+        "host_mounts:\n  - host: /a\n    container: /data-a\n  - host: /b\n    container: /data-b\n"
+    )
+    glob = tmp_path / "global.yaml"
+    glob.write_text("")
+
+    specs = repo_specs()
+    idx = _index_of_section(specs, "host_mounts")
+
+    def run(keys: str) -> str:
+        layer_set = read_layers(repo, glob)
+        output = _CapturingOutput()
+        with create_pipe_input() as pipe:
+            pipe.send_text(keys)
+            run_editor(
+                layer="repo",
+                layer_set=layer_set,
+                specs=specs,
+                policy="patch",
+                input=pipe,
+                output=output,
+            )
+        return output.screen_text()
+
+    # host_mounts collection screen (two entries), n adds a third and opens
+    # it, escape leaves the (incomplete) entry, escape again discards it —
+    # back on the collection screen with the original two (/a, /b; cursor on
+    # /a at index 0). J swaps /a down to index 1 and the cursor follows it
+    # there; x then deletes the entry under the cursor — /a, now at index 1 —
+    # leaving only /b.
+    # Ends `qq`, not `q`: the delete leaves an unsaved edit staged, so the
+    # first `q` only hits the unsaved-changes warning and the second is what
+    # actually exits — a lone `q` here hangs the pipe rather than failing.
+    text = run(f"{'j' * idx}\r" + "n\x1b\x1b" + "J" + "x" + "qq")
+    assert "/b" in text
+    assert "/a" not in text
+    assert "J/K move" in text  # the footer of a live collection screen
+
+
+def test_editing_scratch_config_stages_the_parsed_mapping(tmp_path):
+    """`scratch.config` (`FieldKind.OPAQUE`) is global-only — absent from
+    `repo_specs()` entirely, not merely disabled there — so this cannot use
+    the shared `_editor` helper, which always builds its state from
+    `repo_specs()`. Built by hand instead, the same way `_editor` itself does,
+    but with `global_specs()`.
+    """
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump({}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text(
+        yaml.safe_dump({"scratch": {"config": {"memory": "4GiB"}}}, sort_keys=False)
+    )
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = global_specs()
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(
+            layer="global",
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, "global"),
+        ),
+        policy="patch",
+    )
+    editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
+    _descend(editor, "scratch")
+    _cursor_to(editor, "config")
+
+    editor.edit_current()
+    assert editor.prompt is not None
+    assert editor.prompt.multiline is True
+    editor.prompt.area.text = "memory: 8GiB\n"
+    editor.commit_prompt()
+
+    assert editor.state.staged[("scratch", "config")] == {"memory": "8GiB"}
+
+
+def test_editing_scratch_config_keeps_the_prompt_open_on_a_parse_error(tmp_path):
+    """A parse failure must not silently drop what was typed."""
+    import yaml
+
+    from jailbee.config_edit.app import Editor
+    from jailbee.config_edit.schema import global_specs
+
+    repo_path = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    repo_path.write_text(yaml.safe_dump({}, sort_keys=False))
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text(
+        yaml.safe_dump({"scratch": {"config": {"memory": "4GiB"}}}, sort_keys=False)
+    )
+
+    layer_set = read_layers(repo_path, global_path)
+    specs = global_specs()
+    editor = Editor(
+        layer_set=layer_set,
+        state=st.open_editor(
+            layer="global",
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, "global"),
+        ),
+        policy="patch",
+    )
+    editor.state = st.toggle_show_all(editor.state)  # scratch.config is advanced
+    _descend(editor, "scratch")
+    _cursor_to(editor, "config")
+
+    editor.edit_current()
+    editor.prompt.area.text = "just a string\n"
+    editor.commit_prompt()
+
+    assert editor.prompt is not None
+    assert "mapping" in editor.message
+    assert editor.state.staged == {}
+
+
+# -- inherited collections, and the drill-down gate -----------------------
+
+
+_INHERITED = {"host_mounts": [{"host": "/g1"}, {"host": "/g2"}]}
+"""A `global.yaml` the repo layer inherits whole, having no key of its own."""
+
+
+def test_enter_on_an_inherited_collection_offers_nothing_to_open(tmp_path):
+    """The uncaught `ValueError` this used to end in, cut off at the source.
+
+    `Enter` on one of the inherited rows opened an entry form marked `(set)`;
+    editing a field staged `("host_mounts", 0, "readonly")`, and `s` then took
+    `layers.apply_changes` down a path with no `host_mounts` in the repo file at
+    all — `ValueError: host_mounts.0.readonly: index out of range`, raised
+    straight out of the key handler, killing prompt_toolkit and every staged
+    edit with it. There are no rows to open now, so the sequence cannot start.
+    """
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.enter()
+
+    assert editor.state.trail == ("host_mounts",)  # did not descend into an entry
+    assert "press `n`" in editor.message
+    assert editor.state.staged == {}
+
+
+def test_x_on_an_inherited_collection_says_there_is_nothing_to_delete(tmp_path):
+    """`x` used to stage "global's list minus that entry" as the repo's own —
+    which `deep_merge` then appends back to global's, so the deleted entry
+    survives and the others duplicate."""
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.delete_entry_here()
+
+    assert editor.state.staged == {}
+    assert editor.message == "Nothing to delete here."
+
+
+def test_n_on_an_inherited_collection_stages_only_the_new_entry(tmp_path):
+    """And saving it is a legal repo config, which is the end-to-end proof: the
+    old fold wrote global's two entries into the repo file, and the loader then
+    saw all four."""
+    editor = _editor(tmp_path, repo={}, global_=_INHERITED)
+    _descend(editor, "host_mounts")
+
+    editor.new_entry_here()
+
+    assert editor.state.staged == {("host_mounts",): [{}]}
+    assert editor.state.trail == ("host_mounts", 0)
+
+
+def test_enter_refuses_a_drill_down_the_layer_bans_and_says_why(tmp_path):
+    """`enter` bypassed `render.edit_block` — `render.py` calls it the editor's
+    single gate, and `toggle`, `reset` and `edit_current` all consult it.
+
+    At the repo layer that made `github ▸ api_tokens` fully navigable: a screen
+    for a key `config/loader.py` refuses in a repo config, whose entry prompt
+    then seeded `updated` from `st.effective`, resolving through to the
+    *global* token and staging it into the repo file. `layers.validate` refused
+    the save, so nothing leaked — but the loader ban was the only thing left
+    standing, and `docs/skills/` claimed the UI blocked it.
+    """
+    editor = _editor(tmp_path, repo={}, global_={"github": {"api_tokens": {"gisgro": "ghp_x"}}})
+    _descend(editor, "github")
+    editor.state = st.toggle_show_all(editor.state)  # api_tokens is an advanced field
+    _cursor_to(editor, "api_tokens")
+
+    editor.enter()
+
+    assert editor.state.trail == ("github",)  # did not descend
+    assert "host-local" in editor.message
+    assert editor.message_style == "class:error"
+    assert editor.state.staged == {}
+
+
+def test_the_same_drill_down_opens_normally_on_the_global_layer(tmp_path):
+    """The gate is the layer rule, not a blanket refusal — without this the
+    test above would also pass with `enter` refusing every drill-down."""
+    editor = _editor(
+        tmp_path,
+        repo={},
+        global_={"github": {"api_tokens": {"gisgro": "ghp_x"}}},
+        layer="global",
+    )
+    _descend(editor, "github")
+    editor.state = st.toggle_show_all(editor.state)  # api_tokens is an advanced field
+    _cursor_to(editor, "api_tokens")
+
+    editor.enter()
+
+    assert editor.state.trail == ("github", "api_tokens")
+    assert st.screen(editor.state).kind == "collection"
+
+
+# -- seeding a prompt, and surviving a save that moved the ground ---------
+
+
+def test_edit_current_seeds_an_entry_field_from_the_layer_the_row_shows(tmp_path):
+    """The modal is pre-filled with what the row displays, not another layer's.
+
+    A global-layer session whose repo config also sets `host_mounts`: the row
+    reads `/GLOBAL` (`render._now` goes through `own`), but the seed still went
+    through `st.effective`, which resolves the repo layer first whichever layer
+    is open — so `Enter` pre-filled `/REPO`, and committing wrote the repo
+    layer's value into `global.yaml`. Making the display right is what left the
+    seed wrong; both now go through `state.current_value`.
+    """
+    editor = _editor(
+        tmp_path,
+        repo={"host_mounts": [{"host": "/REPO", "container": "/c"}]},
+        global_={"host_mounts": [{"host": "/GLOBAL", "container": "/c"}]},
+        layer="global",
+    )
+    _descend(editor, "host_mounts", 0)
+    _cursor_to(editor, "host")
+
+    editor.edit_current()
+
+    assert editor.prompt is not None
+    assert editor.prompt.area.text == "/GLOBAL"
+    # And the row the user is looking at says the same thing — the point of
+    # the fix is that these two cannot disagree.
+    row = "".join(chunk for _style, chunk, *_rest in render.field_pane(editor.state).fragments)
+    assert "/GLOBAL" in row
+    assert "/REPO" not in row
+
+
+def test_a_save_that_deletes_the_open_collection_walks_the_cursor_out_of_it(tmp_path):
+    """The reviewer's sequence, which crashed on the tree that fixed the first
+    round: `/host_mounts` `Enter` → `r` → `Esc` → walk in → stand on entry 1 →
+    `s`. The save deletes the key, `_reload` used to carry the trail over
+    unchanged, and the next edit staged `host_mounts.1.host` into a file with no
+    `host_mounts` at all — `ValueError: index out of range` out of the key
+    handler on the following `s`, app dead.
+    """
+    editor = _editor(tmp_path, repo={"host_mounts": [{"host": "/a"}, {"host": "/b"}]})
+    editor.state = st.set_query(editor.state, "host_mounts")  # `/host_mounts` + Enter
+    editor.reset()  # `r` on the collection's own row
+    editor.state = st.set_query(editor.state, "")  # `Esc` out of the search
+    _descend(editor, "host_mounts", 1)
+    assert st.screen(editor.state).kind == "entry"
+
+    editor.save()
+
+    assert editor.message.startswith("Saved")
+    assert editor.state.trail == ("host_mounts",)
+    assert st.screen(editor.state).kind == "collection"
+    assert editor.state.index == 0
+    # And the screen the cursor landed on is a live one: `Enter` offers `n`
+    # rather than opening a form over an entry that is not in the file.
+    editor.enter()
+    assert "press `n`" in editor.message
+
+
+def test_a_stale_staged_path_is_reported_rather_than_taking_the_editor_down(tmp_path):
+    """`_plan`'s own docstring promises every failure keeps the session; the
+    `ValueError` `layers.apply_changes` raises on a path whose integer segment
+    addresses a list the layer does not have was the one that did not.
+
+    `_reload`'s re-anchoring removes the sequence that produced such a path, but
+    the two fixes are independent: this one is what makes the next sequence a
+    message instead of a crash.
+    """
+    editor = _editor(tmp_path, repo={})
+    editor.state = st.stage(editor.state, ("host_mounts", 1, "host"), "/x")
+
+    editor.save()  # must not raise
+
+    assert "host_mounts.1.host: index out of range" in editor.message
+    assert editor.message_style == "class:error"
+    assert editor.state.staged  # the session, and the staged work, survive

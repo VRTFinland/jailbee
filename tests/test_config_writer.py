@@ -6,9 +6,11 @@ a terminal, a container or a real config file.
 
 from __future__ import annotations
 
+import re
 import stat
 from pathlib import Path
 
+import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,6 +107,66 @@ def test_patch_file_leaves_no_temp_file_behind(tmp_path: Path):
     target.write_text(ORIGINAL)
     patch_file(target, [YamlChange(("claude_credentials", "group"), "personal")])
     assert sorted(p.name for p in tmp_path.iterdir()) == ["global.yaml"]
+
+
+def test_patch_yaml_edits_one_field_of_one_list_entry_in_place():
+    """The other entries, and the comments among them, survive byte-identically."""
+    text = (
+        "host_mounts:\n"
+        "  - host: /home/dev/data      # production data\n"
+        "    container: /data\n"
+        "    readonly: false\n"
+        "  - host: /srv/cache\n"
+        "    container: /cache\n"
+    )
+
+    got = patch_yaml(text, [YamlChange(("host_mounts", 0, "readonly"), True)])
+
+    assert "# production data" in got
+    assert "readonly: true" in got
+    assert "/srv/cache" in got
+
+
+def test_patch_yaml_replaces_a_whole_list_when_the_path_names_the_key():
+    text = "host_ports:\n  - name: web\n    port: 8080\n"
+
+    got = patch_yaml(text, [YamlChange(("host_ports",), [{"name": "api", "port": 9000}])])
+
+    assert "api" in got
+    assert "web" not in got
+
+
+def test_patch_yaml_rejects_an_index_that_is_not_there():
+    text = "host_mounts:\n  - host: /a\n    container: /a\n"
+
+    with pytest.raises(ValueError, match=re.escape("host_mounts.4")):
+        patch_yaml(text, [YamlChange(("host_mounts", 4, "readonly"), True)])
+
+
+def test_patch_yaml_deletes_one_list_entry_and_keeps_its_neighbour():
+    """The surviving entry, and its own comment, must not be disturbed."""
+    text = (
+        "host_mounts:\n"
+        "  - host: /a\n"
+        "    container: /a\n"
+        "  - host: /b      # keep me\n"
+        "    container: /b\n"
+    )
+
+    got = patch_yaml(text, [YamlChange(("host_mounts", 0), DELETE)])
+
+    assert "/a" not in got
+    assert "host: /b" in got
+    assert "container: /b" in got
+    assert "# keep me" in got
+    assert yaml.safe_load(got) == {"host_mounts": [{"host": "/b", "container": "/b"}]}
+
+
+def test_patch_yaml_rejects_deleting_an_index_that_is_not_there():
+    text = "host_mounts:\n  - host: /a\n    container: /a\n"
+
+    with pytest.raises(ValueError, match=re.escape("host_mounts.4")):
+        patch_yaml(text, [YamlChange(("host_mounts", 4), DELETE)])
 
 
 class Sample(BaseModel):

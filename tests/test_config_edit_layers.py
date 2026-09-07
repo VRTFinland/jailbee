@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from jailbee.config import HostPort
 from jailbee.config_edit import layers
-from jailbee.config_edit.schema import repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -73,6 +74,17 @@ def test_lookup_does_not_walk_through_a_scalar():
     assert layers.lookup({"gpg": "yes"}, ("gpg", "enabled")) == (False, None)
 
 
+def test_lookup_walks_into_a_list_by_index():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+    assert layers.lookup(raw, ("host_mounts", 1, "host")) == (True, "/b")
+
+
+def test_lookup_reports_an_out_of_range_index_as_absent():
+    """The read path must not raise on a hand-broken file (the `lookup` contract)."""
+    raw = {"host_mounts": [{"host": "/a"}]}
+    assert layers.lookup(raw, ("host_mounts", 7, "host")) == (False, None)
+
+
 def test_raw_for_selects_the_open_layer(tmp_path):
     _write(tmp_path / "global.yaml", "defaults:\n  cpu: 2\n")
     _write(tmp_path / "repo.yaml", "defaults:\n  cpu: 8\n")
@@ -101,18 +113,17 @@ def test_ordinary_fields_are_never_disabled():
     assert layers.disabled_reason(_spec("gpg.enabled"), "global") is None
 
 
-def test_the_opaque_scratch_overlay_is_disabled_in_both_layers():
-    """`scratch.config` is free-form: there is no form to render for it."""
+def test_disabled_reason_no_longer_refuses_an_opaque_field():
+    """`scratch.config` is global-only, so it is only real in `global_specs()`.
+
+    Since Task 10 it is editable as raw YAML in the multiline prompt, so
+    `disabled_reason` no longer carves out a `FieldKind.OPAQUE` branch for it.
+    """
     from jailbee.config_edit.schema import global_specs
 
     spec = next(s for s in global_specs() if s.path == ("scratch", "config"))
-    # Test both layers as the name promises
-    reason_global = layers.disabled_reason(spec, "global")
-    assert reason_global is not None
-    assert "by hand" in reason_global
-    reason_repo = layers.disabled_reason(spec, "repo")
-    assert reason_repo is not None
-    assert "by hand" in reason_repo
+    assert spec.kind is FieldKind.OPAQUE
+    assert layers.disabled_reason(spec, "global") is None
 
 
 def test_repo_layer_shows_the_global_list_entries_it_will_append_to(tmp_path):
@@ -264,6 +275,24 @@ def test_apply_changes_creates_missing_parents_and_deletes():
     out = layers.apply_changes({}, [YamlChange(("gpg", "enabled"), True)])
     assert out == {"gpg": {"enabled": True}}
     assert layers.apply_changes(out, [YamlChange(("gpg", "enabled"), DELETE)]) == {"gpg": {}}
+
+
+def test_apply_changes_edits_one_entry_without_touching_its_neighbour():
+    raw = {"host_mounts": [{"host": "/a", "readonly": False}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0, "readonly"), True)])
+
+    assert got["host_mounts"] == [{"host": "/a", "readonly": True}, {"host": "/b"}]
+    assert raw["host_mounts"][0]["readonly"] is False  # deep-copied, not mutated
+
+
+def test_apply_changes_deletes_one_list_entry():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0), DELETE)])
+
+    assert got["host_mounts"] == [{"host": "/b"}]
+    assert raw["host_mounts"] == [{"host": "/a"}, {"host": "/b"}]  # deep-copied, not mutated
 
 
 @pytest.fixture
@@ -469,3 +498,45 @@ def test_validate_leaves_the_in_memory_layers_untouched(opened):
     layers.validate(got, "global", [YamlChange(("defaults", "cpu"), "lots")])
 
     assert got.global_raw == {"defaults": {"cpu": 2}}
+
+
+def test_validate_entry_names_the_missing_required_field():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    error = layers.validate_entry(spec, {"name": "web"})
+
+    assert error is not None
+    assert "port" in error
+
+
+def test_validate_entry_accepts_a_complete_entry():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    assert layers.validate_entry(spec, {"name": "web", "port": 8080}) is None
+
+
+def test_validate_entry_is_none_for_a_spec_with_no_item_model():
+    """A leaf field (never a collection) has nothing to validate against."""
+    spec = FieldSpec(
+        path=("gpg", "enabled"),
+        label="enabled",
+        kind=FieldKind.BOOL,
+        description="",
+        default=False,
+    )
+
+    assert layers.validate_entry(spec, "anything at all") is None

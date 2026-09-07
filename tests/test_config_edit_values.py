@@ -13,8 +13,10 @@ from jailbee.config_edit.values import (
     format_value,
     list_to_text,
     map_to_text,
+    opaque_to_text,
     parse_list,
     parse_map,
+    parse_opaque,
     parse_value,
     to_text,
 )
@@ -194,3 +196,44 @@ def test_map_to_text_round_trips_through_parse_map_for_a_bool_map():
     spec = _spec(FieldKind.BOOL_MAP, label="pooled_caches")
     value = {"npm": True, "uv": False}
     assert parse_map(spec, map_to_text(value)) == (value, None)
+
+
+def test_opaque_round_trips_a_mapping():
+    value = {"memory": "8GiB", "packages": ["ripgrep", "fd-find"]}
+
+    parsed, error = parse_opaque(opaque_to_text(value))
+
+    assert error is None
+    assert parsed == value
+
+
+def test_opaque_to_text_guards_a_non_dict_and_an_empty_value():
+    assert opaque_to_text(None) == ""
+    assert opaque_to_text("not a dict") == ""
+    assert opaque_to_text({}) == ""
+
+
+def test_opaque_to_text_keeps_the_users_own_key_order():
+    """`sort_keys=False` — an alphabetised comeback would be its own surprise."""
+    text = opaque_to_text({"zeta": 1, "alpha": 2})
+    assert text.index("zeta") < text.index("alpha")
+
+
+def test_opaque_rejects_a_scalar_document():
+    parsed, error = parse_opaque("just a string\n")
+
+    assert parsed is None
+    assert "mapping" in error
+
+
+def test_opaque_reports_the_parser_error_rather_than_raising():
+    parsed, error = parse_opaque("a: [unclosed\n")
+
+    assert parsed is None
+    assert error
+
+
+def test_an_empty_opaque_block_is_an_empty_mapping():
+    """Clearing the block means "no overlay", not "invalid"."""
+    assert parse_opaque("   \n") == ({}, None)
+    assert parse_opaque("") == ({}, None)

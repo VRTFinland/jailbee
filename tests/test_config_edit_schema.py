@@ -8,14 +8,38 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, SecretStr
 
-from jailbee.config import ClaudeAgentConfig, Config
-from jailbee.config_edit.schema import Classified, FieldKind, classify
+from jailbee.config import ClaudeAgentConfig, Config, HostMount
+from jailbee.config_edit.schema import (
+    Classified,
+    FieldKind,
+    FieldSpec,
+    build_specs,
+    classify,
+    is_drilldown,
+    rebase,
+)
 from jailbee.global_config import GlobalConfig
 from tests.test_config_schema_closure import walk_models
 
 
 class _Item(BaseModel):
     x: int = 0
+
+
+def _spec(kind, *, secret=False):
+    """A minimal `FieldSpec` of one `kind`, for `is_drilldown`'s own tests.
+
+    Only `kind` and `secret` matter to `is_drilldown`; everything else is
+    filled with a value that satisfies the dataclass but is never inspected.
+    """
+    return FieldSpec(
+        path=("x",),
+        label="x",
+        kind=kind,
+        description="d",
+        default=None,
+        secret=secret,
+    )
 
 
 @pytest.mark.parametrize(
@@ -56,6 +80,17 @@ def test_secret_map_is_flagged():
     result = classify(dict[str, SecretStr])
     assert result.kind is FieldKind.STR_MAP
     assert result.secret is True
+
+
+def test_is_drilldown_covers_collections_and_a_secret_map():
+    """Two families end up on a screen of their own, for two different
+    reasons — see `is_drilldown`'s own docstring — and everything else edits
+    in place."""
+    assert is_drilldown(_spec(FieldKind.MODEL_LIST))
+    assert is_drilldown(_spec(FieldKind.MODEL_MAP))
+    assert is_drilldown(_spec(FieldKind.STR_MAP, secret=True))
+    assert not is_drilldown(_spec(FieldKind.STR_MAP))
+    assert not is_drilldown(_spec(FieldKind.STR))
 
 
 @pytest.mark.parametrize(
@@ -238,10 +273,29 @@ def test_a_default_factory_field_reports_its_real_default():
     assert _by_path(specs, "egress_allow").default == []
 
 
-def test_repo_specs_is_the_config_tree():
-    from jailbee.config_edit.schema import build_specs, repo_specs
+def test_shared_caches_default_is_plain_data_not_model_instances():
+    """`_default_shared_caches()` returns real `SharedCache` instances, not
+    raw dicts — the only `default_factory` in the schema that does.
 
-    assert repo_specs() == build_specs(Config)
+    Every consumer of `FieldSpec.default` assumes the shape a raw YAML load
+    produces: `state._dig`'s `isinstance(node, dict)` checks, and ultimately
+    `config_writer.patch_yaml`, which cannot represent a pydantic model at
+    all. A model instance surviving into `.default` reaches the YAML writer
+    the moment a structural edit (`add_entry`, i.e. `n`) folds an unset
+    collection's default into what gets staged and saved — see
+    `test_adding_a_shared_cache_entry_over_the_default_produces_writable_yaml`
+    in `test_config_edit_state.py` for the crash this pins from the other
+    end. `_default_of`'s `to_raw` is what normalises it; this asserts its
+    output rather than testing `to_raw` in isolation, since `.default` is
+    the one place any caller actually reads it.
+    """
+    from jailbee.config_edit.schema import build_specs
+
+    caches = _by_path(build_specs(Config), "shared_caches").default
+    assert isinstance(caches, list) and caches
+    for cache in caches:
+        assert isinstance(cache, dict), f"expected plain dict, got {type(cache)!r}"
+        assert not any(isinstance(v, BaseModel) for v in cache.values())
 
 
 def test_global_specs_routes_host_level_keys_to_globalconfig():
@@ -308,18 +362,30 @@ def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
 
 
 def test_every_basic_path_exists_in_a_layer_tree():
-    """A curated path that no longer exists would silently curate nothing.
+    """A curated path that had fallen out of one tree would silently curate
+    nothing there — checking the **union** of both trees would miss exactly
+    that, since the same path can still be found in the other one.
 
-    Exact-match, unlike `test_default_view_paths_all_resolve` below (which
+    `_HOST_LEVEL_KEYS` paths are the documented exception (spec 10.2): those
+    legitimately live in only one tree (`global_specs()`'s host half has no
+    repo counterpart), so they are checked against the union instead.
+
+    Exact-match, unlike `test_default_view_paths_all_resolve` below, which
     also accepts a curated path that is a real leaf's *prefix*, not a leaf
-    itself). Keep this one: deleting it would let a curated non-leaf slip
-    through unnoticed, since the prefix-tolerant test alone would not
-    catch it.
+    itself. Keep both: the prefix-tolerant test alone would let a curated
+    non-leaf slip through unnoticed.
     """
+    from jailbee.config.common import _HOST_LEVEL_KEYS
     from jailbee.config_edit.schema import BASIC_FIELDS, global_specs, repo_specs
 
-    known = {s.path for s in repo_specs()} | {s.path for s in global_specs()}
-    assert BASIC_FIELDS - known == frozenset()
+    repo_paths = {s.path for s in repo_specs()}
+    global_paths = {s.path for s in global_specs()}
+    for path in BASIC_FIELDS:
+        if path[0] in _HOST_LEVEL_KEYS:
+            assert path in repo_paths or path in global_paths, path
+            continue
+        assert path in repo_paths, f"{path} missing from repo_specs()"
+        assert path in global_paths, f"{path} missing from global_specs()"
 
 
 def test_basic_set_is_a_readable_shortlist():
@@ -435,3 +501,23 @@ def test_config_edit_is_editable_in_the_global_tree_only():
     repo_paths = {s.path for s in repo_specs()}
     assert ("config_edit", "write_policy") in global_paths
     assert ("config_edit", "write_policy") not in repo_paths
+
+
+def test_rebase_prefixes_every_path_and_clears_the_advanced_filter():
+    """Entry specs are addressed by their full path, and are never 'advanced'.
+
+    `build_specs` marks a field advanced when its path is not in `BASIC_FIELDS`,
+    and no entry path ever is — so without this an entry form would render empty
+    until the user pressed `a`.
+    """
+    specs = build_specs(HostMount)
+
+    got = rebase(specs, ("host_mounts", 1))
+
+    assert [s.path for s in got] == [
+        ("host_mounts", 1, "host"),
+        ("host_mounts", 1, "container"),
+        ("host_mounts", 1, "readonly"),
+    ]
+    assert all(not s.advanced for s in got)
+    assert [s.label for s in got] == ["host", "container", "readonly"]

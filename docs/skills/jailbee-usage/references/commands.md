@@ -72,19 +72,43 @@ jailbee config edit --config <path>      # a specific repo's config
 jailbee config edit --write regenerate   # override the write policy once
 ```
 
-Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, then edits a field ·
-`Space` toggles a true/false field · `r` resets a field to whatever it
-inherits (by deleting the key, so it keeps following jailbee's default rather
-than freezing at today's) · `/` searches names and descriptions across every
-section and ignores the basic/advanced filter · `a` shows every field, not
-just the curated set · `d` previews the diff (`n` or `Esc` closes it) ·
-`s` or `Ctrl-S` saves · `Esc` goes back · `q` quits (twice, if there are
-unsaved edits). **`Ctrl-C` abandons the editor immediately and
-unconditionally — unlike `q`, it has no unsaved-changes guard, so any staged
-edits are silently discarded.** Inside
-the modal that opens on `Enter`, a single-line field commits with `Enter`; a
-multi-line one (a list or map) commits with `Ctrl-S`, since `Enter` there
-inserts a new row instead.
+Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, a structured list's
+drill-down screen, or an entry within one, then edits a field · `Space`
+toggles a true/false field · `r` resets a field — or a whole list, to just its
+inherited entries — to whatever it inherits (by deleting the key, so it keeps
+following jailbee's default rather than freezing at today's) · `/` searches
+names and descriptions across every section and ignores the basic/advanced
+filter · `a` shows every field, not just the curated set · `d` previews the
+diff (`n` or `Esc` closes it) · `s` or `Ctrl-S` saves · `Esc` goes back · `q`
+quits (twice, if there are unsaved edits). **`Ctrl-C` abandons the editor
+immediately and unconditionally — unlike `q`, it has no unsaved-changes
+guard, so any staged edits are silently discarded.** Inside the modal that
+opens on `Enter`, a single-line field commits with `Enter`; a multi-line one
+(a list or map) commits with `Ctrl-S`, since `Enter` there inserts a new row
+instead.
+
+A structured list (`host_mounts`, `host_ports`, `host_devices`,
+`shared_caches`, `optional_mounts`, `agents`, the `autostart` steps) opens its
+own drill-down screen instead of a modal: `n` new, `x` delete, `J`/`K`
+reorder, `Enter` opens the entry under the cursor. An entry's form is
+generated from its model the same way the top-level fields are, and the
+nesting is recursive — an agent's `shared` mounts are reachable from inside
+its own entry. Leaving an entry validates it against its model; a second
+`Esc` on one that fails discards it outright if `n` just created it this
+session, or, on a pre-existing entry merely edited into an invalid state,
+discards only its staged edits and keeps the entry itself. A map (`agents`,
+`optional_mounts`) asks for the
+new key's name before creating the entry. Editing one field of one entry
+addresses that entry's content by index, so the other entries and any
+comments between them are preserved — but a save re-emits the file with
+jailbee's own block-sequence indentation, so a config written with indented
+sequences (`  - `) is normalised on its first save. Add, delete and reorder
+rewrite the whole list, since those change what the indices mean.
+
+Two staging rules worth knowing: typing into an entry cancels a pending reset
+of its collection, and resetting a collection discards any pending edits
+staged inside it — the editor names this on the message line when it
+happens.
 
 A save is validated through the real config loader before anything is
 written, so the editor cannot produce a file the CLI would reject, and the
@@ -98,18 +122,21 @@ refused for the repo layer: its config is synthesized from `global.yaml`'s
 a config file that stops that layer being used at all. Run `jailbee config
 init` there first, or edit the global layer, where those settings live.
 
-Not editable here yet: lists of structured entries (`host_mounts`,
-`host_ports`, `host_devices`, `shared_caches`, `agents`, `apps`,
-`optional_mounts`, `autostart.on_create`, `autostart.on_start`) have no
-drill-down screen.
-Secrets are never editable, but the reason shown differs by layer: at the
-repo layer (plain `jailbee config edit`), `github.api_tokens` is blocked
-because the whole `github` block is host-local and rejected in a repo config
-— the same reason blocks every other `github` field there too; at the global
-layer (`--global`), where `github` itself is allowed, `github.api_tokens` is
-blocked because the editor will not paint a token on a terminal. And
-`scratch.config`'s free-form YAML has no schema to build a form from. Each
-row shows its own reason; edit any of these by hand.
+`github.api_tokens` can be set from the editor but is never displayed: the
+key list shows a fixed mask, the input is hidden, and a token typed this
+session is redacted from the diff preview exactly like one already on disk.
+It is still blocked at the repo layer (plain `jailbee config edit`), but not
+as a secret — the whole `github` block is host-local and the config loader
+rejects it in a repo config, the same reason that blocks every other
+`github` field there. `scratch.config` has no schema to build a form from;
+it is edited as a YAML block and checked before it is staged.
+
+A repo config's lists are *appended* to the global ones by jailbee's merge
+rules, so a repo-layer drill-down screen shows the inherited global entries
+above your own, read-only, and says so: they cannot be removed from a repo
+config, only discarded wholesale by emptying the list — deleting every entry
+of your own down to none stages an explicit `[]`, which overrides the merge
+instead of appending to it.
 
 Reachable from both dashboards: `e` (repo) and `E` (global) in
 `jailbee dashboard`, and the **Config** menu in the Qt GUI.

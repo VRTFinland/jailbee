@@ -24,6 +24,7 @@ from jailbee.config import (
     ConfigError,
     LooseAutoRevert,
     _columns_already_sanitized,
+    _split_host_keys,
 )
 from jailbee.paths import expand_path, xdg_data_home
 
@@ -235,10 +236,6 @@ def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
     it, ten of the twelve host-level paths the editor offers would be
     written unvalidated.
     """
-    # Local import: config.py imports ConfigError from this module, so a
-    # module-level import would form a cycle.
-    from jailbee.config import _split_host_keys
-
     host_raw, _ = _split_host_keys(raw)
     try:
         return GlobalConfig.model_validate(host_raw)

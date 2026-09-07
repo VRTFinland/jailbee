@@ -202,14 +202,38 @@
 
   Open it with `jailbee config edit` (`--global` for the user-level file),
   with `e` / `E` in `jailbee dashboard`, or from the **Config** menu in the Qt
-  GUI. `jailbee config init` now offers to open it. Lists of structured
-  entries (`host_mounts`, `agents`, `autostart.on_create`/`autostart.on_start`,
-  …) and secrets (`github.api_tokens`) are shown read-only for now, each with
-  its own reason. A directory with no `.jailbee/config.yaml` is refused for
-  the repo layer rather than shown wrongly: its settings come from
-  `global.yaml`'s `scratch.config`, and saving a file here would stop that
-  layer being used at all — run `jailbee config init` there first. See
-  [`config_edit`](docs/config.md#config_edit).
+  GUI. `jailbee config init` now offers to open it. A directory with no
+  `.jailbee/config.yaml` is refused for the repo layer rather than shown
+  wrongly: its settings come from `global.yaml`'s `scratch.config`, and saving
+  a file here would stop that layer being used at all — run `jailbee config
+  init` there first. See [`config_edit`](docs/config.md#config_edit).
+- **Every remaining config field is editable in `jailbee config edit`.**
+  Structured lists — `host_mounts`, `host_ports`, `host_devices`,
+  `shared_caches`, `optional_mounts`, `agents`, and the `autostart` steps —
+  now open a screen of their own: `n` adds an entry, `x` removes one, `J`/`K`
+  reorder, and `Enter` opens an entry's own form, generated from its model the
+  same way the top-level fields are. An entry is validated against its model
+  when you leave it, so an incomplete one is caught where you made it rather
+  than at save time. The nesting is recursive, so an agent's `shared` mounts
+  are reachable too.
+
+  Editing one field of one entry addresses that entry's content by index, so
+  the other entries and any comments among them are preserved — but a save
+  re-emits the file with jailbee's own block-sequence indentation, so a
+  config written with indented sequences (`  - `) is normalised on its first
+  save. Adding, deleting or reordering rewrites the list, because those
+  change what the indices mean.
+
+  `github.api_tokens` can now be set from the editor. Values are never
+  displayed — the key list shows a fixed mask, the input is hidden, and a
+  token typed this session is redacted from the diff preview the same way one
+  already on disk is. `scratch.config`, which has no schema to generate a form
+  from, is edited as a YAML block and checked before it is staged.
+
+  A repo config's lists are *appended* to the global ones by jailbee's merge
+  rules, so a repo-layer screen shows the inherited entries above your own,
+  read-only, and says so: they cannot be removed from a repo config, only
+  discarded wholesale by emptying the list.
 - **`jailbee claude group ls`** lists the credential groups on this host and
   what each one holds — the same rows and columns as `jailbee claude ls`,
   narrowed to rows that *are* a group (a parked login belongs to none, and an
