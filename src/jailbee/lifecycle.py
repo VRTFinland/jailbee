@@ -676,11 +676,23 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
                     catch=GitFetchError,
                 )
             except GitFetchError as e:
+                # A synthetic config has no `.jailbee/config.yaml` — that
+                # absence is what makes it synthetic, and `jailbee new` has
+                # already said so on stderr a moment earlier. Naming that file
+                # as the place to put the escape sends the user to a file they
+                # are not supposed to create; `scratch.config` is where a
+                # scratch directory's `new:` block actually lives.
+                from jailbee.global_config import default_global_config_path
+
+                where = (
+                    f"scratch.config.new.autofetch=false in {default_global_config_path()}"
+                    if cfg.is_synthetic()
+                    else "new.autofetch=false in .jailbee/config.yaml"
+                )
                 raise ValueError(
                     f"jailbee new: autofetch of '{remote}/{fetch_branch}' failed: "
                     f"{e.stderr.strip() or e}\n"
-                    f"Resolve the underlying issue, or set new.autofetch=false "
-                    f"in .jailbee/config.yaml to skip."
+                    f"Resolve the underlying issue, or set {where} to skip."
                 ) from e
         checkout_commit = rev_parse_remote(cfg.repo_root, remote, source_branch)
         if checkout_commit is None:
@@ -926,6 +938,24 @@ def new_container(
         # in every container until the user happens to run `jailbee apply`.
         ensure_claude_config_dir(cfg, incus)
         ensure_claude_credentials_env(cfg, incus)
+
+    # Before `incus.init`, deliberately. `profile_assign` below is the first
+    # thing that fails on a repo that never ran `jailbee init`, and by then the
+    # instance exists — an orphan carrying only `default`, which `jailbee ls`
+    # cannot show (it selects on profile membership) yet which blocks the next
+    # `jailbee new` with "already exists". Refusing up front leaves nothing
+    # behind, and says what Incus's own "Profile not found" does not.
+    missing = [
+        p
+        for p in (names.base, names.binds, names.net_strict, names.net_loose)
+        if not incus.profile_exists(p)
+    ]
+    if missing:
+        raise ValueError(
+            f"jailbee new: this repo's profiles do not exist yet: {', '.join(missing)}.\n"
+            f"Run `jailbee init` in {cfg.repo_root} first "
+            f"(or `jailbee apply` if some already exist)."
+        )
 
     _phase("creating")
     incus.init(opts.from_base, name)

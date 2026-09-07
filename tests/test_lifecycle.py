@@ -2179,6 +2179,128 @@ def test_new_container_origin_mode_errors_when_fetch_fails(tmp_path, mocker):
     incus.init.assert_not_called()
 
 
+def test_new_container_refuses_before_creating_anything_when_profiles_are_missing(tmp_path, mocker):
+    """A repo that never ran `jailbee init` must be told so, not shown Incus's
+    "Profile not found".
+
+    The check has to sit *before* `incus.init`: assigning profiles is the first
+    thing that fails, and by then the instance exists, leaving an orphan that
+    `jailbee ls` cannot see (it selects on profile membership) but that blocks
+    the next `jailbee new` with "already exists".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = False
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError, match="jailbee init"):
+        new_container(cfg, incus, opts)
+
+    incus.init.assert_not_called()
+
+
+def test_new_container_proceeds_when_the_profiles_are_there(tmp_path, mocker):
+    """The guard must not fire for a repo that did run `init` — otherwise it
+    would block every ordinary `jailbee new`."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    new_container(cfg, incus, opts)
+
+    incus.init.assert_called_once()
+
+
+def test_autofetch_failure_points_a_scratch_dir_at_scratch_config(tmp_path, mocker):
+    """A scratch directory has no `.jailbee/config.yaml` to put the escape in.
+
+    The generic message names that file, which is the one file a synthetic
+    config is defined by not having — `jailbee new` says so itself two lines
+    earlier. Point at the key that actually exists instead.
+    """
+    from jailbee.git import GitFetchError
+
+    cfg = _cfg_for_new(tmp_path, clone_from="origin", autofetch=True)
+    cfg._synthetic = True
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.fetch_remote_ref",
+        side_effect=GitFetchError("fetch failed", stderr="fatal: no origin"),
+    )
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        new_container(cfg, incus, opts)
+
+    message = str(excinfo.value)
+    assert "scratch.config" in message
+    assert ".jailbee/config.yaml" not in message
+
+
+def test_autofetch_failure_still_names_the_repo_config_for_a_real_repo(tmp_path, mocker):
+    """The scratch wording must not leak into repos that do have a config
+    file — there the escape really does belong in `.jailbee/config.yaml`."""
+    from jailbee.git import GitFetchError
+
+    cfg = _cfg_for_new(tmp_path, clone_from="origin", autofetch=True)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.fetch_remote_ref",
+        side_effect=GitFetchError("fetch failed", stderr="fatal: no origin"),
+    )
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        new_container(cfg, incus, opts)
+
+    assert ".jailbee/config.yaml" in str(excinfo.value)
+
+
 def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
     """A confirmed retry re-runs only the host fetch, not container creation."""
     from jailbee.git import GitFetchError
