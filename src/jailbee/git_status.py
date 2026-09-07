@@ -364,9 +364,11 @@ if [ -n "$GIT_DIR" ]; then
     IN_PROGRESS="revert"
   fi
 fi
-# `git ls-files --unmerged` prints one line per stage; count distinct paths.
+# `git ls-files --unmerged` prints one line per stage: "<mode> <object>
+# <stage>\t<path>". `cut -f2` splits on that tab, so a path containing a
+# space is not truncated (unlike splitting on all whitespace).
 UNMERGED=$(git ls-files --unmerged 2>/dev/null \
-  | awk '{print $4}' | sort -u | wc -l | tr -d '[:space:]')
+  | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
 printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
