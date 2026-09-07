@@ -3348,6 +3348,127 @@ def test_cli_fetch_git_error_exits_1(mocker, tmp_path):
     assert "exit 128" in result.output
 
 
+def _fetch_setup(mocker, tmp_path):
+    """cfg/incus/short-name mocks, mirroring `_setup` in tests/test_cli_pr.py."""
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "sampleapp"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    incus_mock = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(incus_mock, "sampleapp-feat-foo"),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    return cfg_mock, incus_mock
+
+
+def _sync_refs_result(status: str = "created", submodules: tuple = ()):
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
+
+    return SyncRefsResult(
+        fetch=FetchResult(
+            branch="feat/foo",
+            old_oid=None,
+            new_oid="newsha1234567",
+            base_oid=None,
+            commits_added=1,
+        ),
+        target="feat/foo",
+        superproject=BranchPlacement("refs/heads/feat/foo", status, None, "newsha1234567"),
+        submodules=submodules,
+    )
+
+
+def test_git_fetch_calls_sync_refs_and_prints_the_branch(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    called = mocker.patch(
+        "jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result()
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["force"] is False
+    assert called.call_args.kwargs["as_name"] is None
+    assert "refs/heads/feat/foo" in result.output
+
+
+def test_git_fetch_forwards_as_and_force(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    called = mocker.patch(
+        "jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result()
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo", "--as", "alt", "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["as_name"] == "alt"
+    assert called.call_args.kwargs["force"] is True
+
+
+def test_git_fetch_warns_on_a_diverged_branch_but_exits_zero(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(status="diverged"),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    # A fetch that imported every ref must not fail just because one branch
+    # could not be advanced.
+    assert result.exit_code == 0, result.output
+    assert "diverged" in result.output
+    # The hint must name the *container*, not just the word "diverged" —
+    # `jailbee git pull` needs a target to be useful.
+    assert "feat-foo" in result.output
+
+
+def test_git_fetch_warns_on_refused_without_suggesting_force(mocker, tmp_path):
+    """A checked-out branch with local changes: --force cannot help here
+    (forcing a ref out from under a live index is refused unconditionally),
+    so the remedy must not mention it.
+    """
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(status="refused"),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "uncommitted local changes" in result.output
+    assert "--force" not in result.output
+
+
+def test_git_fetch_reports_submodule_placements(mocker, tmp_path):
+    """Exercises the submodule half of the printer: a normal advance (info)
+    and a loud failure status (warn_plain), both in the same report.
+    """
+    from jailbee.submodules import SubBranchPlacement
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(
+            submodules=(
+                SubBranchPlacement("sub", "fast-forwarded", "oldsub12", "newsub123"),
+                SubBranchPlacement("other", "unreachable", None, "newsub456"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "sub" in result.output
+    assert "fast-forwarded" in result.output
+    assert "other" in result.output
+    assert "unreachable" in result.output
+
+
 def test_cli_pull_invokes_sync(mocker, tmp_path):
     runner = CliRunner()
     cfg_mock = mocker.MagicMock()

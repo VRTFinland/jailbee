@@ -2324,6 +2324,7 @@ if TYPE_CHECKING:
         PublishResult,
         PushResult,
         SourcePref,
+        SyncRefsResult,
     )
 
 
@@ -2508,6 +2509,65 @@ def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> No
 
     for line in git_helpers.log_oneline(cfg.repo_root, range_spec):
         info(f"  {line}")
+
+
+def _placement_remedy(status: str, *, name: str, short: str) -> str:
+    """The one remedy line for a placement failure — see `sync.HostPlacementStatus`
+    and `submodules.PlacementStatus`.
+
+    Each status gets its own sentence on purpose (Task 7 split
+    `checkout_from_container`'s errors the same way): "diverged" and "refused"
+    are both non-fast-forwards but need opposite advice (merge vs. commit/stash),
+    and neither "checked-out" nor "refused" may suggest `--force` — it is
+    refused on the checked-out branch by design, and does not apply to a
+    submodule sitting on the target branch at all.
+    """
+    if status == "diverged":
+        return (
+            f"{name}: diverged from the container — left alone. "
+            f"Use 'jailbee git pull {short}' to merge."
+        )
+    if status == "refused":
+        return (
+            f"{name}: uncommitted local changes are in the way — "
+            f"commit or stash them and try again."
+        )
+    if status == "checked-out":
+        return f"{name}: not moved — that branch is checked out there."
+    if status == "unreachable":
+        return f"{name}: unreachable — the sub-repo is not on disk."
+    # "failed": the ref write itself was refused (e.g. a lost update-ref race,
+    # or the gitlink commit could not be read from the fetched tree).
+    return f"{name}: failed — the ref write was refused."
+
+
+def _print_placement_report(result: "SyncRefsResult", short: str) -> None:
+    """Report what `jailbee git fetch` did to the host branch and every submodule.
+
+    `"up-to-date"` needs no line — nothing moved, nothing to explain. Every
+    other quiet status ("created", "fast-forwarded", "forced",
+    "checked-out-ff") gets one plain info line. The four failure statuses
+    common to both vocabularies plus submodule-only `"unreachable"` are loud:
+    each gets its own remedy from `_placement_remedy`, given via `warn_plain`
+    rather than `warn` — a branch or submodule path can legitimately contain
+    square brackets (`feat/[wip]`), which `warn`'s Rich markup parsing would
+    silently delete.
+    """
+    quiet = {"up-to-date"}
+    loud = {"diverged", "refused", "checked-out", "failed", "unreachable"}
+
+    sup = result.superproject
+    if sup.status in loud:
+        warn_plain(_placement_remedy(sup.status, name=sup.name, short=short))
+    elif sup.status not in quiet:
+        info(f"{sup.name}: {sup.status} → {sup.new_oid[:7]}")
+
+    for sub in result.submodules:
+        label = f"submodule '{sub.path}'"
+        if sub.status in loud:
+            warn_plain(_placement_remedy(sub.status, name=label, short=short))
+        elif sub.status not in quiet:
+            info(f"{label}: {sub.status} → {sub.new_oid[:7]}")
 
 
 def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult") -> None:
@@ -3221,17 +3281,42 @@ def fetch(
         str | None,
         typer.Option("--branch", "-b", help="Override branch detection"),
     ] = None,
+    as_name: Annotated[
+        str | None,
+        typer.Option(
+            "--as",
+            help=(
+                "Host branch to write (default: the container's branch, or its "
+                "PR head branch when the container has one)."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Overwrite a host branch that has diverged from the container. "
+            "Refused for the branch that is currently checked out.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Fetch commits from a container's clone into refs/jailbee/<short>/<branch>.
+    """Bring a container's state onto the host as refs, without switching branches.
 
-    Looks up the container's branch from user.jailbee.branch (set at create
-    time) or falls back to the clone's HEAD. The container must be running.
+    Fetches into refs/jailbee/<short>/<branch>, transports the submodule
+    objects, then points the host branch and every submodule's branch of the
+    same name at what the container has. The working tree is not moved — switch
+    to it afterwards with `jailbee submodule checkout -b <branch>`.
+
+    A host branch that has diverged is left alone with a warning; --force
+    overwrites it, except when it is the branch you have checked out.
 
     Examples:
 
       jailbee git fetch feat-foo              # fetch container's branch
       jailbee git fetch feat-foo -b feat/x    # read feat/x from the container
+      jailbee git fetch feat-foo --as alt     # write the host branch 'alt'
+      jailbee git fetch feat-foo --force      # overwrite a diverged host branch
       jailbee git fetch                       # interactive container picker
     """
     from jailbee import git as git_helpers
@@ -3243,12 +3328,15 @@ def fetch(
     short = short_name(cfg, full)
 
     try:
-        result = sync.fetch_from_container(cfg, incus, short, branch=branch)
+        result = sync.sync_refs_from_container(
+            cfg, incus, short, branch=branch, as_name=as_name, force=force
+        )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    _print_fetch_summary(cfg, short, result)
+    _print_fetch_summary(cfg, short, result.fetch)
+    _print_placement_report(result, short)
 
 
 # Top-level alias — hidden from `jailbee --help`; full docstring inherited from `fetch`.
