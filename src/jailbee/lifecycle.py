@@ -676,11 +676,23 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
                     catch=GitFetchError,
                 )
             except GitFetchError as e:
+                # A synthetic config has no `.jailbee/config.yaml` — that
+                # absence is what makes it synthetic, and `jailbee new` has
+                # already said so on stderr a moment earlier. Naming that file
+                # as the place to put the escape sends the user to a file they
+                # are not supposed to create; `scratch.config` is where a
+                # scratch directory's `new:` block actually lives.
+                from jailbee.global_config import default_global_config_path
+
+                where = (
+                    f"scratch.config.new.autofetch=false in {default_global_config_path()}"
+                    if cfg.is_synthetic()
+                    else "new.autofetch=false in .jailbee/config.yaml"
+                )
                 raise ValueError(
                     f"jailbee new: autofetch of '{remote}/{fetch_branch}' failed: "
                     f"{e.stderr.strip() or e}\n"
-                    f"Resolve the underlying issue, or set new.autofetch=false "
-                    f"in .jailbee/config.yaml to skip."
+                    f"Resolve the underlying issue, or set {where} to skip."
                 ) from e
         checkout_commit = rev_parse_remote(cfg.repo_root, remote, source_branch)
         if checkout_commit is None:
@@ -805,7 +817,28 @@ def new_container(
             on_phase(label)
 
     name = opts.name or derive_container_name(cfg, opts.container_branch)
-    if incus.exists(name):
+    # One listing rather than `incus.exists`, because the entry also carries
+    # `profiles`, and that is what tells a real container apart from a
+    # leftover: an instance with none of this repo's profiles is the residue
+    # of a create that failed after `incus init`. `jailbee ls` selects on
+    # profile membership, so it cannot show that instance — a bare "already
+    # exists" would leave the user holding a name the tool denies having.
+    existing = next((c for c in incus.list_containers() if c["name"] == name), None)
+    if existing is not None:
+        repo_names = profile_names(cfg)
+        repo_profiles = {
+            repo_names.base,
+            repo_names.binds,
+            repo_names.net_strict,
+            repo_names.net_loose,
+        }
+        if not repo_profiles & set(existing.get("profiles") or []):
+            raise ValueError(
+                f"Container '{name}' already exists but carries none of this repo's "
+                f"profiles — a leftover from a create that failed, which is why "
+                f"`jailbee ls` does not list it.\n"
+                f"Remove it with `jailbee destroy {short_name(cfg, name)} --force`."
+            )
         raise ValueError(f"Container '{name}' already exists")
 
     if opts.mount:
@@ -927,17 +960,50 @@ def new_container(
         ensure_claude_config_dir(cfg, incus)
         ensure_claude_credentials_env(cfg, incus)
 
+    # Before `incus.init`, deliberately. `profile_assign` below is the first
+    # thing that fails on a repo that never ran `jailbee init`, and by then the
+    # instance exists — an orphan carrying only `default`, which `jailbee ls`
+    # cannot show (it selects on profile membership) yet which blocks the next
+    # `jailbee new` with "already exists". Refusing up front leaves nothing
+    # behind, and says what Incus's own "Profile not found" does not.
+    missing = [
+        p
+        for p in (names.base, names.binds, names.net_strict, names.net_loose)
+        if not incus.profile_exists(p)
+    ]
+    if missing:
+        raise ValueError(
+            f"jailbee new: this repo's profiles do not exist yet: {', '.join(missing)}.\n"
+            f"Run `jailbee init` in {cfg.repo_root} first "
+            f"(or `jailbee apply` if some already exist)."
+        )
+
     _phase("creating")
     incus.init(opts.from_base, name)
-    incus.profile_assign(
-        name,
-        [
-            "default",
-            names.base,
-            names.binds,
-            names.net_by_mode[opts.network],
-        ],
-    )
+    try:
+        incus.profile_assign(
+            name,
+            [
+                "default",
+                names.base,
+                names.binds,
+                names.net_by_mode[opts.network],
+            ],
+        )
+    except IncusError:
+        # The profiles exist (the pre-flight above said so) but Incus rejected
+        # them anyway — a `host_mounts` entry whose source path is gone does
+        # this. Roll the instance back: it was created seconds ago and holds
+        # nothing, while leaving it behind produces a container with only
+        # `default`, which `jailbee ls` cannot show and which blocks the next
+        # `jailbee new` with "already exists".
+        try:
+            incus.delete(name, force=True)
+        except IncusError:
+            # Cleanup is best-effort. Never let it replace the real cause —
+            # the assign error is what the user has to act on.
+            pass
+        raise
     incus.config_set(name, "limits.memory", opts.memory)
     incus.config_set(name, "limits.cpu", str(opts.cpu))
 

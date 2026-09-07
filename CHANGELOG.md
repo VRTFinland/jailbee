@@ -86,6 +86,37 @@
   from the container's `.gitmodules`, else the container sub-repo's own
   `remote.origin.url`; when neither names one, `origin` is removed and the
   fix is printed instead of silently leaving a broken remote behind.
+- **A `jailbee new` that fails after the container is created no longer
+  leaves it behind.** The instance was created before `incus profile assign`,
+  so an assign that failed — a `host_mounts` entry whose source path has gone
+  does this — left an instance carrying only the `default` profile. `jailbee
+  ls` selects on profile membership and so could not show it, while the next
+  `jailbee new` refused because it existed: the tool denied having the
+  container and blocked itself on it at once. A failed assign now deletes the
+  instance it just created (best-effort, never replacing the original error),
+  and "already exists" distinguishes a leftover from a real container and
+  points it at `jailbee destroy <name> --force`.
+- **`jailbee new` on a repo that never ran `jailbee init` now says so**, and
+  refuses before creating anything, instead of reaching `profile_assign` and
+  surfacing Incus's "Profile not found". Scratch directories are unaffected —
+  their profiles are bootstrapped through `run_apply` first.
+- **The autofetch failure no longer sends a scratch directory to a file it
+  does not have.** It advised setting `new.autofetch=false` in
+  `.jailbee/config.yaml` — the one file a synthesized config is defined by
+  lacking, as `jailbee new` reports two lines earlier. It now names
+  `scratch.config.new.autofetch` in `global.yaml`, with the path spelled out.
+- **`jailbee config init --global` now documents every browser.** The
+  generated file carried only `browsers.chrome`, so nothing in it revealed
+  that Firefox or `browsers.default` exist. Firefox ships present but
+  disabled, the same way `github` does, since it defaults to `source: image`
+  and enabling it would promise a browser no golden image has installed yet.
+- **`jailbee doctor`'s uid-delegation fix is now sized to the host's own user
+  namespace.** It prescribed `root:1000000:1000000000` unconditionally;
+  inside an unprivileged container that range does not fit, and appending it
+  stops every container from starting — nesting or not — with `newuidmap:
+  write to uid_map failed: Operation not permitted`. The advice is now
+  computed from `/proc/self/uid_map` and capped at the documented billion, so
+  an ordinary host sees no change.
 
 ### Changed
 

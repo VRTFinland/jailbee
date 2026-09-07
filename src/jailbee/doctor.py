@@ -771,7 +771,64 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     return results
 
 
-def _subid_fix(uid: int, gid: int) -> str:
+_UID_MAP_PATH = Path("/proc/self/uid_map")
+
+_FULL_DELEGATION = 1_000_000_000
+"""Ids to delegate to root on an ordinary host — what docs/installation.md says."""
+
+_DELEGATION_START = 1_000_000
+"""Where the delegated root range begins; Incus maps container root here."""
+
+
+def _namespace_id_ceiling(uid_map_path: Path) -> int | None:
+    """Highest id this process's user namespace owns, or `None` if unknowable.
+
+    On a host proper the map is the identity map and the ceiling is
+    effectively unbounded. Inside an unprivileged container it is not, and
+    that is the whole point of reading it: `newuidmap` refuses a range the
+    namespace does not own, so advice to delegate ids past this ceiling is
+    advice that breaks the machine.
+
+    Only coverage contiguous from 0 counts. A gap means the ids above it are
+    unreachable for a single `newuidmap` segment anyway.
+    """
+    try:
+        text = uid_map_path.read_text()
+    except OSError:
+        return None
+
+    ranges: list[tuple[int, int]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        try:
+            inner, _outer, count = (int(p) for p in parts)
+        except ValueError:
+            continue
+        ranges.append((inner, count))
+
+    if not ranges:
+        return None
+
+    ceiling = 0
+    for start, count in sorted(ranges):
+        if start > ceiling:
+            break
+        ceiling = max(ceiling, start + count)
+    return ceiling - 1
+
+
+def _delegable_count(uid_map_path: Path) -> int:
+    """How many ids the advice may safely tell the user to delegate."""
+    ceiling = _namespace_id_ceiling(uid_map_path)
+    if ceiling is None:
+        # No map, no verdict — the documented range is the honest default.
+        return _FULL_DELEGATION
+    return max(0, min(_FULL_DELEGATION, ceiling - _DELEGATION_START + 1))
+
+
+def _subid_fix(uid: int, gid: int, *, uid_map_path: Path | None = None) -> str:
     """The fix, phrased as required file contents rather than shell commands.
 
     `doctor` renders details inside a narrow Rich table column, which wraps
@@ -779,11 +836,21 @@ def _subid_fix(uid: int, gid: int) -> str:
     one-liner arrives broken and unusable. Naming the two lines each file
     must contain survives the wrapping, and the ids are substituted so
     there is nothing left to work out.
+
+    The root range is sized against the running user namespace rather than
+    fixed at `_FULL_DELEGATION`. On a host proper nothing changes. Inside a
+    container — which is where jailbee is itself developed — the documented
+    billion does not fit, and appending it stops *every* container from
+    starting, nesting or not, with `newuidmap: write to uid_map failed:
+    Operation not permitted`. Advice that bricks the daemon is worse than no
+    advice.
     """
+    count = _delegable_count(uid_map_path if uid_map_path is not None else _UID_MAP_PATH)
+    root_range = f"root:{_DELEGATION_START}:{count}"
     return (
         f"/etc/subuid must contain both `root:{uid}:1` and "
-        f"`root:1000000:1000000000`; /etc/subgid both `root:{gid}:1` and "
-        f"`root:1000000:1000000000`. Append what is missing, then "
+        f"`{root_range}`; /etc/subgid both `root:{gid}:1` and "
+        f"`{root_range}`. Append what is missing, then "
         f"`sudo systemctl restart incus` — incusd reads these files only at "
         f"startup. See docs/installation.md → 'Delegate one UID/GID for "
         f"host-file access'."

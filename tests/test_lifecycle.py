@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.config import CONTAINER_USERNAME, NewConfig, PoolSpec, SharedCache, load_config
+from jailbee.incus import IncusError
 from jailbee.lifecycle import (
     NewContainerOptions,
     ResolvedContainer,
@@ -2179,6 +2180,240 @@ def test_new_container_origin_mode_errors_when_fetch_fails(tmp_path, mocker):
     incus.init.assert_not_called()
 
 
+def test_already_exists_points_at_destroy_when_the_instance_is_an_orphan(tmp_path, mocker):
+    """An instance without the repo's profiles is a leftover from a failed
+    create, not a container the user made.
+
+    `jailbee ls` cannot show it — it selects on profile membership — so a bare
+    "already exists" leaves the user with a name the tool elsewhere denies
+    having. Name the way out.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "repo-feat-new", "profiles": ["default"]}]
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError, match="jailbee destroy"):
+        new_container(cfg, incus, opts)
+
+
+def test_already_exists_stays_plain_for_a_real_container(tmp_path, mocker):
+    """A container that does carry the repo's profiles is a real one; telling
+    the user to destroy it would be advice to throw away their work."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "repo-feat-new", "profiles": ["default", "repo-base", "repo-binds"]}
+    ]
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        new_container(cfg, incus, opts)
+
+    assert "already exists" in str(excinfo.value)
+    assert "jailbee destroy" not in str(excinfo.value)
+
+
+def test_new_container_rolls_back_the_instance_when_profile_assign_fails(tmp_path, mocker):
+    """An assign that fails after `incus.init` must not leave the instance.
+
+    The profiles exist (so the pre-flight passes) but the assign is rejected
+    anyway — a `host_mounts` entry whose source path is gone does exactly this.
+    Without rollback the empty instance survives, invisible to `jailbee ls`
+    and blocking the next `jailbee new` with "already exists". Nothing of value
+    exists at this point: the container was created moments ago and holds no
+    clone.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_assign.side_effect = IncusError("Failed add validation for device")
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(IncusError):
+        new_container(cfg, incus, opts)
+
+    incus.delete.assert_called_once_with("repo-feat-new", force=True)
+
+
+def test_new_container_rollback_failure_does_not_mask_the_real_error(tmp_path, mocker):
+    """If the cleanup delete also fails, the user must still see why the
+    creation failed — the assign error, not a delete error."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.profile_assign.side_effect = IncusError("the real cause")
+    incus.delete.side_effect = IncusError("cleanup also failed")
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(IncusError, match="the real cause"):
+        new_container(cfg, incus, opts)
+
+
+def test_new_container_refuses_before_creating_anything_when_profiles_are_missing(tmp_path, mocker):
+    """A repo that never ran `jailbee init` must be told so, not shown Incus's
+    "Profile not found".
+
+    The check has to sit *before* `incus.init`: assigning profiles is the first
+    thing that fails, and by then the instance exists, leaving an orphan that
+    `jailbee ls` cannot see (it selects on profile membership) but that blocks
+    the next `jailbee new` with "already exists".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = False
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError, match="jailbee init"):
+        new_container(cfg, incus, opts)
+
+    incus.init.assert_not_called()
+
+
+def test_new_container_proceeds_when_the_profiles_are_there(tmp_path, mocker):
+    """The guard must not fire for a repo that did run `init` — otherwise it
+    would block every ordinary `jailbee new`."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+
+    new_container(cfg, incus, opts)
+
+    incus.init.assert_called_once()
+
+
+def test_autofetch_failure_points_a_scratch_dir_at_scratch_config(tmp_path, mocker):
+    """A scratch directory has no `.jailbee/config.yaml` to put the escape in.
+
+    The generic message names that file, which is the one file a synthetic
+    config is defined by not having — `jailbee new` says so itself two lines
+    earlier. Point at the key that actually exists instead.
+    """
+    from jailbee.git import GitFetchError
+
+    cfg = _cfg_for_new(tmp_path, clone_from="origin", autofetch=True)
+    cfg._synthetic = True
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.fetch_remote_ref",
+        side_effect=GitFetchError("fetch failed", stderr="fatal: no origin"),
+    )
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        new_container(cfg, incus, opts)
+
+    message = str(excinfo.value)
+    assert "scratch.config" in message
+    assert ".jailbee/config.yaml" not in message
+
+
+def test_autofetch_failure_still_names_the_repo_config_for_a_real_repo(tmp_path, mocker):
+    """The scratch wording must not leak into repos that do have a config
+    file — there the escape really does belong in `.jailbee/config.yaml`."""
+    from jailbee.git import GitFetchError
+
+    cfg = _cfg_for_new(tmp_path, clone_from="origin", autofetch=True)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.fetch_remote_ref",
+        side_effect=GitFetchError("fetch failed", stderr="fatal: no origin"),
+    )
+    opts = NewContainerOptions(
+        container_branch="feat/new",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        new_container(cfg, incus, opts)
+
+    assert ".jailbee/config.yaml" in str(excinfo.value)
+
+
 def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
     """A confirmed retry re-runs only the host fetch, not container creation."""
     from jailbee.git import GitFetchError
@@ -3056,7 +3291,11 @@ def test_new_container_pr_label_failure_is_non_fatal(tmp_path):
 def test_new_container_raises_if_exists(tmp_path):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
-    incus.exists.return_value = True
+    # Carries the repo's profiles, so this is a real container, not a leftover
+    # — the plain "already exists" refusal, not the destroy hint.
+    incus.list_containers.return_value = [
+        {"name": "repo-feat-x", "profiles": ["default", "repo-base"]}
+    ]
 
     opts = NewContainerOptions(
         container_branch="feat/x",
