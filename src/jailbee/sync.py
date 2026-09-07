@@ -1323,8 +1323,20 @@ def _place_host_branch(
     that is not possible, nothing at all. `submodules.place_branches_from_commit`
     is *not* such a caller and takes the refusal as its answer.
 
-    Forcing a ref out from under a live index is the one destructive thing this
-    command will not do, which is why `force` does not reach this branch.
+    Whether a dirty tree blocks that merge is **not** pre-judged here — the
+    merge is always attempted, and git's own `--ff-only` is the arbiter of
+    "clean enough": it succeeds whenever no local change would be
+    overwritten, which is strictly weaker (and correct) than refusing on
+    any `git status --porcelain` output at all. A blanket pre-emptive dirty
+    check would also refuse on untracked files in unrelated directories
+    that could never conflict with the fast-forward. When the merge itself
+    declines, the failure is classified by re-checking the tree: dirty means
+    git refused because local edits are in the way (not because the
+    branches diverged), and a clean tree means a genuine divergence —
+    `force` still can't be honored on a checked-out branch either way
+    (forcing a ref out from under a live index is the one destructive thing
+    this command will not do), so it only distinguishes the message, not
+    whether the write happens.
 
     The ordering matters: an absent ref and an already-current one must behave
     the same whether or not `target` is the current branch — creating
@@ -1345,14 +1357,20 @@ def _place_host_branch(
     old_oid = git.rev_parse(cfg.repo_root, ref)
     moving_an_existing_ref = old_oid is not None and old_oid != new_oid
     if moving_an_existing_ref and git.get_current_branch(cfg.repo_root) == target:
-        if git.host_tree_dirty(cfg.repo_root):
-            return BranchPlacement(ref, "refused", old_oid, new_oid)
         try:
             git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
         except git.GitError:
-            # `force` cannot help here, so say "refused" rather than let the
-            # caller think a retry with --force would land it.
-            return BranchPlacement(ref, "refused" if force else "diverged", old_oid, new_oid)
+            if git.host_tree_dirty(cfg.repo_root):
+                # Git declined because local modifications are in the way,
+                # not because the branches diverged.
+                status: HostPlacementStatus = "refused"
+            elif force:
+                # `force` on a checked-out branch is still refused, never
+                # performed — see the docstring.
+                status = "refused"
+            else:
+                status = "diverged"
+            return BranchPlacement(ref, status, old_oid, new_oid)
         return BranchPlacement(ref, "checked-out-ff", old_oid, new_oid)
 
     status, placed_old = git.place_branch(cfg.repo_root, target, new_oid, force=force)
@@ -1466,18 +1484,39 @@ def checkout_from_container(
     status = refs.superproject.status
 
     match status:
-        case "diverged" | "refused" | "failed" | "checked-out":
-            # None of these moved refs/heads/<target> to new_oid: "diverged"
-            # and "failed" are git's own refusals, "refused" is
-            # _place_host_branch's dirty-tree/no-ff-merge guard, and
-            # "checked-out" is place_branch's backstop for a checked-out
-            # branch it cannot move — unreachable in practice because
-            # _place_host_branch intercepts that case first, but reachable in
-            # the type, and proceeding on it would switch onto a branch that
-            # never moved.
+        case "diverged":
+            # The host branch and the container's have genuinely diverged —
+            # a fast-forward is impossible either way, hence the pull hint.
             raise SyncError(
                 f"Branch '{target}' on host has diverged from container. "
                 f"Use 'jailbee git pull {short}' to merge, or rebase manually."
+            )
+        case "refused":
+            # _place_host_branch's guard for HEAD's own branch: either git's
+            # own ff-only merge found local modifications it would have to
+            # overwrite, or (rarer) `force` was requested on a checked-out
+            # branch — forcing a ref out from under a live index is refused
+            # unconditionally. Neither is a divergence, and `jailbee git
+            # pull` would refuse for the very same reason, so it is not
+            # suggested here.
+            raise SyncError(
+                f"Branch '{target}' is checked out on the host and has "
+                f"uncommitted local changes that a fast-forward would have "
+                f"to overwrite. Commit or stash your changes and try again."
+            )
+        case "failed":
+            # The ref write itself was refused by git (e.g. a lost update_ref
+            # race) — not a divergence, so neither the message nor the fix
+            # is "pull to merge".
+            raise SyncError(f"Could not update '{target}' on the host to match the container.")
+        case "checked-out":
+            # place_branch's own backstop for a moving write on HEAD's own
+            # branch — unreachable in practice because _place_host_branch
+            # intercepts that case first (see above), but reachable in the
+            # type, and proceeding on it would switch onto a branch that
+            # never moved.
+            raise SyncError(
+                f"Branch '{target}' on the host did not move to the container's commit."
             )
         case "created" | "up-to-date" | "fast-forwarded" | "forced" | "checked-out-ff":
             # All five leave refs/heads/<target> at new_oid: "created" and
