@@ -69,6 +69,43 @@ class GitStatus:
     unmerged: int | None = None  # paths with unresolved conflicts; None = unknown
 
 
+# Probe value -> the word shown to the user for an operation in progress.
+_IN_PROGRESS_LABELS = {
+    "merge": "merging",
+    "rebase": "rebasing",
+    "cherry-pick": "cherry-picking",
+    "revert": "reverting",
+}
+
+
+def merge_label(status: GitStatus | None) -> tuple[str, str]:
+    """Return ``(text, kind)`` for the MERGE cell — the one definition.
+
+    ``kind`` is ``"none"`` | ``"ok"`` | ``"predicted"`` | ``"active"`` |
+    ``"unknown"``; each UI maps it to its own colour vocabulary.
+
+    Priority matters. ``conflict`` is a *prediction* (would merging this branch
+    into its base conflict?), while ``unmerged``/``in_progress`` describe what
+    the container is doing **right now**. A container left mid-merge by
+    ``jailbee git push --current`` has an open conflict while the prediction
+    against base is still clean, so the live state must win — that is the whole
+    point of this function. The exclamation mark is what separates "go finish
+    this merge" from "this merge would conflict if you ran it".
+    """
+    if status is None:
+        return "—", "none"
+    if status.unmerged:
+        return "conflict!", "active"
+    label = _IN_PROGRESS_LABELS.get(status.in_progress)
+    if label is not None:
+        return label, "active"
+    if status.conflict == "conflict":
+        return "conflict", "predicted"
+    if status.conflict == "ok":
+        return "ok", "ok"
+    return "?", "unknown"
+
+
 def _shortstat_ints(raw: str) -> tuple[int, int]:
     """Parse a single ``git diff --shortstat`` line into ``(ins, del)``.
 

@@ -9,6 +9,7 @@ from jailbee.git_status import (
     SubmoduleChange,
     _parse_submodules,
     _shortstat_ints,
+    merge_label,
     parse_shortstat,
     probe_container_git,
 )
@@ -709,3 +710,35 @@ def test_probe_snippet_checks_rebase_before_merge():
     # A conflicted `git rebase --merge` writes MERGE_HEAD too, so testing
     # MERGE_HEAD first would report "merging" for a rebase.
     assert _PROBE_SNIPPET.index("rebase-merge") < _PROBE_SNIPPET.index("MERGE_HEAD")
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (None, ("—", "none")),
+        (GitStatus("clean", "clean", "0", "ok"), ("ok", "ok")),
+        (GitStatus("clean", "clean", "0", "conflict"), ("conflict", "predicted")),
+        (GitStatus("clean", "clean", "0", "?"), ("?", "unknown")),
+        # An unresolved merge in the tree outranks the prediction, even when
+        # the prediction against base is clean — this is the reported bug.
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="merge", unmerged=2),
+            ("conflict!", "active"),
+        ),
+        # Merge started, conflicts already resolved, commit still pending.
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="merge", unmerged=0),
+            ("merging", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="rebase", unmerged=0),
+            ("rebasing", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "conflict", in_progress="", unmerged=0),
+            ("conflict", "predicted"),
+        ),
+    ],
+)
+def test_merge_label(status, expected):
+    assert merge_label(status) == expected

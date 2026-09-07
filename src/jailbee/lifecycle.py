@@ -30,7 +30,7 @@ from jailbee.git import (
 # `parse_shortstat` is imported (not reimplemented) so the host-side
 # fallback below produces byte-identical `clean` / `+N -M` / `?` strings to
 # the container-side probe — duplicating the parser is how the two would drift.
-from jailbee.git_status import GitStatus, parse_shortstat, probe_many_parallel
+from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
 from jailbee.incus import Incus, IncusError
 from jailbee.profiles import (
     _device_name_from_path,
@@ -2058,15 +2058,18 @@ def ls_field_specs(
 
         return get
 
+    _MERGE_KIND_STYLE = {
+        "none": "dim",
+        "ok": "dim",
+        "predicted": "red",
+        "active": "red",
+        "unknown": "yellow",
+    }
+
     def _conflict_cell(c: ContainerInfo) -> str:
-        if c.git_status is None:
-            return "[dim]—[/dim]"
-        v = c.git_status.conflict
-        if v == "ok":
-            return "[dim]ok[/dim]"
-        if v == "conflict":
-            return "[red]conflict[/red]"
-        return "[yellow]?[/yellow]"
+        text, kind = merge_label(c.git_status)
+        style = _MERGE_KIND_STYLE[kind]
+        return f"[{style}]{text}[/{style}]"
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -2080,6 +2083,8 @@ def ls_field_specs(
             "remote_contained": c.git_status.remote_contained,
             "local_diff": c.git_status.local_diff,
             "local_count": c.git_status.local_count,
+            "in_progress": c.git_status.in_progress,
+            "unmerged": c.git_status.unmerged,
         }
         if show_submodules:
             payload["submodules"] = [

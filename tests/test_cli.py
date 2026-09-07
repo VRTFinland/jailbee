@@ -1171,6 +1171,8 @@ def test_ls_fields_filters_columns_and_supports_git_status_nested(mocker, tmp_pa
                 "remote_contained": None,
                 "local_diff": "?",
                 "local_count": "?",
+                "in_progress": "?",
+                "unmerged": None,
             },
         }
     ]
@@ -4428,6 +4430,8 @@ def test_ls_merge_conflict_in_git_status_json(tmp_path, mocker):
                 "remote_contained": None,
                 "local_diff": "?",
                 "local_count": "?",
+                "in_progress": "?",
+                "unmerged": None,
             },
         }
     ]
