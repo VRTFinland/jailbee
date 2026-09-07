@@ -873,6 +873,90 @@ def test_update_ref_returns_false_when_the_swap_loses(mocker, tmp_path):
     assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is False
 
 
+def _place_branch_mocks(mocker, *, old_oid, ancestor=True, wrote=True):
+    """Mock every helper `place_branch` reaches, so no real git is invoked.
+
+    Returns the `update_ref` and `run_capture` mocks — the two the assertions
+    care about.
+    """
+    mocker.patch("jailbee.git.rev_parse", return_value=old_oid)
+    run_capture = mocker.patch("jailbee.git.run_capture", return_value=(ancestor, ""))
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=wrote)
+    return update_ref, run_capture
+
+
+def test_place_branch_creates_an_absent_ref(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid=None)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("created", None)
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_reports_up_to_date_without_writing(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="new")
+
+    assert git.place_branch(tmp_path, "x", "new") == ("up-to-date", "new")
+    update_ref.assert_not_called()
+    # No point asking git whether a commit is its own ancestor.
+    run_capture.assert_not_called()
+
+
+def test_place_branch_fast_forwards_with_the_real_old_oid(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="old", ancestor=True)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("fast-forwarded", "old")
+    # The compare-and-swap guard must carry the OID actually read, not None:
+    # an `old_oid=None` here would silently turn the fast-forward — the common
+    # production path — into an unconditional overwrite.
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid="old")
+    assert run_capture.call_args.args == (
+        str(tmp_path),
+        ["merge-base", "--is-ancestor", "old", "new"],
+    )
+
+
+def test_place_branch_leaves_a_diverged_ref_alone(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("diverged", "old")
+    update_ref.assert_not_called()
+
+
+def test_place_branch_forces_over_divergence_unconditionally(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False)
+
+    assert git.place_branch(tmp_path, "x", "new", force=True) == ("forced", "old")
+    # A forced write cannot use the swap guard: the whole point is to move a
+    # ref whose current value the caller has decided not to respect.
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_reports_failed_when_the_write_is_refused(mocker, tmp_path):
+    from jailbee import git
+
+    _place_branch_mocks(mocker, old_oid="old", ancestor=True, wrote=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("failed", "old")
+
+
+def test_place_branch_reports_failed_when_the_create_is_refused(mocker, tmp_path):
+    from jailbee import git
+
+    _place_branch_mocks(mocker, old_oid=None, wrote=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("failed", None)
+
+
 def test_host_tree_dirty_true_when_status_nonempty(mocker):
     from jailbee import git
 

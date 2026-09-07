@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 _FALLBACK_BRANCH = "main"
 
@@ -862,6 +863,61 @@ def update_ref(
     except (FileNotFoundError, OSError):
         return False
     return result.returncode == 0
+
+
+PlaceStatus = Literal[
+    "created",
+    "up-to-date",
+    "fast-forwarded",
+    "diverged",
+    "forced",
+    "failed",
+]
+"""What `place_branch` did to one `refs/heads/<branch>`.
+
+The single vocabulary for a ref-only branch placement, wherever the repo is:
+`submodules.PlacementStatus` and `sync.HostPlacementStatus` extend it with the
+one extra outcome each of them has, rather than restating these six.
+"""
+
+
+def place_branch(
+    repo_root: Path, branch: str, new_oid: str, *, force: bool = False
+) -> tuple[PlaceStatus, str | None]:
+    """Point `refs/heads/<branch>` at `new_oid`; fast-forward only unless forced.
+
+    Returns `(status, old_oid)`, where `old_oid` is the ref's value before the
+    call and None when the ref did not exist. Ref writes only: HEAD, the index
+    and the working tree are never touched, so this is safe to run while the
+    repo sits on another branch — and, by the same token, it is *not* safe to
+    call for the branch that is currently checked out (a caller that might be
+    in that position has to handle it first; see `sync._place_host_branch`).
+
+    A fast-forward uses `update_ref`'s compare-and-swap form, so a commit
+    written between the read below and the write loses the race instead of
+    being clobbered. `force` drops the guard, which is the whole point of it.
+    A non-fast-forward without `force` writes nothing and reports
+    `"diverged"`.
+
+    The one ladder for this, shared by the superproject and every submodule:
+    two copies drift, and a drifted copy of "may I move this ref?" loses
+    commits.
+    """
+    ref = f"refs/heads/{branch}"
+    old_oid = rev_parse(repo_root, ref)
+    if old_oid is None:
+        ok = update_ref(repo_root, ref, new_oid, old_oid=None)
+        return ("created" if ok else "failed", None)
+    if old_oid == new_oid:
+        return ("up-to-date", old_oid)
+    ancestor, _ = run_capture(str(repo_root), ["merge-base", "--is-ancestor", old_oid, new_oid])
+    if not ancestor:
+        if not force:
+            return ("diverged", old_oid)
+        ok = update_ref(repo_root, ref, new_oid, old_oid=None)
+        return ("forced" if ok else "failed", old_oid)
+    ok = update_ref(repo_root, ref, new_oid, old_oid=old_oid)
+    return ("fast-forwarded" if ok else "failed", old_oid)
 
 
 def host_tree_dirty(repo_root: Path) -> bool:

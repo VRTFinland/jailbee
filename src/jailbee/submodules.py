@@ -295,15 +295,13 @@ def _gitlink_at(run: GitRun, repo_dir: str, commit: str, path: str) -> str | Non
     return None
 
 
-PlacementStatus = Literal[
-    "created",
-    "fast-forwarded",
-    "up-to-date",
-    "diverged",
-    "forced",
-    "unreachable",
-    "failed",
-]
+PlacementStatus = git.PlaceStatus | Literal["unreachable"]
+"""What happened to one submodule's `refs/heads/<branch>`.
+
+`git.PlaceStatus`'s six outcomes plus the one only a submodule can have:
+`"unreachable"`, a sub-repo that is not on disk at all. Composed rather than
+restated, so the vocabularies cannot drift apart.
+"""
 
 
 @dataclass(frozen=True)
@@ -358,27 +356,15 @@ def place_branches_from_commit(
 def _place_ref(
     repo_dir: Path, display: str, branch: str, new_oid: str, *, force: bool
 ) -> SubBranchPlacement:
-    """One fast-forward-or-report ref write. Shared shape with the superproject
-    placement Task 6 adds — that second occurrence is where this ladder moves
-    into `git.py`; here it stays local to this module.
+    """One fast-forward-or-report ref write, labelled with the submodule's path.
+
+    The ladder itself lives in `git.place_branch` — it is identical for the
+    superproject (`sync._place_host_branch`) and every submodule, and one
+    drifted copy of "may I move this ref?" loses commits. All this adds is the
+    display path the report is keyed by.
     """
-    ref = f"refs/heads/{branch}"
-    old_oid = git.rev_parse(repo_dir, ref)
-    if old_oid is None:
-        ok = git.update_ref(repo_dir, ref, new_oid, old_oid=None)
-        return SubBranchPlacement(display, "created" if ok else "failed", None, new_oid)
-    if old_oid == new_oid:
-        return SubBranchPlacement(display, "up-to-date", old_oid, new_oid)
-    ancestor, _ = git.run_capture(
-        str(repo_dir), ["merge-base", "--is-ancestor", old_oid, new_oid]
-    )
-    if not ancestor:
-        if not force:
-            return SubBranchPlacement(display, "diverged", old_oid, new_oid)
-        ok = git.update_ref(repo_dir, ref, new_oid, old_oid=None)
-        return SubBranchPlacement(display, "forced" if ok else "failed", old_oid, new_oid)
-    ok = git.update_ref(repo_dir, ref, new_oid, old_oid=old_oid)
-    return SubBranchPlacement(display, "fast-forwarded" if ok else "failed", old_oid, new_oid)
+    status, old_oid = git.place_branch(repo_dir, branch, new_oid, force=force)
+    return SubBranchPlacement(display, status, old_oid, new_oid)
 
 
 def _detect_submodule_default(run: GitRun, parent_dir: str, sub: str, name: str) -> str:
