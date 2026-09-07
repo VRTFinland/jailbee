@@ -542,6 +542,40 @@ def apply_allowlist_acl(
     )
 
 
+def _bridge_acls(incus: Incus) -> list[str]:
+    """The ACL names currently attached to `incusbr0`, in their stored order."""
+    current = incus.network_get(BRIDGE_NETWORK, "security.acls")
+    return [a for a in current.split(",") if a]
+
+
+def attach_acl_to_bridge(incus: Incus, name: str) -> bool:
+    """Add `name` to `incusbr0`'s `security.acls`. Returns True when changed.
+
+    Quiet and idempotent — the reporting variants are
+    `ensure_acl_attached_to_bridge` (the repo ACL, part of `init`/`apply`
+    output) and `egress_scope.sync_bridge_extras` (the union ACL, silent).
+    Preserves entries from other jailbee-managed repos that share the bridge.
+    """
+    attached = _bridge_acls(incus)
+    if name in attached:
+        return False
+    incus.network_set(BRIDGE_NETWORK, "security.acls", ",".join([*attached, name]))
+    return True
+
+
+def detach_acl_from_bridge(incus: Incus, name: str) -> bool:
+    """Remove `name` from `incusbr0`'s `security.acls`. True when changed.
+
+    Must run *before* deleting the ACL: Incus refuses to delete an ACL a
+    network still references.
+    """
+    attached = _bridge_acls(incus)
+    if name not in attached:
+        return False
+    incus.network_set(BRIDGE_NETWORK, "security.acls", ",".join(a for a in attached if a != name))
+    return True
+
+
 def ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
     """Ensure `<repo>-allowlist` is in `incusbr0`'s `security.acls` list.
 
@@ -551,18 +585,18 @@ def ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
     required for Docker) then rejects bridge-forwarded SYNs before the
     bridge-family allow can match.
 
+    Covers only the repo ACL. Container-scope grants live in per-container
+    ACLs that are deliberately NOT attached here — `egress_scope`'s union
+    ACL carries them into the same bridge chain instead.
+
     Idempotent. Preserves entries from other jailbee-managed repos that
     share `incusbr0`.
     """
     name = acl_name(cfg)
-    current = incus.network_get(BRIDGE_NETWORK, "security.acls")
-    attached = [a for a in current.split(",") if a]
-    if name in attached:
+    if attach_acl_to_bridge(incus, name):
+        success(f"ACL {name} attached to {BRIDGE_NETWORK}")
+    else:
         info(f"ACL {name} already attached to {BRIDGE_NETWORK}")
-        return
-    attached.append(name)
-    incus.network_set(BRIDGE_NETWORK, "security.acls", ",".join(attached))
-    success(f"ACL {name} attached to {BRIDGE_NETWORK}")
 
 
 def ensure_loose_bridge(incus: Incus) -> None:

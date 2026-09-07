@@ -325,8 +325,10 @@ def test_apply_container_acl_in_loose_mode_tears_the_override_down(make_cfg, tmp
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
     incus.config_device_override.assert_not_called()
     # An orphan ACL left behind on every `jailbee net loose` is a real leak,
-    # not just tidiness — assert the delete actually happens.
-    incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
+    # not just tidiness — assert the delete actually happens. The repo's
+    # bridge-level union goes too: this was its only container.
+    deleted = [call.args[0] for call in incus.network_acl_delete.call_args_list]
+    assert deleted == ["myrepo-feat-extra", "myrepo-container-extras"]
     # And the ORDER matters: Incus refuses to delete an ACL still referenced
     # by an instance NIC, so the NIC device must come off first.
     methods = [call[0] for call in incus.mock_calls]
@@ -345,7 +347,8 @@ def test_apply_container_acl_with_no_extras_removes_acl_and_override(make_cfg, t
     egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
 
     incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
-    incus.network_acl_delete.assert_called_once_with("myrepo-feat-extra")
+    deleted = [call.args[0] for call in incus.network_acl_delete.call_args_list]
+    assert deleted == ["myrepo-feat-extra", "myrepo-container-extras"]
     methods = [call[0] for call in incus.mock_calls]
     assert methods.index("config_device_remove") < methods.index("network_acl_delete")
     assert not warn.called
@@ -485,3 +488,259 @@ def test_drop_container_acl_deletes_only_an_existing_acl(mocker):
     egress_scope.drop_container_acl(incus, "myrepo-feat")
 
     incus.network_acl_delete.assert_not_called()
+
+
+# ---- the bridge-level union ACL ------------------------------------------
+#
+# Incus filters a strict container's egress in two independent places, and
+# BOTH have to pass: the per-NIC chain (`table bridge incus`, from the
+# device's `security.acls`) and the per-network chain (`acl.incusbr0` in
+# `table inet incus`, from `incus network set incusbr0 security.acls`). The
+# network chain ends in a reject, and `bridge-nf-call-iptables=1` routes
+# bridge-forwarded packets through it, so a destination allowed only on the
+# NIC is still rejected. These tests pin the union ACL that puts every
+# container-scope grant into the network chain.
+
+
+def _extra_acl(name: str, *entries: EgressEntry) -> str:
+    from jailbee.network import extra_acl_yaml
+
+    return extra_acl_yaml(name, list(entries))
+
+
+def _bridge_incus(
+    mocker,
+    *,
+    containers: list[str],
+    acl_yamls: dict[str, str],
+    attached: str = "myrepo-allowlist",
+):
+    """A double for `sync_bridge_extras`: containers, ACL bodies, bridge list."""
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": n, "status": "Running", "profiles": [], "config": {}, "devices": {}}
+        for n in containers
+    ]
+    incus.network_acl_exists.side_effect = lambda name: name in acl_yamls
+    incus.network_acl_show.side_effect = lambda name: acl_yamls[name]
+    incus.network_get.return_value = attached
+    return incus
+
+
+def _union_written(incus) -> tuple[str, dict]:
+    import yaml
+
+    name, body = incus.network_acl_set_yaml.call_args[0]
+    return name, yaml.safe_load(body)
+
+
+def test_bridge_extras_acl_name_is_derived_from_the_repo_prefix():
+    assert egress_scope.bridge_extras_acl_name("myrepo") == "myrepo-container-extras"
+
+
+def test_bridge_extras_acl_name_stays_within_the_incus_limit():
+    name = egress_scope.bridge_extras_acl_name("x" * 80)
+    assert len(name) <= egress_scope.ACL_NAME_MAX
+    assert name.endswith("-container-extras")
+
+
+def test_sync_bridge_extras_unions_every_container_extra_acl(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-bug", "myrepo-feat"],
+        acl_yamls={
+            "myrepo-feat-extra": _extra_acl(
+                "myrepo-feat-extra",
+                EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443"),
+            ),
+            "myrepo-bug-extra": _extra_acl(
+                "myrepo-bug-extra",
+                EgressEntry(destinations=["10.0.9.1"], port=8080, description="ci.corp:8080"),
+            ),
+        },
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    name, body = _union_written(incus)
+    assert name == "myrepo-container-extras"
+    assert {(r["destination"], r["destination_port"]) for r in body["egress"]} == {
+        ("10.0.5.7", "443"),
+        ("10.0.9.1", "8080"),
+    }
+    incus.network_acl_create.assert_called_once_with("myrepo-container-extras")
+    incus.network_set.assert_called_once_with(
+        "incusbr0", "security.acls", "myrepo-allowlist,myrepo-container-extras"
+    )
+
+
+def test_sync_bridge_extras_never_puts_the_union_on_a_nic(make_cfg, tmp_path, mocker):
+    """The whole point of the union ACL: it widens the shared network chain
+    only. Applied to a NIC it would hand every container of the repo every
+    other container's container-scope grants — exactly the isolation that
+    per-container ACLs exist to keep."""
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-feat"],
+        acl_yamls={
+            "myrepo-feat-extra": _extra_acl(
+                "myrepo-feat-extra",
+                EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443"),
+            )
+        },
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    incus.config_device_override.assert_not_called()
+    incus.config_device_set.assert_not_called()
+
+
+def test_sync_bridge_extras_merges_a_destination_two_containers_share(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    shared = EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-bug", "myrepo-feat"],
+        acl_yamls={
+            "myrepo-feat-extra": _extra_acl("myrepo-feat-extra", shared),
+            "myrepo-bug-extra": _extra_acl("myrepo-bug-extra", shared),
+        },
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    _, body = _union_written(incus)
+    assert len(body["egress"]) == 1
+
+
+def test_sync_bridge_extras_ignores_another_repos_containers(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-feat", "other-feat"],
+        acl_yamls={
+            "myrepo-feat-extra": _extra_acl(
+                "myrepo-feat-extra",
+                EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443"),
+            ),
+            "other-feat-extra": _extra_acl(
+                "other-feat-extra",
+                EgressEntry(destinations=["10.9.9.9"], port=443, description="secret.corp:443"),
+            ),
+        },
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    _, body = _union_written(incus)
+    assert {r["destination"] for r in body["egress"]} == {"10.0.5.7"}
+
+
+def test_sync_bridge_extras_is_idempotent_on_the_bridge_list(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-feat"],
+        acl_yamls={
+            "myrepo-feat-extra": _extra_acl(
+                "myrepo-feat-extra",
+                EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443"),
+            ),
+            "myrepo-container-extras": _extra_acl("myrepo-container-extras"),
+        },
+        attached="myrepo-allowlist,myrepo-container-extras",
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    incus.network_set.assert_not_called()
+    incus.network_acl_create.assert_not_called()
+
+
+def test_sync_bridge_extras_detaches_and_deletes_when_nothing_is_container_scoped(
+    make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-feat"],
+        acl_yamls={"myrepo-container-extras": _extra_acl("myrepo-container-extras")},
+        attached="myrepo-allowlist,myrepo-container-extras",
+    )
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    incus.network_set.assert_called_once_with("incusbr0", "security.acls", "myrepo-allowlist")
+    incus.network_acl_delete.assert_called_once_with("myrepo-container-extras")
+    # Incus refuses to delete an ACL a network still references, so the
+    # detach has to land first or the delete fails on a real daemon.
+    methods = [call[0] for call in incus.mock_calls]
+    assert methods.index("network_set") < methods.index("network_acl_delete")
+
+
+def test_sync_bridge_extras_does_nothing_when_there_is_no_union_to_remove(
+    make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(mocker, containers=["myrepo-feat"], acl_yamls={})
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    incus.network_set.assert_not_called()
+    incus.network_acl_delete.assert_not_called()
+    incus.network_acl_set_yaml.assert_not_called()
+
+
+def test_apply_container_acl_syncs_the_bridge_union(make_cfg, tmp_path, mocker):
+    """Without this the container's grant lands on its NIC and nowhere else —
+    the silent failure this union exists to fix."""
+    sync = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    mocker.patch(
+        "jailbee.egress_scope._resolve_entries_tolerant",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"])
+    incus.network_acl_exists.return_value = True
+
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
+
+    sync.assert_called_once_with(cfg, incus)
+
+
+def test_apply_container_acl_syncs_the_bridge_union_on_teardown_too(make_cfg, tmp_path, mocker):
+    """A container going loose (or losing its last override) must come OUT of
+    the union — otherwise the network chain keeps allowing what no NIC does."""
+    sync = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"], local_eth0={"type": "nic"})
+    incus.network_acl_exists.return_value = True
+
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="loose")
+
+    sync.assert_called_once_with(cfg, incus)
+
+
+def test_apply_container_acl_can_skip_the_bridge_sync(make_cfg, tmp_path, mocker):
+    """`jailbee apply` calls this once per container and then syncs once at
+    the end — a per-container sync would re-read every container's ACL N
+    times for no gain."""
+    sync = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    mocker.patch(
+        "jailbee.egress_scope._resolve_entries_tolerant",
+        return_value=[
+            EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")
+        ],
+    )
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["nexus.corp:443"])
+    incus.network_acl_exists.return_value = True
+
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict", sync_bridge=False)
+
+    sync.assert_not_called()
