@@ -479,7 +479,7 @@ def test_probe_four_field_output_yields_no_submodules(mocker):
 
 
 def _payload(*fields: str) -> str:
-    """Ten NUL-terminated probe fields, in wire order."""
+    """NUL-terminated probe fields, in wire order."""
     return "".join(f"{f}\x00" for f in fields)
 
 
@@ -639,12 +639,11 @@ def test_probe_does_not_take_the_git_index_lock(mocker):
 def test_probe_reports_in_progress_merge_and_unmerged_count(mocker):
     from jailbee.git_status import probe_container_git
 
-    incus = mocker.MagicMock()
+    incus = mocker.Mock()
     # 12 fields: wt, ahead, count, conflict, sub_committed, sub_wt,
     # head_sha, remote_contained, local_diff, local_count, in_progress, unmerged
-    incus.exec.return_value = (
-        "\x00" "\x00" "0\x00" "ok\x00" "\x00" "\x00"
-        "abc123\x00" "0\x00" "?\x00" "?\x00" "merge\x00" "3\x00"
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "3"
     )
     status = probe_container_git(incus, "c", "/repo", "main", "main")
     assert status.in_progress == "merge"
@@ -656,14 +655,42 @@ def test_probe_reports_in_progress_merge_and_unmerged_count(mocker):
 def test_probe_in_progress_is_unknown_on_a_ten_field_payload(mocker):
     from jailbee.git_status import probe_container_git
 
-    incus = mocker.MagicMock()
-    incus.exec.return_value = (
-        "\x00" "\x00" "0\x00" "ok\x00" "\x00" "\x00"
-        "abc123\x00" "0\x00" "?\x00" "?\x00"
-    )
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload("", "", "0", "ok", "", "", "abc123", "0", "?", "?")
     status = probe_container_git(incus, "c", "/repo", "main", "main")
     assert status.in_progress == "?"
     assert status.unmerged is None
+
+
+def test_probe_in_progress_unrecognised_value_degrades_to_unknown(mocker):
+    """A 12-field payload can still carry a value outside the known set
+
+    (e.g. a future git op, or the shell computing something unexpected);
+    the parser must reject it rather than pass it through unvalidated.
+    """
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "bisect", "0"
+    )
+    status = probe_container_git(incus, "c", "/repo", "main", "main")
+    assert status.in_progress == "?"
+
+
+def test_probe_unmerged_non_numeric_or_sentinel_is_none(mocker):
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "abc"
+    )
+    assert probe_container_git(incus, "c", "/repo", "main", "main").unmerged is None
+
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "?"
+    )
+    assert probe_container_git(incus, "c", "/repo", "main", "main").unmerged is None
 
 
 def test_probe_snippet_resolves_git_dir_instead_of_testing_dot_git():
