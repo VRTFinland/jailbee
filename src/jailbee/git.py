@@ -839,6 +839,31 @@ def fast_forward_branch(repo_root: Path, branch: str, source_ref: str) -> bool:
     return result.returncode == 0
 
 
+def update_ref(
+    repo_root: Path, ref: str, new_oid: str, *, old_oid: str | None = None
+) -> bool:
+    """Point `ref` at `new_oid`. Return True on success, False on refusal.
+
+    With `old_oid`, uses `update-ref`'s three-argument compare-and-swap form:
+    a commit written between the caller's read and this write loses the race
+    rather than being silently overwritten. Without it the write is
+    unconditional — callers use that only for a deliberate `--force`.
+
+    Never raises: a missing git binary or a lost swap is a False, matching the
+    `check=False` style of the other helpers here.
+    """
+    args = ["git", "update-ref", ref, new_oid]
+    if old_oid is not None:
+        args.append(old_oid)
+    try:
+        result = subprocess.run(
+            args, cwd=repo_root, capture_output=True, text=True, check=False
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    return result.returncode == 0
+
+
 def host_tree_dirty(repo_root: Path) -> bool:
     """Return True if ``git status --porcelain`` in ``repo_root`` has output."""
     result = subprocess.run(

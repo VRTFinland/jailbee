@@ -843,6 +843,36 @@ def test_fast_forward_branch_returns_false_on_non_ff(mocker):
     assert git.fast_forward_branch(Path("/repo"), "dev", "refs/x") is False
 
 
+def test_update_ref_uses_the_compare_and_swap_form(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is True
+    args = run.call_args[0][0]
+    assert args == ["git", "update-ref", "refs/heads/x", "new", "old"]
+
+
+def test_update_ref_without_old_oid_omits_the_guard(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new") is True
+    assert run.call_args[0][0] == ["git", "update-ref", "refs/heads/x", "new"]
+
+
+def test_update_ref_returns_false_when_the_swap_loses(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="ref changed")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is False
+
+
 def test_host_tree_dirty_true_when_status_nonempty(mocker):
     from jailbee import git
 
