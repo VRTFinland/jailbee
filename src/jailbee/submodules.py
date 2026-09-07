@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import git
 from jailbee.incus import IncusError
@@ -152,6 +152,34 @@ def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
     return result
 
 
+def _gitmodules_paths_at(run: GitRun, repo_dir: str, commit: str) -> list[tuple[str, str]]:
+    """`.gitmodules` entries as recorded in `commit` -> [(name, path)].
+
+    The working-tree twin of this is `_gitmodules_paths`. This one reads the
+    blob out of the object store instead, because the no-checkout placement
+    path runs while the working tree is on a different branch — which may not
+    have the same submodules, or any.
+    """
+    ok, out = run(
+        repo_dir,
+        [
+            "config",
+            "--blob",
+            f"{commit}:.gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
+    )
+    if not ok:
+        return []
+    result: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        key, _, path = line.strip().partition(" ")
+        if key.startswith("submodule.") and key.endswith(".path") and path:
+            result.append((key[len("submodule.") : -len(".path")], path))
+    return result
+
+
 def _gitmodules_branch(run: GitRun, top_dir: str, name: str) -> str | None:
     """Return `submodule.<name>.branch` from `top_dir/.gitmodules`, or None."""
     ok, out = run(top_dir, ["config", "-f", f"{top_dir}/.gitmodules", f"submodule.{name}.branch"])
@@ -265,6 +293,92 @@ def _gitlink_at(run: GitRun, repo_dir: str, commit: str, path: str) -> str | Non
     if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
         return parts[2]
     return None
+
+
+PlacementStatus = Literal[
+    "created",
+    "fast-forwarded",
+    "up-to-date",
+    "diverged",
+    "forced",
+    "unreachable",
+    "failed",
+]
+
+
+@dataclass(frozen=True)
+class SubBranchPlacement:
+    """What happened to one submodule's `refs/heads/<branch>`."""
+
+    path: str  # top-relative, e.g. "mid/inner"
+    status: PlacementStatus
+    old_oid: str | None
+    new_oid: str
+
+
+def place_branches_from_commit(
+    repo_root: Path, commit: str, branch: str, *, force: bool = False
+) -> list[SubBranchPlacement]:
+    """Point every submodule's `refs/heads/<branch>` at the gitlink `commit` records.
+
+    Ref writes only: no submodule HEAD, index or working tree is touched, so
+    this is safe to run while the superproject sits on another branch. That is
+    the whole reason it exists — `update_submodules_on_host` needs the
+    superproject checked out and reads each submodule's *current HEAD* as the
+    gitlink, and both of those assumptions are exactly what the no-checkout
+    caller (a host branch placed from a container fetch, without moving the
+    working tree) lacks. `.gitmodules` is likewise read from `commit`'s blob
+    (`_gitmodules_paths_at`), never from the working tree, for the same reason.
+
+    Fast-forward by default; `force` overwrites a diverged branch. A sub-repo
+    that is not there on disk is reported as `"unreachable"` rather than
+    skipped — a silent skip is what made an earlier nested-submodule report
+    misdescribe a missing checkout as "detached".
+    """
+    out: list[SubBranchPlacement] = []
+
+    def walk(repo_dir: Path, at_commit: str, prefix: str) -> None:
+        for _name, path in _gitmodules_paths_at(git.run_capture, str(repo_dir), at_commit):
+            display = f"{prefix}{path}"
+            sub_dir = repo_dir / path
+            sha = _gitlink_at(git.run_capture, str(repo_dir), at_commit, path)
+            if sha is None:
+                out.append(SubBranchPlacement(display, "failed", None, ""))
+                continue
+            if not (sub_dir / ".git").exists():
+                out.append(SubBranchPlacement(display, "unreachable", None, sha))
+                continue
+            out.append(_place_ref(sub_dir, display, branch, sha, force=force))
+            walk(sub_dir, sha, f"{display}/")
+
+    walk(Path(repo_root), commit, "")
+    return out
+
+
+def _place_ref(
+    repo_dir: Path, display: str, branch: str, new_oid: str, *, force: bool
+) -> SubBranchPlacement:
+    """One fast-forward-or-report ref write. Shared shape with the superproject
+    placement Task 6 adds — that second occurrence is where this ladder moves
+    into `git.py`; here it stays local to this module.
+    """
+    ref = f"refs/heads/{branch}"
+    old_oid = git.rev_parse(repo_dir, ref)
+    if old_oid is None:
+        ok = git.update_ref(repo_dir, ref, new_oid, old_oid=None)
+        return SubBranchPlacement(display, "created" if ok else "failed", None, new_oid)
+    if old_oid == new_oid:
+        return SubBranchPlacement(display, "up-to-date", old_oid, new_oid)
+    ancestor, _ = git.run_capture(
+        str(repo_dir), ["merge-base", "--is-ancestor", old_oid, new_oid]
+    )
+    if not ancestor:
+        if not force:
+            return SubBranchPlacement(display, "diverged", old_oid, new_oid)
+        ok = git.update_ref(repo_dir, ref, new_oid, old_oid=None)
+        return SubBranchPlacement(display, "forced" if ok else "failed", old_oid, new_oid)
+    ok = git.update_ref(repo_dir, ref, new_oid, old_oid=old_oid)
+    return SubBranchPlacement(display, "fast-forwarded" if ok else "failed", old_oid, new_oid)
 
 
 def _detect_submodule_default(run: GitRun, parent_dir: str, sub: str, name: str) -> str:

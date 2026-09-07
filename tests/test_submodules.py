@@ -1660,3 +1660,122 @@ def test_repoint_removal_failure_is_cosmetic(mocker, tmp_path):
     submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
 
     warn.assert_called_once()
+
+
+def _one_level_gitmodules(top_dir, entries):
+    """side_effect for `_gitmodules_paths_at`: `entries` only at `top_dir`
+    itself, `[]` everywhere below it. Without this, an unconditional
+    `return_value` makes the placement routine recurse into the fake
+    sub-repo it just placed and "discover" the same submodule again —
+    the mocked directory has a `.git` (so the recursion isn't stopped by
+    the on-disk check), so it needs the mock itself to stop the walk at
+    the depth the test expects.
+    """
+
+    def side_effect(run, repo_dir, commit):
+        return entries if str(repo_dir) == str(top_dir) else []
+
+    return side_effect
+
+
+def test_place_branches_from_commit_creates_a_missing_branch(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value=None)  # branch absent
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert [(p.path, p.status) for p in result] == [("sub", "created")]
+    update.assert_called_once_with(tmp_path / "sub", "refs/heads/x", "subsha", old_oid=None)
+
+
+def test_place_branches_from_commit_reports_divergence_without_writing(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    # old is NOT an ancestor of new
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert result[0].status == "diverged"
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_forces_over_divergence(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x", force=True)
+
+    assert result[0].status == "forced"
+    update.assert_called_once_with(tmp_path / "sub", "refs/heads/x", "subsha", old_oid=None)
+
+
+def test_place_branches_from_commit_reports_a_missing_subrepo_loudly(mocker, tmp_path):
+    # No tmp_path/"sub" directory at all.
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", return_value=[("sub", "sub")])
+    # _gitlink_at is called BEFORE the .git existence check (it reads the
+    # superproject's object store, not the sub-repo's) so it must be mocked
+    # here even though the sub-repo itself never exists — otherwise it would
+    # shell out to real git in tmp_path and return None, producing "failed"
+    # instead of the "unreachable" this test asserts.
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    # NOT skipped silently: the 2026-09-05 design's §D lesson.
+    assert result[0].status == "unreachable"
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_path):
+    (tmp_path / "mid" / ".git").mkdir(parents=True)
+    (tmp_path / "mid" / "inner" / ".git").mkdir(parents=True)
+
+    def paths_at(run, repo_dir, commit):
+        # Real call shape is (run, repo_dir, commit). "mid" declares one
+        # nested submodule; one level below that ("mid/inner") declares
+        # none, which is what stops the recursion at the expected depth.
+        if str(repo_dir) == str(tmp_path):
+            return [("mid", "mid")]
+        if str(repo_dir) == str(tmp_path / "mid"):
+            return [("inner", "inner")]
+        return []
+
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=paths_at)
+    mocker.patch(
+        "jailbee.submodules._gitlink_at",
+        side_effect=lambda run, repo_dir, commit, path: f"{path}sha",
+    )
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert [p.path for p in result] == ["mid", "mid/inner"]
+
+
+def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
+    run = mocker.MagicMock(return_value=(True, "submodule.sub.path sub\n"))
+    assert submodules._gitmodules_paths_at(run, "/repo", "deadbeef") == [("sub", "sub")]
+    args = run.call_args[0][1]
+    assert args[:3] == ["config", "--blob", "deadbeef:.gitmodules"]
