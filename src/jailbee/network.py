@@ -212,7 +212,19 @@ def entries_from_acl_yaml(acl_yaml: str) -> list[EgressEntry]:
     return list(by_desc.values())
 
 
-def extra_acl_yaml(name: str, entries: list[EgressEntry]) -> str:
+EXTRA_ACL_DESC = "jailbee per-container egress additions"
+BRIDGE_EXTRAS_ACL_DESC = (
+    "jailbee container-scope egress additions, union over the repo's "
+    "containers — attached to the bridge network only, never to a NIC"
+)
+
+
+def extra_acl_yaml(
+    name: str,
+    entries: list[EgressEntry],
+    *,
+    description: str = EXTRA_ACL_DESC,
+) -> str:
     """Generate a per-container extra allowlist ACL.
 
     Allow rules only. DHCP, DNS and the registry-mirror rules deliberately
@@ -224,10 +236,16 @@ def extra_acl_yaml(name: str, entries: list[EgressEntry]) -> str:
     Descriptions use the same `ALLOWLIST_DESC_PREFIX` as the repo ACL, so
     `entries_from_acl_yaml` reads this ACL back unchanged and `/etc/hosts`
     pinning works identically for both.
+
+    `description` is the ACL's own human-readable label, not a rule
+    description. `egress_scope.sync_bridge_extras` renders the bridge-level
+    union ACL with the same rule shape and passes
+    `BRIDGE_EXTRAS_ACL_DESC` so `incus network acl list` says which of the
+    two kinds a given ACL is.
     """
     acl = {
         "name": name,
-        "description": "jailbee per-container egress additions",
+        "description": description,
         "egress": _allow_rules(entries),
         "ingress": [],
     }

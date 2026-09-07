@@ -56,6 +56,7 @@ name can leave no room for the suffix.
 """
 
 _ACL_SUFFIX = "-extra"
+_BRIDGE_EXTRAS_SUFFIX = "-container-extras"
 _DIGEST_LEN = 8
 
 
@@ -134,19 +135,33 @@ def _warn_bad_label(name: str, reason: str) -> None:
 # ---- naming --------------------------------------------------------------
 
 
-def extra_acl_name(container: str) -> str:
-    """ACL name for one container's extra allowlist.
+def _capped_acl_name(base: str, suffix: str) -> str:
+    """``<base><suffix>`` when it fits in `ACL_NAME_MAX`, else truncated.
 
-    ``<container>-extra`` when it fits. Otherwise the container name is
-    truncated and a digest of the *full* name is spliced in, so two long
-    names sharing a head do not collide on one ACL.
+    On overflow the base is cut short and a digest of the *full* base is
+    spliced in, so two long bases sharing a head do not collide on one ACL.
     """
-    name = f"{container}{_ACL_SUFFIX}"
+    name = f"{base}{suffix}"
     if len(name) <= ACL_NAME_MAX:
         return name
-    head_len = ACL_NAME_MAX - len(_ACL_SUFFIX) - _DIGEST_LEN - 1
-    digest = hashlib.sha256(container.encode()).hexdigest()[:_DIGEST_LEN]
-    return f"{container[:head_len]}-{digest}{_ACL_SUFFIX}"
+    head_len = ACL_NAME_MAX - len(suffix) - _DIGEST_LEN - 1
+    digest = hashlib.sha256(base.encode()).hexdigest()[:_DIGEST_LEN]
+    return f"{base[:head_len]}-{digest}{suffix}"
+
+
+def extra_acl_name(container: str) -> str:
+    """ACL name for one container's extra allowlist — ``<container>-extra``."""
+    return _capped_acl_name(container, _ACL_SUFFIX)
+
+
+def bridge_extras_acl_name(prefix: str) -> str:
+    """ACL name for the repo's bridge-level union — ``<prefix>-container-extras``.
+
+    Deliberately does not end in ``-extra``: `apply._sweep_orphan_extra_acls`
+    reclaims every ``<prefix>-<something>-extra`` ACL with no live container
+    behind it, and this one has no container of its own.
+    """
+    return _capped_acl_name(prefix, _BRIDGE_EXTRAS_SUFFIX)
 
 
 # ---- composition, classification, and rendering ---------------------------
@@ -378,8 +393,30 @@ def apply_container_acl(
     name: str,
     *,
     mode: str,
+    sync_bridge: bool = True,
 ) -> None:
     """Materialise (or tear down) one container's extra egress ACL.
+
+    Then rebuild the repo's bridge-level union ACL, because the per-container
+    ACL alone is not enough to let a packet out — see `sync_bridge_extras`.
+    Pass ``sync_bridge=False`` when the caller loops over many containers and
+    syncs once at the end (`jailbee apply`); every other caller wants the
+    default, since forgetting the sync is exactly the silent failure the
+    union exists to prevent.
+    """
+    _materialise_container_acl(cfg, incus, name, mode=mode)
+    if sync_bridge:
+        sync_bridge_extras(cfg, incus)
+
+
+def _materialise_container_acl(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    mode: str,
+) -> None:
+    """Write one container's extra ACL and its ``eth0`` override.
 
     Idempotent and derived: the label is the source of truth, and this
     rebuilds the ACL and the ``eth0`` override from it every time.
@@ -472,8 +509,115 @@ def drop_container_acl(incus: Incus, name: str) -> None:
     """Delete one container's extra ACL if it exists.
 
     Call only after the referencing NIC is gone — Incus refuses to delete an
-    ACL still applied to an instance.
+    ACL still applied to an instance. The bridge never references this ACL
+    (only the union does), so there is nothing to detach first.
     """
     extra_name = extra_acl_name(name)
     if incus.network_acl_exists(extra_name):
         incus.network_acl_delete(extra_name)
+
+
+# ---- the bridge-level union ----------------------------------------------
+
+
+def sync_bridge_extras(cfg: Config, incus: Incus) -> None:
+    """Rebuild ``<prefix>-container-extras`` and keep it on `incusbr0`.
+
+    A strict container's egress passes through two independent filters, and
+    both must allow the packet:
+
+    * the per-NIC chain in ``table bridge incus``, built from the device's
+      ``security.acls`` — where `apply_container_acl` puts the container's
+      own ``<container>-extra``;
+    * the per-network chain ``acl.incusbr0`` in ``table inet incus``, built
+      from ``incus network set incusbr0 security.acls`` — which ends in a
+      reject, and which bridge-forwarded packets traverse anyway because
+      ``bridge-nf-call-iptables=1`` (the kernel default, required by Docker).
+
+    `init_command.ensure_acl_attached_to_bridge` puts the repo ACL into the
+    second chain. Container-scope overrides had nothing there, so every
+    ``jailbee net egress add <host> <container>`` reported success, produced
+    a correct ACL and a correct nftables rule — and the destination stayed
+    unreachable, rejected by the network chain before the NIC chain's allow
+    could match.
+
+    This ACL closes that gap with ONE name per repo instead of one per
+    container: the network chain does not distinguish containers anyway (the
+    repo ACL is already there for all of them), so per-container granularity
+    buys nothing at that layer, while a per-container attachment would grow
+    `incusbr0`'s ``security.acls`` without bound and turn a host-global
+    read-modify-write string into something six commands and a systemd timer
+    race over. Per-container isolation is unaffected: it comes from the NIC
+    chain, and this ACL is **never** applied to a NIC.
+
+    Content is read back from the per-container ACLs rather than re-resolved,
+    so the union is exactly the set of destinations the NIC chains allow. A
+    re-resolution could return a different GSLB answer and leave a NIC-allowed
+    IP missing from the network chain — the same silent failure again.
+
+    Empty union: the ACL is detached and deleted, so a repo that uses no
+    container-scope override leaves no name on the shared bridge.
+    """
+    from jailbee.egress_pool import _apply_acl_with_nft_quirk
+    from jailbee.init_command import attach_acl_to_bridge, detach_acl_from_bridge
+    from jailbee.network import BRIDGE_EXTRAS_ACL_DESC, extra_acl_yaml
+
+    union_name = bridge_extras_acl_name(cfg.container_prefix)
+    entries = _union_of_container_extras(cfg, incus)
+
+    if not entries:
+        # Detach first: Incus refuses to delete an ACL a network references.
+        detach_acl_from_bridge(incus, union_name)
+        if incus.network_acl_exists(union_name):
+            incus.network_acl_delete(union_name)
+        return
+
+    if not incus.network_acl_exists(union_name):
+        incus.network_acl_create(union_name)
+    _apply_acl_with_nft_quirk(
+        incus,
+        union_name,
+        extra_acl_yaml(union_name, entries, description=BRIDGE_EXTRAS_ACL_DESC),
+    )
+    attach_acl_to_bridge(incus, union_name)
+
+
+def _union_of_container_extras(cfg: Config, incus: Incus) -> list[EgressEntry]:
+    """Every allow rule in this repo's live per-container extra ACLs.
+
+    Read from Incus, not re-resolved — see `sync_bridge_extras`. Scoped to
+    this repo by container-name prefix, and to *live* containers, so an
+    orphan ACL awaiting `apply._sweep_orphan_extra_acls` contributes nothing.
+    Entries sharing a raw description merge into one, so two containers
+    allowlisting the same host produce one rule.
+
+    A non-string `network_acl_show` payload is skipped — the same defensive
+    guard `hosts._entries_from_live_acl` carries, so a unit test's MagicMock
+    never reaches `yaml.safe_load`.
+    """
+    from jailbee.egress import EgressEntry
+    from jailbee.network import entries_from_acl_yaml
+
+    prefix = f"{cfg.container_prefix}-"
+    names = sorted(raw["name"] for raw in incus.list_containers() if raw["name"].startswith(prefix))
+
+    merged: dict[str, EgressEntry] = {}
+    for container in names:
+        acl = extra_acl_name(container)
+        if not incus.network_acl_exists(acl):
+            continue
+        payload = incus.network_acl_show(acl)
+        if not isinstance(payload, str):
+            continue
+        for entry in entries_from_acl_yaml(payload):
+            existing = merged.get(entry.description)
+            if existing is None:
+                merged[entry.description] = entry
+                continue
+            destinations = list(dict.fromkeys([*existing.destinations, *entry.destinations]))
+            merged[entry.description] = EgressEntry(
+                destinations=destinations,
+                port=existing.port,
+                description=entry.description,
+            )
+    return list(merged.values())

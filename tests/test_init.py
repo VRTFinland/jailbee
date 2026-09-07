@@ -471,6 +471,60 @@ def test_init_skips_attach_when_already_present(tmp_path):
     incus.network_set.assert_not_called()
 
 
+def test_attach_acl_to_bridge_appends_and_reports_the_change():
+    from jailbee.init_command import attach_acl_to_bridge
+
+    incus = MagicMock()
+    incus.network_get.return_value = "otherrepo-allowlist"
+
+    assert attach_acl_to_bridge(incus, "myrepo-container-extras") is True
+    incus.network_set.assert_called_once_with(
+        "incusbr0", "security.acls", "otherrepo-allowlist,myrepo-container-extras"
+    )
+
+
+def test_attach_acl_to_bridge_is_a_no_op_when_already_there():
+    from jailbee.init_command import attach_acl_to_bridge
+
+    incus = MagicMock()
+    incus.network_get.return_value = "otherrepo-allowlist,myrepo-container-extras"
+
+    assert attach_acl_to_bridge(incus, "myrepo-container-extras") is False
+    incus.network_set.assert_not_called()
+
+
+def test_attach_acl_to_bridge_handles_an_empty_list():
+    from jailbee.init_command import attach_acl_to_bridge
+
+    incus = MagicMock()
+    incus.network_get.return_value = ""
+
+    assert attach_acl_to_bridge(incus, "myrepo-allowlist") is True
+    incus.network_set.assert_called_once_with("incusbr0", "security.acls", "myrepo-allowlist")
+
+
+def test_detach_acl_from_bridge_removes_only_that_name():
+    from jailbee.init_command import detach_acl_from_bridge
+
+    incus = MagicMock()
+    incus.network_get.return_value = "otherrepo-allowlist,myrepo-container-extras,x-allowlist"
+
+    assert detach_acl_from_bridge(incus, "myrepo-container-extras") is True
+    incus.network_set.assert_called_once_with(
+        "incusbr0", "security.acls", "otherrepo-allowlist,x-allowlist"
+    )
+
+
+def test_detach_acl_from_bridge_is_a_no_op_when_absent():
+    from jailbee.init_command import detach_acl_from_bridge
+
+    incus = MagicMock()
+    incus.network_get.return_value = "otherrepo-allowlist"
+
+    assert detach_acl_from_bridge(incus, "myrepo-container-extras") is False
+    incus.network_set.assert_not_called()
+
+
 def test_init_preserves_other_repo_acls(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})

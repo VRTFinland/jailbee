@@ -7279,9 +7279,43 @@ def test_destroy_container_deletes_the_extra_acl_after_the_instance(make_cfg, tm
         side_effect=lambda *a, **k: calls.append("drop_acl"),
     )
 
+    mocker.patch(
+        "jailbee.egress_scope.sync_bridge_extras",
+        side_effect=lambda *a, **k: calls.append("sync_bridge"),
+    )
+
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
-    assert calls == ["delete", "drop_acl"]
+    # The union ACL is rebuilt last: the destroyed container's grants must
+    # come out of `incusbr0`'s chain too, and the rebuild reads the ACLs
+    # that are left, so it has to run after this one is gone.
+    assert calls == ["delete", "drop_acl", "sync_bridge"]
+
+
+def test_destroy_container_tolerates_a_bridge_union_sync_failure(make_cfg, tmp_path, mocker):
+    """Same reasoning as the ACL delete below it: the container is gone, so a
+    failure rebuilding the repo's union ACL must not fail the destroy.
+    `jailbee apply` rebuilds it on the next run."""
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "status": "Stopped", "profiles": [], "config": {}, "devices": {}}
+    ]
+    mocker.patch("jailbee.egress_scope.drop_container_acl")
+    mocker.patch(
+        "jailbee.egress_scope.sync_bridge_extras",
+        side_effect=IncusError("network set failed"),
+    )
+    warn = mocker.patch("jailbee.lifecycle.warn")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    incus.delete.assert_called_once()
+    warn.assert_called_once()
 
 
 def test_destroy_container_tolerates_acl_delete_failure(make_cfg, tmp_path, mocker):

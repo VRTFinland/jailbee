@@ -155,6 +155,36 @@ flowchart TB
     APP <-->|"proxy device, never eth0"| SVC
 ```
 
+### Two filters, not one
+
+The single "NIC" box above is really two nftables chains, and a packet has to
+pass **both**:
+
+| Chain | Built from | Scope |
+|---|---|---|
+| `in.<ct>.eth0` / `fwd.<ct>.eth0` in `table bridge incus` | the container device's `security.acls` | one container |
+| `acl.incusbr0` in `table inet incus` | `incus network set incusbr0 security.acls` | every container on the bridge |
+
+The second chain exists because `bridge-nf-call-iptables=1` — the kernel
+default, and required by Docker — sends bridge-forwarded packets through the
+inet-family forward hook as well. It ends in a `reject`, so a destination
+allowed only on the NIC fails *immediately* ("could not connect", not a
+timeout).
+
+Three ACLs feed those chains:
+
+- `<repo>-allowlist` — `config.yaml`'s `egress_allow` plus host-local repo
+  overrides. On both the NIC and the bridge.
+- `<container>-extra` — one container's own overrides. On that container's
+  NIC only.
+- `<repo>-container-extras` — the union of every `<container>-extra` in the
+  repo. On the **bridge only, never on a NIC**, so it widens the shared chain
+  without handing one container another's grants. Rebuilt from the
+  per-container ACLs whenever they change.
+
+Isolation between containers therefore comes from the NIC chain; the bridge
+chain is repo-granular by construction and always was.
+
 ## Host <-> container git bridge
 
 Containers clone the source repo with `git clone --shared`, so a container's

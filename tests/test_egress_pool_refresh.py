@@ -936,6 +936,47 @@ def test_refresh_pool_writes_a_container_extra_acl(
     assert "myrepo-feat-extra" in written
 
 
+def test_refresh_pool_syncs_the_bridge_extras_union_after_rewriting_extras(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    """The timer rewrites a container's extra ACL whenever a GSLB host
+    rotates to a new IP. That new IP has to reach `incusbr0`'s chain too, or
+    the grant goes silently dead until the next `jailbee apply` — the same
+    failure the union ACL exists to prevent, just delayed."""
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        side_effect=[
+            ({"github.com": ["1.1.1.1"]}, {}),
+            ({"nexus.corp": ["10.0.5.7"]}, {}),
+        ],
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["nexus.corp"])
+    sync = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+            )
+        ],
+    )
+
+    refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    sync.assert_called_once_with(cfg, incus)
+
+
 def test_refresh_pool_skips_extra_acl_churn_for_a_loose_container(
     db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
 ) -> None:

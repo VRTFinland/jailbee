@@ -1737,6 +1737,16 @@ def destroy_container(
     except IncusError as e:
         warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
 
+    # The repo's bridge-level union carried this container's grants into
+    # `incusbr0`'s ACL chain; rebuild it now that the container is gone.
+    # Best-effort for the same reason as the ACL delete above, and in its own
+    # try so a failed delete does not also skip the rebuild — the union is
+    # derived from the ACLs that remain, not from the one just dropped.
+    try:
+        egress_scope.sync_bridge_extras(cfg, incus)
+    except IncusError as e:
+        warn(f"Could not refresh the bridge egress ACL after destroying '{name}': {e}")
+
     # Drop any background job tracking row so `jailbee ls` stops showing it.
     # Best-effort: a DB hiccup must not turn a successful destroy into a
     # failure.

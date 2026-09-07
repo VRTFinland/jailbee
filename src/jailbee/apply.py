@@ -348,7 +348,13 @@ def run_apply(
         # container's NIC frozen on whatever ACL/bridge was current the
         # last time it happened to be running, forever. Only the
         # `/etc/hosts` step below genuinely needs the container up.
-        egress_scope.apply_container_acl(cfg, incus, ci.name, mode=ci.network or "strict")
+        # `sync_bridge=False`: the repo's bridge-level union ACL is rebuilt
+        # once after this loop instead of once per container — the rebuild
+        # reads every container's extra ACL, so a per-container sync would
+        # make it O(containers²) Incus calls for an identical result.
+        egress_scope.apply_container_acl(
+            cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
+        )
 
         if ci.state != "Running":
             continue
@@ -379,6 +385,12 @@ def run_apply(
     orphans = _sweep_orphan_extra_acls(cfg, incus)
     if orphans:
         info(f"Removed {len(orphans)} orphan egress ACL(s): {', '.join(orphans)}")
+
+    # After the sweep, so a reclaimed orphan cannot leave its destinations in
+    # the union. Without this, a container-scope grant reaches the NIC chain
+    # and nothing else, and stays silently unreachable — see
+    # `egress_scope.sync_bridge_extras`.
+    egress_scope.sync_bridge_extras(cfg, incus)
 
     restarted: list[str] = []
     restart_failures: list[tuple[str, str]] = []
