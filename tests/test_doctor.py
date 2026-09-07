@@ -2527,3 +2527,49 @@ def test_doctor_stays_quiet_when_the_containers_cannot_be_listed(tmp_path, make_
     cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
 
     assert _check_redundant_claude_overrides(cfg, incus) == []
+
+
+# ---- _subid_fix: the remedy must fit the namespace it is given ----
+
+
+def test_subid_fix_recommends_the_full_range_on_a_real_host(tmp_path):
+    """An identity uid_map is an ordinary host: the documented billion-id
+    range fits, so the advice is unchanged."""
+    from jailbee.doctor import _subid_fix
+
+    uid_map = tmp_path / "uid_map"
+    uid_map.write_text("         0          0 4294967295\n")
+
+    assert "root:1000000:1000000000" in _subid_fix(53023, 53023, uid_map_path=uid_map)
+
+
+def test_subid_fix_caps_the_range_to_what_a_containerized_host_owns(tmp_path):
+    """Applying the billion-id range inside an unprivileged container breaks
+    Incus outright — every container then fails to start with `newuidmap:
+    write to uid_map failed: Operation not permitted`, because the namespace
+    does not own ids that far up. Recommend what actually fits.
+    """
+    from jailbee.doctor import _subid_fix
+
+    uid_map = tmp_path / "uid_map"
+    # A real jailbee container's map: ~1e9 ids, but only up to 999999999.
+    uid_map.write_text(
+        "         0    1000000      53023\n"
+        "     53023      53023          1\n"
+        "     53024    1053024  999946976\n"
+    )
+
+    fix = _subid_fix(53023, 53023, uid_map_path=uid_map)
+
+    assert "root:1000000:1000000000" not in fix
+    assert "root:1000000:999000000" in fix
+
+
+def test_subid_fix_is_unchanged_when_the_uid_map_cannot_be_read(tmp_path):
+    """No map, no verdict: fall back to the documented range rather than
+    inventing a narrower one from nothing."""
+    from jailbee.doctor import _subid_fix
+
+    fix = _subid_fix(53023, 53023, uid_map_path=tmp_path / "absent")
+
+    assert "root:1000000:1000000000" in fix
