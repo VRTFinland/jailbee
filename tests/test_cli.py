@@ -3349,7 +3349,14 @@ def test_cli_fetch_git_error_exits_1(mocker, tmp_path):
 
 
 def _fetch_setup(mocker, tmp_path):
-    """cfg/incus/short-name mocks, mirroring `_setup` in tests/test_cli_pr.py."""
+    """cfg/incus/short-name mocks, mirroring `_setup` in tests/test_cli_pr.py.
+
+    Also mocks `git.log_oneline`: `_print_fetch_summary` calls it for real
+    on `commits_added > 0`, and `_sync_refs_result`'s default FetchResult
+    (`commits_added=1`) takes that branch — left unmocked, it would shell
+    out to a real (harmless but real) `git log` against `tmp_path`, which
+    isn't a repo.
+    """
     cfg_mock = mocker.MagicMock()
     cfg_mock.repo_root = tmp_path
     cfg_mock.container_prefix = "sampleapp"
@@ -3360,6 +3367,7 @@ def _fetch_setup(mocker, tmp_path):
         return_value=(incus_mock, "sampleapp-feat-foo"),
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    mocker.patch("jailbee.git.log_oneline", return_value=["newsha1 fix"])
     return cfg_mock, incus_mock
 
 
