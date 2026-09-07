@@ -192,6 +192,32 @@ def test_choice_title_includes_conflict() -> None:
     assert "conflict" in title
 
 
+def test_picker_row_shows_the_live_conflict_marker() -> None:
+    from jailbee.git_status import GitStatus
+    from jailbee.tui import _choice_widths, _format_choice_title
+
+    c = ContainerInfo(
+        name="myrepo-feat-a",
+        state="Running",
+        network="strict",
+        ip="10.0.0.42",
+        memory_limit="4GB",
+        repo="myrepo",
+        base_branch="dev",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            in_progress="merge",
+            unmerged=1,
+        ),
+    )
+    widths = _choice_widths([c])
+    assert widths["conflict"] >= len("conflict!")
+    assert "conflict!" in _format_choice_title(c, widths)
+
+
 def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
     """The picker mirrors `claude ls`'s split: the account column carries
     `display_name` (no `#<org8>` inside it) and the org follows, padded so the

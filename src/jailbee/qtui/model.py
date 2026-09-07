@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee.git_status import IN_PROGRESS_CELL_LABELS
+
 if TYPE_CHECKING:
     from jailbee.dashboard import RepoGroup
     from jailbee.lifecycle import ContainerInfo
@@ -141,7 +143,10 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         segs.append((f"wt {wt}", "diff"))
     conflict = card_field(cc, "conflict")
     if conflict not in (None, "ok"):
-        segs.append((f"merge {conflict}", "conflict"))
+        # An in-progress state is already a verb ("merging"); only the
+        # prediction words need the "merge " prefix to read as a sentence.
+        label = conflict if conflict in IN_PROGRESS_CELL_LABELS else f"merge {conflict}"
+        segs.append((label, "conflict"))
     return segs
 
 

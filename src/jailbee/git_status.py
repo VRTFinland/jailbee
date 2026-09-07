@@ -77,6 +77,13 @@ _IN_PROGRESS_LABELS = {
     "revert": "reverting",
 }
 
+# Cell texts that already read as a state (a live in-progress operation), as
+# opposed to the "merge <word>" prediction texts. Consumers that turn a
+# conflict cell into a sentence (e.g. `qtui.model.git_segments`) must not
+# prefix these with "merge " — "merging" is already the whole sentence.
+# Derived from `_IN_PROGRESS_LABELS` so the two can never drift apart.
+IN_PROGRESS_CELL_LABELS: frozenset[str] = frozenset(_IN_PROGRESS_LABELS.values())
+
 
 def merge_label(status: GitStatus | None) -> tuple[str, str]:
     """Return ``(text, kind)`` for the MERGE cell — the one definition.
