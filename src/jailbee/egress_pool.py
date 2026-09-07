@@ -556,6 +556,15 @@ def _refresh_container_extras(
         except Exception as e:
             log.warning("refresh_pool: container extras failed for %s: %s", container.name, e)
 
+    # A rotated GSLB IP written above reaches only the NIC chain; the union
+    # ACL is what carries it into `incusbr0`'s chain, where the reject that
+    # would otherwise kill the connection lives. Once, after the loop — it
+    # reads every container's extra ACL back.
+    try:
+        egress_scope.sync_bridge_extras(cfg, incus)
+    except Exception as e:
+        log.warning("refresh_pool: bridge extras sync failed: %s", e)
+
 
 def _prune_container_pools(incus: Incus, session: Session) -> list[str]:
     """Drop `ct:` pool rows whose container no longer exists."""

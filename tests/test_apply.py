@@ -65,6 +65,19 @@ def _no_container_acl_apply(mocker: MockerFixture) -> Any:
     return mocker.patch("jailbee.egress_scope.apply_container_acl")
 
 
+@pytest.fixture(autouse=True)
+def _no_bridge_extras_sync(mocker: MockerFixture) -> Any:
+    """Default: the repo's bridge-level union ACL sync is a no-op.
+
+    `run_apply` syncs `<prefix>-container-extras` once after the container
+    loop. The real implementation reads every container's extra ACL back out
+    of Incus, which most `run_apply` tests here don't configure; its
+    behaviour is covered in `tests/test_egress_scope.py`. The call site is
+    asserted in `test_run_apply_syncs_the_bridge_extras_union_once`.
+    """
+    return mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+
+
 def test_profile_differs_returns_false_for_equivalent_yaml() -> None:
     from jailbee.apply import _profile_differs
 
@@ -470,10 +483,54 @@ def test_run_apply_re_materialises_container_acl_for_every_container(
     run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
     assert _no_container_acl_apply.call_args_list == [
-        mocker.call(cfg, incus, "a", mode="strict"),
-        mocker.call(cfg, incus, "b", mode="strict"),  # None falls back to "strict"
-        mocker.call(cfg, incus, "c", mode="strict"),  # stopped — still re-materialised
+        # sync_bridge=False: the union is synced once after the loop instead
+        # of re-reading every container's ACL once per container.
+        mocker.call(cfg, incus, "a", mode="strict", sync_bridge=False),
+        mocker.call(cfg, incus, "b", mode="strict", sync_bridge=False),  # None → "strict"
+        mocker.call(cfg, incus, "c", mode="strict", sync_bridge=False),  # stopped, still done
     ]
+
+
+def test_run_apply_syncs_the_bridge_extras_union_once(
+    make_cfg,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    _no_bridge_extras_sync: MagicMock,
+) -> None:
+    """`jailbee apply` is the drift-killer, and the union ACL is drift: a
+    container-scope grant that never reached `incusbr0`'s `security.acls` is
+    silently unreachable. Once, after the loop — not once per container."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=name,
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            )
+            for name in ("a", "b")
+        ],
+    )
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    _no_bridge_extras_sync.assert_called_once_with(cfg, incus)
 
 
 def test_run_apply_passes_mirror_endpoint_to_apply_hosts_for_strict(
