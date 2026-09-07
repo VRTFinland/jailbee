@@ -154,6 +154,7 @@ def test_update_on_host_delegates_to_git(mocker):
     from pathlib import Path
 
     upd = mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
     mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
     submodules.update_submodules_on_host(Path("/host/repo"))
     upd.assert_called_once_with(Path("/host/repo"))
@@ -185,7 +186,7 @@ def test_transport_to_host_fetches_each_container_submodule(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 lib (v1)\n"
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
     clone = mocker.patch("jailbee.submodules.git.clone_url")
 
@@ -208,7 +209,7 @@ def test_transport_to_host_clones_missing_host_subrepo(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 lib (v1)\n"
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
     clone = mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules._repoint_cloned_subrepo")
@@ -270,7 +271,7 @@ def test_transport_to_host_points_a_cloned_subrepo_at_its_real_url(mocker, tmp_p
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
     mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
@@ -295,7 +296,7 @@ def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocke
             "/home/dev/repo/lib/.gitmodules": {"nested": "git@github.com:acme/nested.git"},
         },
     )
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
     mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
@@ -307,23 +308,26 @@ def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocke
     set_origin.assert_called_once_with(tmp_path / "lib/nested", "git@github.com:acme/nested.git")
 
 
-def test_transport_to_host_leaves_origin_alone_when_no_url_is_recorded(mocker, tmp_path):
-    """No .gitmodules entry to copy → leave the clone as git made it rather
-    than inventing a remote.
+def test_transport_to_host_removes_origin_when_no_url_is_recorded(mocker, tmp_path):
+    """No .gitmodules entry and no container sub-repo origin → remove the ext::
+    origin left by the clone, which would push into the container and dies
+    with it.
     """
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.side_effect = _container_exec_stub(" 1111 lib (v1)\n", {})
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
     mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
+    remove_origin = mocker.patch("jailbee.submodules.git.remove_origin")
 
     submodules.transport_submodules_to_host(
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
     )
 
     set_origin.assert_not_called()
+    remove_origin.assert_called_once_with(tmp_path / "lib")
 
 
 def test_transport_to_host_never_rewrites_an_existing_subrepos_origin(mocker, tmp_path):
@@ -336,7 +340,7 @@ def test_transport_to_host_never_rewrites_an_existing_subrepos_origin(mocker, tm
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
 
@@ -359,7 +363,7 @@ def test_transport_to_host_survives_a_failing_origin_rewrite(mocker, tmp_path):
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules._host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
     mocker.patch("jailbee.submodules.git.clone_url")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     mocker.patch(
@@ -934,6 +938,7 @@ def test_update_on_host_invokes_placement_with_none_by_default(mocker):
 
     place = mocker.patch("jailbee.submodules._place_submodule_branches")
     mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
 
     submodules.update_submodules_on_host(Path("/host/repo"))
 
@@ -948,11 +953,30 @@ def test_update_on_host_forwards_branch(mocker):
 
     place = mocker.patch("jailbee.submodules._place_submodule_branches")
     mocker.patch("jailbee.submodules.git.submodule_update")
+    mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
 
     submodules.update_submodules_on_host(Path("/host/repo"), branch="feat/foo")
 
     assert place.call_args.args[1] == "/host/repo"
     assert place.call_args.args[2] == "feat/foo"
+
+
+def test_update_submodules_on_host_absorbs_between_update_and_placement(mocker, tmp_path):
+    """Absorb must run after --init registers the path and before placement."""
+
+    calls = []
+    mocker.patch("jailbee.git.submodule_update", side_effect=lambda root: calls.append("update"))
+    mocker.patch(
+        "jailbee.git.submodule_absorb_gitdirs", side_effect=lambda root: calls.append("absorb")
+    )
+    mocker.patch(
+        "jailbee.submodules._place_submodule_branches",
+        side_effect=lambda run, top, branch=None: calls.append("place"),
+    )
+
+    submodules.update_submodules_on_host(tmp_path, branch="master")
+
+    assert calls == ["update", "absorb", "place"]
 
 
 def test_unmerged_entries_parses_stages():
@@ -1557,3 +1581,82 @@ def test_declared_branch_for_top_relative_path_returns_none_when_nothing_matches
         return (False, "")
 
     assert submodules.declared_branch_for_top_relative_path(run, "/repo", "libs/foo") is None
+
+
+def _repoint_mocks(mocker, *, gitmodules_url, subrepo_url):
+    mocker.patch("jailbee.submodules._container_submodule_url", return_value=gitmodules_url)
+    mocker.patch("jailbee.submodules._container_subrepo_origin_url", return_value=subrepo_url)
+    return (
+        mocker.patch("jailbee.git.set_origin_url"),
+        mocker.patch("jailbee.git.remove_origin"),
+    )
+
+
+def test_repoint_prefers_the_gitmodules_url(mocker, tmp_path):
+    set_url, remove = _repoint_mocks(
+        mocker,
+        gitmodules_url="git@github.com:acme/foo.git",
+        subrepo_url="git@github.com:other/x.git",
+    )
+    incus = mocker.MagicMock()
+
+    submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/foo", tmp_path, uid=1000)
+
+    set_url.assert_called_once_with(tmp_path, "git@github.com:acme/foo.git")
+    remove.assert_not_called()
+
+
+def test_repoint_falls_back_to_the_container_subrepo_origin(mocker, tmp_path):
+    """A repo created inside the container gets its upstream on the sub-repo,
+    not in the superproject's .gitmodules."""
+    set_url, remove = _repoint_mocks(
+        mocker, gitmodules_url=None, subrepo_url="git@github.com:acme/new.git"
+    )
+    incus = mocker.MagicMock()
+
+    submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
+
+    set_url.assert_called_once_with(tmp_path, "git@github.com:acme/new.git")
+    remove.assert_not_called()
+
+
+def test_repoint_skips_an_ext_url_from_the_container(mocker, tmp_path):
+    """`ext::…` is jailbee's own transport, never a real upstream."""
+    set_url, remove = _repoint_mocks(
+        mocker,
+        gitmodules_url=None,
+        subrepo_url="ext::incus exec --user 1000 c -- git upload-pack /repo/libs/new",
+    )
+    incus = mocker.MagicMock()
+
+    submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
+
+    set_url.assert_not_called()
+    remove.assert_called_once_with(tmp_path)
+
+
+def test_repoint_removes_origin_and_warns_when_no_url_is_known(mocker, tmp_path):
+    set_url, remove = _repoint_mocks(mocker, gitmodules_url=None, subrepo_url=None)
+    warn = mocker.patch("jailbee.submodules._warn")
+    incus = mocker.MagicMock()
+
+    submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
+
+    set_url.assert_not_called()
+    remove.assert_called_once_with(tmp_path)
+    assert "libs/new" in warn.call_args[0][0]
+    assert "remote add origin" in warn.call_args[0][0]
+
+
+def test_repoint_removal_failure_is_cosmetic(mocker, tmp_path):
+    """A failed removal must not fail the pull — the objects are already across."""
+    from jailbee import git as git_mod
+
+    _repoint_mocks(mocker, gitmodules_url=None, subrepo_url=None)
+    mocker.patch("jailbee.git.remove_origin", side_effect=git_mod.GitError("boom"))
+    warn = mocker.patch("jailbee.submodules._warn")
+    incus = mocker.MagicMock()
+
+    submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
+
+    warn.assert_called_once()

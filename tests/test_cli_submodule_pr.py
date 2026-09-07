@@ -91,6 +91,23 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None, mock_state_r
     return cfg_mock, incus_mock, record
 
 
+def _happy(mocker):
+    """Patch the publish/create tail so a run can reach exit 0.
+
+    `_setup` deliberately leaves `publish_submodule_branch` and `create_pr`
+    unpatched so each test can assert on them; the gate tests care about the
+    gates, not the tail.
+    """
+    from jailbee.submodule_pr import SubPublishResult
+
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
+    )
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
+    mocker.patch("jailbee.pr.create_pr", return_value=_created())
+
+
 def test_create_submodule_pr_happy_path(mocker, tmp_path):
     from jailbee.submodule_pr import SubPublishResult
 
@@ -596,3 +613,323 @@ def test_submodule_pr_bind_prefix_names_the_submodule_in_errors(mocker, tmp_path
 
     assert result.exit_code == 1
     assert "lib/a" in result.output
+
+
+# --- The three TTY-only gates: container picker, submodule picker, confirm ---
+#
+# `CliRunner` replaces stdin with a non-tty, so `_stdin_is_interactive()` is
+# already False in this file. The non-TTY tests still patch it to False
+# explicitly: they are the safety net for "off a TTY nothing changes", and an
+# explicit patch keeps them honest if the runner's stdin ever changes. They
+# are not vacuous — an implementation that skipped the TTY check would call
+# the picker and fail them.
+
+
+def test_off_a_tty_a_single_container_is_still_auto_picked(mocker, tmp_path):
+    """Regression guard for the whole of this task."""
+    _setup(mocker, tmp_path, candidates=[_candidate()])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_submodule")
+    confirm = mocker.patch("typer.confirm")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_not_called()
+    confirm.assert_not_called()
+
+
+def test_off_a_tty_two_ahead_candidates_still_exit_2(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a"), _candidate("lib/b")])
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_submodule")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 2, result.output
+    pick.assert_not_called()
+    assert "lib/a" in result.output and "lib/b" in result.output
+
+
+def test_off_a_tty_an_unknown_path_still_exits_2_when_there_are_no_submodules(mocker, tmp_path):
+    """The empty-candidate shortcut must not swallow an explicitly named path.
+
+    Without PATH an empty list means "this container has no submodules"
+    (exit 0). With one it still means the user named something that does not
+    exist — exit 2, exactly as before this task.
+    """
+    _setup(mocker, tmp_path, candidates=[])
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/nope"])
+
+    assert result.exit_code == 2, result.output
+    assert "lib/nope" in result.output
+
+
+def test_off_a_tty_the_plan_block_is_not_printed_at_all(mocker, tmp_path):
+    """The block is a confirmation artifact; off a TTY there is no one to ask.
+
+    `jailbee submodule pr` must leave every message off a TTY unchanged, so a
+    script parsing its output does not suddenly find a new block in it —
+    deliberately unlike `_confirm_bridge_plan`, which prints either way.
+    Nothing is lost: the warnings that carry the facts still print, which is
+    what the `uncommitted` assertion pins.
+    """
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a", dirty=True)])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    confirm = mocker.patch("typer.confirm")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    confirm.assert_not_called()
+    assert "Submodule PR" not in result.output
+    assert "resolved once the submodule is on the host" not in result.output
+    # …but the pre-existing warning that carries the same fact still does.
+    assert "uncommitted" in result.output.lower()
+
+
+def test_on_a_tty_the_picker_runs_for_a_single_candidate(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_called_once()
+
+
+def test_picking_a_zero_commit_submodule_proceeds_to_transport_and_publish(mocker, tmp_path):
+    """The picker's headline case: it offers a submodule with nothing ahead
+    of its base (`test_on_a_tty_the_picker_is_offered_every_candidate_ordered`
+    already proves that), and picking it must not stop the run. `select_target`
+    accepts an explicit path regardless of commit count, so the run proceeds
+    all the way to transport and publish (a real `gh` would reject the PR
+    with "No commits between …", but `create_pr` is mocked here)."""
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/idle", commits=0)])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/idle")
+    mocker.patch("typer.confirm", return_value=True)
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "0 commits" in result.output
+    assert "no commits ahead of its base" in result.output
+    transport.assert_called_once()
+    assert "#123" in result.output  # _happy's create_pr ran — publish was reached
+
+
+def test_on_a_tty_the_picker_is_offered_every_candidate_ordered(mocker, tmp_path):
+    _setup(
+        mocker,
+        tmp_path,
+        candidates=[_candidate("lib/a", commits=0), _candidate("lib/b", commits=5)],
+    )
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/b")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    offered = [c.path for c in pick.call_args[0][0]]
+    assert offered == ["lib/b", "lib/a"]  # ahead first, then the rest
+
+
+def test_cancelling_the_picker_aborts_without_transporting(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value=None)
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code != 0
+    transport.assert_not_called()
+
+
+def test_declining_the_confirmation_transports_nothing(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=False)
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code != 0
+    transport.assert_not_called()
+    publish.assert_not_called()
+
+
+def test_yes_skips_the_confirmation_but_not_the_picker(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    confirm = mocker.patch("typer.confirm")
+
+    result = runner.invoke(app, ["submodule", "pr", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_called_once()
+    confirm.assert_not_called()
+
+
+def test_an_explicit_path_skips_the_picker_but_still_confirms(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_submodule")
+    confirm = mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/a"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_not_called()
+    confirm.assert_called_once()
+
+
+def test_the_container_picker_runs_when_no_name_is_given(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    # _setup already patched this; re-patch so the call kwargs are inspectable.
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "sampleapp-feat-foo")
+    )
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["always_prompt"] is True
+
+
+def test_an_explicit_container_name_does_not_prompt(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "sampleapp-feat-foo")
+    )
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["always_prompt"] is False
+
+
+def test_open_only_does_not_prompt_for_a_container(mocker, tmp_path):
+    """--open mutates nothing, so it keeps today's silent auto-selection."""
+    from jailbee.pr_flow import PrRecord
+
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "sampleapp-feat-foo")
+    )
+    mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=["lib/a"])
+    mocker.patch(
+        "jailbee.submodule_pr.SubmodulePrState.read",
+        return_value=PrRecord(7, "feat/foo", True, False),
+    )
+    mocker.patch("jailbee.pr.open_pr_in_browser")
+
+    result = runner.invoke(app, ["submodule", "pr", "--open"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["always_prompt"] is False
+
+
+def test_the_plan_defers_base_and_remote_for_a_submodule_not_on_the_host(mocker, tmp_path):
+    """The FIX 2 invariant: nothing reads the host sub-repo before transport."""
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "resolved once the submodule is on the host" in result.output
+
+
+def test_the_plan_shows_real_base_and_remote_when_the_subrepo_exists(mocker, tmp_path):
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "develop" in result.output  # _setup's resolve_base_branch
+    assert "resolved once the submodule is on the host" not in result.output
+
+
+def test_the_plan_says_update_when_binding_to_a_numbered_pr(mocker, tmp_path):
+    """`--pr N` binds to an existing PR *after* the confirmation, so the line
+    the user is asked to approve must not promise a brand-new PR."""
+    _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _bind_publish(mocker)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info())
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(456, already=True))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr", "--pr", "456"])
+
+    assert result.exit_code == 0, result.output
+    assert "update the existing PR" in result.output
+    assert "create a PR" not in result.output
+
+
+def test_the_plan_does_not_claim_a_draft_change_on_the_update_path(mocker, tmp_path):
+    """I1: on the update path, `apply_pr_updates` only touches draft/ready
+    state when `--ready`/`--draft` is given. With neither flag, the plan
+    block must not claim it will turn a ready-for-review PR into a draft (or
+    vice versa) — it does nothing to that state at all."""
+    from jailbee.pr_flow import PrRecord
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(
+        mocker,
+        tmp_path,
+        candidates=[_candidate("lib/a")],
+        state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="user/x", forced=False),
+    )
+    mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["submodule", "pr"])
+
+    assert result.exit_code == 0, result.output
+    assert "update the existing PR" in result.output
+    assert "draft" not in result.output.lower()
+    assert "ready for review" not in result.output

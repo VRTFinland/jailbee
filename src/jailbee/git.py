@@ -182,6 +182,26 @@ def set_origin_url(repo_root: Path, url: str) -> None:
         raise GitError(f"git remote set-url origin failed (exit {result.returncode})")
 
 
+def remove_origin(repo_root: Path) -> None:
+    """`git remote remove origin` in repo_root.
+
+    Used when a sub-repo cloned out of a container has no upstream the host
+    could reach: the `ext::incus exec …` origin `git clone` left behind is
+    worse than none — it dies with the container, and `git push origin` from
+    the host would push *into* it. Raises `GitError` when the command fails;
+    callers treat that as cosmetic.
+    """
+    result = subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise GitError(f"git remote remove origin failed: {result.stderr.strip()}")
+
+
 def get_branch_tracking(repo_root: Path, branch: str) -> tuple[str, str] | None:
     """Return (remote, merge_ref) tracking config for `branch`, or None.
 
@@ -932,6 +952,25 @@ def submodule_update(repo_root: Path) -> None:
     )
     if returncode != 0:
         raise GitError(f"git submodule update failed (exit {returncode})")
+
+
+def submodule_absorb_gitdirs(repo_root: Path) -> None:
+    """Run `git submodule absorbgitdirs` in repo_root. Best-effort.
+
+    A sub-repo `submodules.transport_submodules_to_host` cloned out of a
+    container keeps a legacy `.git` *directory* in the working tree; git's own
+    layout since the submodule rewrite is a `.git` *file* pointing at
+    `<superproject>/.git/modules/<name>`. This migrates it, preserving the
+    sub-repo's remotes and refs.
+
+    A non-zero exit is deliberately ignored rather than raised: by the time
+    this runs the objects are already across and the legacy layout still
+    works, so failing the caller's pull over a cosmetic migration would be
+    the worse outcome. The command is a silent no-op (exit 0, no output) both
+    on an already-absorbed repo and on one with no submodules, so it is safe
+    to call unconditionally.
+    """
+    subprocess.call(["git", "submodule", "absorbgitdirs"], cwd=repo_root)
 
 
 def fetch_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:

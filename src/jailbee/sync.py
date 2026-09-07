@@ -1375,7 +1375,9 @@ def checkout_submodules_on_host(
     resolved = branch if branch is not None else git.get_current_branch(cfg.repo_root)
     if resolved is None:
         raise SyncError(
-            "Host is in detached HEAD; pass -b <branch> to name the branch to place submodules on."
+            "Host is in detached HEAD; pass a branch to name what to place submodules on "
+            "(`jailbee branch <branch>`, or `-b <branch>` with the deprecated "
+            "`jailbee submodule checkout` alias)."
         )
     if switch_superproject:
         try:
@@ -1413,7 +1415,9 @@ def checkout_submodules_in_container(
     resolved = branch if branch is not None else incus.config_get(full_name, "user.jailbee.branch")
     if not resolved:
         raise SyncError(
-            f"container '{short}' has no recorded branch (user.jailbee.branch); pass -b <branch>."
+            f"container '{short}' has no recorded branch (user.jailbee.branch); pass a "
+            f"branch explicitly (`jailbee branch <branch> --container {short}`, or "
+            f"`-b <branch>` with the deprecated `jailbee submodule checkout` alias)."
         )
 
     repo_dir = container_repo_dir(cfg, incus, full_name)

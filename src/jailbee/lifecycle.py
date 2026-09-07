@@ -1801,6 +1801,7 @@ def resolve_container_for_interactive_detailed(
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
     is_interactive: Callable[[], bool] = _stdin_is_interactive,
     with_background: bool = False,
+    always_prompt: bool = False,
 ) -> ResolvedContainer:
     """Resolve a container name, reporting whether jailbee chose it unprompted.
 
@@ -1811,6 +1812,12 @@ def resolve_container_for_interactive_detailed(
     When ``with_background`` is set, a named lookup that finds no live
     container falls back to an in-flight ``jailbee new --background`` op of the
     same name, and the picker includes in-flight-only rows.
+
+    ``always_prompt`` suppresses the single-container short-circuit on a TTY,
+    so the picker runs even when there is only one candidate. Off a TTY it is
+    inert — a script must not be made to hang for a choice it cannot make.
+    Used by ``jailbee submodule pr``, which mutates a GitHub repository and
+    therefore shows the user its target rather than settling on one silently.
     """
     if name is not None:
         try:
@@ -1827,7 +1834,7 @@ def resolve_container_for_interactive_detailed(
     containers = list_containers(cfg, incus, with_git_status=True, with_background=with_background)
     if not containers:
         raise ValueError(f"no managed containers found for repo '{cfg.container_prefix}'")
-    if len(containers) == 1:
+    if len(containers) == 1 and not (always_prompt and is_interactive()):
         return ResolvedContainer(name=containers[0].name, auto_selected=True)
     if is_interactive():
         chosen = picker(containers)
@@ -1848,6 +1855,7 @@ def resolve_container_for_interactive(
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
     is_interactive: Callable[[], bool] = _stdin_is_interactive,
     with_background: bool = False,
+    always_prompt: bool = False,
 ) -> str:
     """Resolve a container name; auto-pick or prompt if name is omitted.
 
@@ -1861,6 +1869,7 @@ def resolve_container_for_interactive(
         picker=picker,
         is_interactive=is_interactive,
         with_background=with_background,
+        always_prompt=always_prompt,
     ).name
 
 

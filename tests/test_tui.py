@@ -668,3 +668,151 @@ def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answe
     assert (
         choose_shared_credential(Path("/creds/work"), Path("/x/.credentials.json"), "app") is None
     )
+
+
+def _sub(path="libs/foo", commits=2):
+    from jailbee.submodule_pr import SubCandidate
+
+    return SubCandidate(
+        path=path,
+        commits=commits,
+        branch="feat/x",
+        dirty=False,
+        head_sha="aaa",
+        recorded_sha="aaa",
+        subject="feat: work",
+    )
+
+
+def test_pick_submodule_returns_the_chosen_path(mocker):
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/foo"
+
+    assert tui.pick_submodule([_sub("libs/foo"), _sub("libs/bar")]) == "libs/foo"
+
+
+def test_pick_submodule_returns_none_on_escape(mocker):
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = None  # questionary's Ctrl-C / ESC answer
+
+    assert tui.pick_submodule([_sub()]) is None
+
+
+def test_pick_submodule_cancel_row_uses_a_sentinel_not_its_title(mocker):
+    """A Choice with value=None answers its *title*, which would read as a path."""
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = tui._CANCEL_SUBMODULE
+
+    assert tui.pick_submodule([_sub()]) is None
+
+    choices = select.call_args.kwargs["choices"]
+    assert choices[-1].value is tui._CANCEL_SUBMODULE
+    assert choices[-1].value is not None
+
+
+def test_pick_submodule_offers_every_candidate_in_the_given_order(mocker):
+    """The caller orders the list (via order_candidates); the picker must not
+    re-sort. The fixture is deliberately in an order `order_candidates` would
+    NOT produce — it would put the 5-commit entry first — so an internal sort
+    would fail this test."""
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/b"
+
+    tui.pick_submodule([_sub("libs/b", commits=1), _sub("libs/a", commits=5)])
+
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert values[:2] == ["libs/b", "libs/a"]
+
+
+def test_pick_submodule_offers_a_submodule_with_nothing_to_publish(mocker):
+    """A submodule with no commits ahead is still a legitimate target; hiding
+    it would force the user to retype the command with an explicit path."""
+    from jailbee import tui
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "libs/idle"
+
+    assert tui.pick_submodule([_sub("libs/idle", commits=0)]) == "libs/idle"
+
+    values = [c.value for c in select.call_args.kwargs["choices"]]
+    assert "libs/idle" in values
+
+
+def test_render_submodule_pr_plan_shows_every_field():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan())
+
+    assert "feat-foo" in text
+    assert "myrepo-feat-foo" in text
+    assert "libs/foo" in text
+    assert "feat/foo" in text
+    assert "3 commits" in text
+    assert "main" in text
+    assert "origin" in text
+    assert "draft" in text
+
+
+def test_render_submodule_pr_plan_defers_an_unresolvable_base_and_remote():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(base=None, remote=None))
+
+    assert text.count("resolved once the submodule is on the host") == 2
+    assert "None" not in text
+
+
+def test_render_submodule_pr_plan_renders_notes_as_warnings():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(notes=("uncommitted changes are NOT in the PR",)))
+
+    assert "⚠ uncommitted changes are NOT in the PR" in text
+
+
+def test_render_submodule_pr_plan_says_update_for_an_existing_pr():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    assert "update" in tui.render_submodule_pr_plan(_plan(action="update")).lower()
+
+
+def test_render_submodule_pr_plan_says_ready_when_not_draft():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    assert "ready for review" in tui.render_submodule_pr_plan(_plan(draft=False))
+
+
+def test_render_submodule_pr_plan_omits_state_when_draft_is_unchanged():
+    """draft=None means the update path leaves the PR's draft state alone —
+    the action line must not claim either state."""
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(action="update", draft=None))
+
+    assert "draft" not in text.lower()
+    assert "ready for review" not in text
+    assert "update the existing PR" in text
+
+
+def test_render_submodule_pr_plan_handles_a_detached_submodule():
+    from jailbee import tui
+    from tests.test_submodule_pr import _plan
+
+    text = tui.render_submodule_pr_plan(_plan(source_branch=None, commits=None))
+
+    assert "detached" in text
+    assert "? commits" in text

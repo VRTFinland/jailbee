@@ -2317,7 +2317,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
-    from jailbee.submodule_pr import SubCandidate
+    from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
         FetchResult,
@@ -2331,18 +2331,21 @@ if TYPE_CHECKING:
 def _resolve_existing(
     cfg: "Config",
     name: str | None,
+    *,
+    always_prompt: bool = False,
 ) -> tuple["IncusType", str]:
     """Resolve a container name, prompting interactively if omitted.
 
     See lifecycle.resolve_container_for_interactive for the behavior
-    matrix. ValueError is translated to typer.Exit(1).
+    matrix. ValueError is translated to typer.Exit(1). ``always_prompt``
+    shows the picker on a TTY even for a single container.
     """
     from jailbee.incus import Incus
     from jailbee.lifecycle import resolve_container_for_interactive
 
     incus = Incus()
     try:
-        resolved = resolve_container_for_interactive(cfg, incus, name)
+        resolved = resolve_container_for_interactive(cfg, incus, name, always_prompt=always_prompt)
     except ValueError as e:
         error(str(e))
         raise typer.Exit(1) from e
@@ -3885,6 +3888,34 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
     console.print(render_bridge_plan(plan), markup=False, highlight=False)
     if not _stdin_is_interactive():
         return
+    if not typer.confirm("Continue?", default=True):
+        raise typer.Abort()
+
+
+def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
+    """On a TTY, show a submodule-PR plan and ask whether to go ahead.
+
+    ``markup=False`` because branch names and commit subjects are user data
+    and may contain Rich markup characters. Declining raises
+    ``typer.Abort()``; nothing has been mutated at that point, which is why
+    this runs before the transport rather than after it.
+
+    Off a TTY this prints *nothing* and returns — deliberately unlike
+    :func:`_confirm_bridge_plan`, which shows its block either way and skips
+    only the prompt. `jailbee submodule pr` is specified to leave every
+    behaviour, message and exit code unchanged off a TTY, so that a script
+    parsing its output does not suddenly find a new block in it. Nothing is
+    lost: the plan block is a confirmation artifact, there is no one to
+    confirm, and the facts that matter (a dirty submodule, a stale gitlink, an
+    unresolved commit count) are still reported by the command's own
+    ``warn``/``info`` calls further down. Do not "fix" this back.
+    """
+    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee.tui import console, render_submodule_pr_plan
+
+    if not _stdin_is_interactive():
+        return
+    console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not typer.confirm("Continue?", default=True):
         raise typer.Abort()
 
@@ -5472,76 +5503,56 @@ def _print_submodule_report(branch: str, report: list[tuple[str, str | None]]) -
 
 
 def _print_submodule_pr_candidates(candidates: list["SubCandidate"]) -> None:
-    """List the submodules that have commits to publish, one per line."""
+    """List the submodules that have commits to publish, one per line.
+
+    Renders through `submodule_pr.describe_candidate`, the same function the
+    TTY picker uses, so the two cannot drift. `markup=False` because a commit
+    subject is user data and may contain Rich markup characters.
+    """
+    from jailbee.submodule_pr import describe_candidate
     from jailbee.tui import console
 
     width = max((len(c.path) for c in candidates), default=0)
     for c in candidates:
-        count = "?" if c.commits is None else str(c.commits)
-        console.print(f"  {c.path.ljust(width)}  {count} commits  {c.subject}")
+        console.print(f"  {describe_candidate(c, width=width)}", markup=False, highlight=False)
 
 
-@submodule_app.command("checkout")
-def submodule_checkout(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
-    branch: Annotated[
-        str | None,
-        typer.Option(
-            "--branch",
-            "-b",
-            help="Branch to put the tree on (default: current). On the host this "
-            "checks the branch out in the superproject too.",
-        ),
-    ] = None,
-    submodules_only: Annotated[
-        bool,
-        typer.Option(
-            "--submodules-only",
-            help="Align submodules without checking -b out in the superproject "
-            "(host only: a container's branch is never switched here).",
-        ),
-    ] = False,
-    config: ConfigOption = None,
+def _align_tree_to_branch(
+    cfg: "Config",
+    *,
+    branch: str | None,
+    container: str | None,
+    submodules_only: bool,
 ) -> None:
-    """Put the repo tree — superproject and submodules — on one branch.
+    """Put a repo tree — superproject and submodules — on one branch.
 
-    Purely local — moves nothing between host and container (that is
-    `jailbee git push`/`pull`).
-
-    With no NAME this works on the host repo: bare, it aligns the submodules
-    to the branch already checked out; with -b it checks that branch out in
-    the superproject first and then aligns the submodules to it, so one
-    command jumps the whole tree. Pass --submodules-only to leave the
-    superproject where it is (a deliberate mismatch, or a detached HEAD you
-    want to keep).
-
-    With a container NAME, aligns that container's submodules to its branch
-    (or -b). A container's branch is its identity, so -b never switches it.
-
-    Examples:
-
-      jailbee submodule checkout               # host, align to current branch
-      jailbee submodule checkout -b master     # host, whole tree to master
-      jailbee submodule checkout -b master --submodules-only
-      jailbee submodule checkout feat-foo      # container 'feat-foo', its branch
+    The single implementation behind `jailbee branch` and its hidden
+    `jailbee submodule checkout` alias. Purely local: moves nothing between
+    host and container (that is `jailbee git push`/`pull`).
     """
     from jailbee import sync
     from jailbee.lifecycle import short_name
 
-    cfg = _load_or_exit(config)
+    if submodules_only and container is not None:
+        # A container's branch is never switched here, so there is nothing for
+        # --submodules-only to opt out of. Reject rather than ignore: a
+        # silently-discarded explicit flag leaves the user believing something
+        # happened.
+        error(
+            "--submodules-only applies to the host repo only; a container's "
+            "branch is never switched, so there is nothing to skip."
+        )
+        raise typer.Exit(2)
 
     try:
-        if name is None:
+        if container is None:
             resolved, report = sync.checkout_submodules_on_host(
                 cfg,
                 branch=branch,
                 switch_superproject=branch is not None and not submodules_only,
             )
         else:
-            incus, full = _resolve_existing(cfg, name)
+            incus, full = _resolve_existing(cfg, container)
             short = short_name(cfg, full)
             resolved, report = sync.checkout_submodules_in_container(
                 cfg, incus, short, branch=branch
@@ -5551,6 +5562,94 @@ def submodule_checkout(
         raise typer.Exit(1) from exc
 
     _print_submodule_report(resolved, report)
+
+
+@app.command("branch")
+def branch_cmd(
+    branch: Annotated[
+        str | None,
+        typer.Argument(
+            autocompletion=completion.complete_branch,
+            help="Branch to put the tree on (default: the one already checked out).",
+        ),
+    ] = None,
+    container: Annotated[
+        str | None,
+        typer.Option(
+            "--container",
+            autocompletion=completion.complete_container,
+            help="Align this container's submodules instead of the host repo's.",
+        ),
+    ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option(
+            "--submodules-only",
+            help="Align submodules without checking BRANCH out in the superproject (host only).",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Put the repo tree — superproject and submodules — on one branch.
+
+    Purely local — moves nothing between host and container (that is
+    `jailbee git push`/`pull`).
+
+    Without --container this works on the host repo: bare, it aligns the
+    submodules to the branch already checked out; with BRANCH it checks that
+    branch out in the superproject first and then aligns the submodules to it,
+    so one command jumps the whole tree. Pass --submodules-only to leave the
+    superproject where it is (a deliberate mismatch, or a detached HEAD you
+    want to keep).
+
+    With --container, aligns that container's submodules to its branch (or
+    BRANCH). A container's branch is its identity, so this never switches it.
+
+    There is no `-c` short form: `-c` is `--config` on every jailbee command.
+
+    Examples:
+
+      jailbee branch                              # host, align to current branch
+      jailbee branch master                       # host, whole tree to master
+      jailbee branch master --submodules-only
+      jailbee branch --container feat-foo         # container 'feat-foo', its branch
+      jailbee branch master --container feat-foo
+    """
+    cfg = _load_or_exit(config)
+    _align_tree_to_branch(cfg, branch=branch, container=container, submodules_only=submodules_only)
+
+
+@submodule_app.command("checkout", hidden=True)
+def submodule_checkout(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Branch to put the tree on (default: current)."),
+    ] = None,
+    submodules_only: Annotated[
+        bool,
+        typer.Option("--submodules-only", help="Align submodules only (host only)."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated alias for `jailbee branch`. See `jailbee branch --help`.
+
+    Kept with its original argument shape — container as the positional,
+    branch behind `-b` — so existing scripts and muscle memory keep working.
+    """
+    from jailbee.tui import hint
+
+    cfg = _load_or_exit(config)
+    hint(
+        [
+            "`jailbee submodule checkout` is now `jailbee branch`.",
+            "  jailbee branch [BRANCH] [--container NAME] [--submodules-only]",
+        ]
+    )
+    _align_tree_to_branch(cfg, branch=branch, container=name, submodules_only=submodules_only)
 
 
 @submodule_app.command("pr")
@@ -5611,9 +5710,12 @@ def submodule_pr_cmd(
     submodule's own GitHub repository — a separate repo, so a separate PR from
     the superproject's `jailbee pr`. One PR per run.
 
-    Without PATH, the submodule that has commits ahead of its base is targeted
-    automatically; when several do, they are listed and PATH is required (two
-    submodules are two repositories and two PRs).
+    On a TTY you are asked which container and which submodule when you do not
+    name them, and shown what will be published before anything is
+    transported; --yes skips that last question. Off a TTY nothing is asked:
+    without PATH the submodule that has commits ahead of its base is targeted
+    automatically, and when several do they are listed and PATH is required
+    (two submodules are two repositories and two PRs).
 
     The base branch comes from the submodule's own `.gitmodules` entry, else its
     `<remote>/HEAD`, else `main`; `--base` overrides. The head branch name is
@@ -5627,8 +5729,8 @@ def submodule_pr_cmd(
       jailbee submodule pr feat-foo --open       # just open it in the browser
     """
     from jailbee import pr as pr_mod
-    from jailbee import pr_flow, submodule_pr, sync
-    from jailbee.lifecycle import container_repo_dir, short_name
+    from jailbee import pr_flow, submodule_pr, submodules, sync
+    from jailbee.lifecycle import _stdin_is_interactive, container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
         error(
@@ -5638,7 +5740,10 @@ def submodule_pr_cmd(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus, full = _resolve_existing(cfg, name)
+    # --open mutates nothing, so it keeps the silent auto-selection; the
+    # publishing path always shows the user which container it will publish
+    # from, because `gh` is about to change a GitHub repository.
+    incus, full = _resolve_existing(cfg, name, always_prompt=name is None and not open_only)
     short = short_name(cfg, full)
 
     # --open resolves from the recorded state alone: no preflight, no
@@ -5679,18 +5784,39 @@ def submodule_pr_cmd(
         subs = submodule_pr.detect_candidates(
             cfg, incus, full, repo_dir=repo_dir, base_branch=super_base, short=short
         )
+    except submodule_pr.SubmodulePrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+    if not subs and path is None:
+        # "Name one with PATH" is unactionable advice when there is nothing to
+        # name — distinguish "no submodules at all" from "submodules exist,
+        # none are ahead". With an explicit PATH this is not that case: the
+        # user named something that does not exist, which `select_target`
+        # below still reports as an unknown path (exit 2).
+        info(f"Container '{short}' has no submodules.")
+        return
+
+    if path is None and _stdin_is_interactive():
+        # The picker replaces both the silent single-candidate auto-target and
+        # the ambiguity error: it offers every submodule, ahead ones first, so
+        # a submodule with nothing to publish no longer has to be typed from
+        # memory. Off a TTY `select_target` below keeps today's exact
+        # behaviour, messages and exit codes.
+        from jailbee.tui import pick_submodule
+
+        chosen = pick_submodule(submodule_pr.order_candidates(subs))
+        if chosen is None:
+            raise typer.Abort()
+        path = chosen
+
+    try:
         target = submodule_pr.select_target(subs, path)
     except submodule_pr.NoSubmoduleCandidatesError:
-        if not subs:
-            # "Name one with PATH" is unactionable advice when there is
-            # nothing to name — distinguish "no submodules at all" from
-            # "submodules exist, none are ahead".
-            info(f"Container '{short}' has no submodules.")
-        else:
-            info(
-                f"No submodule in '{short}' has commits ahead of its base — nothing to "
-                f"open a PR for. Name one with PATH to publish it anyway."
-            )
+        info(
+            f"No submodule in '{short}' has commits ahead of its base — nothing to "
+            f"open a PR for. Name one with PATH to publish it anyway."
+        )
         return
     except submodule_pr.AmbiguousSubmoduleTargetError as exc:
         error(f"Several submodules in '{short}' have commits to publish:")
@@ -5705,6 +5831,61 @@ def submodule_pr_cmd(
 
     subpath = target.path
     source_branch = branch or target.branch
+
+    # Read the recorded PR state here rather than after the transport: it is
+    # one `incus config get`, it never touches the host sub-repo, and it
+    # decides whether the plan says "create" or "update". Only these two lines
+    # move up — `remote`, `resolved_base`, `scope`, the `--pr N` binding and
+    # `pr_label` all stay below the transport, where they belong.
+    state = submodule_pr.SubmodulePrState(incus, full, subpath)
+    record = state.read()
+
+    # base/remote only when the host sub-repo already exists: resolving them
+    # for a submodule the host has never seen would both misreport (the
+    # resolvers fall back to `origin`/`main`) and break the FIX 2 invariant
+    # that the transport is the first thing to touch that directory. The
+    # authoritative resolution stays after the transport, untouched.
+    on_host = submodules.host_subrepo_exists(cfg.repo_root, subpath)
+    plan_remote = submodule_pr.resolve_remote(cfg.repo_root, subpath) if on_host else None
+    plan_base = base or (
+        submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=None) if on_host else None
+    )
+
+    notes: list[str] = []
+    if target.dirty:
+        notes.append("the submodule has uncommitted changes — they are NOT in the PR")
+    if target.gitlink_stale:
+        notes.append("the superproject's gitlink does not yet point at these commits")
+    if target.commits is None:
+        notes.append("the commit count could not be resolved (no base anchor)")
+    if target.commits == 0:
+        notes.append("this submodule has no commits ahead of its base")
+
+    if not yes:
+        # `--pr N` binds to an existing PR *below*, after this confirmation,
+        # so without it here the line the user approves would promise a new
+        # PR and then update one.
+        plan_action: Literal["create", "update"] = (
+            "update" if (record.author or record.head or pr_number is not None) else "create"
+        )
+        _confirm_submodule_pr_plan(
+            submodule_pr.SubmodulePrPlan(
+                container_short=short,
+                container_full=full,
+                subpath=subpath,
+                source_branch=source_branch,
+                commits=target.commits,
+                action=plan_action,
+                base=plan_base,
+                remote=plan_remote,
+                # Create path: a new PR is a draft unless --ready. Update
+                # path: apply_pr_updates only touches draft state when
+                # --ready/--draft was given, so `ready` itself (None included)
+                # is the true outcome — anything else would misreport.
+                draft=(ready is not True) if plan_action == "create" else ready,
+                notes=tuple(notes),
+            )
+        )
 
     # Step 2 of the spec's pipeline: transport this submodule's objects to
     # the host BEFORE anything below reads the host sub-repo. For a
@@ -5724,8 +5905,6 @@ def submodule_pr_cmd(
         prefix=f"submodule '{subpath}': ",
         subpath=subpath,
     )
-    state = submodule_pr.SubmodulePrState(incus, full, subpath)
-    record = state.read()
     if pr_number is not None:
         # After the transport, not before: for a submodule the host has never
         # seen, `scope.repo_root` does not exist as a git repo until the

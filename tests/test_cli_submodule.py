@@ -5,10 +5,17 @@ from typer.testing import CliRunner
 from jailbee.cli import app
 
 
-def test_submodule_checkout_help_lists_command():
-    result = CliRunner().invoke(app, ["submodule", "--help"])
-    assert result.exit_code == 0
-    assert "checkout" in result.output
+def test_submodule_checkout_is_hidden_but_invocable(mocker, tmp_path):
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    mocker.patch("jailbee.sync.checkout_submodules_on_host", return_value=("main", []))
+
+    help_result = CliRunner().invoke(app, ["submodule", "--help"])
+    assert "checkout" not in help_result.output
+
+    run_result = CliRunner().invoke(app, ["submodule", "checkout"])
+    assert run_result.exit_code == 0, run_result.output
 
 
 def test_submodule_checkout_host_path(mocker, tmp_path):

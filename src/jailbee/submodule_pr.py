@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import git, submodules
 from jailbee.incus import IncusError
@@ -173,6 +173,76 @@ def select_target(subs: list[SubCandidate], path: str | None) -> SubCandidate:
     if len(ahead) > 1:
         raise AmbiguousSubmoduleTargetError(ahead)
     return ahead[0]
+
+
+def order_candidates(subs: list[SubCandidate]) -> list[SubCandidate]:
+    """Order submodules the way a picker should offer them.
+
+    Ahead of their base first (descending by commit count, because the one
+    with the most unpublished work is the likeliest target), then those whose
+    count could not be resolved, then the rest. Stable by path inside each
+    group so repeated runs offer the same order.
+
+    Returns a new list; the input is not mutated.
+    """
+
+    def key(sub: SubCandidate) -> tuple[int, int, str]:
+        if sub.commits is not None and sub.commits > 0:
+            return (0, -sub.commits, sub.path)
+        if sub.commits is None:
+            return (1, 0, sub.path)
+        return (2, 0, sub.path)
+
+    return sorted(subs, key=key)
+
+
+def describe_candidate(sub: SubCandidate, *, width: int = 0) -> str:
+    """One line describing a submodule, for the picker and the printed list.
+
+    Shared by both so the TTY and non-TTY renderings cannot drift. `width`
+    left-pads the path so a column of these lines up. An unknown commit count
+    renders as `?` rather than a plausible-but-wrong zero.
+    """
+    count = "?" if sub.commits is None else str(sub.commits)
+    flags = ""
+    if sub.dirty:
+        flags += "  [dirty]"
+    if sub.gitlink_stale:
+        flags += "  [gitlink stale]"
+    if sub.branch is None:
+        flags += "  [detached]"
+    return f"{sub.path.ljust(width)}  {count} commits  {sub.subject}{flags}"
+
+
+@dataclass(frozen=True)
+class SubmodulePrPlan:
+    """What `jailbee submodule pr` is about to do, before it does it.
+
+    Purely descriptive, like `sync.BridgePlan`: constructing one mutates
+    nothing. Built and shown *before* the submodule is transported to the
+    host, so that declining leaves no clone behind.
+
+    `base` and `remote` are None when the host sub-repo does not exist yet:
+    resolving them there would both misreport (the resolvers fall back to
+    `main`/`origin`) and violate the FIX 2 ordering invariant that nothing
+    reads the host sub-repo before the transport. The renderer says so rather
+    than showing a guess.
+
+    `draft` is `None` to mean the PR's draft state is left as it is — only
+    reachable on the update path, where `pr_flow.apply_pr_updates` does
+    nothing to the draft/ready state unless `--ready`/`--draft` was given.
+    """
+
+    container_short: str
+    container_full: str
+    subpath: str
+    source_branch: str | None
+    commits: int | None
+    action: Literal["create", "update"]
+    base: str | None
+    remote: str | None
+    draft: bool | None
+    notes: tuple[str, ...]
 
 
 STATE_KEY = "user.jailbee.sub_pr"
