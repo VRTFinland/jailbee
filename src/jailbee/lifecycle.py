@@ -817,7 +817,28 @@ def new_container(
             on_phase(label)
 
     name = opts.name or derive_container_name(cfg, opts.container_branch)
-    if incus.exists(name):
+    # One listing rather than `incus.exists`, because the entry also carries
+    # `profiles`, and that is what tells a real container apart from a
+    # leftover: an instance with none of this repo's profiles is the residue
+    # of a create that failed after `incus init`. `jailbee ls` selects on
+    # profile membership, so it cannot show that instance — a bare "already
+    # exists" would leave the user holding a name the tool denies having.
+    existing = next((c for c in incus.list_containers() if c["name"] == name), None)
+    if existing is not None:
+        repo_names = profile_names(cfg)
+        repo_profiles = {
+            repo_names.base,
+            repo_names.binds,
+            repo_names.net_strict,
+            repo_names.net_loose,
+        }
+        if not repo_profiles & set(existing.get("profiles") or []):
+            raise ValueError(
+                f"Container '{name}' already exists but carries none of this repo's "
+                f"profiles — a leftover from a create that failed, which is why "
+                f"`jailbee ls` does not list it.\n"
+                f"Remove it with `jailbee destroy {short_name(cfg, name)} --force`."
+            )
         raise ValueError(f"Container '{name}' already exists")
 
     if opts.mount:
@@ -959,15 +980,30 @@ def new_container(
 
     _phase("creating")
     incus.init(opts.from_base, name)
-    incus.profile_assign(
-        name,
-        [
-            "default",
-            names.base,
-            names.binds,
-            names.net_by_mode[opts.network],
-        ],
-    )
+    try:
+        incus.profile_assign(
+            name,
+            [
+                "default",
+                names.base,
+                names.binds,
+                names.net_by_mode[opts.network],
+            ],
+        )
+    except IncusError:
+        # The profiles exist (the pre-flight above said so) but Incus rejected
+        # them anyway — a `host_mounts` entry whose source path is gone does
+        # this. Roll the instance back: it was created seconds ago and holds
+        # nothing, while leaving it behind produces a container with only
+        # `default`, which `jailbee ls` cannot show and which blocks the next
+        # `jailbee new` with "already exists".
+        try:
+            incus.delete(name, force=True)
+        except IncusError:
+            # Cleanup is best-effort. Never let it replace the real cause —
+            # the assign error is what the user has to act on.
+            pass
+        raise
     incus.config_set(name, "limits.memory", opts.memory)
     incus.config_set(name, "limits.cpu", str(opts.cpu))
 
