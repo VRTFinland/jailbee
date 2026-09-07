@@ -471,6 +471,22 @@ def test_has_graphical_session_false(monkeypatch):
     assert has_graphical_session() is False
 
 
+def test_no_gui_warning_names_apps_not_two_products(tmp_path, capsys, mocker):
+    """The message must generalise: any registry app can autostart now, not
+    just the IDE and Chrome (see `apps.launch_autostart_apps`).
+
+    `warn()` prints through `tui.console`, which is stdout (`err_console` is
+    the stderr one, used by `error()`) — so this reads `.out`, not `.err`.
+    """
+    from jailbee.autostart import maybe_warn_no_gui
+
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=False)
+    maybe_warn_no_gui()
+    out = capsys.readouterr().out
+    assert "Chrome" not in out
+    assert "GUI app" in out
+
+
 # ---------- github-token autostart step
 
 

@@ -54,11 +54,22 @@ repo opts out of every credential group.
 """
 
 
+KeyPath = tuple[str | int, ...]
+"""A path into a YAML document: mapping keys, with list indices as integers.
+
+An integer segment addresses an entry of a list the caller has already read
+from this same document (`config_edit.state.changes`), which is why walking
+onto a missing index raises rather than creating one: there is no sensible
+list to create at an arbitrary index, and a silent no-op would drop an edit
+the user watched themselves make.
+"""
+
+
 @dataclass(frozen=True)
 class YamlChange:
     """One edit to apply. `value is DELETE` removes the key."""
 
-    path: tuple[str, ...]
+    path: KeyPath
     value: object
 
 
@@ -93,16 +104,39 @@ def patch_yaml(text: str, changes: Sequence[YamlChange]) -> str:
 def _apply(data: CommentedMap, change: YamlChange) -> None:
     *parents, leaf = change.path
     node: Any = data
-    for key in parents:
-        child = node.get(key)
-        if not isinstance(child, dict):
-            child = CommentedMap()
-            node[key] = child
-        node = child
+    for i, key in enumerate(parents):
+        node = _descend(node, key, change.path[: i + 1])
+    if isinstance(leaf, int):
+        _require_index(node, leaf, change.path)
+        if change.value is DELETE:
+            del node[leaf]
+        else:
+            node[leaf] = change.value
+        return
     if change.value is DELETE:
         node.pop(leaf, None)
     else:
         node[leaf] = change.value
+
+
+def _descend(node: Any, key: str | int, so_far: KeyPath) -> Any:
+    """One step down, creating a missing mapping but never a missing list entry."""
+    if isinstance(key, int):
+        _require_index(node, key, so_far)
+        return node[key]
+    child = node.get(key) if isinstance(node, dict) else None
+    if not isinstance(child, (dict, list)):
+        child = CommentedMap()
+        node[key] = child
+    return child
+
+
+def _require_index(node: Any, index: int, so_far: KeyPath) -> None:
+    dotted = ".".join(str(seg) for seg in so_far)
+    if not isinstance(node, list):
+        raise ValueError(f"{dotted}: expected a list, found {type(node).__name__}")
+    if not 0 <= index < len(node):
+        raise ValueError(f"{dotted}: index out of range (list has {len(node)} entries)")
 
 
 _DEFAULT_MODE = 0o600

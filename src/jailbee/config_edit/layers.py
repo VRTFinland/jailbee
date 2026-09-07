@@ -19,7 +19,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config import ConfigError, load_config_from_layers
+from pydantic import ValidationError
+
+from jailbee.config import ConfigError, load_config_from_layers, resolve_browsers_raw
 
 # `_HOST_LEVEL_KEYS` is the loader's own routing table: the keys
 # `_split_host_keys` lifts out of `global.yaml` *before* `deep_merge` runs.
@@ -27,8 +29,8 @@ from jailbee.config import ConfigError, load_config_from_layers
 # routing exactly — a key on one side of the boundary merges by
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
 from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
-from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind
-from jailbee.config_writer import DELETE, YamlChange
+from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted
+from jailbee.config_writer import DELETE, KeyPath, YamlChange
 from jailbee.global_config import validate_global_raw
 
 if TYPE_CHECKING:
@@ -80,12 +82,12 @@ def read_layers(repo_config_path: Path, global_path: Path) -> LayerSet:
     )
 
 
-def raw_for(layers: LayerSet, layer: LayerName) -> dict[str, object]:
+def raw_for(layer_set: LayerSet, layer: LayerName) -> dict[str, object]:
     """The raw mapping of the layer being edited."""
-    return layers.repo_raw if layer == "repo" else layers.global_raw
+    return layer_set.repo_raw if layer == "repo" else layer_set.global_raw
 
 
-def lookup(raw: dict[str, object], path: tuple[str, ...]) -> tuple[bool, object]:
+def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     """`(present, value)` for `path` in a raw mapping.
 
     `present` and `value` are separate because `None` is a legitimate
@@ -93,29 +95,54 @@ def lookup(raw: dict[str, object], path: tuple[str, ...]) -> tuple[bool, object]
     different states, and collapsing them would make the origin marker
     lie. Walking into a non-mapping returns "absent" rather than raising:
     a hand-broken file must not crash the editor's read path.
+
+    That includes an out-of-range integer segment: `apply_changes` and
+    `config_writer._apply` raise on one, because there an index is always
+    produced by code that just read the same list, so a bad one is a
+    programming error. Here it can also come from a hand-edited file the
+    editor is merely displaying, so it reads as "absent" instead — the
+    read path must never crash on a document it didn't write.
     """
     node: object = raw
     for key in path:
+        if isinstance(key, int):
+            if not isinstance(node, list) or not 0 <= key < len(node):
+                return False, None
+            node = node[key]
+            continue
         if not isinstance(node, dict) or key not in node:
             return False, None
         node = node[key]
     return True, node
 
 
-def resolve(specs: Sequence[FieldSpec], layers: LayerSet) -> dict[tuple[str, ...], Origin]:
+def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Origin]:
     """Where each spec's value comes from: repo, else global, else the default.
 
     Independent of which layer is open. A repo-layer editor still marks an
     inherited value `(global)`, so the user can see that editing it will
     create a repo-layer key rather than change the one they are looking at.
+
+    Looks up paths through `resolve_browsers_raw`'s fold rather than
+    `layer_set.repo_raw`/`global_raw` directly, so a legacy top-level
+    `chrome:` block still reports a real origin for `browsers.chrome.*`
+    instead of lying and saying "default". `emit_hint=False` because this
+    runs on every reload — including while the editor `Application` is
+    live — and the deprecation notice writing to the terminal mid-session
+    would corrupt the display. The stored `layer_set.repo_raw`/`global_raw`
+    are left untouched: they are also the write path's base mapping
+    (`raw_for`), and folding there would rewrite a user's `chrome:` block
+    into `browsers:` as a side effect of an unrelated save.
     """
-    out: dict[tuple[str, ...], Origin] = {}
+    repo_raw = resolve_browsers_raw(layer_set.repo_raw, emit_hint=False)
+    global_raw = resolve_browsers_raw(layer_set.global_raw, emit_hint=False)
+    out: dict[KeyPath, Origin] = {}
     for spec in specs:
-        present, value = lookup(layers.repo_raw, spec.path)
+        present, value = lookup(repo_raw, spec.path)
         if present:
             out[spec.path] = Origin("repo", value)
             continue
-        present, value = lookup(layers.global_raw, spec.path)
+        present, value = lookup(global_raw, spec.path)
         if present:
             out[spec.path] = Origin("global", value)
             continue
@@ -148,10 +175,6 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     expect a fourth key to silence a repo-layer setting that has no visible
     `repo_specs()` entry.
     """
-    if spec.kind is FieldKind.OPAQUE:
-        return (
-            "Free-form overlay with no schema — edit it by hand in ~/.config/jailbee/global.yaml."
-        )
     if layer == "repo" and spec.path[0] in GLOBAL_ONLY_KEYS:
         return (
             f"`{spec.path[0]}` is host-local and is rejected in a repo config — "
@@ -160,7 +183,7 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     return None
 
 
-def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tuple[object, ...]:
+def inherited_entries(spec: FieldSpec, layer_set: LayerSet, layer: LayerName) -> tuple[object, ...]:
     """Global list entries the repo layer's own entries will be appended to.
 
     `deep_merge` appends lists, so a repo-level `egress_allow` adds to the
@@ -193,12 +216,12 @@ def inherited_entries(spec: FieldSpec, layers: LayerSet, layer: LayerName) -> tu
         # Split out before deep_merge ever runs; global.yaml's block is a
         # separate object merged field-wise by Config._effective_columns.
         return ()
-    repo_present, repo_value = lookup(layers.repo_raw, spec.path)
+    repo_present, repo_value = lookup(layer_set.repo_raw, spec.path)
     if repo_present and not (isinstance(repo_value, list) and repo_value):
         # [] resets, null and any non-list hit deep_merge's overlay-wins
         # branch; only a non-empty repo list appends.
         return ()
-    present, value = lookup(layers.global_raw, spec.path)
+    present, value = lookup(layer_set.global_raw, spec.path)
     if not present or not isinstance(value, list):
         return ()
     return tuple(value)
@@ -211,22 +234,54 @@ def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict
     validator needs the resulting mapping, not the resulting YAML text.
     Deep-copies first, because `raw` is the editor's live view of the file
     and a rejected validation must leave it untouched.
+
+    An integer path segment addresses an entry of a list already present
+    in `raw` (the caller just read it from this same document), so an
+    out-of-range index raises rather than being silently absorbed — unlike
+    `lookup`, which reads a possibly hand-broken file and must not crash.
     """
     out = deepcopy(raw)
     for change in changes:
         *parents, leaf = change.path
-        node: dict[str, object] = out
+        node: object = out
         for key in parents:
-            child = node.get(key)
-            if not isinstance(child, dict):
-                child = {}
-                node[key] = child
-            node = child
+            node = _descend_raw(node, key, change.path)
+        if isinstance(leaf, int):
+            if not isinstance(node, list) or not 0 <= leaf < len(node):
+                raise ValueError(f"{dotted(change.path)}: index out of range")
+            if change.value is DELETE:
+                del node[leaf]
+            else:
+                node[leaf] = change.value
+            continue
+        if not isinstance(node, dict):
+            raise ValueError(f"{dotted(change.path)}: expected a mapping")
         if change.value is DELETE:
             node.pop(leaf, None)
         else:
             node[leaf] = change.value
     return out
+
+
+def _descend_raw(node: object, key: str | int, path: KeyPath) -> object:
+    """One step down a plain `dict`/`list` tree, matching `config_writer._descend`.
+
+    Creates a missing mapping but never a missing list entry, and keeps an
+    existing `list` in place rather than replacing it — otherwise a parent
+    segment pointing at a list (`host_mounts` before its index) would be
+    clobbered with a fresh `dict` and the entry beneath it unreachable.
+    """
+    if isinstance(key, int):
+        if not isinstance(node, list) or not 0 <= key < len(node):
+            raise ValueError(f"{dotted(path)}: index out of range")
+        return node[key]
+    if not isinstance(node, dict):
+        raise ValueError(f"{dotted(path)}: expected a mapping")
+    child = node.get(key)
+    if not isinstance(child, (dict, list)):
+        child = {}
+        node[key] = child
+    return child
 
 
 _PREFIX_PATH = ("container_prefix",)
@@ -240,7 +295,7 @@ by construction.
 """
 
 
-def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
+def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) -> str | None:
     """The error a save would produce, or `None` if the staged layer loads.
 
     Runs the *real* loader over the staged mapping (spec 3.5 step 2), so
@@ -277,23 +332,57 @@ def validate(layers: LayerSet, layer: LayerName, changes: Sequence[YamlChange]) 
     first: it is the broader check (it scans the whole global mapping for
     retired keys and sees both layers for the cross-layer rules), so its
     diagnosis is the more general one when both would fire.
+
+    `emit_hint=False`: this runs synchronously from the editor's save
+    handler while the full-screen `Application` is live. Without it, a
+    legacy top-level `chrome:` block would print `resolve_browsers_raw`'s
+    deprecation notice straight to the terminal on every save — the same
+    hazard `resolve()` already guards against on reload.
     """
-    global_raw = layers.global_raw
-    repo_raw = layers.repo_raw
+    global_raw = layer_set.global_raw
+    repo_raw = layer_set.repo_raw
     if layer == "repo":
         repo_raw = apply_changes(repo_raw, changes)
     else:
         global_raw = apply_changes(global_raw, changes)
-        if not layers.repo_path.exists() and not (
+        if not layer_set.repo_path.exists() and not (
             lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]
         ):
             repo_raw = {**repo_raw, "container_prefix": _PLACEHOLDER_PREFIX}
     try:
         load_config_from_layers(
-            global_raw, repo_raw, layers.repo_path, origin=str(layers.repo_path)
+            global_raw,
+            repo_raw,
+            layer_set.repo_path,
+            origin=str(layer_set.repo_path),
+            emit_hint=False,
         )
         if layer == "global":
-            validate_global_raw(global_raw, layers.global_path)
+            validate_global_raw(global_raw, layer_set.global_path)
     except ConfigError as e:
         return str(e)
+    return None
+
+
+def validate_entry(spec: FieldSpec, value: object) -> str | None:
+    """The first thing wrong with one collection entry, or `None`.
+
+    Early feedback, not a second gate: `validate` still runs the real loader
+    over the whole staged mapping at save time and remains authoritative. This
+    only spares the user a save that fails with a path they then have to hunt
+    for (spec 11.8) — which is why it reports one field, the way a form does,
+    rather than the whole error tree.
+
+    Kept here rather than in a new `validation.py`: it is six lines and pulls
+    in nothing `layers` does not already reach. Spec 10.7's suggested split
+    still stands for the day `validate` itself grows.
+    """
+    if spec.item_model is None:
+        return None
+    try:
+        spec.item_model.model_validate(value)
+    except ValidationError as e:
+        first = e.errors()[0]
+        where = ".".join(str(part) for part in first["loc"]) or spec.label
+        return f"{where}: {first['msg']}"
     return None

@@ -1297,7 +1297,7 @@ jailbee destroy feat-submod-conflict2 --force
 git reset --hard HEAD~1   # drop the local "host: bump submodule" commit
 ```
 
-## `jailbee submodule checkout` smoke test
+## `jailbee branch` smoke test
 
 > Host-only. Puts the tree on a branch locally (no host<->container transport).
 
@@ -1306,36 +1306,47 @@ git reset --hard HEAD~1   # drop the local "host: bump submodule" commit
 git checkout -b feat/align-smoke
 git -C <submodule-path> checkout --detach
 git submodule status --recursive            # shows detached
-jailbee submodule checkout
+jailbee branch
 # expect: per-submodule "✓ feat/align-smoke" lines, then
 #         "Submodules aligned to 'feat/align-smoke'."
 git -C <submodule-path> branch --show-current   # -> feat/align-smoke
 
-# -b switches the superproject too: one command for the whole tree.
+# BRANCH switches the superproject too: one command for the whole tree.
 git branch feat/other
-jailbee submodule checkout -b feat/other
+jailbee branch feat/other
 git branch --show-current                       # -> feat/other  (superproject moved)
 git -C <submodule-path> branch --show-current   # -> feat/other
 
-# --submodules-only keeps the superproject put (the pre-1.2 behaviour).
-jailbee submodule checkout -b feat/align-smoke --submodules-only
+# --submodules-only keeps the superproject put.
+jailbee branch feat/align-smoke --submodules-only
 git branch --show-current                       # -> feat/other  (unchanged)
 git -C <submodule-path> branch --show-current   # -> feat/align-smoke
 
 # A refused superproject checkout aligns nothing.
-jailbee submodule checkout -b no/such/branch    # expect: exit 1, git's own error
+jailbee branch no/such/branch    # expect: exit 1, git's own error
 git -C <submodule-path> branch --show-current   # -> feat/align-smoke (untouched)
 
 # Container target (aligns the container's submodules to its branch).
 jailbee new feat/submod-align
-jailbee submodule checkout feat-submod-align
+jailbee branch --container feat-submod-align
 # expect: "✓ feat/submod-align" per submodule
+# --submodules-only with a container is a usage error, not a silent no-op:
+jailbee branch --container feat-submod-align --submodules-only   # expect: exit 2
 jailbee destroy feat-submod-align --force
 
-# Detached-HEAD host without -b is refused.
+# Detached-HEAD host without BRANCH is refused.
 git checkout --detach
-jailbee submodule checkout 2>&1 | grep "detached HEAD"
+jailbee branch 2>&1 | grep "detached HEAD"
 git checkout main && git branch -D feat/align-smoke
+
+# The old spelling still works, with its original (opposite) argument shape:
+# positional is the CONTAINER, branch is behind -b — and it prints a
+# deprecation hint pointing at `jailbee branch`.
+jailbee new feat/submod-align2
+jailbee submodule checkout feat-submod-align2 -b feat/align-smoke
+# expect: "`jailbee submodule checkout` is now `jailbee branch`." hint, then
+#         the same per-submodule report as `jailbee branch` would print
+jailbee destroy feat-submod-align2 --force
 ```
 
 ## `jailbee submodule pr` smoke test
@@ -1377,6 +1388,50 @@ jailbee destroy feat-sub --force
 Two submodules with commits ahead is worth checking too: `jailbee submodule
 pr feat-sub` with no `<path>` should list both candidates and exit 2 asking
 you to name one.
+
+## Submodule created in a container: interactive pr + transport smoke test
+
+> Host-only. Needs a real Incus daemon and a real terminal (not redirected).
+> Covers two things no unit test can: what `jailbee submodule pr` asks when
+> only one container and one submodule exist, and what a submodule created
+> inside a container looks like on the host once transported.
+
+```bash
+# Setup: add a brand-new submodule inside a container — the host has never
+# cloned it.
+jailbee new feat/new-submod
+jailbee shell feat-new-submod
+cd ~/SampleApp
+git submodule add https://github.com/octocat/Hello-World libs/hello
+git commit -m "add libs/hello submodule"
+exit
+
+# 1. `jailbee submodule pr` is interactive on a TTY, even with one container
+#    and one submodule — and declining transports nothing.
+jailbee submodule pr
+# expect, in order:
+#   - container picker offers 'feat-new-submod' (asked despite being the only
+#     one)
+#   - submodule picker offers 'libs/hello' (asked despite being the only
+#     submodule with commits)
+#   - a plan block (container/submodule/source/base/remote/action), then
+#     "Continue? [Y/n]"
+# answer n → expect: aborted, exit 1
+# nothing printed: the host has never cloned it, and declining transported
+# nothing.
+ls libs/hello/.git 2>/dev/null
+
+# 2. `jailbee git pull` is what actually transports it — check the layout
+#    and the origin it lands with.
+jailbee git pull feat-new-submod --into main
+file libs/hello/.git   # -> ASCII text (a gitdir: pointer file, not a directory)
+test -d .git/modules/libs/hello && echo absorbed
+# -> the real GitHub URL, never an ext::incus exec … URL
+git -C libs/hello remote get-url origin
+
+jailbee destroy feat-new-submod --force
+git reset --hard HEAD~1   # drop the local "add libs/hello submodule" commit
+```
 
 ## `jailbee new` clone source (`new.clone_from` / `new.autofetch`) smoke test
 

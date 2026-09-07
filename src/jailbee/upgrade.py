@@ -112,6 +112,19 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "compositor socket instead of a hardcoded wayland-0"
         ),
     ),
+    UpgradeNote(
+        version=(1, 3, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "browsers set to `source: image` are installed into the golden image "
+            "by new provisioning snippets"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 3, 0),
+        actions=frozenset({"apply"}),
+        reason="Firefox adds a host mount and a per-container profile pool slot",
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

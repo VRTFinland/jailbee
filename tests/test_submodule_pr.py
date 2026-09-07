@@ -467,3 +467,110 @@ def test_publish_maps_a_push_failure_to_a_submodule_pr_error(tmp_path, mocker):
         _publish(tmp_path, mocker)
 
     assert "user/x" in str(excinfo.value)
+
+
+def _cand(path, commits, *, dirty=False, stale=False, branch="feat/x", subject="feat: work"):
+    from jailbee.submodule_pr import SubCandidate
+
+    return SubCandidate(
+        path=path,
+        commits=commits,
+        branch=branch,
+        dirty=dirty,
+        head_sha="aaa",
+        recorded_sha="bbb" if stale else "aaa",
+        subject=subject,
+    )
+
+
+def test_order_candidates_puts_ahead_first_by_descending_count():
+    from jailbee.submodule_pr import order_candidates
+
+    subs = [_cand("a", 1), _cand("b", 5), _cand("c", 3)]
+
+    assert [s.path for s in order_candidates(subs)] == ["b", "c", "a"]
+
+
+def test_order_candidates_groups_ahead_then_unknown_then_rest():
+    from jailbee.submodule_pr import order_candidates
+
+    subs = [_cand("rest", 0), _cand("unknown", None), _cand("ahead", 2)]
+
+    assert [s.path for s in order_candidates(subs)] == ["ahead", "unknown", "rest"]
+
+
+def test_order_candidates_is_stable_by_path_within_a_group():
+    from jailbee.submodule_pr import order_candidates
+
+    subs = [_cand("z", 2), _cand("a", 2), _cand("m", 2)]
+
+    assert [s.path for s in order_candidates(subs)] == ["a", "m", "z"]
+
+
+def test_order_candidates_does_not_mutate_its_input():
+    from jailbee.submodule_pr import order_candidates
+
+    subs = [_cand("a", 1), _cand("b", 5)]
+    before = list(subs)
+
+    order_candidates(subs)
+
+    assert subs == before
+
+
+def test_describe_candidate_renders_path_count_and_subject():
+    from jailbee.submodule_pr import describe_candidate
+
+    assert describe_candidate(_cand("libs/foo", 3, subject="feat: parser")) == (
+        "libs/foo  3 commits  feat: parser"
+    )
+
+
+def test_describe_candidate_shows_question_mark_for_an_unknown_count():
+    from jailbee.submodule_pr import describe_candidate
+
+    assert "? commits" in describe_candidate(_cand("libs/foo", None))
+
+
+def test_describe_candidate_flags_dirty_stale_and_detached():
+    from jailbee.submodule_pr import describe_candidate
+
+    text = describe_candidate(_cand("libs/foo", 1, dirty=True, stale=True, branch=None))
+
+    assert "[dirty]" in text
+    assert "[gitlink stale]" in text
+    assert "[detached]" in text
+
+
+def test_describe_candidate_pads_to_width():
+    from jailbee.submodule_pr import describe_candidate
+
+    text = describe_candidate(_cand("ab", 1, subject="s"), width=6)
+
+    assert text.startswith("ab    ")
+
+
+def _plan(**over):
+    from jailbee.submodule_pr import SubmodulePrPlan
+
+    fields = dict(
+        container_short="feat-foo",
+        container_full="myrepo-feat-foo",
+        subpath="libs/foo",
+        source_branch="feat/foo",
+        commits=3,
+        action="create",
+        base="main",
+        remote="origin",
+        draft=True,
+        notes=(),
+    )
+    fields.update(over)
+    return SubmodulePrPlan(**fields)
+
+
+def test_submodule_pr_plan_is_frozen():
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        _plan().base = "other"

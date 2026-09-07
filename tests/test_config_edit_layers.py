@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from jailbee.config import HostPort
 from jailbee.config_edit import layers
-from jailbee.config_edit.schema import repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -50,15 +51,16 @@ def test_repo_wins_over_global_wins_over_default(tmp_path):
 
 
 def test_an_explicit_null_is_a_set_value_not_an_absent_one(tmp_path):
-    """`chrome.url: null` is a deliberate choice, distinct from not setting it.
+    """`browsers.chrome.url: null` is a deliberate choice, distinct from not
+    setting it.
 
     Treating None as absent would make the origin marker lie and would
     make reset a no-op on a key the user did set.
     """
-    _write(tmp_path / "global.yaml", "chrome:\n  url: null\n")
+    _write(tmp_path / "global.yaml", "browsers:\n  chrome:\n    url: null\n")
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     origins = layers.resolve(repo_specs(), got)
-    assert origins[("chrome", "url")] == layers.Origin("global", None)
+    assert origins[("browsers", "chrome", "url")] == layers.Origin("global", None)
 
 
 def test_lookup_distinguishes_absent_from_none():
@@ -70,6 +72,17 @@ def test_lookup_distinguishes_absent_from_none():
 def test_lookup_does_not_walk_through_a_scalar():
     """A malformed file must not raise from the editor's read path."""
     assert layers.lookup({"gpg": "yes"}, ("gpg", "enabled")) == (False, None)
+
+
+def test_lookup_walks_into_a_list_by_index():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+    assert layers.lookup(raw, ("host_mounts", 1, "host")) == (True, "/b")
+
+
+def test_lookup_reports_an_out_of_range_index_as_absent():
+    """The read path must not raise on a hand-broken file (the `lookup` contract)."""
+    raw = {"host_mounts": [{"host": "/a"}]}
+    assert layers.lookup(raw, ("host_mounts", 7, "host")) == (False, None)
 
 
 def test_raw_for_selects_the_open_layer(tmp_path):
@@ -100,18 +113,17 @@ def test_ordinary_fields_are_never_disabled():
     assert layers.disabled_reason(_spec("gpg.enabled"), "global") is None
 
 
-def test_the_opaque_scratch_overlay_is_disabled_in_both_layers():
-    """`scratch.config` is free-form: there is no form to render for it."""
+def test_disabled_reason_no_longer_refuses_an_opaque_field():
+    """`scratch.config` is global-only, so it is only real in `global_specs()`.
+
+    Since Task 10 it is editable as raw YAML in the multiline prompt, so
+    `disabled_reason` no longer carves out a `FieldKind.OPAQUE` branch for it.
+    """
     from jailbee.config_edit.schema import global_specs
 
     spec = next(s for s in global_specs() if s.path == ("scratch", "config"))
-    # Test both layers as the name promises
-    reason_global = layers.disabled_reason(spec, "global")
-    assert reason_global is not None
-    assert "by hand" in reason_global
-    reason_repo = layers.disabled_reason(spec, "repo")
-    assert reason_repo is not None
-    assert "by hand" in reason_repo
+    assert spec.kind is FieldKind.OPAQUE
+    assert layers.disabled_reason(spec, "global") is None
 
 
 def test_repo_layer_shows_the_global_list_entries_it_will_append_to(tmp_path):
@@ -139,18 +151,60 @@ def test_non_list_fields_inherit_nothing(tmp_path):
     assert layers.inherited_entries(_spec("defaults.cpu"), got, "repo") == ()
 
 
+def test_a_legacy_top_level_chrome_block_still_resolves_its_origin(tmp_path, capsys):
+    """`chrome:` is folded into `browsers.chrome` at config-load time
+    (`resolve_browsers_raw`), but `layers.resolve` reads the raw layers
+    directly and never applied that fold — so a host still on the legacy
+    spelling saw `browsers.chrome.enabled` reported as origin "default"
+    even though a real value is set. Not data loss (an explicit
+    `browsers:` block still wins on the next load), but the origin marker
+    lies, which is exactly what this test suite exists to prevent.
+
+    Quiet: `resolve_browsers_raw`'s deprecation hint must not fire here —
+    `resolve()` runs on every reload, including while the full-screen
+    editor `Application` is live, and printing to the terminal mid-session
+    would corrupt the display.
+    """
+    _write(tmp_path / "global.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("browsers", "chrome", "enabled")] == layers.Origin("global", True)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_legacy_top_level_chrome_block_in_the_repo_layer_also_resolves(tmp_path, capsys):
+    _write(tmp_path / "repo.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("browsers", "chrome", "enabled")] == layers.Origin("repo", True)
+    assert capsys.readouterr().err == ""
+
+
+def test_resolving_a_legacy_chrome_block_does_not_rewrite_the_stored_raw(tmp_path):
+    """The fold is only for origin lookup. `raw_for` (the write path's base
+    mapping) must still show the file's real, un-migrated content — a save
+    of an unrelated field must not silently rewrite `chrome:` into
+    `browsers:` as a side effect.
+    """
+    _write(tmp_path / "global.yaml", "chrome:\n  enabled: true\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+    layers.resolve(repo_specs(), got)
+    assert layers.raw_for(got, "global") == {"chrome": {"enabled": True}}
+
+
 def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
-    """`chrome.url: null` in the repo layer is the twin of the global test.
+    """`browsers.chrome.url: null` in the repo layer is the twin of the
+    global test.
 
     This closes a gap: `test_an_explicit_null_is_a_set_value_not_an_absent_one`
     only covers the global layer. Both branches of `resolve()` are
     structurally identical, so a mutation breaking only the repo one would
     pass the suite without this twin.
     """
-    _write(tmp_path / "repo.yaml", "chrome:\n  url: null\n")
+    _write(tmp_path / "repo.yaml", "browsers:\n  chrome:\n    url: null\n")
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
     origins = layers.resolve(repo_specs(), got)
-    assert origins[("chrome", "url")] == layers.Origin("repo", None)
+    assert origins[("browsers", "chrome", "url")] == layers.Origin("repo", None)
 
 
 def test_an_explicit_empty_list_in_the_repo_layer_resets_not_appends(tmp_path):
@@ -223,6 +277,24 @@ def test_apply_changes_creates_missing_parents_and_deletes():
     assert layers.apply_changes(out, [YamlChange(("gpg", "enabled"), DELETE)]) == {"gpg": {}}
 
 
+def test_apply_changes_edits_one_entry_without_touching_its_neighbour():
+    raw = {"host_mounts": [{"host": "/a", "readonly": False}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0, "readonly"), True)])
+
+    assert got["host_mounts"] == [{"host": "/a", "readonly": True}, {"host": "/b"}]
+    assert raw["host_mounts"][0]["readonly"] is False  # deep-copied, not mutated
+
+
+def test_apply_changes_deletes_one_list_entry():
+    raw = {"host_mounts": [{"host": "/a"}, {"host": "/b"}]}
+
+    got = layers.apply_changes(raw, [YamlChange(("host_mounts", 0), DELETE)])
+
+    assert got["host_mounts"] == [{"host": "/b"}]
+    assert raw["host_mounts"] == [{"host": "/a"}, {"host": "/b"}]  # deep-copied, not mutated
+
+
 @pytest.fixture
 def opened(tmp_path, monkeypatch, mocker):
     """A `LayerSet` over an isolated global.yaml, with git detection stubbed.
@@ -251,6 +323,23 @@ def opened(tmp_path, monkeypatch, mocker):
 def test_validate_accepts_a_good_repo_change(opened):
     got = opened()
     assert layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)]) is None
+
+
+def test_validate_does_not_print_the_legacy_chrome_hint_mid_session(opened, capsys):
+    """`validate()` runs `load_config_from_layers` synchronously from the
+    editor's save handler while the full-screen `Application` is live.
+    `resolve_browsers_raw`'s deprecation hint writes straight to a Rich
+    stderr `Console`, bypassing prompt_toolkit entirely — printing it here
+    would corrupt the display, exactly the hazard `resolve()` already
+    guards against on reload (Ruling 30).
+
+    A host still on the legacy `chrome:` spelling must see this go quiet
+    for *any* staged change, not just one touching `browsers`.
+    """
+    got = opened("chrome:\n  enabled: true\n")
+    error = layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)])
+    assert error is None
+    assert capsys.readouterr().err == ""
 
 
 def test_validate_rejects_a_bad_value_and_names_the_field(opened):
@@ -409,3 +498,45 @@ def test_validate_leaves_the_in_memory_layers_untouched(opened):
     layers.validate(got, "global", [YamlChange(("defaults", "cpu"), "lots")])
 
     assert got.global_raw == {"defaults": {"cpu": 2}}
+
+
+def test_validate_entry_names_the_missing_required_field():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    error = layers.validate_entry(spec, {"name": "web"})
+
+    assert error is not None
+    assert "port" in error
+
+
+def test_validate_entry_accepts_a_complete_entry():
+    spec = FieldSpec(
+        path=("host_ports",),
+        label="host_ports",
+        kind=FieldKind.MODEL_LIST,
+        description="",
+        default=[],
+        item_model=HostPort,
+    )
+
+    assert layers.validate_entry(spec, {"name": "web", "port": 8080}) is None
+
+
+def test_validate_entry_is_none_for_a_spec_with_no_item_model():
+    """A leaf field (never a collection) has nothing to validate against."""
+    spec = FieldSpec(
+        path=("gpg", "enabled"),
+        label="enabled",
+        kind=FieldKind.BOOL,
+        description="",
+        default=False,
+    )
+
+    assert layers.validate_entry(spec, "anything at all") is None

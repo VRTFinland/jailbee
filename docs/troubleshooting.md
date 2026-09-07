@@ -64,17 +64,37 @@ appears only in `incus info --show-log <name>`.
 Re-run step 2 of the install and restart Incus: see
 [Why the UID mapping is needed](installation.md#why-the-uid-mapping-is-needed).
 
-### The IDE won't launch (`jailbee ide`)
+### A GUI app (IDE, browser, `apps:` entry) won't launch
 
-- `jailbee ide` exits 2 with a message → `jetbrains.enabled` is `false`. Turn it
+- `jailbee ide` / `jailbee chrome` / `jailbee firefox` exits 2 with a
+  message → the matching master switch (`jetbrains.enabled`,
+  `browsers.chrome.enabled`, `browsers.firefox.enabled`) is `false`. Turn it
   on in `~/.config/jailbee/global.yaml` (see [`config.md`](config.md)).
 - Nothing appears on screen → there's no graphical session for the
-  passthrough to target (autostart's IDE launch is a no-op without one), or
-  the JetBrains Toolbox path doesn't match `jetbrains.toolbox_host_path`.
+  passthrough to target (autostart's launch is a no-op without one), or —
+  for the IDE — the JetBrains Toolbox path doesn't match
+  `jetbrains.toolbox_host_path`. Every app's stdout/stderr lands in
+  `/tmp/jailbee-app-<name>.log` inside the container (`/tmp/jailbee-exec-*.log`
+  for a `jailbee exec -d` command) — check it before assuming the launch
+  itself failed.
+- `jailbee apps ls <container>` reports a builtin or `apps:` entry as
+  `missing` → the binary genuinely isn't in that image (common on one built
+  before a browser was enabled or before `source` changed to `image`). Run
+  `jailbee base build` (for `source: image`) or `jailbee apply` (for
+  `source: host`) and check again.
 - "Only one IDEA at a time" → the JetBrains profile is shared across
-  containers, so a second IDEA won't open while one is running. Chrome runs
-  per-container (`jailbee chrome`); inspect its profile pool with
-  `jailbee pool ls chrome-profile` (`jailbee chrome-pool ls` still works too).
+  containers, so a second IDEA won't open while one is running. Chrome and
+  Firefox both run **per-container** instead (`jailbee chrome` /
+  `jailbee firefox`); inspect their profile pools with `jailbee pool ls
+  chrome-profile` / `jailbee pool ls firefox-profile` (`jailbee chrome-pool
+  ls` still works too, as a deprecated alias for the Chrome one).
+- "Firefox is already running, but is not responding" from inside the
+  container → this is exactly what Firefox's own profile pool exists to
+  prevent (a stale lock file from an unclean exit, seeded into a fresh
+  container). If it still happens, check the pool with `jailbee pool ls
+  firefox-profile` — a slot stuck mid-release, or a repo whose
+  `pooled_caches` overrides `firefox-profile: false` (a `ConfigError` at
+  load time, so this shouldn't reach a real config) points at the cause.
 
 ### Gradle (or Maven) builds hang on "Waiting to acquire ... lock"
 

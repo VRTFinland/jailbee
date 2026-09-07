@@ -888,3 +888,59 @@ def test_repo_uses_docker_ignores_unrelated_extra_apt_packages(tmp_path, make_cf
     late in the name."""
     cfg = _repo_cfg(tmp_path, make_cfg, golden={"extra_apt_packages": ["golang-docker-dev"]})
     assert repo_uses_docker(cfg) is False
+
+
+def test_image_sourced_browsers_stage_their_snippets(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={
+            "chrome": {"enabled": True, "source": "image", "host_path": None},
+            "firefox": {"enabled": True, "source": "image"},
+        },
+    )
+    assert browser_snippet_names(cfg) == ["70-chrome.sh", "70-firefox.sh"]
+
+
+def test_host_sourced_browsers_stage_nothing(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "source": "host"}})
+    assert browser_snippet_names(cfg) == []
+
+
+def test_disabled_browsers_stage_nothing(tmp_path, make_cfg):
+    from jailbee.golden import browser_snippet_names
+
+    assert browser_snippet_names(make_cfg(tmp_path)) == []
+
+
+def test_both_browser_snippets_exist_in_available_library():
+    """Ordering ('70' runs after '60-gui-libs') is a claim about the actual
+    staged snippet order, not about the literal file names — that is
+    covered by
+    ``test_image_sourced_browser_is_staged_after_gui_libs`` below, which
+    resolves real snippet paths instead of asserting a string against
+    itself.
+    """
+    from jailbee.golden import _resource_dir
+
+    available = _resource_dir("install.d.available")
+    for name in ("70-chrome.sh", "70-firefox.sh"):
+        assert (available / name).is_file(), f"{name} missing from install.d.available"
+
+
+def test_image_sourced_browser_is_staged_after_gui_libs(tmp_path, make_cfg):
+    """Exercises the fold-in at golden.py's `enabled = list(dict.fromkeys(...))`
+    line, not just `browser_snippet_names` in isolation. Deleting
+    `*browser_snippet_names(cfg),` from that line leaves every one of the
+    other browser tests passing (they call `browser_snippet_names`
+    directly) while `70-firefox.sh` silently stops being staged — this is
+    the test that would catch it, by asserting it is actually present in
+    `resolved_snippet_paths` and ordered after `60-gui-libs.sh`.
+    """
+    cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True, "source": "image"}})
+    names = [p.name for p in resolved_snippet_paths(cfg)]
+    assert "70-firefox.sh" in names
+    assert names.index("60-gui-libs.sh") < names.index("70-firefox.sh")

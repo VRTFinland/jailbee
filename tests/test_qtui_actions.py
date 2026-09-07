@@ -92,6 +92,32 @@ def test_build_action_attach_verbs_pass_force_without_confirming():
         ]
 
 
+def test_build_action_routes_a_registry_apps_container_through_the_flag():
+    """The Qt mirror of the TUI's `_dispatch_action` bug: a config-sourced
+    `apps:` entry's verb is `"apps run <name> --container"`
+    (`dashboard._app_menu_verb`), not a bare name — `apps run`'s container is
+    an option (Ruling 24), not a second positional. If the container were
+    appended as a bare positional after the verb's own tokens (the way every
+    other verb here works), it would land in the app's own variadic `args`
+    instead of naming a container. This also confirms `--force` still gets
+    appended for it, even though the verb is not a member of
+    `_ASSUME_YES_VERBS` (no fixed set could enumerate every app's name)."""
+    ac = a.build_action("apps run figma --container", "p-foo", _t("/repo/.gie/config.yaml"))
+    assert ac.argv == [
+        "jailbee",
+        "apps",
+        "run",
+        "figma",
+        "--container",
+        "p-foo",
+        "--config",
+        "/repo/.gie/config.yaml",
+        "--force",
+    ]
+    assert ac.confirm is False
+    assert ac.launch == "detached"
+
+
 def test_resolve_launch_non_interactive_returns_argv_unchanged():
     ac = a.build_action("stop", "p-foo", _t("/x/config.yaml"))
     assert a.resolve_launch(ac, None) == ac.argv

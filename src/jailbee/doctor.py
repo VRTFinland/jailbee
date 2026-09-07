@@ -680,8 +680,8 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 8. Wayland session. Specifically Wayland: `runtime_mounts` passes the
     # compositor's own socket into the container and nothing else, so a
     # bare DISPLAY has no matching socket on the container side. Reporting
-    # an X11 session as a pass told users their GUI would work when
-    # `jailbee ide` / `jailbee chrome` would start and never open a window.
+    # an X11 session as a pass told users their GUI would work when GUI apps
+    # launched with `jailbee apps run` would start and never open a window.
     if os.environ.get("WAYLAND_DISPLAY"):
         results.append(CheckResult("graphical session", True, "Wayland"))
     elif os.environ.get("DISPLAY"):

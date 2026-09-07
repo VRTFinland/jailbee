@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
-from jailbee.entry import main
+from jailbee.config import ConfigError
+from jailbee.entry import main, rewrite_app_argv
 from jailbee.incus import IncusError
 
 
@@ -17,6 +20,9 @@ def test_incus_error_is_reported_as_a_message_not_a_traceback(mocker, capsys):
     binary hit this on every command.
     """
     mocker.patch("jailbee.macos.maybe_delegate")
+    # An option-shaped argv takes rewrite_app_argv's early-return branch, so
+    # this test doesn't depend on however the real test runner was invoked.
+    mocker.patch.object(sys, "argv", ["jailbee", "--help"])
     mocker.patch(
         "jailbee.cli.app",
         side_effect=IncusError("`incus` not found in PATH — Incus is not installed"),
@@ -34,8 +40,144 @@ def test_incus_error_is_reported_as_a_message_not_a_traceback(mocker, capsys):
 def test_successful_run_is_left_alone(mocker):
     """The handler must not swallow the normal path or its exit code."""
     mocker.patch("jailbee.macos.maybe_delegate")
+    mocker.patch.object(sys, "argv", ["jailbee", "--help"])
     app = mocker.patch("jailbee.cli.app")
 
     main()
 
     app.assert_called_once_with()
+
+
+def test_main_applies_the_rewrite_before_running_the_app(mocker):
+    """`main()` must actually route sys.argv through rewrite_app_argv.
+
+    The two tests above deliberately use `--help`-shaped argv, which takes
+    `rewrite_app_argv`'s early-return branch — they would still pass even if
+    `main()` never called it at all. This one exercises the rewrite path
+    itself, so removing the wiring line in `main()` fails it.
+    """
+    mocker.patch("jailbee.macos.maybe_delegate")
+    mocker.patch("jailbee.entry._command_names", return_value=set())
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    mocker.patch.object(sys, "argv", ["jailbee", "figma", "--flag"])
+    app = mocker.patch("jailbee.cli.app")
+
+    main()
+
+    app.assert_called_once_with()
+    assert sys.argv == ["jailbee", "apps", "run", "figma", "--flag"]
+
+
+def test_a_registered_command_is_left_alone(mocker):
+    load = mocker.patch("jailbee.entry._top_level_app_names")
+    assert rewrite_app_argv(["ls", "--all"]) == ["ls", "--all"]
+    # A known command must not even reach the config load.
+    assert not load.called
+
+
+def test_an_option_is_left_alone(mocker):
+    load = mocker.patch("jailbee.entry._top_level_app_names")
+    assert rewrite_app_argv(["--help"]) == ["--help"]
+    assert not load.called
+
+
+def test_empty_argv_is_left_alone():
+    assert rewrite_app_argv([]) == []
+
+
+def test_a_top_level_app_is_rewritten(mocker):
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert rewrite_app_argv(["figma", "--flag"]) == ["apps", "run", "figma", "--flag"]
+
+
+def test_the_container_option_survives_the_rewrite(mocker):
+    """The documented way to name a container for a promoted app.
+
+    `apps run` takes the container as an *option*, so the docs must teach
+    `jailbee <app> --container c1` and never `jailbee <app> c1` — the latter
+    lands in the app's variadic `args` and launches in the default
+    container. This pins the spelling four documents now describe: a
+    rewrite that reordered, swallowed or reinterpreted the argv after the
+    app name would fail here.
+    """
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert rewrite_app_argv(["figma", "--container", "c1"]) == [
+        "apps",
+        "run",
+        "figma",
+        "--container",
+        "c1",
+    ]
+
+
+def test_the_documented_spellings_bind_the_container_option_not_args(mocker):
+    """Parse the rewritten argv the way Typer will, and assert where each
+    token lands.
+
+    `test_the_container_option_survives_the_rewrite` pins the rewrite;
+    this pins the *consequence* — that click binds `--container` to the
+    option and a bare positional to `args`. It is the failure the four
+    documents taught: no error, the app just launches in the wrong
+    container. Asserting on the parse rather than on the argv list is what
+    makes this test able to notice `apps run` growing a positional
+    container slot (which would make the old docs correct again, and this
+    test wrong on purpose).
+    """
+    import typer.main
+
+    from jailbee.cli import app
+    from jailbee.entry import rewrite_app_argv
+
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    group = typer.main.get_command(app)
+    apps_group = group.commands["apps"]
+    run_cmd = apps_group.commands["run"]
+
+    def parse(argv: list[str]) -> dict[str, object]:
+        ctx = run_cmd.make_context("run", rewrite_app_argv(argv)[2:], resilient_parsing=True)
+        return ctx.params
+
+    documented = parse(["figma", "--container", "c1"])
+    assert documented["container"] == "c1"
+    assert documented["args"] == ()
+
+    broken = parse(["figma", "c1"])
+    assert broken["container"] is None
+    assert broken["args"] == ("c1",)
+
+
+def test_an_unknown_name_falls_through_to_typers_own_error(mocker):
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert rewrite_app_argv(["lss"]) == ["lss"]
+
+
+def test_a_broken_config_does_not_break_unrelated_commands(mocker):
+    # Outside a repo, or with a config that fails validation, an unknown
+    # first argument must still reach Typer's own error rather than a
+    # traceback from the config loader. ConfigError is what the loader
+    # actually raises for both of those cases (see config/loader.py) — the
+    # same exception `cli._run_dashboard` catches from the identical
+    # `load_repo_config(Path.cwd())` call.
+    mocker.patch("jailbee.entry._top_level_app_names", side_effect=ConfigError("boom"))
+    assert rewrite_app_argv(["lss"]) == ["lss"]
+
+
+def test_an_unrelated_internal_error_propagates(mocker):
+    """A failure that is not one of the config loader's own documented modes
+    must surface, not be silently treated as "not an app".
+
+    This is the property a narrow `except (ConfigError, OSError)` buys over
+    a bare `except Exception`: a bug in this module's own code, or an
+    unrelated internal error, must still produce a traceback rather than
+    quietly falling through to Typer's unknown-command error.
+    """
+    mocker.patch("jailbee.entry._top_level_app_names", side_effect=RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        rewrite_app_argv(["lss"])
+
+
+def test_command_names_come_from_the_live_typer_app():
+    from jailbee.entry import _command_names
+
+    names = _command_names()
+    assert {"ls", "new", "shell", "exec", "apps"} <= names

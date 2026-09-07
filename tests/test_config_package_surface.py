@@ -72,6 +72,7 @@ EXPECTED_SURFACE = frozenset(
         "load_config_unsanitized",
         "load_repo_config",
         "load_repo_config_unsanitized",
+        "merge_apps_raw",
         "parse_loose_ttl",
         "resolve_agents_raw",
         "resolve_kitty_terminfo_path",

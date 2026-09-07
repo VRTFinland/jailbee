@@ -26,13 +26,12 @@ from jailbee.cli import app
 # `completion.complete_pool_names`, not `completion.complete_container` —
 # hence the exclusion.
 #
-# Blind spots this guard does not cover, because both checks below key on the
-# literal parameter name "name" and on `TyperArgument`: a container-name
-# *positional* under any other name (e.g. a future `container: ...` parameter)
-# would not be walked at all, and a container-name *Option* (e.g. `--container`)
-# would not be walked either, since `_walk` never filters on `TyperOption`.
-# Neither has arisen yet; if one does, extend the walk rather than assume this
-# set already covers it.
+# Blind spot this guard does not cover: a container-name *positional* under
+# any other name (e.g. a hypothetical future `container: ...` positional
+# distinct from both "name" and the "container" Option matched below) would
+# not be walked at all. A container-name *Option* is covered — see
+# `_is_container_param` — since `jailbee apps run`'s `--container` (Ruling
+# 24) turned that from a hypothetical into a real case.
 NON_CONTAINER_NAME_ARGS: set[tuple[str, str]] = {
     ("jailbee pool ls", "name"),
     ("jailbee pool prune", "name"),
@@ -48,6 +47,28 @@ def _walk(cmd: TyperCommand | TyperGroup, path: str = ""):
         return
     for param in cmd.params:
         yield here, param
+
+
+def _is_container_param(cmd_path: str, param: TyperArgument | TyperOption) -> bool:
+    """True for a parameter this guard expects to resolve a container name.
+
+    Two shapes, both completed by `completion.complete_container`:
+
+    * a positional named `name` (the historical, near-universal shape),
+      except the `NON_CONTAINER_NAME_ARGS` exclusions above;
+    * an Option named `container` (`jailbee apps run --container`, Ruling
+      24) — a middle *positional* container slot is ambiguous once the
+      command also takes a variadic trailing argument, so this shape moved
+      the container behind a flag instead. `_walk` already yields Options
+      (it filters on nothing), so this needed only a predicate change, not
+      a walk change — the naming in the old comment above ("extend the
+      walk") is what to search for; the fix lives here.
+    """
+    if isinstance(param, TyperArgument):
+        return param.name == "name" and (cmd_path, param.name) not in NON_CONTAINER_NAME_ARGS
+    if isinstance(param, TyperOption):
+        return param.name == "container"
+    return False
 
 
 def _has_completion(param: TyperArgument | TyperOption) -> bool:
@@ -126,28 +147,23 @@ def test_every_container_name_argument_offers_completion():
     missing = [
         f"{cmd_path}:{param.name}"
         for cmd_path, param in _walk(cli)
-        if isinstance(param, TyperArgument)
-        and param.name == "name"
-        and (cmd_path, param.name) not in NON_CONTAINER_NAME_ARGS
-        and not _has_completion(param)
+        if _is_container_param(cmd_path, param) and not _has_completion(param)
     ]
-    assert not missing, f"container-name arguments without autocompletion: {missing}"
+    assert not missing, f"container-name parameters without autocompletion: {missing}"
 
 
 def test_the_completion_callback_is_the_container_completer():
-    """Guard against wiring a name argument to the wrong completer."""
+    """Guard against wiring a container-name parameter to the wrong completer."""
     from jailbee.completion import complete_container
 
     cli = typer.main.get_command(app)
     wrong = [
         f"{cmd_path}:{param.name}"
         for cmd_path, param in _walk(cli)
-        if isinstance(param, TyperArgument)
-        and param.name == "name"
-        and (cmd_path, param.name) not in NON_CONTAINER_NAME_ARGS
+        if _is_container_param(cmd_path, param)
         and _underlying_completer(param) is not complete_container
     ]
-    assert not wrong, f"name arguments wired to something else: {wrong}"
+    assert not wrong, f"container-name parameters wired to something else: {wrong}"
 
 
 def _param(cmd_path: str, param_name: str) -> TyperArgument | TyperOption:

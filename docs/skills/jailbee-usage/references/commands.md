@@ -26,10 +26,11 @@ Common conventions:
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
-- [Submodules (`submodule checkout`, `submodule pr`)](#submodules)
+- [Branch placement (`branch`)](#branch-placement)
+- [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
 - [Claude accounts (`claude ls|use|park|rm`)](#claude-accounts)
-- [GUI (`ide`, `chrome`)](#gui)
+- [GUI (`ide`, `chrome`, `firefox`, `browser`, `apps ls`, `apps run`, `exec --detach`)](#gui)
 - [Cache pools (`pool`, `chrome-pool`)](#cache-pools)
 - [Mounts (`mount`, `unmount`)](#mounts)
 - [Snapshots (`snapshot create|restore|ls|delete`)](#snapshots)
@@ -71,19 +72,43 @@ jailbee config edit --config <path>      # a specific repo's config
 jailbee config edit --write regenerate   # override the write policy once
 ```
 
-Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, then edits a field ·
-`Space` toggles a true/false field · `r` resets a field to whatever it
-inherits (by deleting the key, so it keeps following jailbee's default rather
-than freezing at today's) · `/` searches names and descriptions across every
-section and ignores the basic/advanced filter · `a` shows every field, not
-just the curated set · `d` previews the diff (`n` or `Esc` closes it) ·
-`s` or `Ctrl-S` saves · `Esc` goes back · `q` quits (twice, if there are
-unsaved edits). **`Ctrl-C` abandons the editor immediately and
-unconditionally — unlike `q`, it has no unsaved-changes guard, so any staged
-edits are silently discarded.** Inside
-the modal that opens on `Enter`, a single-line field commits with `Enter`; a
-multi-line one (a list or map) commits with `Ctrl-S`, since `Enter` there
-inserts a new row instead.
+Keys: `↑/↓` (or `j`/`k`) move · `Enter` opens a section, a structured list's
+drill-down screen, or an entry within one, then edits a field · `Space`
+toggles a true/false field · `r` resets a field — or a whole list, to just its
+inherited entries — to whatever it inherits (by deleting the key, so it keeps
+following jailbee's default rather than freezing at today's) · `/` searches
+names and descriptions across every section and ignores the basic/advanced
+filter · `a` shows every field, not just the curated set · `d` previews the
+diff (`n` or `Esc` closes it) · `s` or `Ctrl-S` saves · `Esc` goes back · `q`
+quits (twice, if there are unsaved edits). **`Ctrl-C` abandons the editor
+immediately and unconditionally — unlike `q`, it has no unsaved-changes
+guard, so any staged edits are silently discarded.** Inside the modal that
+opens on `Enter`, a single-line field commits with `Enter`; a multi-line one
+(a list or map) commits with `Ctrl-S`, since `Enter` there inserts a new row
+instead.
+
+A structured list (`host_mounts`, `host_ports`, `host_devices`,
+`shared_caches`, `optional_mounts`, `agents`, the `autostart` steps) opens its
+own drill-down screen instead of a modal: `n` new, `x` delete, `J`/`K`
+reorder, `Enter` opens the entry under the cursor. An entry's form is
+generated from its model the same way the top-level fields are, and the
+nesting is recursive — an agent's `shared` mounts are reachable from inside
+its own entry. Leaving an entry validates it against its model; a second
+`Esc` on one that fails discards it outright if `n` just created it this
+session, or, on a pre-existing entry merely edited into an invalid state,
+discards only its staged edits and keeps the entry itself. A map (`agents`,
+`optional_mounts`) asks for the
+new key's name before creating the entry. Editing one field of one entry
+addresses that entry's content by index, so the other entries and any
+comments between them are preserved — but a save re-emits the file with
+jailbee's own block-sequence indentation, so a config written with indented
+sequences (`  - `) is normalised on its first save. Add, delete and reorder
+rewrite the whole list, since those change what the indices mean.
+
+Two staging rules worth knowing: typing into an entry cancels a pending reset
+of its collection, and resetting a collection discards any pending edits
+staged inside it — the editor names this on the message line when it
+happens.
 
 A save is validated through the real config loader before anything is
 written, so the editor cannot produce a file the CLI would reject, and the
@@ -97,17 +122,21 @@ refused for the repo layer: its config is synthesized from `global.yaml`'s
 a config file that stops that layer being used at all. Run `jailbee config
 init` there first, or edit the global layer, where those settings live.
 
-Not editable here yet: lists of structured entries (`host_mounts`,
-`host_ports`, `host_devices`, `shared_caches`, `agents`, `optional_mounts`,
-`autostart.on_create`, `autostart.on_start`) have no drill-down screen.
-Secrets are never editable, but the reason shown differs by layer: at the
-repo layer (plain `jailbee config edit`), `github.api_tokens` is blocked
-because the whole `github` block is host-local and rejected in a repo config
-— the same reason blocks every other `github` field there too; at the global
-layer (`--global`), where `github` itself is allowed, `github.api_tokens` is
-blocked because the editor will not paint a token on a terminal. And
-`scratch.config`'s free-form YAML has no schema to build a form from. Each
-row shows its own reason; edit any of these by hand.
+`github.api_tokens` can be set from the editor but is never displayed: the
+key list shows a fixed mask, the input is hidden, and a token typed this
+session is redacted from the diff preview exactly like one already on disk.
+It is still blocked at the repo layer (plain `jailbee config edit`), but not
+as a secret — the whole `github` block is host-local and the config loader
+rejects it in a repo config, the same reason that blocks every other
+`github` field there. `scratch.config` has no schema to build a form from;
+it is edited as a YAML block and checked before it is staged.
+
+A repo config's lists are *appended* to the global ones by jailbee's merge
+rules, so a repo-layer drill-down screen shows the inherited global entries
+above your own, read-only, and says so: they cannot be removed from a repo
+config, only discarded wholesale by emptying the list — deleting every entry
+of your own down to none stages an explicit `[]`, which overrides the merge
+instead of appending to it.
 
 Reachable from both dashboards: `e` (repo) and `E` (global) in
 `jailbee dashboard`, and the **Config** menu in the Qt GUI.
@@ -331,9 +360,12 @@ menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits
 the dashboard).
 
 The menu, in order: `job clear`, `job log`, `pr --open`, `pr`, `git push`,
-`git push --pr`, `git pull`, `git diff`, then
-tmux/shell/ide/chrome/net/restart/stop/destroy for Running (start/destroy for
-Stopped). Each entry appears only when it would do something:
+`git push --pr`, `git pull`, `git diff`, then tmux/shell, then one "Launch
+`<name>`" entry per app the repo's GUI registry declares (browsers, the
+JetBrains IDE, and any `apps:` entries, in that order — empty repos get
+none), then network mode switches, then restart/stop/destroy for Running
+(start/destroy for Stopped). Each entry appears only when it would do
+something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live
   worker's log and prints a finished one once);
@@ -350,12 +382,21 @@ Stopped). Each entry appears only when it would do something:
   first git-tier refresh — hides nothing: a missing column is not evidence of a
   clean tree.
 
+A builtin's "Launch `<name>`" entry (a browser or the IDE) dispatches a bare
+`jailbee <name> <container>` — each is a real top-level command that takes
+the container as a plain positional. An `apps:` entry's "Launch" entry
+dispatches `jailbee apps run <name> --container <container>` instead — the
+same command `apps run` documents above, with the container passed as its
+`--container` option rather than a positional — regardless of whether the
+entry set `top_level: true`, so it launches correctly either way.
+
 Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
 open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR, `P`
 create/update the PR, `u` update from base, `d` show the diff. Each one
 fires only when that action is offered for that container — the gate is the
-same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need the
-repo's `jetbrains.enabled`/`chrome.enabled`, `p` needs a known PR, `P`/`u`/`d`
+same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need
+`jetbrains.enabled`/`browsers.chrome.enabled` (Firefox and `apps:` entries
+have no quick key, only the full menu), `p` needs a known PR, `P`/`u`/`d`
 need a running clone-mode container, and orphan
 rows have none of them. A declined key prints the reason in the panel footer
 for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
@@ -696,36 +737,49 @@ names the container and the session id of the attempt, so you can see how far it
 got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
 transcript as it works, so a run that ran out of budget is still on disk.
 
-## Submodules
+## Branch placement
 
-### `jailbee submodule checkout [NAME] [-b BRANCH] [--submodules-only]`
+### `jailbee branch [BRANCH] [--container NAME] [--submodules-only]`
 
 Put the tree — superproject and submodules, recursively — on one branch.
 Submodules can end up on a detached HEAD after clone / `jailbee git
-push`/`pull`. With **no NAME** it works on the **host** repo; with a NAME on
-that **container's** submodules.
+push`/`pull`. With **no `--container`** it works on the **host** repo; with
+`--container NAME` on that **container's** submodules. There is no `-c` short
+form: `-c` is `--config` on every jailbee command.
 
 ```bash
-jailbee submodule checkout                # host, align to current branch
-jailbee submodule checkout -b master      # host, whole tree to master
-jailbee submodule checkout -b master --submodules-only
-jailbee submodule checkout feat-foo       # container 'feat-foo', its branch
+jailbee branch                              # host, align to current branch
+jailbee branch master                       # host, whole tree to master
+jailbee branch master --submodules-only
+jailbee branch --container feat-foo         # container 'feat-foo', its branch
+jailbee branch master --container feat-foo
 ```
 
-On the host, `-b BRANCH` checks that branch out in the **superproject** first
-and then aligns the submodules to it — one command for jumping the whole tree
-between `master` and a container's branch (towards a container, use `jailbee
-git checkout <container>`, which already aligns submodules). `--submodules-only`
-skips the superproject checkout, which is the only way to align submodules
-from a detached HEAD or to keep a deliberate mismatch. With a container NAME,
-`-b` is pure submodule placement: a container's branch is its identity and is
-never switched here.
+On the host, a BRANCH argument checks that branch out in the **superproject**
+first and then aligns the submodules to it — one command for jumping the
+whole tree between `master` and a container's branch (towards a container,
+use `jailbee git checkout <container>`, which already aligns submodules).
+`--submodules-only` skips the superproject checkout, which is the only way to
+align submodules from a detached HEAD or to keep a deliberate mismatch. With
+`--container NAME`, BRANCH is pure submodule placement: a container's branch
+is its identity and is never switched here — and `--submodules-only` combined
+with `--container` is rejected outright (exit 2), since there is nothing for
+it to opt out of.
 
 Placement never rewinds a submodule branch. A submodule whose local branch is
 ahead of the superproject's recorded gitlink keeps that newer branch checked
 out and warns — bump the pointer with `git add <sub> && git commit` in the
 superproject. A dirty or genuinely diverged submodule is left on its detached
 HEAD, also with a warning.
+
+`jailbee submodule checkout [NAME] [-b BRANCH] [--submodules-only]` is a
+**hidden** deprecated alias, kept with its original (opposite) argument shape
+— NAME is the positional, BRANCH is behind `-b`/`--branch` — for existing
+scripts and muscle memory. It prints a deprecation hint pointing at `jailbee
+branch` and then behaves identically, including the same `--submodules-only`
++ container rejection.
+
+## Submodules
 
 ### `jailbee submodule pr [NAME] [PATH]`
 
@@ -741,11 +795,24 @@ jailbee submodule pr feat-foo --ready      # mark ready for review
 jailbee submodule pr feat-foo --open       # just open it in the browser
 ```
 
-Without PATH, the submodule that has commits ahead of its own base is targeted
-automatically; several ahead prints a table (path, commits, last subject) and
-exits 2 asking you to name one — two submodules are two repositories and two
-PRs. None ahead is reported as a fact (exit 0), not an error; name one with
-PATH to publish it anyway.
+**Off a TTY** (or with NAME and PATH both given), without PATH the submodule
+that has commits ahead of its own base is targeted automatically; several
+ahead prints a table (path, commits, last subject) and exits 2 asking you to
+name one — two submodules are two repositories and two PRs. None ahead is
+reported as a fact (exit 0), not an error; name one with PATH to publish it
+anyway.
+
+**On a TTY**, this command is interactive instead: a container picker runs
+when NAME is not given (even with only one container), a submodule picker
+runs when PATH is not given (offering **every** submodule, not only the ones
+ahead of their base), and a plan block (base, head, commit count) is shown
+for confirmation before anything is transported or published. `--yes` skips
+only that last confirmation — it does not skip the pickers. Naming NAME/PATH
+still skips the corresponding picker. `--open` is unaffected: it never asks
+anything. Off a TTY, none of this applies — nothing is asked and no exit code
+changes — but the several-ahead table above now renders through the same
+code the picker uses, so it gains `[dirty]`/`[gitlink stale]`/`[detached]`
+flags; a script grepping that table sees more than before.
 
 The candidate signal is deliberately the submodule's **own**
 `refs/jailbee/base/<super-base>` anchor (seeded at container creation), not
@@ -763,7 +830,7 @@ yet in the superproject's gitlink"), never as an error.
 | `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
 | `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
-| `--yes` / `-y` | Skip confirmations. Required when there is no TTY. Does **not** skip the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
+| `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
 | `--web` | Open the PR in the browser afterwards. |
@@ -1036,13 +1103,19 @@ throw away a name nothing can supply again until a container runs Claude.
 | Command | Notes |
 |---|---|
 | `jailbee ide [NAME] [--app idea\|webstorm\|pycharm\|...]` | Launch a JetBrains IDE in the container. Needs `jetbrains.enabled`. One IDE at a time across containers (shared profile). |
-| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `chrome.enabled`. URL falls back to `chrome.url`. |
+| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`. |
+| `jailbee firefox [NAME] [URL]` | Launch Firefox (per-container profile slot). Needs `browsers.firefox.enabled`. URL falls back to `browsers.firefox.url`. Defaults to `source: image` — installed into the golden image, since the host's Firefox is normally a snap and not usefully mountable. |
+| `jailbee browser [NAME] [URL]` | Launch the default browser: `browsers.default` when set, otherwise the single enabled browser. Errors and names what to set if that's ambiguous (none, or more than one, enabled). |
+| `jailbee apps ls [NAME] [-o json] [--fields ...] [--force]` | List every GUI app this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without `NAME` this is config only; with it, a STATUS column probes each app for real (`present`/`missing`). |
+| `jailbee apps run APP [ARGS...] [--container NAME] [--force]` | Launch a GUI app by name — `APP` is required and comes first (see `jailbee apps ls`); the container is named with `--container`, not a second positional, because `APP` optional-in-form plus variadic `ARGS` can't be told apart from a middle container slot. An `apps:` entry with `top_level: true` also runs as bare `jailbee <name> [ARGS...] [--container NAME]` — the argv after the name is passed through to `apps run` unchanged, so the container is still named with `--container` and a dash-leading argument still needs a `--` separator (`jailbee <name> -- --some-flag`). A bare `jailbee <name> NAME` silently launches in the *default* container and hands `NAME` to the app as an argument. |
+| `jailbee exec NAME -- CMD [ARGS...] [--cwd repo\|home\|PATH] [-d\|--detach]` | Run any command in the container as the dev user. `-d`/`--detach` backgrounds it — needed for a GUI app run by hand (`jailbee exec smoke -d -- some-gui-tool`), useful for anything long-running; it returns immediately and logs to a file inside the container instead of the terminal. |
 
 ## Cache pools
 
-Any cache pooled via `pooled_caches` or `SharedCache.pool` — `gradle`, `m2`
-and (when `chrome.enabled`) `chrome-profile` default on; `npm` and
-`pnpm-store` ship a preset but need an explicit opt-in (see
+Any cache pooled via `pooled_caches` or `SharedCache.pool` — `gradle`, `m2`,
+`chrome-profile` (when `browsers.chrome.enabled`) and `firefox-profile`
+(when `browsers.firefox.enabled`) default on; `npm` and `pnpm-store` ship a
+preset but need an explicit opt-in (see
 [`config-schema.md` `pooled_caches`](../../jailbee-repo-setup/references/config-schema.md#pooled_caches))
 — gets one private slot directory per container instead of one mount
 shared by all of them, seeded from the warmest existing slot.
@@ -1051,7 +1124,7 @@ shared by all of them, seeded from the warmest existing slot.
 |---|---|
 | `jailbee pool ls [NAME] [--format table\|json] [--fields ...]` | List every slot of every pool, or just `NAME`'s. Fields: `pool`, `slot`, `container` (or `(free)`), `warmth_mtime`, `size_bytes`/`size`, `path`. The table footer's "total on disk (deduplicated)" counts each inode once — per-slot sizes above it don't, and over-report once slots share hardlinked files. |
 | `jailbee pool prune [NAME]` | Delete every slot with no container attached, for `NAME`'s pool or all of them. |
-| `jailbee chrome-pool ls` / `prune` | Deprecated alias for `jailbee pool ls/prune chrome-profile`. Still works; prints a deprecation warning. |
+| `jailbee chrome-pool ls` / `prune` | Deprecated alias for `jailbee pool ls/prune chrome-profile`. Still works; prints a deprecation warning. Firefox has no such alias — use `jailbee pool ls/prune firefox-profile`. |
 
 ## Mounts
 

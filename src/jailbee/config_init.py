@@ -33,13 +33,29 @@ _TEMPLATE = """\
 # Per-repo overrides for credential / IDE / browser blocks. Each block
 # defaults to `enabled: false` — opt-in lives in ~/.config/jailbee/global.yaml.
 # Override here only when the repo needs to deviate (e.g. force a different
-# IDE for this stack, or pin chrome.url to the repo's app URL).
+# IDE for this stack, or pin browsers.chrome.url to the repo's app URL).
 # See docs/config.md for the full schema.
 #
 # jetbrains:
 #   ide: pycharm        # repo's IDE flavour for `jailbee ide` / autostart
-# chrome:
-#   url: https://app.example.com   # auto-opened URL on `jailbee chrome`
+# browsers:
+#   chrome:
+#     url: https://app.example.com   # auto-opened URL on `jailbee chrome`
+#   firefox:
+#     enabled: true      # defaults to source: image (no host Firefox to mount)
+
+# GUI applications beyond the built-in browsers and JetBrains IDE — an
+# AppImage, a vendor binary, a wrapper script. Each entry launches with
+# `jailbee apps run <name>`, or directly as `jailbee <name>` when
+# `top_level: true` (a name colliding with a built-in command is reported
+# by `jailbee config validate` as a config error — not refused at load
+# time). See docs/config.md#apps.
+#
+# apps:
+#   figma:
+#     command: /opt/figma-linux/figma-linux
+#     top_level: true
+#     description: "Figma desktop app"
 
 # Repo-specific host bind-mounts (per-project credentials/caches).
 # Personal mounts (~/.gnupg, ~/.gitconfig, JetBrains/Toolbox) live in
@@ -101,7 +117,7 @@ host_ports: []
 #   - launches it in the autostart tmux session when `autostart: true`,
 #   - includes its shared dirs in `jailbee doctor` checks.
 #
-# Commented out on purpose, like the `jetbrains` / `chrome` blocks above:
+# Commented out on purpose, like the `jetbrains` / `browsers` blocks above:
 # repo values win over global ones, so a live `enabled: false` here would
 # silently switch off an agent the user opted into in
 # ~/.config/jailbee/global.yaml. Opt in globally; override here only when the
@@ -148,9 +164,9 @@ golden:
 #   on_start:  every stopped→running transition — both `jailbee new` (after
 #              on_create) and `jailbee start` (recurring launches, e.g. servers).
 # Put one-shot setup in on_create, recurring launches in on_start — don't
-# duplicate. IDE and Chrome launch decisions live in `jetbrains.autostart`
-# and `chrome.autostart` (not here). See docs/config.md for the full step
-# reference.
+# duplicate. IDE and browser launch decisions live in `jetbrains.autostart`,
+# `browsers.<name>.autostart` and `apps.<name>.autostart` (not here). See
+# docs/config.md for the full step reference.
 autostart:
   step_timeout: 600
   # Global env merged into every step (per-step env overrides on collision).
@@ -222,12 +238,14 @@ GLOBAL_SEED: dict[str, object] = {
         "autostart": False,
         "toolbox_host_path": "~/.local/share/JetBrains/Toolbox",
     },
-    "chrome": {
-        "enabled": True,
-        "url": None,
-        "dark_mode": False,
-        "autostart": False,
-        "host_path": "/opt/google/chrome",
+    "browsers": {
+        "chrome": {
+            "enabled": True,
+            "url": None,
+            "dark_mode": False,
+            "autostart": False,
+            "host_path": "/opt/google/chrome",
+        },
     },
     "terminal": {"kitty": {"enabled": "auto", "host_terminfo_path": None}},
     # `agents.claude` is the one exercised in production; enabling it here

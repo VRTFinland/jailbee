@@ -13,15 +13,15 @@ from jailbee.config.errors import ConfigError
 
 _RETIRED_KEYS_TOP_LEVEL: dict[str, str] = {
     "ide": "jetbrains.ide",
-    "chrome_url": "chrome.url",
+    "chrome_url": "browsers.chrome.url",
     "seed_ssh_from_host": "ssh.seed_from_host",
     "jetbrains_userprefs_from_host": "jetbrains.userprefs_from_host",
 }
 
 _RETIRED_KEYS_AUTOSTART: dict[str, str] = {
     "open_ide": "jetbrains.ide + jetbrains.autostart",
-    "open_chrome": "chrome.autostart",
-    "chrome_dark_mode": "chrome.dark_mode",
+    "open_chrome": "browsers.chrome.autostart",
+    "chrome_dark_mode": "browsers.chrome.dark_mode",
 }
 
 # Renamed with the project itself. Accepted as a validation alias with a

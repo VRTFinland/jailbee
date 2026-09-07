@@ -230,6 +230,36 @@ def test_complete_pool_names_empty_when_no_config_can_be_loaded(mocker):
     assert completion.complete_pool_names(_ctx(), "") == []
 
 
+# ---- app names --------------------------------------------------------
+
+
+def test_complete_app_name_filters_by_what_was_typed(completion_repo, mocker):
+    """Must narrow by prefix like every sibling completer — offering every
+    app regardless of what was typed would suggest `idea` for a user who
+    typed `fi`."""
+    from jailbee.apps import AppSpec
+
+    mocker.patch(
+        "jailbee.apps.resolve_apps",
+        return_value=[
+            AppSpec(name="figma", command=["/opt/f/f"]),
+            AppSpec(name="idea", command=["/opt/idea/bin/idea"]),
+        ],
+    )
+    assert completion.complete_app_name(_ctx(), "fi") == ["figma"]
+    assert completion.complete_app_name(_ctx(), "") == ["figma", "idea"]
+
+
+def test_complete_app_name_empty_when_no_config_can_be_loaded(mocker):
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    assert completion.complete_app_name(_ctx(), "") == []
+
+
 # ---- claude accounts ------------------------------------------------------
 
 

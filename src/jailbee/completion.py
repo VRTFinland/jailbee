@@ -217,6 +217,21 @@ def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 @_never_raises
+def complete_app_name(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete an app name from this repo's GUI application registry.
+
+    Used by `jailbee apps run`'s APP_NAME positional.
+    """
+    from jailbee.apps import resolve_apps
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, _incus = loaded
+    return [s.name for s in resolve_apps(cfg) if s.name.startswith(incomplete)]
+
+
+@_never_raises
 def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a stored Claude login for `jailbee claude use`/`rm`.
 

@@ -1,383 +1,92 @@
-"""Tests for GUI app launchers (open_ide / open_chrome).
+"""Tests for GUI launch primitives: `gui_env`, `launch_detached`, and the
+host's Wayland compositor socket name.
 
-These verify that launched apps redirect stdout/stderr to a per-app log file
-inside the container, not to /dev/null. The user needs to be able to read
-those logs to diagnose why a GUI failed to appear (Wayland sockets not
-visible, missing libs, crash on startup, etc.).
+App-specific launch behavior (Chrome/Firefox/JetBrains specs, URL handling,
+dark mode, pool allocation) is tested at the registry level in
+`test_apps.py`, `test_browsers.py`, and `test_ide.py` — `gui.py` no longer
+knows about any application by name. `open_ide`/`open_chrome` were removed
+in Task 14; `cli.py` now reads the registry (`apps.get_app`/`apps.launch`)
+directly.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import subprocess as sp
 
-import pytest
-
-from jailbee.config import load_config
-from jailbee.gui import host_wayland_socket, open_chrome, open_ide
-from jailbee.incus import Incus
-
-FIXTURES = Path(__file__).parent / "fixtures"
+from jailbee.gui import gui_env, host_wayland_socket, launch_detached
 
 
-@pytest.fixture(autouse=True)
-def _stub_config_get(mocker):
-    """Default Incus.config_get to None so the new label lookup in
-    container_repo_dir falls back without shelling out to a real ``incus``
-    binary. Individual tests can override per-instance if they need to.
+def test_gui_env_sets_home_for_the_container_user(tmp_path):
+    """Incus exec --user <uid> doesn't auto-set HOME, so apps that depend on
+    it (~/.config, ~/.local) fail without an explicit HOME env var.
     """
-    mocker.patch.object(Incus, "config_get", return_value=None)
+    from jailbee.config import CONTAINER_USERNAME
+    from tests.conftest import make_cfg
+
+    env = gui_env(make_cfg(tmp_path))
+    assert env["HOME"] == f"/home/{CONTAINER_USERNAME}"
 
 
-def _popen_bash_command(popen_mock) -> str:
-    """Extract the `bash -c <SCRIPT>` argument passed to subprocess.Popen."""
-    assert popen_mock.call_count == 1
-    argv = popen_mock.call_args.args[0]
-    # argv is: ["incus", "exec", container, ..., "--", "bash", "-c", "<script>"]
-    return argv[-1]
+def test_gui_env_sets_user_and_logname_for_the_container_user(tmp_path):
+    """`incus exec --user <uid>` runs the process directly, not through
+    `login`/PAM, so nothing else sets USER/LOGNAME — a GUI app or plain
+    shell command reading either sees it empty without this. `profiles.py`'s
+    base profile injects the display vars but never these two, so `gui_env`
+    is the only place that can supply them.
+    """
+    from jailbee.config import CONTAINER_USERNAME
+    from tests.conftest import make_cfg
+
+    env = gui_env(make_cfg(tmp_path))
+    assert env["USER"] == CONTAINER_USERNAME
+    assert env["LOGNAME"] == CONTAINER_USERNAME
 
 
-def test_open_ide_redirects_to_log_file_not_dev_null(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(
-        incus,
-        "exec",
-        return_value="/opt/jetbrains-toolbox/apps/intellij-idea-ultimate/bin/idea\n",
-    )
+def test_launch_detached_passes_env_as_incus_env_flags(mocker):
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
+    launch_detached("c1", 1000, {"HOME": "/home/dev", "DISPLAY": ":0"}, "/bin/true", "/tmp/x.log")
 
-    open_ide(cfg, incus, "feat-smoke", "idea")
+    argv = popen.call_args.args[0]
+    pairs = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
+    assert pairs == ["HOME=/home/dev", "DISPLAY=:0"]
 
-    script = _popen_bash_command(popen)
-    # stdout+stderr go to the log, not to /dev/null
-    assert ">/tmp/jailbee-ide-idea.log" in script
+
+def test_launch_detached_redirects_to_the_log_file(mocker):
+    """stdout+stderr go to the per-app log, not to /dev/null — the user needs
+    to be able to read them to diagnose why a GUI failed to appear (Wayland
+    sockets not visible, missing libs, crash on startup, etc.). stdin is
+    closed (`</dev/null`) and the inner process is `setsid`-detached so it
+    survives the launcher's own bash exiting, and the whole thing is
+    backgrounded (`&`) so `incus exec` returns immediately. Each of these
+    four was, until this test, only asserted through the now-deleted
+    `open_ide`/`open_chrome` tests — dropping any one of them ships green
+    without this.
+    """
+    popen = mocker.patch("jailbee.gui.subprocess.Popen")
+    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/jailbee-app-x.log")
+    script = popen.call_args.args[0][-1]
+    assert ">/tmp/jailbee-app-x.log" in script
     assert "2>&1" in script
     assert ">/dev/null" not in script
-    # stdin is closed (</dev/null) and the inner process is setsid-detached
-    # so it survives the launcher's bash exiting.
-    assert "</dev/null" in script
-    assert "setsid" in script
-    # Backgrounded
-    assert script.rstrip().endswith("&")
-
-
-def test_open_ide_uses_app_specific_log_for_webstorm(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(
-        incus,
-        "exec",
-        return_value="/opt/jetbrains-toolbox/apps/webstorm/bin/webstorm\n",
-    )
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "webstorm")
-
-    script = _popen_bash_command(popen)
-    assert "/tmp/jailbee-ide-webstorm.log" in script
-    assert "/tmp/jailbee-ide-idea.log" not in script
-
-
-def test_open_ide_announces_log_path_in_info_message(mocker, capsys):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(
-        incus,
-        "exec",
-        return_value="/opt/jetbrains-toolbox/apps/intellij-idea-ultimate/bin/idea\n",
-    )
-    mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "idea")
-
-    out = capsys.readouterr().out
-    assert "/tmp/jailbee-ide-idea.log" in out
-
-
-def test_open_ide_skips_launch_when_no_launcher_found(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(incus, "exec", return_value="\n")
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "idea")
-
-    popen.assert_not_called()
-
-
-def test_open_chrome_redirects_to_log_file_not_dev_null(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    script = _popen_bash_command(popen)
-    assert ">/tmp/jailbee-chrome.log" in script
-    assert "2>&1" in script
-    assert ">/dev/null" not in script
-    assert "</dev/null" in script
+    assert "</dev/null" in script  # stdin only
     assert "setsid" in script
     assert script.rstrip().endswith("&")
 
 
-def test_open_chrome_announces_log_path_in_info_message(mocker, capsys):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", "https://example.com")
-
-    out = capsys.readouterr().out
-    assert "/tmp/jailbee-chrome.log" in out
-
-
-def test_open_chrome_passes_url_when_provided(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", "https://example.com")
-
-    script = _popen_bash_command(popen)
-    assert "https://example.com" in script
-
-
-def _popen_env_args(popen_mock) -> dict[str, str]:
-    """Extract env vars from `incus exec ... --env K=V ...` argv."""
-    argv = popen_mock.call_args.args[0]
-    env: dict[str, str] = {}
-    i = 0
-    while i < len(argv):
-        if argv[i] == "--env" and i + 1 < len(argv):
-            k, _, v = argv[i + 1].partition("=")
-            env[k] = v
-            i += 2
-        else:
-            i += 1
-    return env
-
-
-def test_open_ide_passes_home_env_var(mocker):
-    """Incus exec --user <uid> doesn't auto-set HOME, so apps
-    that depend on it (~/.config, ~/.local) fail. _gui_env must include
-    HOME=/home/<username>.
-    """
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(
-        incus,
-        "exec",
-        return_value="/opt/jetbrains-toolbox/apps/intellij-idea-ultimate/bin/idea\n",
-    )
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "idea")
-
-    env = _popen_env_args(popen)
-    assert env.get("HOME") == "/home/dev"
-
-
-def test_open_chrome_passes_home_env_var(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    env = _popen_env_args(popen)
-    assert env.get("HOME") == "/home/dev"
-
-
-def test_open_chrome_passes_ozone_wayland_on_wayland_host(mocker, monkeypatch):
-    """Chrome defaults to X11 even with WAYLAND_DISPLAY set;
-    pass --ozone-platform=wayland explicitly when the host is Wayland.
-    """
-    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    script = _popen_bash_command(popen)
-    assert "--ozone-platform=wayland" in script
-
-
-def test_open_chrome_passes_dark_mode_flags_when_enabled(mocker):
-    """Chrome.dark_mode=True (opt-in) forces Chrome into dark mode."""
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    cfg = cfg.model_copy(update={"chrome": cfg.chrome.model_copy(update={"dark_mode": True})})
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    script = _popen_bash_command(popen)
-    assert "--force-dark-mode" in script
-    assert "WebContentsForceDark" in script
-
-
-def test_open_chrome_omits_dark_mode_flags_by_default(mocker):
-    """Chrome.dark_mode defaults to False — no forced dark mode."""
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    script = _popen_bash_command(popen)
-    assert "--force-dark-mode" not in script
-    assert "WebContentsForceDark" not in script
-
-
-def test_open_chrome_omits_ozone_wayland_on_x11_host(mocker, monkeypatch):
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    script = _popen_bash_command(popen)
-    assert "--ozone-platform=wayland" not in script
-
-
-def test_open_chrome_calls_allocate_before_popen(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    allocate = mocker.patch(
-        "jailbee.pool.allocate",
-        return_value=Path("/x/slot-0"),
-    )
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    from jailbee.pool import get as pool_get
-
-    chrome_pool = pool_get(cfg, "chrome-profile")
-    allocate.assert_called_once_with(cfg, incus, chrome_pool, "feat-smoke")
-    assert popen.called
-
-
-def test_open_ide_popen_fully_detaches_from_parent(mocker):
+def test_launch_detached_fully_detaches_from_parent(mocker):
     """Without start_new_session + DEVNULL stdio, the child `incus exec`
-    shares gie's TTY. When gie exits the terminal is left in a broken
-    state (`reset` needed) and SIGHUP propagation kills the GUI before
-    it appears. Verify both detach knobs are set.
+    shares jailbee's TTY. When jailbee exits the terminal is left in a broken
+    state (`reset` needed) and SIGHUP propagation kills the GUI before it
+    appears. Verify both detach knobs are set.
     """
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(
-        incus,
-        "exec",
-        return_value="/opt/jetbrains-toolbox/apps/intellij-idea-ultimate/bin/idea\n",
-    )
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "idea")
-
-    import subprocess as sp
+    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/x.log")
 
     kw = popen.call_args.kwargs
     assert kw.get("start_new_session") is True
     assert kw.get("stdin") == sp.DEVNULL
     assert kw.get("stdout") == sp.DEVNULL
     assert kw.get("stderr") == sp.DEVNULL
-
-
-def test_open_chrome_popen_fully_detaches_from_parent(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch("jailbee.pool.ensure_pool_dirs")
-    mocker.patch("jailbee.pool.allocate", return_value=Path("/x"))
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_chrome(cfg, incus, "feat-smoke", None)
-
-    import subprocess as sp
-
-    kw = popen.call_args.kwargs
-    assert kw.get("start_new_session") is True
-    assert kw.get("stdin") == sp.DEVNULL
-    assert kw.get("stdout") == sp.DEVNULL
-    assert kw.get("stderr") == sp.DEVNULL
-
-
-# --- Extended JetBrains IDE support (pycharm, goland, clion, etc.) ---
-
-
-@pytest.mark.parametrize(
-    "ide_name",
-    [
-        "pycharm",
-        "goland",
-        "clion",
-        "phpstorm",
-        "rider",
-        "rubymine",
-        "datagrip",
-        "rustrover",
-        "aqua",
-        "dataspell",
-        "studio",
-    ],
-)
-def test_open_ide_supports_additional_jetbrains_launchers(mocker, ide_name):
-    """The Toolbox layout uses the IDE short name as the launcher binary
-    name (e.g. apps/pycharm-professional/bin/pycharm,
-    apps/android-studio/bin/studio). Verify the find command targets the
-    correct launcher for each supported IDE."""
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    exec_mock = mocker.patch.object(
-        incus,
-        "exec",
-        return_value=f"/opt/jetbrains-toolbox/apps/{ide_name}/bin/{ide_name}\n",
-    )
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", ide_name)
-
-    # find_cmd issued to incus.exec must search for the IDE-specific launcher.
-    find_argv = exec_mock.call_args.args[1]
-    find_cmd = " ".join(find_argv)
-    assert f"-name '{ide_name}'" in find_cmd
-    # And the launched process logs to a per-IDE log path.
-    script = _popen_bash_command(popen)
-    assert f"/tmp/jailbee-ide-{ide_name}.log" in script
-
-
-def test_open_ide_rejects_unknown_app_name(mocker):
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = Incus()
-    mocker.patch.object(incus, "exec")
-    popen = mocker.patch("jailbee.gui.subprocess.Popen")
-
-    open_ide(cfg, incus, "feat-smoke", "vim")
-
-    popen.assert_not_called()
-
-
-# ---- the host's compositor socket name ----
 
 
 def test_host_wayland_socket_reads_the_env_var(monkeypatch):
@@ -397,3 +106,10 @@ def test_host_wayland_socket_falls_back_to_wayland_0_when_unset(monkeypatch):
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
 
     assert host_wayland_socket() == "wayland-0"
+
+
+def test_gui_module_no_longer_exports_the_old_launchers():
+    import jailbee.gui as gui
+
+    assert not hasattr(gui, "open_chrome")
+    assert not hasattr(gui, "open_ide")

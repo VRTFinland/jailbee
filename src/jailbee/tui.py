@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from jailbee.destroy_guard import RiskSummary
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import BridgePlan, RefSummary
 
 console = Console()
@@ -645,6 +646,45 @@ def pick_container(containers: list[ContainerInfo]) -> str | None:
     return str(result)
 
 
+# A unique object, never `None` and never a string: questionary falls back to a
+# Choice's *title* when its value is None, so a `value=None` cancel row would
+# answer the label text and be used as a submodule path. Same hazard the
+# credential picker documents above.
+_CANCEL_SUBMODULE = object()
+
+
+def pick_submodule(candidates: list[SubCandidate]) -> str | None:
+    """Interactive arrow-key picker over a container's submodules.
+
+    Offers every submodule, not only the ones ahead of their base: a submodule
+    with nothing to publish is still a legitimate target (`jailbee submodule
+    pr` accepts an explicit path regardless), and hiding it would force the
+    user to retype the command. The caller orders the list — see
+    `submodule_pr.order_candidates` — and does the TTY check, exactly as for
+    `pick_container`.
+
+    Returns the chosen submodule's path, or None if the user cancels.
+    """
+    import questionary
+
+    from jailbee.submodule_pr import describe_candidate
+
+    width = max((len(c.path) for c in candidates), default=0)
+    choices = [
+        questionary.Choice(title=describe_candidate(c, width=width), value=c.path)
+        for c in candidates
+    ]
+    choices.append(questionary.Choice(title="cancel — open no PR", value=_CANCEL_SUBMODULE))
+    result = questionary.select(
+        "Which submodule should the PR be for?",
+        choices=choices,
+        use_shortcuts=True,
+    ).ask()
+    if result is None or result is _CANCEL_SUBMODULE:
+        return None
+    return str(result)
+
+
 def pick_containers_multi(
     containers: list[ContainerInfo],
     *,
@@ -766,5 +806,36 @@ def render_bridge_plan(plan: BridgePlan) -> str:
     if plan.incoming is not None:
         lines.append(f"            : {plan.incoming} commit(s) to apply")
     lines.append(f"  action    : {plan.action}")
+    lines.extend(f"  ⚠ {note}" for note in plan.notes)
+    return "\n".join(lines)
+
+
+_UNRESOLVED_SUB_FIELD = "(resolved once the submodule is on the host)"
+
+
+def render_submodule_pr_plan(plan: SubmodulePrPlan) -> str:
+    """Render a `SubmodulePrPlan` as the block shown before publishing.
+
+    Plain text on purpose, like `render_bridge_plan`: branch names and commit
+    subjects are user data and may contain Rich markup characters, so callers
+    print this with ``markup=False``.
+    """
+    source = plan.source_branch or "(detached)"
+    count = "?" if plan.commits is None else str(plan.commits)
+    action = "create a PR" if plan.action == "create" else "update the existing PR"
+    if plan.draft is None:
+        action_line = action
+    else:
+        state = "draft" if plan.draft else "ready for review"
+        action_line = f"{action} ({state})"
+    lines = [
+        "Submodule PR  container ──▶ GitHub",
+        f"  container : {plan.container_short}  ({plan.container_full})",
+        f"  submodule : {plan.subpath}",
+        f"  source    : {source}  ({count} commits ahead of base)",
+        f"  base      : {plan.base or _UNRESOLVED_SUB_FIELD}",
+        f"  remote    : {plan.remote or _UNRESOLVED_SUB_FIELD}",
+        f"  action    : {action_line}",
+    ]
     lines.extend(f"  ⚠ {note}" for note in plan.notes)
     return "\n".join(lines)

@@ -12,7 +12,8 @@ never renders.
 from __future__ import annotations
 
 import types
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypeGuard, Union, get_args, get_origin
@@ -23,6 +24,7 @@ from pydantic_core import PydanticUndefined
 
 from jailbee.config import Config
 from jailbee.config.common import _HOST_LEVEL_KEYS  # router impl; must stay in sync
+from jailbee.config_writer import KeyPath
 from jailbee.global_config import GlobalConfig
 
 
@@ -194,9 +196,14 @@ class FieldSpec:
     staged changes (`config_writer.YamlChange.path`) and by
     `BASIC_FIELDS`. `default` is the schema default, shown in the help
     pane so the user can see what resetting the field gives back.
+
+    A path is a `KeyPath`, not a tuple of strings: `rebase` produces the
+    specs of one *entry* of a collection, and those carry the entry's
+    index or map key as a segment (`("host_mounts", 1, "readonly")`).
+    `build_specs` itself only ever emits string segments.
     """
 
-    path: tuple[str, ...]
+    path: KeyPath
     label: str
     kind: FieldKind
     description: str
@@ -208,20 +215,54 @@ class FieldSpec:
     advanced: bool = True
 
 
+def to_raw(value: object) -> object:
+    """`value` with every pydantic model instance dumped to plain data.
+
+    A `default_factory` is free to return real model instances rather than
+    the plain dicts/lists/scalars a raw YAML load always produces —
+    `_default_shared_caches` (`shared_caches`'s default: one built-in `ssh`
+    `SharedCache`) is the only case in the schema today, but every consumer
+    of `FieldSpec.default` assumes the YAML-compatible shape: `state._dig`
+    walks it with `isinstance(node, dict)` checks that a model instance
+    fails, and `render.collection_pane`/`_entry_summary` do the same.
+
+    A structural edit used to fold this very default into what `changes()`
+    stages (`add_entry` on an empty collection, i.e. `n` on a fresh
+    `shared_caches`), so an unnormalised model instance could reach
+    `config_writer.patch_yaml` and blow up there (`RepresenterError: cannot
+    represent an object: SharedCache(...)`) rather than anywhere closer to the
+    cause. `state.own` closed that particular route — a structural edit now
+    starts from the open layer's own value, and a default belongs to no layer —
+    but the display paths above still walk `.default` directly. Fixed once,
+    generally, here —
+    a bare model, one nested in a list, one nested in a dict — rather than
+    in each place that might otherwise dig into a default.
+    """
+    if isinstance(value, BaseModel):
+        return to_raw(value.model_dump(mode="python"))
+    if isinstance(value, list):
+        return [to_raw(item) for item in value]
+    if isinstance(value, dict):
+        return {key: to_raw(item) for key, item in value.items()}
+    return value
+
+
 def _default_of(info: FieldInfo) -> object:
-    """The field's default, with `default_factory` called.
+    """The field's default, with `default_factory` called and normalised.
 
     A `default_factory` field reports `PydanticUndefined` as its
     `default`, which would render as the string "PydanticUndefined" in
-    the help pane. Calling the factory gives the real empty value.
+    the help pane. Calling the factory gives the real empty value — `to_raw`
+    is what keeps it usable as one, see its own docstring for why.
     """
     if info.default_factory is not None:
         # `default_factory` may take the already-validated data as its one
-        # argument; none of jailbee's do, so the no-arg call is correct here.
-        return info.default_factory()  # type: ignore[call-arg]  # no validated-data factories in jailbee
+        # argument; none of jailbee's do, so the no-arg call below is fine —
+        # that's what the `type: ignore[call-arg]` on it is for.
+        return to_raw(info.default_factory())  # type: ignore[call-arg]
     if info.default is PydanticUndefined:
         return None
-    return info.default
+    return to_raw(info.default)
 
 
 def build_specs(model: type[BaseModel]) -> tuple[FieldSpec, ...]:
@@ -277,6 +318,55 @@ def _walk(
     return out
 
 
+def dotted(path: KeyPath) -> str:
+    """A `KeyPath` as one readable string: `host_mounts.1.readonly`.
+
+    One definition rather than a `".".join(path)` per call site: since a path
+    can carry integer segments, every such join now needs the `str()` and one
+    that forgets it raises `TypeError` in the middle of a redraw.
+    """
+    return ".".join(str(seg) for seg in path)
+
+
+COLLECTION_KINDS: frozenset[FieldKind] = frozenset({FieldKind.MODEL_LIST, FieldKind.MODEL_MAP})
+"""Kinds whose editor is a drill-down screen rather than a modal line.
+
+Public because three modules need the same answer: `state` decides what
+entering the row means, `render` draws the screen, `app` binds `n`/`x`/`J`/`K`
+only where it makes sense. It used to be `render._COLLECTION_KINDS`, private
+because a collection was not editable at all.
+"""
+
+
+def is_drilldown(spec: FieldSpec) -> bool:
+    """Whether this field is edited on a screen of its own rather than in a line.
+
+    Two families, for two different reasons. A **model collection** has no
+    single value to type. A **secret map** has one, and must not be typed: the
+    block editor for a `STR_MAP` is seeded with every value in it
+    (`values.map_to_text`), which for `github.api_tokens` would print the
+    user's tokens into a text area. Listing the keys and hiding the values is
+    what makes it editable at all (spec 11.9).
+    """
+    return spec.kind in COLLECTION_KINDS or (spec.secret and spec.kind is FieldKind.STR_MAP)
+
+
+def rebase(specs: Sequence[FieldSpec], prefix: KeyPath) -> tuple[FieldSpec, ...]:
+    """`specs` re-addressed as fields of the entry at `prefix`.
+
+    Two things happen here, and both are load-bearing:
+
+    * **The path becomes absolute.** `state.staged`, `render._pending` and
+      `YamlChange.path` all key on `FieldSpec.path`, so re-basing at the single
+      point where entry specs are produced is what keeps every one of them
+      unchanged.
+    * **`advanced` is cleared.** `build_specs` sets it from `BASIC_FIELDS`, and
+      no entry path is in that set — an entry form would otherwise render empty
+      until the user pressed `a` (spec 11.3).
+    """
+    return tuple(replace(spec, path=(*prefix, *spec.path), advanced=False) for spec in specs)
+
+
 BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
     {
         # Identity and sizing — the first things a new repo sets.
@@ -305,9 +395,12 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("ssh", "enabled"),
         ("jetbrains", "enabled"),
         ("jetbrains", "ide"),
-        ("chrome", "enabled"),
-        # Agents and startup.
+        ("browsers", "chrome", "enabled"),
+        ("browsers", "firefox", "enabled"),
+        ("browsers", "default"),
+        # Agents, apps and startup.
         ("agents",),
+        ("apps",),
         ("autostart", "on_create"),
         ("autostart", "on_start"),
         ("after_new",),
@@ -317,7 +410,7 @@ BASIC_FIELDS: frozenset[tuple[str, ...]] = frozenset(
         ("pull", "destroy_container"),
     }
 )
-"""The 28 paths the default view shows; everything else is behind "show all".
+"""The 31 paths the default view shows; everything else is behind "show all".
 
 Curation lives here rather than as metadata on the models: a config model
 should not also carry a presentational concern, and the curated set is only

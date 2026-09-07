@@ -34,20 +34,21 @@ from prompt_toolkit.widgets import TextArea
 
 from jailbee.config_edit import render, values
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import raw_for
-from jailbee.config_edit.schema import FieldKind
+from jailbee.config_edit.layers import lookup, validate_entry
+from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from prompt_toolkit.formatted_text import StyleAndTextTuples
     from prompt_toolkit.input import Input
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
     from prompt_toolkit.output import Output
 
-    from jailbee.config_edit.layers import LayerName, LayerSet, Origin
+    from jailbee.config_edit.layers import LayerName, LayerSet
     from jailbee.config_edit.save import SavePlan, WritePolicy
     from jailbee.config_edit.schema import FieldSpec
+    from jailbee.config_writer import KeyPath
 
 _SECTION_WIDTH = 20
 _HELP_HEIGHT = 9
@@ -58,6 +59,7 @@ Enough to show the whole of any hand-written note anyone actually leaves in a
 config file, and few enough that the diff underneath is not pushed off the
 pane by the header that introduces it."""
 _UNSAVED = "Unsaved changes — press q again to discard, or s to save."
+_ENTRY_INVALID = "This entry is incomplete — press Esc again to discard it. "
 
 _TEXT_KINDS = frozenset(
     {FieldKind.STR, FieldKind.INT, FieldKind.PATH, FieldKind.CHOICE, FieldKind.SCALAR_UNION}
@@ -84,13 +86,40 @@ class _Prompt:
     spec: FieldSpec | None
     area: TextArea
     multiline: bool
+    map_key_for: FieldSpec | None = None
+    """Set by `new_entry_here` for a `MODEL_MAP`: this prompt names the new
+    entry's key rather than editing a field. `spec` is `None` here too (there
+    is no field yet to attach to), so `commit_prompt` must tell the two
+    `spec is None` prompts apart by checking this first."""
+    secret_key: str | None = None
+    """Set when this prompt is setting one key's token inside a secret map:
+    `spec` is the map itself (`github.api_tokens`), and this is the key under
+    the cursor (`"gisgro"`). Unlike `map_key_for`, `spec` is *not* `None`
+    here — the map field already exists — so `commit_prompt` tells this
+    apart from an ordinary field edit by checking `secret_key` first."""
+    password: bool = False
+    """Mirrors the `password=` the `TextArea` was built with (spec 11.9).
+
+    Not redundant bookkeeping: `TextArea` accepts `password=` in its
+    constructor but exposes no attribute for it (verified against the
+    installed prompt_toolkit), so this is the only way a test — or a future
+    reviewer — can prove the input is actually hidden rather than trusting
+    that `_open_prompt` passed the right thing at construction time.
+    """
 
     @property
     def label(self) -> str:
+        if self.map_key_for is not None:
+            return f"New {self.map_key_for.label} entry — name it, Enter to create"
+        if self.secret_key is not None and self.spec is not None:
+            # Names the key, never the value: this label is painted on every
+            # redraw while the prompt is open, so it is exactly the kind of
+            # place the one rule (never paint a token) has to hold.
+            return f"{dotted(self.spec.path)}.{self.secret_key} — Enter to set, Esc to cancel"
         if self.spec is None:
             return "Search — Enter to apply, Esc to cancel"
         verb = "Ctrl-S to commit" if self.multiline else "Enter to commit"
-        return f"{'.'.join(self.spec.path)} — {verb}, Esc to cancel"
+        return f"{dotted(self.spec.path)} — {verb}, Esc to cancel"
 
 
 @dataclass
@@ -111,6 +140,11 @@ class Editor:
     prompt: _Prompt | None = field(default=None)
     confirm: SavePlan | None = field(default=None)
     diff_open: bool = False
+    new_entry: KeyPath | None = None
+    """The entry `n` created this session, so a second `Esc` on an invalid
+    one removes it outright rather than merely discarding staged edits — an
+    entry that was never saved has nothing to "keep". Set by `n` (Task 8);
+    always `None` here."""
 
     def notice(self, text: str, *, style: str = "class:notice") -> None:
         """Say something on the message line. Cleared by the next keypress."""
@@ -127,27 +161,186 @@ class Editor:
         self.state = st.move(self.state, delta)
 
     def enter(self) -> None:
-        """Open the section under the cursor, or edit the field under it.
+        """Descend: into a section, into a collection, into an entry, or edit.
 
-        The one Enter key does both because the two lists are never focused at
-        the same time: `state.section` is `None` exactly while the section list
-        has the cursor.
+        One key for all four because the screens are never focused at once —
+        `state.trail` says which one is open, and `state.screen` reads it.
         """
-        if self.state.section is None and not self.state.query:
+        view = st.screen(self.state)
+        if view.kind == "sections":
             names = st.sections(self.state)
             if names:
-                self.state = st.enter_section(self.state, names[self.state.index])
+                self.state = st.enter_crumb(self.state, names[self.state.index])
+            return
+        if view.kind == "collection" and view.collection is not None:
+            crumbs = st.entries(self.state, view.collection)
+            if not crumbs:
+                self.notice("No entries yet — press `n` to add one.")
+                return
+            if view.collection.item_model is None:
+                # A secret map: there is no entry form to descend into, so
+                # open a hidden input on the key under the cursor instead —
+                # never seeded with the current token (see `_open_prompt`).
+                self._open_prompt(view.collection, "", multiline=False, password=True)
+                if self.prompt is not None:
+                    self.prompt.secret_key = str(crumbs[self.state.index])
+                return
+            self.state = st.enter_crumb(self.state, crumbs[self.state.index])
+            return
+        spec = st.current(self.state)
+        if spec is not None and is_drilldown(spec):
+            # Through `edit_block`, the editor's single gate (`render.py`'s own
+            # word for it), exactly as `toggle`, `reset` and `edit_current` do.
+            # A drill-down used to skip it, which made `github ▸ api_tokens`
+            # fully navigable in a repo-layer session — a screen for a key the
+            # loader bans from a repo config, whose entry prompt then seeded
+            # itself from the *global* tokens.
+            blocked = render.edit_block(spec, self.state.layer)
+            if blocked is not None:
+                self.notice(blocked, style="class:error")
+                return
+            self.state = st.enter_crumb(self.state, spec.path[len(self.state.trail)])
             return
         self.edit_current()
 
     def back(self) -> None:
-        """Escape: clear a search first, then leave the section."""
+        """Escape: clear a search, then leave — refusing an invalid entry once.
+
+        The first press reports what is wrong and stays put, so the user can fix
+        it; the second leaves anyway and throws the entry's staged edits away
+        (spec 11.8). `message` is what tells the two presses apart, the same
+        mechanism `_quit` uses for the unsaved-changes confirmation — so, like
+        `_quit`, the key binding must not clear the message line before calling
+        this (see `_bindings`'s docstring).
+        """
         if self.state.query:
             self.state = st.set_query(self.state, "")
+            self.clear_notice()
             return
-        self.state = st.leave_section(self.state)
+        view = st.screen(self.state)
+        if view.kind == "entry" and view.collection is not None:
+            error = validate_entry(view.collection, st.own(self.state, view.entry_path))
+            if error is not None and not self.message.startswith(_ENTRY_INVALID):
+                self.notice(f"{_ENTRY_INVALID}{error}", style="class:error")
+                return
+            if error is not None:
+                self.state = self._discard_entry(view)
+        self.state = st.leave_crumb(self.state)
+        self.clear_notice()
+
+    def _discard_entry(self, view: st.Screen) -> st.EditorState:
+        """Undo this entry: remove it if `n` made it, else drop its staged edits.
+
+        Either branch walks the trail out of the entry via the caller's
+        `leave_crumb` right after this returns — never the other way round.
+        `delete_entry` changes the collection but deliberately leaves `trail`
+        alone (its own docstring), and `stage` now raises on a path whose
+        index no longer exists; discarding before leaving would land the
+        cursor on a now-nonexistent entry with no crash to show for it until
+        the *next* edit, discarding after leaving never happens because the
+        entry is already gone by then. Doing it in this order — discard while
+        still standing on the entry, leave right after — means the trail
+        never points at a hole.
+        """
+        if view.collection is None:
+            return self.state
+        if self.new_entry == view.entry_path:
+            self.new_entry = None
+            return st.delete_entry(self.state, view.collection, view.entry_path[-1])
+        return st.discard_under(self.state, view.entry_path)
+
+    # -- collection editing ----------------------------------------------
+
+    def _open_collection(self) -> FieldSpec | None:
+        """The collection under the cursor, or `None` with a notice if there is none."""
+        view = st.screen(self.state)
+        if view.kind != "collection" or view.collection is None:
+            self.notice("That key is not a collection — open one to add or remove entries.")
+            return None
+        # `enter` now refuses to open a blocked collection at all, so this is
+        # unreachable through the UI — but `new_entry_here`/`delete_entry_here`/
+        # `move_entry_here` are public and take nothing from `enter` about how
+        # the screen was reached, so they re-check rather than trusting that
+        # invariant to hold forever. The same reasoning `edit_current` states.
+        blocked = render.edit_block(view.collection, self.state.layer)
+        if blocked is not None:
+            self.notice(blocked, style="class:error")
+            return None
+        return view.collection
+
+    def new_entry_here(self) -> None:
+        """`n`: append an entry and open it. A map is asked for its key first.
+
+        A secret map is also asked for its key first — its condition joins
+        `MODEL_MAP`'s rather than replacing it, since both need a name before
+        there is anything to stage. `commit_prompt`'s `map_key_for` branch is
+        what tells the two apart afterward and stages the new key's value as
+        an empty string rather than `{}` (a secret map's entries are strings,
+        not models).
+        """
+        spec = self._open_collection()
+        if spec is None:
+            return
+        if spec.item_model is None or spec.kind is FieldKind.MODEL_MAP:
+            self._open_prompt(None, "", multiline=False)
+            if self.prompt is not None:
+                self.prompt.map_key_for = spec
+            return
+        self.state, crumb = st.add_entry(self.state, spec)
+        self.new_entry = (*self.state.trail, crumb)
+        self.state = st.enter_crumb(self.state, crumb)
+
+    def delete_entry_here(self) -> None:
+        """`x`: remove the entry under the cursor. `x`, not `d`: `d` is the diff.
+
+        Only reachable from the collection screen (`_open_collection`'s
+        guard), which means the trail never extends into an entry here — so
+        this can never delete the entry the trail itself stands in. That
+        matters because `delete_entry` deliberately does not move the trail,
+        and `stage` raises on a path whose index no longer exists; the guard
+        is what keeps that pairing unreachable rather than a coincidence.
+        """
+        spec = self._open_collection()
+        if spec is None:
+            return
+        crumbs = st.entries(self.state, spec)
+        if not crumbs:
+            self.notice("Nothing to delete here.")
+            return
+        self.state = st.delete_entry(self.state, spec, crumbs[self.state.index])
+        self.state = st.move(self.state, 0)  # re-clamp: the list just got shorter
+
+    def move_entry_here(self, delta: int) -> None:
+        """`J`/`K`: swap the entry under the cursor with its neighbour."""
+        spec = self._open_collection()
+        if spec is None:
+            return
+        if spec.kind is FieldKind.MODEL_MAP:
+            self.notice("A mapping has no order to change.")
+            return
+        before_state = self.state
+        before = self.state.index
+        self.state = st.move_entry(self.state, spec, before, delta)
+        if self.state is not before_state:
+            self.state = st.move(self.state, delta)
 
     # -- editing --------------------------------------------------------
+
+    def _pending_reset_of(self, path: KeyPath) -> KeyPath | None:
+        """The nearest staged ancestor of `path`, if it is a pending reset.
+
+        `state.py` stays pure and cannot say so itself — `stage`'s own
+        docstring: "Whether to *say* so belongs to `app.py`; this module is
+        pure." A peek at `state.staged` (a public field) rather than a call
+        into `state`'s private `_staged_ancestor`, and only useful called
+        *before* the `stage`/`toggle_current` that is about to fold into (and
+        so silently cancel) the reset it finds.
+        """
+        for i in range(len(path) - 1, 0, -1):
+            ancestor = path[:i]
+            if ancestor in self.state.staged:
+                return ancestor if self.state.staged[ancestor] is st.UNSET else None
+        return None
 
     def toggle(self) -> None:
         """Space: flip the boolean under the cursor, if it is one and editable."""
@@ -161,7 +354,10 @@ class Editor:
         if spec.kind is not FieldKind.BOOL:
             self.notice("Space toggles a true/false field — press Enter to edit this one.")
             return
+        cancelled = self._pending_reset_of(spec.path)
         self.state = st.toggle_current(self.state)
+        if cancelled is not None:
+            self.notice(f"This also cancels the pending reset of {dotted(cancelled)}.")
 
     def reset(self) -> None:
         """`r`: stage a delete of this key from the open layer.
@@ -177,10 +373,31 @@ class Editor:
         if blocked is not None:
             self.notice(blocked, style="class:error")
             return
-        self.state = st.reset_current(self.state, raw_for(self.layer_set, self.state.layer))
+        discarding = any(
+            len(p) > len(spec.path) and p[: len(spec.path)] == spec.path for p in self.state.staged
+        )
+        self.state = st.reset_current(self.state)
+        if discarding:
+            self.notice(f"Discarded pending edits inside {dotted(spec.path)}.")
 
     def edit_current(self) -> None:
-        """Open the modal editor on the field under the cursor."""
+        """Open the modal editor on the field under the cursor.
+
+        `enter()` is the only place a drill-down field's row is supposed to
+        reach this: it checks `is_drilldown` first and routes a collection —
+        secret map included — to its own screen instead. But this method is
+        public and takes no state from `enter()` about how it was reached, so
+        it re-checks here rather than trusting that invariant to hold
+        forever. For a `MODEL_LIST`/`MODEL_MAP` that would just be defence in
+        depth (the kind dispatch below already falls through to the same
+        "not editable here" notice, since neither kind matches a case
+        above). For a secret `STR_MAP` it is load-bearing: `edit_block` now
+        lets it through (Task 9 — it *is* editable, just not here), and its
+        kind *does* match `_MAP_KINDS` below, which would otherwise hand
+        `values.map_to_text` — every token in the map — straight to a plain
+        multiline prompt. Confirmed by direct call in this task's audit
+        before this guard existed.
+        """
         spec = st.current(self.state)
         if spec is None:
             return
@@ -188,15 +405,31 @@ class Editor:
         if blocked is not None:
             self.notice(blocked, style="class:error")
             return
-        value = st.effective(self.state, spec.path)
+        if is_drilldown(spec):
+            self.notice(f"`{spec.kind.value}` fields are not editable here.", style="class:error")
+            return
+        # `st.current_value`, never `st.effective` directly: the modal is
+        # seeded with what the row under the cursor *displays*, and inside an
+        # entry that is the open layer's own value. Seeding from `effective`
+        # there pre-filled another layer's value into a prompt whose commit
+        # writes to this one (see `state.current_value`).
+        value = st.current_value(self.state, spec.path)
         if spec.kind is FieldKind.STR_LIST:
             self._open_prompt(spec, values.list_to_text(value), multiline=True)
         elif spec.kind in _MAP_KINDS:
             self._open_prompt(spec, values.map_to_text(value), multiline=True)
+        elif spec.kind is FieldKind.OPAQUE:
+            self._open_prompt(spec, values.opaque_to_text(value), multiline=True)
         elif spec.kind in _TEXT_KINDS:
             self._open_prompt(spec, values.to_text(spec, value), multiline=False)
         elif spec.kind is FieldKind.BOOL:
-            self.state = st.toggle_current(self.state)
+            # Through `toggle`, not a bare `st.toggle_current` call, so `Enter`
+            # on a bool field gets the same pending-reset-cancelled notice
+            # `Space` does — the two are otherwise the same one keystroke to
+            # the user, and `toggle` has already re-checked `edit_block`/kind,
+            # both of which just passed above, so this is not a new failure
+            # mode, only shared plumbing.
+            self.toggle()
         else:
             self.notice(f"`{spec.kind.value}` fields are not editable here.", style="class:error")
 
@@ -204,7 +437,9 @@ class Editor:
         """`/`: a modal line whose commit sets the search query."""
         self._open_prompt(None, self.state.query, multiline=False)
 
-    def _open_prompt(self, spec: FieldSpec | None, text: str, *, multiline: bool) -> None:
+    def _open_prompt(
+        self, spec: FieldSpec | None, text: str, *, multiline: bool, password: bool = False
+    ) -> None:
         completer = None
         if spec is not None and spec.choices:
             completer = WordCompleter([str(c) for c in spec.choices], ignore_case=True)
@@ -214,11 +449,43 @@ class Editor:
             completer=completer,
             complete_while_typing=completer is not None,
             height=6 if multiline else 1,
+            password=password,
         )
         area.buffer.cursor_position = len(text)
-        self.prompt = _Prompt(spec=spec, area=area, multiline=multiline)
+        self.prompt = _Prompt(spec=spec, area=area, multiline=multiline, password=password)
 
     def cancel_prompt(self) -> None:
+        """Close the modal, discarding anything typed into it.
+
+        A secret prompt on a key `n` just created is the one case this
+        undoes more than the keystroke: `n` on a secret map stages
+        `{key: ""}` *before* the value is even typed (there is no form to
+        hold it meanwhile), so an untouched entry abandoned here must not
+        survive as an empty token rather than as if `n` had never been
+        pressed.
+        """
+        prompt = self.prompt
+        if (
+            prompt is not None
+            and prompt.secret_key is not None
+            and prompt.spec is not None
+            and self.new_entry == (*prompt.spec.path, prompt.secret_key)
+        ):
+            spec = prompt.spec
+            self.state = st.delete_entry(self.state, spec, prompt.secret_key)
+            self.new_entry = None
+            # `delete_entry` stages whatever the map is left holding — `{}`
+            # when the key just removed was the only one in it. If the map
+            # was not on this layer's file at all before this session either,
+            # a staged `{}` still writes an empty `api_tokens: {}` on save —
+            # not "as if `n` had never been pressed". Drop the staged key
+            # outright in that case so a layer with nothing to begin with
+            # ends up with nothing staged, not an empty one.
+            present, _ = lookup(self.state.layer_raw, spec.path)
+            if not present and self.state.staged.get(spec.path) == {}:
+                staged = dict(self.state.staged)
+                del staged[spec.path]
+                self.state = replace(self.state, staged=staged)
         self.prompt = None
 
     def commit_prompt(self) -> None:
@@ -232,6 +499,73 @@ class Editor:
         if prompt is None:
             return
         text = prompt.area.text
+        # Checked first, before both branches below: a secret-key prompt has
+        # `spec` set (the map itself) and `map_key_for` unset, so neither of
+        # the next two checks would catch it — and if it fell through to the
+        # generic `spec.kind` dispatch at the bottom, `_MAP_KINDS` would hand
+        # a bare token to `values.parse_map`, which on anything without `=`
+        # in it reports the error as `got {entry!r}` — quoting the token
+        # right back onto the message line. Closing that off here, before
+        # any other branch can partially match, is what the one rule (never
+        # paint a token) actually rests on for this prompt.
+        if prompt.secret_key is not None and prompt.spec is not None:
+            token = text.strip()
+            if not token:
+                self.notice(
+                    "A token is required — press Esc to leave it unchanged.",
+                    style="class:error",
+                )
+                return
+            # `own`, not `effective`: this map is about to be staged back
+            # into the open layer, so it must start from that layer's own
+            # value. Seeding it from the merged one would copy another
+            # layer's tokens into this file.
+            current = st.own(self.state, prompt.spec.path)
+            updated = dict(current) if isinstance(current, dict) else {}
+            updated[prompt.secret_key] = token
+            self.state = st.stage(self.state, prompt.spec.path, updated)
+            if self.new_entry == (*prompt.spec.path, prompt.secret_key):
+                # The key `n` just created now has a real token, so it is no
+                # longer "new" — an unrelated Esc elsewhere must not treat it
+                # as abandoned and delete it (`cancel_prompt`'s own guard).
+                # Anything else `new_entry` might be tracking (a MODEL_LIST
+                # entry left mid-form) is untouched.
+                self.new_entry = None
+            self.prompt = None
+            return
+        # Checked before `prompt.spec is None` below: a map-key prompt also has
+        # `spec is None` (there is no field yet to attach to), and the search
+        # branch would otherwise read the typed key name as a search query and
+        # create nothing.
+        if prompt.map_key_for is not None:
+            key = text.strip()
+            if not key:
+                self.notice("A name is required.", style="class:error")
+                return
+            spec = prompt.map_key_for
+            if key in st.entries(self.state, spec):
+                self.notice(f"`{key}` already exists.", style="class:error")
+                return
+            if spec.secret:
+                # A secret map's entry is a string, not a model: stage the
+                # key with an empty placeholder, then open a hidden prompt to
+                # fill it in — there is no entry form to descend into, and
+                # the placeholder is never shown (`cancel_prompt` removes it
+                # again if that second prompt is abandoned).
+                current = st.own(self.state, spec.path)
+                updated = dict(current) if isinstance(current, dict) else {}
+                updated[key] = ""
+                self.state = st.stage(self.state, spec.path, updated)
+                self.new_entry = (*spec.path, key)
+                self._open_prompt(spec, "", multiline=False, password=True)
+                if self.prompt is not None:
+                    self.prompt.secret_key = key
+                return
+            self.state, crumb = st.add_entry(self.state, spec, key)
+            self.new_entry = (*self.state.trail, crumb)
+            self.state = st.enter_crumb(self.state, crumb)
+            self.prompt = None
+            return
         if prompt.spec is None:
             self.state = st.set_query(self.state, text.strip())
             self.prompt = None
@@ -243,13 +577,18 @@ class Editor:
             parsed, error = values.parse_list(spec, text)
         elif spec.kind in _MAP_KINDS:
             parsed, error = values.parse_map(spec, text)
+        elif spec.kind is FieldKind.OPAQUE:
+            parsed, error = values.parse_opaque(text)
         else:
             parsed, error = values.parse_value(spec, text)
         if error is not None:
             self.notice(error, style="class:error")
             return
+        cancelled = self._pending_reset_of(spec.path)
         self.state = st.stage(self.state, spec.path, parsed)
         self.prompt = None
+        if cancelled is not None:
+            self.notice(f"This also cancels the pending reset of {dotted(cancelled)}.")
 
     # -- saving -----------------------------------------------------------
 
@@ -283,28 +622,41 @@ class Editor:
         """The plan for the staged edits, or `None` with a notice explaining why.
 
         Shared by `save` and `show_diff` so the two cannot drift on which
-        failures stop a save: nothing staged, a mapping the loader rejects, and
-        a rendering this package cannot read back (`RenderedYamlError`, spec
+        failures stop a save: nothing staged, a mapping the loader rejects, a
+        staged path that does not address the file (`ValueError`), and a
+        rendering this package cannot read back (`RenderedYamlError`, spec
         3.5's last line of defence — `validate` sees the mapping, never the
         text). Every one of them keeps the session and the staged edits alive.
+
+        The `ValueError` arm is what makes that last sentence true rather than
+        aspirational. `layers.apply_changes` raises on a path whose integer
+        segment addresses a list the layer does not have, and `validate` calls
+        it — so before this, a staged path gone stale took the whole
+        application down out of the key handler, taking every other staged edit
+        with it. `_reload`'s re-anchoring removes the one sequence that
+        produced such a path; this makes the next one a message instead of a
+        crash, which is what every other failure here already is.
         """
-        from jailbee.config_edit.layers import raw_for, validate
+        from jailbee.config_edit.layers import validate
         from jailbee.config_edit.save import RenderedYamlError, build_plan
 
-        edits = st.changes(self.state, raw_for(self.layer_set, self.state.layer))
+        edits = st.changes(self.state)
         if not edits:
             self.notice(nothing_staged)
             return None
-        error = validate(self.layer_set, self.state.layer, edits)
-        if error is not None:
-            self.notice(error, style="class:error")
-            return None
         try:
+            error = validate(self.layer_set, self.state.layer, edits)
+            if error is not None:
+                self.notice(error, style="class:error")
+                return None
             return build_plan(
                 self.layer_set, self.state.layer, edits, self.state.specs, self.policy
             )
         except RenderedYamlError as e:
             self.notice(str(e), style="class:error")
+            return None
+        except ValueError as e:
+            self.notice(f"Cannot apply the staged edits: {e}", style="class:error")
             return None
 
     def _write(self, plan: SavePlan) -> None:
@@ -334,21 +686,31 @@ class Editor:
         only here. The cursor, the open section, the search and the show-all
         flag survive: the user's place in a tree of eighty-odd fields is
         expensive to find again.
+
+        Survive, but re-anchored: the save may have deleted the entry the trail
+        was standing in (`r` on a collection, then walk into it, then `s`), and
+        carrying the trail over unchanged leaves a form painting an entry that
+        is no longer in the file — and the next edit stages a path whose index
+        addresses nothing. `st.reanchor` trims the trail back to a screen that
+        still exists and re-clamps the cursor to it.
         """
-        from jailbee.config_edit.layers import read_layers, resolve
+        from jailbee.config_edit.layers import raw_for, read_layers, resolve
 
         self.layer_set = read_layers(self.layer_set.repo_path, self.layer_set.global_path)
         fresh = st.open_editor(
             layer=self.state.layer,
             specs=self.state.specs,
             origins=resolve(self.state.specs, self.layer_set),
+            layer_raw=raw_for(self.layer_set, self.state.layer),
         )
-        self.state = replace(
-            fresh,
-            section=self.state.section,
-            index=self.state.index,
-            query=self.state.query,
-            show_all=self.state.show_all,
+        self.state = st.reanchor(
+            replace(
+                fresh,
+                trail=self.state.trail,
+                index=self.state.index,
+                query=self.state.query,
+                show_all=self.state.show_all,
+            )
         )
 
     def show_diff(self) -> None:
@@ -364,9 +726,7 @@ class Editor:
         self.diff_open = False
 
     def dirty(self) -> bool:
-        from jailbee.config_edit.layers import raw_for
-
-        return st.is_dirty(self.state, raw_for(self.layer_set, self.state.layer))
+        return st.is_dirty(self.state)
 
 
 def run_editor(
@@ -374,20 +734,30 @@ def run_editor(
     layer: LayerName,
     layer_set: LayerSet,
     specs: Sequence[FieldSpec],
-    origins: Mapping[tuple[str, ...], Origin],
     policy: WritePolicy,
     input: Input | None = None,
     output: Output | None = None,
 ) -> int:
     """Run the editor until the user quits. Returns a process exit code.
 
+    Origins and the open layer's raw mapping are both derived from `layer_set`
+    here rather than taken as arguments, so a caller cannot hand the session an
+    `origins` that describes one set of layers and a file that is another.
+
     `input`/`output` exist for the tests, which drive a real `Application`
     through `create_pipe_input()` and a `DummyOutput` — the same idiom
     `tests/test_tui.py` uses for the forked questionary checkbox.
     """
+    from jailbee.config_edit.layers import raw_for, resolve
+
     editor = Editor(
         layer_set=layer_set,
-        state=st.open_editor(layer=layer, specs=specs, origins=origins),
+        state=st.open_editor(
+            layer=layer,
+            specs=specs,
+            origins=resolve(specs, layer_set),
+            layer_raw=raw_for(layer_set, layer),
+        ),
         policy=policy,
     )
     application = _build_application(editor, input=input, output=output)
@@ -405,10 +775,10 @@ def _build_application(
         return Point(0, render.section_pane(editor.state).cursor_row)
 
     def fields_pane() -> StyleAndTextTuples:
-        return render.field_pane(editor.state, editor.layer_set).fragments
+        return render.body_pane(editor.state, editor.layer_set).fragments
 
     def fields_cursor() -> Point:
-        return Point(0, render.field_pane(editor.state, editor.layer_set).cursor_row)
+        return Point(0, render.body_pane(editor.state, editor.layer_set).cursor_row)
 
     def message_line() -> StyleAndTextTuples:
         return [(editor.message_style, f" {editor.message} ")] if editor.message else []
@@ -466,7 +836,7 @@ def _build_application(
                 filter=Condition(lambda: editor.confirm is not None),
             ),
             Window(FormattedTextControl(message_line), height=1),
-            Window(FormattedTextControl(render.footer), height=1),
+            Window(FormattedTextControl(lambda: render.footer(editor.state)), height=1),
         ]
     )
     return Application(
@@ -520,7 +890,7 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     Most handlers clear the message line first — via `_act`/`_act_focus`, or
     explicitly in `_commit`/`_cancel` — so a notice that outlived the keypress
     it answered doesn't read as a fresh complaint about the key just pressed.
-    Three handlers deliberately do not, each for a different reason, and none
+    Four handlers deliberately do not, each for a different reason, and none
     of them should be "fixed" into consistency with the rest:
 
     * `_quit` skips it on purpose. It compares `editor.message` against
@@ -529,6 +899,13 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
       always true, so the second `q` could never be told apart from the
       first — the double-press-to-quit-while-dirty behaviour would trap the
       user in the warning forever with no way out.
+    * `_back` (browsing `escape`) is the same trick for the same reason:
+      `Editor.back` compares `editor.message` against `_ENTRY_INVALID` to
+      tell a first `Esc` out of a broken entry (which refuses and explains)
+      from a confirming second one (which discards and leaves). `back`
+      manages its own message on every path — clearing it on a plain ascend,
+      leaving it set on the first refusal — so the binding must hand it the
+      message untouched and never clear afterward either.
     * `_yes`/`_no` (the confirm modal's accept/decline) don't clear either,
       but harmlessly: `confirm_save` always sets its own fresh notice
       ("Saved ..." or "Not saved."), and `close_diff` (reached via `n` or
@@ -571,7 +948,6 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     kb.add("down", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
     kb.add("j", filter=browsing & ~confirming)(_act(lambda: editor.move(1)))
     kb.add("enter", filter=browsing & ~confirming)(_act_focus(editor.enter))
-    kb.add("escape", filter=browsing & ~confirming, eager=True)(_act(editor.back))
     kb.add("a", filter=browsing & ~confirming)(
         _act(lambda: setattr(editor, "state", st.toggle_show_all(editor.state)))
     )
@@ -581,6 +957,10 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
     kb.add("c-s", filter=browsing & ~confirming)(_act(editor.save))
     kb.add("s", filter=browsing & ~confirming)(_act(editor.save))
     kb.add("d", filter=browsing & ~confirming)(_act(editor.show_diff))
+    kb.add("n", filter=browsing & ~confirming)(_act_focus(editor.new_entry_here))
+    kb.add("x", filter=browsing & ~confirming)(_act(editor.delete_entry_here))
+    kb.add("J", filter=browsing & ~confirming)(_act(lambda: editor.move_entry_here(1)))
+    kb.add("K", filter=browsing & ~confirming)(_act(lambda: editor.move_entry_here(-1)))
 
     @kb.add("enter", filter=editing & Condition(lambda: not _multiline(editor)))
     @kb.add("c-s", filter=editing)
@@ -607,6 +987,10 @@ def _bindings(editor: Editor, fields_window: Window) -> KeyBindings:
             editor.close_diff()
         else:
             editor.confirm_save(accept=False)
+
+    @kb.add("escape", filter=browsing & ~confirming, eager=True)
+    def _back(_event: KeyPressEvent) -> None:
+        editor.back()
 
     @kb.add("q", filter=browsing & ~confirming)
     def _quit(event: KeyPressEvent) -> None:

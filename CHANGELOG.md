@@ -70,6 +70,22 @@
   group than the one being parked from — silently mislabeling the stored
   login. Parking and switching now only trust a container's config home
   when it is an *authoritative* member of the group in question.
+- **A submodule created inside a container now lands on the host in git's
+  normal layout, as of the next `jailbee git pull`/`checkout`.** Cloning a
+  sub-repo out of a container over `ext::` used to leave a legacy `.git`
+  directory instead of git's usual gitdir-file-plus-`.git/modules/<name>`
+  layout. `jailbee git pull`/`checkout` now absorbs it into
+  `<repo>/.git/modules/<name>` between `submodule update --init` and branch
+  placement; sub-repos cloned by earlier versions are healed the same way on
+  their next `jailbee git pull`/`checkout`. `jailbee submodule pr` does not
+  run this step, so a submodule it first materialises on the host keeps the
+  legacy layout until the following `jailbee git pull`/`checkout`.
+- **Such a submodule's `origin` is no longer left pointing at the dead
+  `ext::incus exec …` transport URL**, which would have pushed the host's
+  commits into a container that no longer exists. The upstream now comes
+  from the container's `.gitmodules`, else the container sub-repo's own
+  `remote.origin.url`; when neither names one, `origin` is removed and the
+  fix is printed instead of silently leaving a broken remote behind.
 
 ### Changed
 
@@ -152,6 +168,11 @@
   fixed-width refresh field (`↻ 12s/3s`, age clamped to two digits), so its
   width no longer changes between frames; the subtitle carries a transient
   notice and nothing else.
+- **BREAKING (narrow): `--submodules-only` combined with a container is now
+  a usage error (exit 2)** on both `jailbee branch` and the `jailbee
+  submodule checkout` alias. It was previously accepted and silently
+  ignored — a container's branch is never switched, so there was nothing
+  for it to opt out of.
 
 ### Added
 
@@ -181,14 +202,38 @@
 
   Open it with `jailbee config edit` (`--global` for the user-level file),
   with `e` / `E` in `jailbee dashboard`, or from the **Config** menu in the Qt
-  GUI. `jailbee config init` now offers to open it. Lists of structured
-  entries (`host_mounts`, `agents`, `autostart.on_create`/`autostart.on_start`,
-  …) and secrets (`github.api_tokens`) are shown read-only for now, each with
-  its own reason. A directory with no `.jailbee/config.yaml` is refused for
-  the repo layer rather than shown wrongly: its settings come from
-  `global.yaml`'s `scratch.config`, and saving a file here would stop that
-  layer being used at all — run `jailbee config init` there first. See
-  [`config_edit`](docs/config.md#config_edit).
+  GUI. `jailbee config init` now offers to open it. A directory with no
+  `.jailbee/config.yaml` is refused for the repo layer rather than shown
+  wrongly: its settings come from `global.yaml`'s `scratch.config`, and saving
+  a file here would stop that layer being used at all — run `jailbee config
+  init` there first. See [`config_edit`](docs/config.md#config_edit).
+- **Every remaining config field is editable in `jailbee config edit`.**
+  Structured lists — `host_mounts`, `host_ports`, `host_devices`,
+  `shared_caches`, `optional_mounts`, `agents`, and the `autostart` steps —
+  now open a screen of their own: `n` adds an entry, `x` removes one, `J`/`K`
+  reorder, and `Enter` opens an entry's own form, generated from its model the
+  same way the top-level fields are. An entry is validated against its model
+  when you leave it, so an incomplete one is caught where you made it rather
+  than at save time. The nesting is recursive, so an agent's `shared` mounts
+  are reachable too.
+
+  Editing one field of one entry addresses that entry's content by index, so
+  the other entries and any comments among them are preserved — but a save
+  re-emits the file with jailbee's own block-sequence indentation, so a
+  config written with indented sequences (`  - `) is normalised on its first
+  save. Adding, deleting or reordering rewrites the list, because those
+  change what the indices mean.
+
+  `github.api_tokens` can now be set from the editor. Values are never
+  displayed — the key list shows a fixed mask, the input is hidden, and a
+  token typed this session is redacted from the diff preview the same way one
+  already on disk is. `scratch.config`, which has no schema to generate a form
+  from, is edited as a YAML block and checked before it is staged.
+
+  A repo config's lists are *appended* to the global ones by jailbee's merge
+  rules, so a repo-layer screen shows the inherited entries above your own,
+  read-only, and says so: they cannot be removed from a repo config, only
+  discarded wholesale by emptying the list.
 - **`jailbee claude group ls`** lists the credential groups on this host and
   what each one holds — the same rows and columns as `jailbee claude ls`,
   narrowed to rows that *are* a group (a parked login belongs to none, and an
@@ -315,6 +360,67 @@
   repo's egress pool keeps refreshing instead of being pruned as soon as its
   (nonexistent) config file goes missing. See
   [`scratch`](docs/config.md#scratch).
+- **A generic GUI app registry, plus Firefox as a first-class browser
+  alongside Chrome.** `chrome:` becomes `browsers.chrome` (see below), and a
+  new `browsers.firefox` block adds Firefox as an equal citizen: its own
+  master switch, URL, dark-mode, autostart, and per-container profile pool
+  (`firefox-profile`, same pooling machinery Chrome's `chrome-profile` has
+  always used) so two containers running Firefox never fight over one
+  profile directory or see "Firefox is already running". Unlike Chrome,
+  Firefox **defaults to `source: image`**: on Ubuntu the host's Firefox is a
+  snap, and `/snap/firefox` is not usefully mountable into a container, so
+  `jailbee base build` now installs it (and, when asked, Chrome too) from
+  each browser's own upstream apt repository via new `70-chrome.sh` /
+  `70-firefox.sh` provisioning snippets, auto-staged from
+  `browsers.<name>.source: image` with no separate `enable_snippets` toggle
+  to keep in sync. Changing `source` needs `jailbee base build` (`image`)
+  or `jailbee apply` (`host`) to take effect.
+
+  Browsers, the JetBrains IDE, and now any number of user-defined
+  applications all resolve to one **app registry** (`AppSpec`), read by
+  every surface that used to hardcode "IDE" and "Chrome": `jailbee apps ls
+  [<container>]` lists every app a repo can launch — config only without a
+  container, a live `present`/`missing` probe with one — and
+  `jailbee apps run <app> [<args>…] [--container <name>]` launches one by
+  name (app name first, container behind `--container` — deliberately not
+  the container-first shape `jailbee chrome [<container>] [<url>]` uses,
+  since an optional app name plus variadic arguments can't be told apart
+  from an optional container in the middle). A new `apps:` config block
+  defines a GUI app beyond the builtins (an AppImage, a vendor binary, a
+  wrapper script — command, args, cwd, env, description, autostart); an
+  entry with `top_level: true` is also promoted to a bare `jailbee <name>
+  [<args>…]`, which keeps `apps run`'s own shape — name another container
+  with `--container <name>`, never as a positional, and an argument that
+  starts with a dash needs a `--` separator (`jailbee figma -- --flag`).
+  A name colliding with a built-in command is reported by `jailbee config
+  validate` as a config error. `jailbee browser [<container>] [<url>]`
+  launches whichever browser `browsers.default` names, or the single
+  enabled one. Both dashboards' action menus and quick-launch surfaces now
+  read the same registry instead of two hardcoded IDE/Chrome switches.
+
+  `jailbee exec` gained `--detach`/`-d`: runs any command in the background
+  — the same detached-`incus exec` mechanism every registry launch already
+  used — so it returns immediately and logs to a file inside the container
+  instead of the terminal. Needed for a GUI app run by hand
+  (`jailbee exec <name> -d -- firefox`), useful for anything long-running.
+
+  The top-level `chrome:` block is **deprecated**: it still works in 1.3.x,
+  folded into `browsers.chrome` at load time with a one-time hint on
+  stderr, and is removed in 1.4.0. See
+  [`browsers`](docs/config.md#browsers) and [`apps`](docs/config.md#apps).
+- **`jailbee branch [BRANCH] [--container NAME] [--submodules-only]`** puts
+  the whole tree, superproject and submodules, on one branch. Replaces
+  `jailbee submodule checkout`, which stays as a hidden deprecated alias with
+  its original argument shape. There is no `-c` short form for
+  `--container`: `-c` is `--config` on every jailbee command.
+- **`jailbee submodule pr` is now interactive on a TTY:** it asks which
+  container (even when there is only one), offers a picker over every
+  submodule instead of erroring when several are ahead, and confirms a plan
+  block before transporting or publishing anything. `--yes` skips the
+  confirmation but not the pickers. `--open` is unaffected. Off a TTY nothing
+  is asked and no exit code changes; the several-ahead listing gains
+  `[dirty]`/`[gitlink stale]`/`[detached]` flags from the same rendering the
+  new picker uses, so a script grepping that listing sees more than before.
 
 ## 1.2.2 - 2026-08-28
 

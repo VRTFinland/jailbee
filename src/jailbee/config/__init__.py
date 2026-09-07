@@ -22,6 +22,7 @@ from jailbee.config.common import (
     SCRATCH_ORIGIN_SUFFIX,
     _split_host_keys,
     deep_merge,
+    merge_apps_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
@@ -35,6 +36,7 @@ from jailbee.config.loader import (
     load_repo_config,
     load_repo_config_unsanitized,
     resolve_agents_raw,
+    resolve_browsers_raw,
     scratch_repo_layer,
     synthesized_repo_layer,
 )
@@ -46,6 +48,7 @@ from jailbee.config.models_agents import (
     DockerRegistryMirrorRepoConfig,
     GithubConfig,
 )
+from jailbee.config.models_apps import APP_NAME_RE, AppEntry
 from jailbee.config.models_behaviour import (
     BootConfig,
     ConfirmConfig,
@@ -85,6 +88,9 @@ from jailbee.config.models_net import (
     parse_loose_ttl,
 )
 from jailbee.config.models_tools import (
+    BrowserConfig,
+    BrowsersConfig,
+    BrowserSource,
     ChromeConfig,
     GpgConfig,
     JetbrainsConfig,
@@ -106,6 +112,7 @@ from jailbee.config.root import Config
 # submodule) by tests or by `global_config.py`; see EXPECTED_SURFACE in
 # tests/test_config_package_surface.py.
 __all__ = [
+    "APP_NAME_RE",
     "CONTAINER_USERNAME",
     "DASHBOARD_DEFAULT_HIDE",
     "GITHUB_API_HOSTS",
@@ -119,9 +126,13 @@ __all__ = [
     "SCRATCH_ORIGIN_SUFFIX",
     "_HOST_LEVEL_KEYS",
     "AgentConfig",
+    "AppEntry",
     "Autostart",
     "AutostartStep",
     "BootConfig",
+    "BrowserConfig",
+    "BrowserSource",
+    "BrowsersConfig",
     "ChromeConfig",
     "ClaudeAgentConfig",
     "ClaudeCredentials",
@@ -165,8 +176,10 @@ __all__ = [
     "load_config_unsanitized",
     "load_repo_config",
     "load_repo_config_unsanitized",
+    "merge_apps_raw",
     "parse_loose_ttl",
     "resolve_agents_raw",
+    "resolve_browsers_raw",
     "resolve_kitty_terminfo_path",
     "sanitize_column_blocks",
     "scratch_repo_layer",

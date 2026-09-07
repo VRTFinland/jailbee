@@ -150,7 +150,8 @@ Everything else here is **auto-added**, not part of the literal default, by
 | `m2` | `caches/m2` | `~/.m2` | `golden.stacks.java` enabled |
 | `jetbrains-config` | `jetbrains-config` | `~/.config/JetBrains` | `jetbrains.enabled: true` |
 | `jetbrains-data` | `jetbrains-data` | `~/.local/share/JetBrains` | `jetbrains.enabled: true` |
-| `chrome-profile` | `chrome-pool` | `~/.config/google-chrome` | `chrome.enabled: true` |
+| `chrome-profile` | `chrome-pool` | `~/.config/google-chrome` | `browsers.chrome.enabled: true` |
+| `firefox-profile` | `firefox-pool` | `~/.mozilla/firefox` | `browsers.firefox.enabled: true` |
 
 > The claude shared caches (`claude`, `claude-install`) are auto-added the
 > same way, when `claude.enabled: true`. See `## claude` below.
@@ -178,7 +179,7 @@ pooled_caches:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pooled_caches` | dict of `name` → bool | `{}` | `true`/`false` overrides pooling for a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`). A key naming a cache with no builtin preset is a `ConfigError` unless that cache's own `shared_caches` entry carries an explicit `pool:` block. `chrome-profile: false` is also a `ConfigError`: its `host_subpath` *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Turn Chrome off with `chrome.enabled: false`. |
+| `pooled_caches` | dict of `name` → bool | `{}` | `true`/`false` overrides pooling for a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`). A key naming a cache with no builtin preset is a `ConfigError` unless that cache's own `shared_caches` entry carries an explicit `pool:` block. `chrome-profile: false` and `firefox-profile: false` are also a `ConfigError`: each one's `host_subpath` *is* its pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Turn a browser off with `browsers.chrome.enabled: false` / `browsers.firefox.enabled: false` instead. |
 
 Builtin presets and their `default_on` (absent keys follow this):
 
@@ -187,6 +188,7 @@ Builtin presets and their `default_on` (absent keys follow this):
 | `gradle` | `true` | `caches/modules-2/files-2.1`, `wrapper/dists` |
 | `m2` | `true` | `repository` |
 | `chrome-profile` | `true` | none (Chrome rewrites its state files in place) |
+| `firefox-profile` | `true` | none (Firefox rewrites `places.sqlite`/`prefs.js` in place) |
 | `npm` | `false` | `_cacache` |
 | `pnpm-store` | `false` | `v3/files` |
 
@@ -358,19 +360,68 @@ the low-level escape hatch for anything `stacks` doesn't cover.
 
 When `userprefs_from_host` is on, `egress_allow` is auto-extended (in strict-mode ACL only — YAML field unchanged) with `account.jetbrains.com`, `data.services.jetbrains.com`, `plugins.jetbrains.com`, `download.jetbrains.com` (all port 443).
 
-## `chrome`
+## `browsers`
+
+Chrome and Firefox, each the same `BrowserConfig` shape under
+`browsers.chrome` / `browsers.firefox`, plus `browsers.default`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` exits 2, autostart skips the Chrome launch, and the `host_path` auto-mount is omitted. |
-| `url` | string \| null | `null` | URL Chrome opens. `jailbee chrome <name> <URL>` overrides. |
-| `dark_mode` | bool | `false` | Pass `--force-dark-mode --enable-features=WebContentsForceDark` regardless of host GTK theme. |
-| `autostart` | bool | `false` | Launch Chrome after autostart steps. Ignored when `enabled: false`. |
-| `host_path` | path \| null | `/opt/google/chrome` | Host path RO-mounted to `/opt/google/chrome` (container-side path is hardcoded — `gui.open_chrome` invokes `/opt/google/chrome/google-chrome`). Override for non-standard installs (chromium etc.); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with `container: /opt/google/chrome` wins. |
+| `default` | `chrome` \| `firefox` \| `null` | `null` | Which browser `jailbee browser` opens. `null` resolves at command time: the single enabled browser, or an error naming what to set if more than one (or none) is enabled. |
+| `<name>.enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` / `jailbee firefox` exits 2, the browser is hidden from `jailbee apps ls`, autostart skips its launch, and the `host_path` auto-mount is omitted. |
+| `<name>.source` | `host` \| `image` | `host` (Chrome), `image` (Firefox) | `host` RO-mounts an existing host install; `image` installs it into the golden image during `jailbee base build`. **Changing this needs `jailbee base build` (image) or `jailbee apply` (host) to take effect.** Firefox defaults to `image` because Ubuntu's own Firefox is a snap, not usefully mountable. |
+| `<name>.host_path` | path \| null | `/opt/google/chrome` (Chrome), `null` (Firefox) | Host path RO-mounted into the container under `source: host` (must be `null` under `source: image`). The container-side mount target is hardcoded per browser (`/opt/google/chrome`, `/opt/firefox`). `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with a matching `container:` wins. Setting this on Firefox without a `source` implies `source: host`. |
+| `<name>.url` | string \| null | `null` | URL the browser opens. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override. |
+| `<name>.dark_mode` | bool | `false` | Asymmetric: Chrome gets `--force-dark-mode --enable-features=WebContentsForceDark` (darkens page content too); Firefox gets `GTK_THEME=Adwaita:dark` instead (browser UI only — Firefox has no page-darkening flag). |
+| `<name>.autostart` | bool | `false` | Launch this browser after autostart steps. Ignored when `enabled: false`. |
+
+Each enabled browser gets its own per-container profile pool
+(`chrome-profile` / `firefox-profile`), so two containers never fight over
+one profile directory. **The top-level `chrome:` block from before 1.3.0
+still works** in 1.3.x, folded into `browsers.chrome` at load time with a
+one-time deprecation hint — write `browsers.chrome` in anything you
+generate. It is removed in 1.4.0.
+
+## `apps`
+
+User-defined GUI applications beyond the built-in browsers and JetBrains
+IDE — an AppImage, a vendor binary, a wrapper script. Keyed by app name.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `command` | list[string] | required | Container-side command. A string is shell-split; a list is taken as-is. Not resolved on the host. |
+| `args` | list[string] | `[]` | Extra arguments appended after `command`, before any passed on the `jailbee apps run` command line. |
+| `cwd` | string | `"repo"` | `repo`, `home`, or an absolute container path. |
+| `env` | map[string, string] | `{}` | Extra env vars, merged over jailbee's own GUI environment. |
+| `description` | string | `""` | One-line summary shown in `jailbee apps ls`. |
+| `top_level` | bool | `false` | Promote to `jailbee <name>` directly. A name colliding with a built-in command is a config error — rename the app or set this `false` and use `jailbee apps run <name>`. |
+| `autostart` | bool | `false` | Launch after autostart steps complete. |
+
+```yaml
+apps:
+  figma:
+    command: /opt/figma-linux/figma-linux
+    top_level: true
+    description: "Figma desktop app"
+```
+
+No pool and no auto-mount is generated for an `apps:` entry — that is
+deliberate (YAGNI): model an app as a builtin instead if it needs either.
+`jailbee apps ls [<container>]` lists builtins and `apps:` entries
+together, in that order.
+
+`apps:` merges across the two layers per app name and, within one app, per
+key — so a repo can set `autostart: true` on an app defined in
+`~/.config/jailbee/global.yaml` without restating its `command`. Two keys
+differ: a repo's `command` **replaces** the global one (a second binary
+path would otherwise become an argument to the first), while `args`
+**appends** to it, the way every other list-valued config key does.
 
 ## `autostart`
 
-IDE and Chrome launches are controlled by `jetbrains.autostart` / `chrome.autostart` (not here). The `autostart` block describes the in-container shell steps.
+IDE and browser launches are controlled by `jetbrains.autostart` /
+`browsers.<name>.autostart` (and, for a plain GUI app, `apps.<name>.autostart`),
+not here. The `autostart` block describes the in-container shell steps.
 
 ```yaml
 autostart:

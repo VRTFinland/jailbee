@@ -437,7 +437,7 @@ def test_global_template_writes_autostart_false_by_default():
     opt-in to the integration does not imply auto-launch."""
     parsed = yaml.safe_load(render_global_template())
     assert parsed["jetbrains"]["autostart"] is False
-    assert parsed["chrome"]["autostart"] is False
+    assert parsed["browsers"]["chrome"]["autostart"] is False
 
 
 def test_repo_template_omits_host_specific_defaults_block(tmp_path):

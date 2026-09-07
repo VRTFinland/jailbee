@@ -528,7 +528,7 @@ def test_pool_note_advises_apply_only() -> None:
     change actually touches."""
     from jailbee.upgrade import UPGRADE_NOTES
 
-    matches = [n for n in UPGRADE_NOTES if "pool" in n.reason]
+    matches = [n for n in UPGRADE_NOTES if n.version == (1, 2, 0) and "pool" in n.reason]
     assert len(matches) == 1
     note = matches[0]
     assert note.version == (1, 2, 0)
@@ -583,3 +583,18 @@ def test_pending_reports_the_releases_behind_the_reasons() -> None:
     )
     got = pending("1.2.0", {"base_build": Watermark((1, 1, 0), observed=False)}, notes=notes)
     assert got.actions[0].releases == ((1, 1, 0), (1, 2, 0))
+
+
+def test_the_130_notes_are_split_by_action() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 0)]
+    assert len(notes) == 2
+    by_action = {frozenset(n.actions): n.reason for n in notes}
+    assert frozenset({"base_build"}) in by_action
+    assert frozenset({"apply"}) in by_action
+    # The base-build reason must not mention profile or mount work, and
+    # the apply reason must not mention the image: a combined entry would
+    # print each action the other's reasons.
+    assert "image" in by_action[frozenset({"base_build"})]
+    assert "image" not in by_action[frozenset({"apply"})]

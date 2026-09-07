@@ -94,8 +94,7 @@ def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
     mocker.patch("jailbee.autostart.run_autostart")
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app,
@@ -103,8 +102,41 @@ def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_called_once()
-    open_ide.assert_called_once()
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {"ide", "chrome"}
+
+
+def test_restart_continues_launching_chrome_after_ide_launcher_is_missing(mocker):
+    """Finding 1 (review round): the IDE and Chrome autostart launches in
+    `_post_start_actions` are independent — a missing Toolbox launcher for
+    the IDE (an ordinary state, not a crash) must not also skip Chrome, and
+    must not abort `jailbee restart`.
+
+    Task 17: this containment now lives in `apps.launch_autostart_apps`, not
+    in a `cli.py`-local wrapper, so the reported-failure assertion patches
+    `jailbee.tui.error` (where `apps.py` calls it) rather than `jailbee.cli.error`.
+    """
+    _common_mocks(mocker)
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    mocker.patch("jailbee.autostart.run_autostart")
+    error_mock = mocker.patch("jailbee.tui.error")
+
+    def fake_launch(cfg, incus, container, spec, args=None):
+        if spec.name == "ide":
+            raise ValueError("No idea launcher found in /opt/jetbrains-toolbox/apps")
+
+    launch = mocker.patch("jailbee.apps.launch", side_effect=fake_launch)
+
+    result = runner.invoke(
+        app,
+        ["restart", "myrepo-feat-x", "--config", str(FIXTURES / "full_config.yaml")],
+    )
+
+    assert result.exit_code == 0, result.output
+    error_mock.assert_called_once()
+    assert "idea" in error_mock.call_args.args[0]
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {"ide", "chrome"}
 
 
 def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
@@ -121,16 +153,14 @@ def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
         "jetbrains:\n  enabled: false\n  autostart: true\nchrome:\n  autostart: false\n"
     )
 
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app, ["restart", "myrepo-feat-x", "--config", str(repo / ".gie" / "config.yaml")]
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_not_called()
-    open_ide.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_restart_skips_chrome_when_chrome_disabled(mocker, tmp_path):
@@ -147,13 +177,11 @@ def test_restart_skips_chrome_when_chrome_disabled(mocker, tmp_path):
         "chrome:\n  enabled: false\n  autostart: true\njetbrains:\n  autostart: false\n"
     )
 
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
         app, ["restart", "myrepo-feat-x", "--config", str(repo / ".gie" / "config.yaml")]
     )
 
     assert result.exit_code == 0, result.output
-    open_chrome.assert_not_called()
-    open_ide.assert_not_called()
+    launch.assert_not_called()

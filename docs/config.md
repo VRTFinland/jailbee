@@ -27,7 +27,7 @@ Repo-level values overlay user-level values. The effective `Config` Python objec
 | Source type | Rule | How to reset |
 |---|---|---|
 | Scalar (`str`, `int`, `bool`, `Path`, enum) | Repo value replaces user value | `null` in repo clears |
-| List | Repo list appended to user list | `[]` in repo replaces with empty list |
+| List | Repo list appended to user list (exception: `apps.<name>.command` replaces instead — see [`apps` layering](#apps-layering)) | `[]` in repo replaces with empty list |
 | Map / dict | Recursive deep-merge per key | No bulk reset — set an individual key to `null` to clear it (an empty `{}` is a no-op) |
 
 Example: a user-level `host_mounts` entry plus a repo-level one yields two mounts after merge. A repo that needs to *exclude* a user mount must `host_mounts: []` and re-list everything it wants.
@@ -46,9 +46,11 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `jetbrains.userprefs_from_host` | global | Personal license state (off by default — opt in only to share host JBA login) |
 | `jetbrains.ai_enabled` | global | Personal — turn on if you use JetBrains AI Assistant |
 | `jetbrains.toolbox_host_path` | global | Personal Toolbox install path |
-| `chrome.enabled` | global | Personal — turn on if you want `jailbee chrome` / auto-launch. Default `false`. |
-| `chrome.dark_mode` | global | Personal preference |
-| `chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`) |
+| `browsers.chrome.enabled` / `browsers.firefox.enabled` | global | Personal — turn on if you want `jailbee chrome` / `jailbee firefox` / auto-launch. Both default `false`. |
+| `browsers.chrome.dark_mode` / `browsers.firefox.dark_mode` | global | Personal preference |
+| `browsers.chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`). Firefox has no host default — it defaults to `source: image` instead. |
+| `browsers.default` | global | Personal — which browser `jailbee browser` opens when more than one is enabled |
+| `apps.<name>` | repo | A GUI app is part of the repo's tooling, like `agents:` |
 | `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). `dashboard:` is deprecated — the dashboards keep their own view state instead, not a config block at either layer. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
@@ -59,8 +61,8 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `jetbrains.ide` | repo | Repo's stack determines the IDE |
 | `jetbrains.autostart` | repo | Repo decides whether autostart launches IDE |
 | `jetbrains.share_idea` | repo | Repo decides whether to shadow VCS-tracked `.idea/*` with a per-repo shared mount |
-| `chrome.url` | repo | Repo's app URL |
-| `chrome.autostart` | repo | Repo's autostart workflow |
+| `browsers.chrome.url` / `browsers.firefox.url` | repo | Repo's app URL |
+| `browsers.chrome.autostart` / `browsers.firefox.autostart` | repo | Repo's autostart workflow |
 | `autostart.on_create`, `autostart.on_start` | repo | Repo-specific runtime workflow |
 | `container.env` | repo | Repo-specific runtime env (`NODE_OPTIONS`, app feature flags, …) |
 | `shared_dir` | repo only (auto-derived) | Setting globally forces all repos to share the same dir |
@@ -157,7 +159,7 @@ At runtime inside the container, `install.sh` skips any empty (zero-byte) snippe
 | `05-extra-apt.sh` | Packages from `golden.extra_apt_packages` | `EXTRA_APT_PACKAGES` |
 | `10-locale.sh` | `en_US.UTF-8` locale | — |
 | `15-prompt.sh` | Bash prompt branch indicator (`$JAILBEE_BRANCH`) | `CONTAINER_USER` |
-| `60-gui-libs.sh` | JetBrains/Chrome runtime libs + fonts | — |
+| `60-gui-libs.sh` | JetBrains/Chrome/Firefox runtime libs + fonts | — |
 | `75-github-cli.sh` | GitHub CLI (`gh`) from `cli.github.com` | — |
 
 ### Stacks (`golden.stacks`)
@@ -219,6 +221,8 @@ golden:
 | `30-nodejs.sh` | `nodejs` | Node.js + per-user `~/.npmrc` | `NODE_MAJOR`, `JAILBEE_USER_HOME`, `CONTAINER_USER` |
 | `40-python.sh` | `python` | `python${PYTHON_VERSION}` + venv + pip | `PYTHON_VERSION` (no auto-source — set via `provision_env`; `golden.python` is deprecated and does *not* feed it) |
 | `50-docker.sh` | `docker` | Docker Engine + AppArmor systemd override; adds dev user to docker group | `CONTAINER_USER` |
+| `70-chrome.sh` | `chrome` | Google Chrome from Google's own apt repository | — |
+| `70-firefox.sh` | `firefox` | Mozilla Firefox from Mozilla's own apt repository, pinned above Ubuntu's transitional/snap package | — |
 | `80-ecr-helper.sh` | `ecr-helper` | `amazon-ecr-credential-helper` | — |
 | `90-registry-mirror-ca.sh` | `registry-mirror-ca` | Imports `/opt/jailbee-mirror-ca.crt` into the Java truststore (no-op if absent) | — |
 
@@ -228,6 +232,16 @@ enabled. `golden.stacks` auto-stages `registry-mirror-ca` whenever both
 `java` and `docker` are on (see [Stacks](#stacks-goldenstacks) above).
 Unknown names in `enable_snippets` are ignored with a warning at
 `jailbee base build` time.
+
+`70-chrome.sh` and `70-firefox.sh` are not staged via `enable_snippets` at
+all: `golden.browser_snippet_names` derives them straight from
+`browsers.<name>.source` — a browser enabled with `source: image` gets its
+snippet automatically, with no separate toggle to keep in sync. Both run
+after the always-on `60-gui-libs.sh`, which installs the shared X11/Wayland/EGL
+libraries and fonts a browser needs to render at all. `70-chrome.sh` fails
+the build outright on an arm64 golden-image host — Google publishes no
+`linux/arm64` package — and points at `browsers.chrome.source: host` or
+Firefox instead.
 
 ### Snippet contract
 
@@ -341,8 +355,8 @@ container:
 ### `shared_dir`
 
 Host directory that holds JailBee's shared state: shared caches (pnpm,
-gradle, npm, m2), JetBrains config/data, Chrome pool slots, and Claude
-state. It is the host-side *root* for these — each entry is bind-mounted
+gradle, npm, m2), JetBrains config/data, Chrome and Firefox pool slots, and
+Claude state. It is the host-side *root* for these — each entry is bind-mounted
 individually at its own in-container path (e.g. `~/.claude`, and the
 cache paths), not under a single `/mnt/shared` mount point.
 
@@ -554,6 +568,11 @@ the matching `golden.enable_snippets` entry.
 > `~/.claude` mount: the golden image exports
 > `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
 > `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. See `### claude` below.
+>
+> `chrome-profile` (`chrome-pool` → `~/.config/google-chrome`) and
+> `firefox-profile` (`firefox-pool` → `~/.mozilla/firefox`) are appended the
+> same way, when `browsers.chrome.enabled: true` / `browsers.firefox.enabled:
+> true` respectively. See `### browsers` below.
 
 `ssh` is seeded on first `jailbee init` from host `~/.ssh/` (`config`,
 `known_hosts`, `config.d/`) when `ssh.seed_from_host` is on (default).
@@ -577,13 +596,14 @@ An entry can carry its own `pool:` block instead of relying on
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. `chrome-profile: false` is also rejected: its host directory *is* the pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Use `chrome.enabled: false` to turn Chrome off. |
+| `pooled_caches` | dict of `name` → bool | `{}` | Per-cache override of pooling. `true` pools a `shared_caches` entry using its builtin preset (`POOL_PRESETS[name]`); `false` keeps it a plain shared mount. A key naming a cache with no builtin preset is rejected at load time unless that cache's `shared_caches` entry carries its own `pool:` block. `chrome-profile: false` and `firefox-profile: false` are also rejected: each one's host directory *is* its pool root, so an un-pooled mount would point every container at the pool's own `slots/` and `by-container/`. Use `browsers.chrome.enabled: false` / `browsers.firefox.enabled: false` to turn that browser off instead. |
 
 A pooled cache is **not** mounted by the binds profile like the rest of
 `shared_caches`. Instead each container gets its own slot directory under
 `<shared_dir>/<host_subpath>/slots/`, attached as a per-container disk
 device named `<cache name>-slot` — allocated on `jailbee new` and on every
-boot (or on first use, for Chrome), released on `jailbee destroy`. This is
+boot (or on first use, for `chrome-profile` and `firefox-profile`), released
+on `jailbee destroy`. This is
 what stops two containers from contending on one tool's lock files: Gradle
 and Maven both take an inter-process lock on their cache directory, so a
 build in one container used to block or fail while another container's
@@ -596,6 +616,7 @@ A key absent from `pooled_caches` follows the preset's own `default_on`:
 | `gradle` | `true` | `caches/modules-2/files-2.1`, `wrapper/dists` |
 | `m2` | `true` | `repository` |
 | `chrome-profile` | `true` | none — SQLite + `Preferences` are rewritten in place |
+| `firefox-profile` | `true` | none — `places.sqlite` and `prefs.js` are rewritten in place |
 | `npm` | `false` | `_cacache` |
 | `pnpm-store` | `false` | `v3/files` |
 
@@ -615,7 +636,10 @@ that a tool rewrites in place, would restore exactly the cross-container
 sharing pooling exists to remove. `wipe_paths` and `stale_globs` are the
 other side of that same rule: content excluded from seeding and removed
 when a slot is released — regenerable bulk (Gradle's `daemon/` dir) and
-stale lock files an unclean exit left behind, respectively.
+stale lock files an unclean exit left behind, respectively. Both accept
+glob patterns; `wipe_paths` needs them for Firefox, whose profile
+directory carries a random `<id>.default-release/` component that no
+literal path can name (`*/cache2`).
 
 To pool a cache with no builtin preset — including one of your own
 `shared_caches` entries — give that entry an explicit `pool:` block
@@ -634,8 +658,9 @@ shared_caches:
 **An explicit `pool:` block on a `shared_caches` entry always overrides
 `pooled_caches`** — even a `pooled_caches: {my-tool-cache: false}` key does
 not un-pool it. This is also true of the presets themselves: setting
-`pool:` on the `gradle`/`m2`/`chrome-profile`/`npm`/`pnpm-store` entries
-replaces their builtin `PoolSpec` outright rather than merging into it.
+`pool:` on the `gradle`/`m2`/`chrome-profile`/`firefox-profile`/`npm`/
+`pnpm-store` entries replaces their builtin `PoolSpec` outright rather than
+merging into it.
 
 `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` inspect and clean
 pool slots — see [`commands.md`](commands.md). A pre-existing
@@ -833,17 +858,19 @@ enabled — via `golden.stacks` (recommended, see
 
 ### Master switches — opt-in by default
 
-Every host-tooling block (`gpg`, `ssh`, `jetbrains`, `chrome`) ships with
-`enabled: false`. None of them does anything until the user opts in,
-typically at the global layer (`~/.config/jailbee/global.yaml`). Per-repo
-overrides can also turn a block on for repos that need it. The point is
-to keep the container minimal until the user explicitly says "yes, wire
-this host integration in."
+Every host-tooling block (`gpg`, `ssh`, `jetbrains`, and each browser under
+`browsers`) ships with `enabled: false`. None of them does anything until
+the user opts in, typically at the global layer
+(`~/.config/jailbee/global.yaml`). Per-repo overrides can also turn a block
+on for repos that need it. The point is to keep the container minimal
+until the user explicitly says "yes, wire this host integration in."
 
-`jailbee config init --global` writes a file that flips all four to
-`enabled: true` — a working starting point for a typical developer setup,
-not a literal echo of the built-in defaults. The file itself is generated,
-not hand-written: its comments are each field's own schema description
+`jailbee config init --global` writes a file that flips `gpg`, `ssh`,
+`jetbrains` and `browsers.chrome` to `enabled: true` — a working starting
+point for a typical developer setup, not a literal echo of the built-in
+defaults. `browsers.firefox` is left off in that seed; enable it by hand if
+you want it too. The file itself is generated, not hand-written: its
+comments are each field's own schema description
 (`config_writer.render_documented`), so they cannot drift from this
 document or the code the way a hand-maintained template could.
 
@@ -931,15 +958,131 @@ tokens are written once per session). If both write at the same time,
 last-flush wins; the loser's in-memory state diverges until the next
 IDE restart.
 
-### `chrome`
+### `browsers`
+
+Chrome and Firefox as registry entries — see [`apps`](#apps) below for the
+umbrella both feed into, and [Provisioning snippets](#provisioning-snippets-installd)
+above for how `source: image` reaches the golden image.
+
+**Turning on a browser for the first time needs `jailbee base build` too,
+not only a later `source` change.** Under the default `source: image`
+(Firefox), setting `enabled: true` alone does nothing to an already-built
+image — the browser is only installed by `jailbee base build`. `jailbee
+<browser>` on a container from an older image starts, prints its usual
+"Launching …" line, and exits 0: the launch is detached, so a missing
+binary fails silently *inside the container*, visible only in
+`/tmp/jailbee-app-<name>.log` or as `missing` in `jailbee apps ls
+<container>`. Run `jailbee base build` after enabling, the same as after
+changing `source` to `image`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` exits 2 with a clear message, autostart skips the Chrome launch, and the `host_path` auto-mount is omitted from `effective_host_mounts`. |
-| `url` | string \| null | `null` | URL Chrome opens. `null` = no URL. `jailbee chrome <name> <URL>` overrides this per-call. |
-| `dark_mode` | bool | `false` | Pass `--force-dark-mode --enable-features=WebContentsForceDark` regardless of host GTK theme. |
-| `autostart` | bool | `false` | Launch Chrome after autostart steps. No-op if no graphical session, or when `enabled: false`. |
-| `host_path` | path \| null | `/opt/google/chrome` | Host path RO-mounted to `/opt/google/chrome`. The container-side path is hardcoded because `gui.open_chrome` invokes `/opt/google/chrome/google-chrome` directly. Override for non-standard installs (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with `container: /opt/google/chrome` wins. |
+| `default` | `chrome` \| `firefox` \| `null` | `null` | Which browser `jailbee browser` opens. `null` resolves at command time: the single enabled browser if exactly one is, otherwise the command asks you to set this or name one directly (`jailbee chrome` / `jailbee firefox`). Naming a disabled browser here is a config error. |
+| `chrome` | `BrowserConfig` | see below | Google Chrome. |
+| `firefox` | `BrowserConfig` | see below | Mozilla Firefox. |
+
+Each of `browsers.chrome` and `browsers.firefox` is the same `BrowserConfig`
+shape:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` / `jailbee firefox` exits 2 with a clear message, the browser is hidden from `jailbee apps ls`, autostart skips its launch, and the `host_path` auto-mount is omitted from `effective_host_mounts`. |
+| `source` | `host` \| `image` | `host` for Chrome, `image` for Firefox | `host` RO-mounts an existing host install (see `host_path`); `image` installs the browser into the golden image during `jailbee base build` — no host install needed. **Changing `source` needs a re-run to take effect: `jailbee base build` for `image`, `jailbee apply` for `host`.** Firefox defaults to `image` because on Ubuntu the host's Firefox is a snap and `/snap/firefox` is not usefully mountable into a container; Chrome defaults to `host`, matching how it has always worked. |
+| `host_path` | path \| null | `/opt/google/chrome` for Chrome, `null` for Firefox | Host path RO-mounted into the container when `source: host` (must be `null` under `source: image`). The container-side mount target is hardcoded per browser (`/opt/google/chrome`, `/opt/firefox`) — `browsers.py`'s `BROWSER_BINARIES` map is what actually invokes the binary there. Override for a non-standard install (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with a matching `container:` wins. Firefox has no default here because its host install is normally a snap — but setting `host_path` on Firefox without also setting `source` implies `source: host`, so naming a real install is enough. |
+| `url` | string \| null | `null` | URL the browser opens on launch. `null` = no URL. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override this per-call. |
+| `dark_mode` | bool | `false` | Force a dark theme — **asymmetric between the two browsers**. Chrome gets `--force-dark-mode --enable-features=WebContentsForceDark`, which darkens page content as well as the browser chrome. Firefox has no equivalent flag, so it gets `GTK_THEME=Adwaita:dark` instead, which darkens the browser UI only — pages render exactly as the site sends them; forcing dark page content in Firefox is an extension's job, not jailbee's. |
+| `autostart` | bool | `false` | Launch this browser after autostart steps. No-op if no graphical session is detected, or when `enabled: false`. |
+
+Each enabled browser gets its own per-container profile pool
+(`chrome-profile` / `firefox-profile` — see [`pooled_caches`](#pooled_caches)),
+so two containers running the same browser never fight over one profile
+directory.
+
+**The top-level `chrome:` block from before 1.3.0 still works** in 1.3.x,
+folded into `browsers.chrome` at load time with a one-time deprecation hint
+on stderr naming `docs/config.md`. Unlike the `agents`/`claude` legacy
+alias, defining both is not an error: an explicit `browsers.chrome` overlays
+the folded legacy block field-by-field, so a half-migrated config behaves
+the way the newer spelling says. It is removed entirely in 1.4.0 — migrate
+to `browsers.chrome`.
+
+The fold runs on the **merged** global+repo dict, so `browsers:` wins over
+`chrome:` regardless of which layer each one sits in — a `browsers.chrome`
+block in `~/.config/jailbee/global.yaml` overlays a repo's legacy
+`chrome:` block, not the other way round. Migrate the global layer last,
+or a repo still on the old spelling silently loses its overrides.
+
+### `apps`
+
+User-defined GUI applications beyond the built-in browsers and JetBrains
+IDE — an AppImage, a vendor binary, a wrapper script. A mapping keyed by
+app name; each entry resolves to the same `AppSpec` shape the builtins use,
+so `jailbee apps ls`, autostart and the dashboards handle a user-defined app
+identically to Chrome or the IDE. No pool and no mount is generated for an
+`apps:` entry — that YAGNI call is deliberate: if an app needs a
+per-container profile pool or an auto-mount, model it as a builtin instead.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `command` | list[string] | required | Container-side command to run. A string is split with shell quoting rules; a list is taken as-is. The first element is an absolute container path or a name on the container's `PATH` — never resolved on the host. A repo layer's value **replaces** the global layer's (see [Layering](#apps-layering) below). |
+| `args` | list[string] | `[]` | Extra arguments appended after `command`. Arguments passed on the `jailbee apps run` command line are appended after these. A repo layer's entries **append** to the global layer's. |
+| `cwd` | string | `"repo"` | Working directory inside the container: `repo` (the checkout), `home` (the dev user's home), or an absolute container path. |
+| `env` | map[string, string] | `{}` | Extra environment variables, merged over the GUI environment jailbee already supplies (`HOME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`). |
+| `description` | string | `""` | One-line summary shown in `jailbee apps ls`. |
+| `top_level` | bool | `false` | Promote this app to a top-level command, so `jailbee <name>` launches it directly instead of `jailbee apps run <name>`. A built-in command of the same name always wins; **a name that collides with one is a config error** (`jailbee config validate` reports it, naming the fix: rename the app, or set `top_level: false` and use `jailbee apps run <name>`). |
+| `autostart` | bool | `false` | Launch this app after autostart steps complete. |
+
+```yaml
+apps:
+  figma:
+    command: /opt/figma-linux/figma-linux
+    top_level: true
+    description: "Figma desktop app"
+```
+
+With the above, `jailbee figma [args…]` launches it in the container this
+branch would attach to, and `jailbee figma --container <container>
+[args…]` names a different one. Both are literally
+`jailbee apps run figma …` — the promotion only drops the `apps run`, and
+everything after the app name is passed through untouched. Arguments that
+start with a dash need a `--` separator, exactly as `jailbee apps run`
+does: `jailbee figma -- --no-sandbox`.
+
+**`jailbee figma <container>` does not name a container.** `apps run`
+takes the container as an option, not as a positional, so a bare name
+there is appended to the app's own arguments: the app starts in the
+default container and receives `<container>` on its command line, with no
+error. Use `--container`.
+
+Note the asymmetry: `jailbee apps run` takes the app name as its first
+positional and the container behind `--container`, while `jailbee chrome
+[container] [url]` takes the container as its first positional. The two
+shapes can't be unified — `jailbee apps run` allows an optional app name,
+an optional container and a variadic list of extra arguments, and three
+positionals with an optional one in the middle cannot be told apart
+reliably.
+
+An app name must match `[a-z0-9][a-z0-9._-]*` — it becomes a command word,
+a log-file path segment (`/tmp/jailbee-app-<name>.log`), and a dashboard
+action verb, so it is restricted to characters none of the three need
+quoted.
+
+`jailbee apps ls [<container>]` lists every app this config can launch —
+builtins first, then `apps:` entries, in that order regardless of YAML key
+order. Without a container it is configuration only; name one to add a
+STATUS column that actually probes each app inside it (`present` /
+`missing`).
+
+<a id="apps-layering"></a>
+**Layering.** `apps:` is an ordinary merge-layer key, so an app defined in
+`~/.config/jailbee/global.yaml` merges with a repo's `apps:` per app name,
+and within one app per key — a repo can set `autostart: true` on a
+host-wide app without restating its `command`. One key breaks the general
+["lists append"](#merge-rules) rule on purpose: a repo layer's `command`
+**replaces** the global layer's rather than appending to it, because a
+second binary path would otherwise become an *argument* to the first.
+`args` still appends, which is what lets a repo add one flag to a
+host-wide app.
 
 ### `agents`
 
@@ -1070,9 +1213,10 @@ terminfo file into every container so the entry resolves naturally.
 
 ### `autostart`
 
-IDE and Chrome launch decisions live in `jetbrains.autostart` and
-`chrome.autostart` (not here). The `autostart` block describes the shell
-steps that run inside the container during startup.
+IDE and browser launch decisions live in `jetbrains.autostart`,
+`browsers.<name>.autostart` and `apps.<name>.autostart` (not here). The
+`autostart` block describes the shell steps that run inside the container
+during startup.
 
 Top-level keys:
 
@@ -1638,7 +1782,7 @@ use gh" state.
 
 Optional. Host-global settings shared across all repos. It is the required
 home for the [`github`](#github) block (above) and the usual home for the
-opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `chrome`, `agents`).
+opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `browsers`, `agents`).
 `agents:` is valid at both layers, though — see [`agents`](#agents) above —
 and a repo entry merges over a global one, so a team default set globally
 can still be adjusted per repo.

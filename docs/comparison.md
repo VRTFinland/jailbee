@@ -60,7 +60,7 @@ Concretely, that means the container behaves like a Linux box you own:
 | Sign a commit with the key on your YubiKey | The host **gpg-agent's socket** is shared into the container and `SSH_AUTH_SOCK` points at it, so `git commit -S` and `ssh` work inside while the private key stays on the host — and the touch is still yours to give. |
 | Drive a phone plugged into your laptop | Declare `host_ports: [{ name: adb, port: 5037 }]` and plain `adb devices` inside the container sees whatever the host has plugged in — no `ADB_SERVER_SOCKET`, no second adb server. [Recipe](project-config.md#talking-to-android-devices-over-adb). |
 | Run systemd services | It has systemd. |
-| Test your stack in a real browser | `jailbee chrome <name>` launches Chrome **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
+| Test your stack in a real browser | `jailbee chrome <name>` / `jailbee firefox <name>` launches Chrome or Firefox **inside the container**, rendered onto your Wayland session. It reaches the container's own `localhost:3000`. |
 | Use a JetBrains IDE against the code | `jailbee ide <name>`, same passthrough. |
 | Install something weird | `apt install` it. It's a full Linux userland, not a locked-down image. |
 
@@ -344,13 +344,18 @@ the runtime is the hard part *and* you want the whole runtime fenced.
 - **A golden image build**, ~10–15 minutes, once per repo stack. After that
   containers are copy-on-write clones and creation is fast.
 - **Disk.** Cheap per container, not free.
-- **JetBrains and Chrome out of the box; anything else by hand.** `jailbee ide`
-  accepts the JetBrains launcher names and `jailbee chrome` knows Chrome, and
-  there is no devcontainer integration. The passthrough underneath is generic
-  — it hands the container the host's Wayland socket and the environment any
-  GUI app needs — so VS Code installed into the golden image and started from
-  a shell does work; there is simply no command that sets it up for you. Only
-  one IDEA-family IDE at a time across containers (shared profile).
+- **JetBrains, Chrome and Firefox out of the box; anything else registered by
+  hand.** `jailbee ide` accepts the JetBrains launcher names, and
+  `jailbee chrome` / `jailbee firefox` know their browsers — Firefox
+  installs straight into the golden image, since Ubuntu's own Firefox is a
+  snap and can't be mounted in. Anything else — VS Code, Figma, a vendor
+  tool — is a few lines under `apps:` (command, working directory, optional
+  autostart), which gets it `jailbee apps run <name>` and a place in
+  `jailbee apps ls`; there is no devcontainer integration, and jailbee does
+  not install the binary itself. The passthrough underneath is generic — it
+  hands the container the host's Wayland socket and the environment any GUI
+  app needs. Only one IDEA-family IDE at a time across containers (shared
+  profile); browsers each get their own per-container profile.
 - **A shared kernel.** A system container is the right boundary for code you
   are supervising loosely; it is not a multi-tenant boundary against a
   determined attacker, and a kernel bug is an escape path. Incus can run real

@@ -2014,6 +2014,14 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
     incus.exists.side_effect = lambda n: n == "myrepo-feat-x"
     incus.exec_interactive.return_value = 0
 
+    # env is now the GUI environment (jailbee.gui.gui_env), passed
+    # unconditionally: HOME is the load-bearing fix (incus exec --user
+    # doesn't read /etc/passwd), the rest is inert for a non-GUI command
+    # like this one. Pin the wiring, not gui_env's own host-dependent
+    # values (WAYLAND_DISPLAY/DISPLAY come from the host environment).
+    fake_env = {"HOME": "/home/dev", "WAYLAND_DISPLAY": "wayland-9", "DISPLAY": ":9"}
+    mocker.patch("jailbee.gui.gui_env", return_value=fake_env)
+
     result = CliRunner().invoke(app, ["exec", "feat-x", "--", "claude"])
     assert result.exit_code == 0, result.stdout
     import os
@@ -2023,7 +2031,7 @@ def test_exec_default_cwd_is_container_repo_dir(mocker, tmp_path):
         ["bash", "-lc", "cd /home/dev/myrepo && exec claude"],
         uid=os.getuid(),
         gid=os.getgid(),
-        env={"HOME": "/home/dev", "USER": "dev", "LOGNAME": "dev"},
+        env=fake_env,
         init_groups=True,
     )
 
@@ -2751,11 +2759,11 @@ def test_ide_cmd_uses_cfg_jetbrains_ide_when_no_app_flag(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "pycharm"
+    assert launch.call_args.args[3].command == ["pycharm"]
 
 
 def test_ide_cmd_errors_when_jetbrains_disabled(tmp_path, mocker):
@@ -2776,12 +2784,12 @@ def test_ide_cmd_errors_when_jetbrains_disabled(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
 
     assert result.exit_code == 2
-    open_ide.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_ide_cmd_defaults_to_idea_when_no_app_and_no_override(tmp_path, mocker):
@@ -2799,11 +2807,11 @@ def test_ide_cmd_defaults_to_idea_when_no_app_and_no_override(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "idea"
+    assert launch.call_args.args[3].command == ["idea"]
 
 
 def test_ide_cmd_app_flag_overrides_cfg_ide(tmp_path, mocker):
@@ -2820,11 +2828,43 @@ def test_ide_cmd_app_flag_overrides_cfg_ide(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_ide = mocker.patch("jailbee.gui.open_ide")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["ide", "feat-x", "--app", "pycharm"])
     assert result.exit_code == 0, result.stdout
-    assert open_ide.call_args.args[3] == "pycharm"
+    assert launch.call_args.args[3].command == ["pycharm"]
+
+
+def test_ide_cmd_app_flag_spec_still_opens_the_project(tmp_path, mocker):
+    """The `--app` one-off spec is built by hand here, so it can drift from
+    `ide.builtin_specs`.
+
+    Without `append_cwd_arg` the launcher gets no project path and the IDE
+    opens the Welcome screen — the same regression `test_apps.py`'s
+    `test_the_ide_launcher_is_given_the_repo_dir_to_open` pins for the
+    registry spec, asserted here at the boundary `cli.py` owns: the spec it
+    hands to `apps.launch`.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_ide(tmp_path, "idea")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch(
+        "jailbee.cli._resolve_attachable",
+        return_value=(mocker.MagicMock(), "myrepo-feat-x"),
+    )
+    launch = mocker.patch("jailbee.apps.launch")
+
+    result = CliRunner().invoke(app, ["ide", "feat-x", "--app", "pycharm"])
+    assert result.exit_code == 0, result.stdout
+    spec = launch.call_args.args[3]
+    assert spec.append_cwd_arg is True
+    assert spec.cwd == "repo"
 
 
 # --- `gie chrome` URL resolution (cfg.chrome_url + CLI override) ---
@@ -2858,11 +2898,17 @@ def test_chrome_cmd_uses_cfg_chrome_url_when_no_url_arg(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] == "https://example.com"
+    # No explicit URL argument: `args` stays None and the spec's own
+    # `default_url` (from `browsers.chrome.url`) is what `apps.launch` falls
+    # back to — asserted directly here so a regression that resurrects the
+    # old `url or cfg.chrome.url` double-application bug (which would smuggle
+    # the configured URL into `args` too) is caught.
+    assert launch.call_args.args[4] is None
+    assert launch.call_args.args[3].default_url == "https://example.com"
 
 
 def test_chrome_cmd_url_arg_overrides_cfg_chrome_url(tmp_path, mocker):
@@ -2879,11 +2925,11 @@ def test_chrome_cmd_url_arg_overrides_cfg_chrome_url(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x", "https://from-cli"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] == "https://from-cli"
+    assert launch.call_args.args[4] == ["https://from-cli"]
 
 
 def test_chrome_cmd_errors_when_chrome_disabled(tmp_path, mocker):
@@ -2904,12 +2950,12 @@ def test_chrome_cmd_errors_when_chrome_disabled(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
 
     assert result.exit_code == 2
-    open_chrome.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_chrome_cmd_passes_none_when_no_url_anywhere(tmp_path, mocker):
@@ -2926,11 +2972,12 @@ def test_chrome_cmd_passes_none_when_no_url_anywhere(tmp_path, mocker):
         "jailbee.cli._resolve_attachable",
         return_value=(mocker.MagicMock(), "myrepo-feat-x"),
     )
-    open_chrome = mocker.patch("jailbee.gui.open_chrome")
+    launch = mocker.patch("jailbee.apps.launch")
 
     result = CliRunner().invoke(app, ["chrome", "feat-x"])
     assert result.exit_code == 0, result.stdout
-    assert open_chrome.call_args.args[3] is None
+    assert launch.call_args.args[4] is None
+    assert launch.call_args.args[3].default_url is None
 
 
 # --- Phase A Task 7: config show --layer -------------------------------------
@@ -7353,6 +7400,92 @@ def test_finalize_new_skips_gui_without_session(make_cfg, tmp_path, mocker):
     # No graphical session -> GUI launch is skipped with a warning. (The PR
     # label is persisted in new_container, not here — see test_lifecycle.py.)
     warn_mock.assert_called_once()
+
+
+def test_finalize_new_launches_gui_apps_when_session_available(make_cfg, tmp_path, mocker):
+    """Mirrors `test_restart_launches_chrome_and_ide_when_gui_available` in
+    test_cli_restart.py. Before this test, `_finalize_new`'s positive
+    GUI-launch branch — the lines Task 14 rewrote against the registry — ran
+    under no test at all (the only existing test here forces
+    has_graphical_session=False). That is how an unguarded `ValueError` from
+    `resolve_launcher` slipped through review unnoticed (see the
+    `_finds_missing_launcher` test below, which pins the fix).
+    """
+    from jailbee.apps import get_app
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    cfg = cfg.model_copy(
+        update={
+            "jetbrains": cfg.jetbrains.model_copy(update={"enabled": True, "autostart": True}),
+            "browsers": cfg.browsers.model_copy(
+                update={
+                    "chrome": cfg.chrome.model_copy(update={"enabled": True, "autostart": True})
+                }
+            ),
+        }
+    )
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    launch = mocker.patch("jailbee.apps.launch")
+
+    from jailbee.cli import _finalize_new
+
+    _finalize_new(cfg, incus, f"{cfg.container_prefix}-feat-foo", launch_gui=True)
+
+    launched = {c.args[3].name for c in launch.call_args_list}
+    assert launched == {get_app(cfg, "ide").name, get_app(cfg, "chrome").name}
+
+
+def test_finalize_new_launches_chrome_even_when_ide_launcher_is_missing(make_cfg, tmp_path, mocker):
+    """Finding 1 (review round): the IDE and Chrome autostart launches are
+    independent. A missing Toolbox launcher for the IDE (an ordinary state —
+    a container built before the Toolbox mount existed, or
+    `toolbox_host_path: null`) must not also skip Chrome, and must not raise
+    out of `_finalize_new` — the container is already created by this point
+    in `jailbee new`, so there is nothing left to abort into.
+
+    Task 17: this containment now lives in `apps.launch_autostart_apps`, not
+    in a `cli.py`-local wrapper, so the reported-failure assertion patches
+    `jailbee.tui.error` (where `apps.py` calls it) rather than `jailbee.cli.error`.
+    """
+    from jailbee.incus import Incus
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    cfg = cfg.model_copy(
+        update={
+            "jetbrains": cfg.jetbrains.model_copy(
+                update={"enabled": True, "autostart": True, "ide": "idea"}
+            ),
+            "browsers": cfg.browsers.model_copy(
+                update={
+                    "chrome": cfg.chrome.model_copy(update={"enabled": True, "autostart": True})
+                }
+            ),
+        }
+    )
+    incus = Incus()
+    mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
+    mocker.patch.object(Incus, "exec", return_value="")  # no ide launcher found
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.pool.allocate")
+    error_mock = mocker.patch("jailbee.tui.error")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    from jailbee.cli import _finalize_new
+
+    # Must not raise: one app's resolver failing must not abort the caller.
+    _finalize_new(cfg, incus, f"{cfg.container_prefix}-feat-foo", launch_gui=True)
+
+    # The IDE's failure was reported...
+    error_mock.assert_called_once()
+    assert "idea" in error_mock.call_args.args[0]
+    # ...and Chrome still launched despite it.
+    assert detached.call_count == 1
+    assert "google-chrome" in detached.call_args.args[3]
 
 
 def test_new_worker_success_deletes_op_and_finalizes(make_cfg, tmp_path, monkeypatch, mocker):

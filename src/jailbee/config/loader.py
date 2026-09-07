@@ -19,6 +19,7 @@ from jailbee.config.common import (
     _read_yaml_or_empty,
     _split_host_keys,
     deep_merge,
+    merge_apps_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.models_columns import (
@@ -42,6 +43,7 @@ from jailbee.config.retired import (
 from jailbee.config.root import Config
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
+from jailbee.tui import hint
 
 if TYPE_CHECKING:
     # Runtime import would be a cycle: `global_config` imports from
@@ -95,7 +97,7 @@ def _validate_pooled_caches(cfg: Config) -> None:
         preset = POOL_PRESETS.get(name)
         if not wanted and preset is not None and preset.pool_only:
             remedy = (
-                "Set `chrome.enabled: false` to turn Chrome off instead."
+                "Set `browsers.chrome.enabled: false` to turn Chrome off instead."
                 if name == "chrome-profile"
                 else "Disable the integration that adds it instead."
             )
@@ -189,8 +191,57 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> dict[str, object]:
+    """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
+
+    `chrome:` was the only browser block through 1.2.x. Rather than the hard
+    `retired.py` error other renames got, it is accepted for one release with
+    a warning: it lives in `~/.config/jailbee/global.yaml` on every host that
+    ever enabled Chrome, and a hard error there would break every command in
+    every repo at once. Retire in 1.4.0.
+
+    An explicit `browsers:` block wins, so a half-migrated config behaves the
+    way the newer spelling says. The legacy block predates `source:`, so it
+    resolves to `source: host` — the behaviour it has always had.
+
+    The notice goes out via `tui.hint` (stderr), not `tui.warn` (stdout):
+    this runs on every config load, and stdout is where `jailbee ls --format
+    json` and friends put script-parsed output. `warn` would inject
+    `⚠ ...` ahead of that payload for any host with a legacy `chrome:`
+    block. See `hint`'s own docstring for the same reasoning.
+
+    `emit_hint=False` suppresses that notice without changing the fold
+    itself. `config_edit.layers.resolve` needs the fold — so a legacy
+    `chrome:` block still reports a real origin instead of "default" — but
+    calls it on every reload, including while the full-screen editor
+    `Application` is running; printing to the terminal mid-session would
+    corrupt the display, and the CLI's own load of the same file already
+    prints the notice once elsewhere.
+    """
+    legacy = raw.get("chrome")
+    if not isinstance(legacy, dict):
+        return raw
+    if emit_hint:
+        hint(
+            [
+                "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+                "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+            ]
+        )
+    merged = deep_merge({"source": "host", **legacy}, {})
+    browsers = raw.get("browsers")
+    overlay = browsers if isinstance(browsers, dict) else {}
+    result = {k: v for k, v in raw.items() if k != "chrome"}
+    result["browsers"] = deep_merge({"chrome": merged}, overlay)
+    return result
+
+
 def _build_config_from_dict(
-    raw: dict[str, object], config_path: Path, *, origin: str | None = None
+    raw: dict[str, object],
+    config_path: Path,
+    *,
+    origin: str | None = None,
+    emit_hint: bool = True,
 ) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -205,12 +256,16 @@ def _build_config_from_dict(
     `origin` labels the source in error messages when it is not the file at
     `config_path` — a config layer synthesized from `global.yaml`'s
     `scratch.config` has no file of its own.
+
+    `emit_hint` is threaded straight to `resolve_browsers_raw` — see that
+    function's docstring for why a caller would ever want it `False`.
     """
     label = origin or str(config_path)
     try:
         raw = resolve_agents_raw(raw)
     except ConfigError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
+    raw = resolve_browsers_raw(raw, emit_hint=emit_hint)
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)
@@ -339,6 +394,7 @@ def load_config_from_layers(
     path: Path,
     *,
     origin: str,
+    emit_hint: bool = True,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
@@ -352,6 +408,16 @@ def load_config_from_layers(
 
     `global_raw` is the whole `global.yaml` mapping, host-level keys
     included; the split is done here, exactly as the on-disk path does it.
+
+    `emit_hint` reaches `resolve_browsers_raw` through `_build_config_from_dict`
+    unchanged. The default `True` is right for every real load — the CLI path
+    (`_load_config_from_repo_raw`) never overrides it, so the legacy `chrome:`
+    deprecation notice still prints exactly once per ordinary command.
+    `config_edit.layers.validate` passes `False`: it calls this function
+    synchronously from the editor's save handler, while the full-screen
+    `Application` is live, and `hint()` writes straight to a Rich stderr
+    `Console` that bypasses prompt_toolkit — the same terminal-corruption
+    hazard `config_edit.layers.resolve` already guards against on reload.
     """
     # Local import for the same cycle as in `_load_config_from_repo_raw`:
     # global_config imports ConfigError from this package, so importing
@@ -388,7 +454,14 @@ def load_config_from_layers(
             )
 
     merged = deep_merge(global_for_merge, repo_raw)
-    cfg = _build_config_from_dict(merged, path, origin=origin)
+    # `apps:` needs one rule `deep_merge` cannot express: `AppEntry.command`
+    # must be replaced by the repo layer, not appended to (see
+    # `merge_apps_raw`). Only both layers defining `apps:` can hit it.
+    global_apps = global_for_merge.get("apps")
+    repo_apps = repo_raw.get("apps")
+    if isinstance(global_apps, dict) and isinstance(repo_apps, dict):
+        merged["apps"] = merge_apps_raw(global_apps, repo_apps)
+    cfg = _build_config_from_dict(merged, path, origin=origin, emit_hint=emit_hint)
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))

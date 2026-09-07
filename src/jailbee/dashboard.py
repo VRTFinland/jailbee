@@ -21,10 +21,10 @@ import threading
 import time
 import tty
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TextIO
+from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -67,6 +67,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
+    from jailbee.apps import AppSpec
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
@@ -94,6 +95,53 @@ carried by implication and this one has to say outright.
 """
 
 
+class AppMenuEntry(NamedTuple):
+    """One registry app as the action menu needs it: a dispatch verb plus
+    the text to show for it.
+
+    ``verb`` is what :func:`_dispatch_action` splits and inserts the
+    container name after — see :func:`_app_menu_verb` for why it is the bare
+    `AppSpec.name` for a builtin (``ide``, ``chrome``, ``firefox``: each a
+    real top-level ``jailbee`` command taking the container as a plain
+    positional) but ``"apps run <name> --container"`` for a config-sourced
+    `apps:` entry. ``label`` is `AppSpec.description` when the repo's config
+    set one (JetBrains sets ``"JetBrains idea"``, a browser sets ``"Chrome
+    (host)"``); it falls back to the bare app name for a user's ``apps:``
+    entry that left ``description`` empty, so the menu never renders a blank
+    label.
+    """
+
+    verb: str
+    label: str
+
+
+def _app_menu_verb(spec: AppSpec) -> str:
+    """The :func:`_dispatch_action` verb for one registry app.
+
+    A builtin (``chrome``, ``firefox``, ``ide``) is a real top-level
+    ``jailbee`` command that takes the container as a plain positional, so
+    its bare name dispatches correctly, keeps ``action:ide``/``action:chrome``
+    quick keys matching (:data:`KEY_BINDINGS`), and keeps `--force` working
+    through the unmodified :data:`ATTACH_VERBS` check.
+
+    A config-sourced ``apps:`` entry has no such command — dispatching its
+    bare name only works at all when the entry set ``top_level: true``
+    (`entry._top_level_app_names`), and even then `entry.rewrite_app_argv`
+    turns ``jailbee <app> <name>`` into ``apps run <app> <name>``, where
+    Ruling 24 made the container an *option* (``--container``), not a second
+    positional — ``<name>`` would land in the app's own variadic ``args``
+    instead of naming the container, silently launching in the default one.
+    Routing explicitly through ``apps run <name> --container`` here — rather
+    than through the top-level command and its rewrite — dispatches
+    correctly whether or not the entry declared ``top_level``, and works for
+    one that did not (which the bare-name form cannot reach at all: Typer has
+    no such command to rewrite).
+    """
+    if spec.source == "builtin":
+        return spec.name
+    return f"apps run {spec.name} --container"
+
+
 @dataclass
 class RepoGroup:
     """One repo's containers. ``repo_root`` is None for orphan groups
@@ -102,9 +150,13 @@ class RepoGroup:
     that has no ``.jailbee/config.yaml`` of its own, whose config is
     synthesized — so it gates nothing on its own: it says only whether a child
     is addressed with ``--config`` or by its cwd (see :class:`RepoTarget`).
-    ``ide_enabled``/``chrome_enabled`` mirror the repo's own
-    ``jetbrains.enabled``/``chrome.enabled`` config and gate the
-    corresponding action-menu entries; orphan groups keep both False.
+    ``apps`` mirrors the repo's GUI app registry (`apps.resolve_apps`,
+    builtins and `apps:` entries alike) in registry order, and drives the
+    corresponding action-menu entries; orphan groups keep it empty. It
+    replaces what used to be two separate booleans (``ide_enabled``,
+    ``chrome_enabled``) — the registry can hold any number of apps, not just
+    those two, and each carries its own display label (see
+    :class:`AppMenuEntry`).
     ``loose_ttl_default`` is the repo's effective ``loose_auto_revert.after``
     as prompt-ready text — what the GUI's duration dialog pre-selects — or
     None when auto-revert is disabled, which tells the GUI not to ask at all
@@ -118,8 +170,7 @@ class RepoGroup:
     repo_root: str | None
     config_path: Path | None
     containers: list[ContainerInfo]
-    ide_enabled: bool = False
-    chrome_enabled: bool = False
+    apps: list[AppMenuEntry] = field(default_factory=list)
     loose_ttl_default: str | None = None
     push_action_default: str = "ask"
     push_source_default: str = "base"
@@ -300,6 +351,8 @@ def gather_rows(
     jailbee-managed containers whose repo we could not load, as view-only
     orphan groups.
     """
+    from jailbee.apps import resolve_apps
+
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
@@ -326,8 +379,10 @@ def gather_rows(
                     str(cfg.repo_root),
                     repo_config_path(root),
                     containers,
-                    ide_enabled=cfg.jetbrains.enabled,
-                    chrome_enabled=cfg.chrome.enabled,
+                    apps=[
+                        AppMenuEntry(_app_menu_verb(spec), spec.description or spec.name)
+                        for spec in resolve_apps(cfg)
+                    ],
                     loose_ttl_default=_loose_ttl_default(cfg, gcfg),
                     push_action_default=cfg.push.default_action,
                     push_source_default=cfg.push.default_source,
@@ -505,13 +560,16 @@ class MenuContext:
     ``pr_author`` splits the PR containers the way the PR column's ``↓`` marker
     already does: False is a container built from someone else's PR (a review),
     True one whose PR jailbee opened from the container's own branch.
+
+    ``apps`` mirrors the repo's GUI app registry (sourced from
+    ``RepoGroup.apps``) rather than two integration switches — one
+    "Launch <label>" entry appears per :class:`AppMenuEntry`, in order.
     """
 
     state: str
     has_repo: bool
     mode: str = "clone"
-    ide_enabled: bool = False
-    chrome_enabled: bool = False
+    apps: list[AppMenuEntry] = field(default_factory=list)
     current_network: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
@@ -556,11 +614,11 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
 
     Empty for orphan rows (no repo root ⇒ nothing to address a child at, see
     :meth:`RepoTarget.of`); a repo with no config file of its own is *not* one
-    of those and gets the full menu. "Launch IDE"/"Launch Chrome" only appear
-    when the repo's own config enables
-    `jetbrains`/`chrome` respectively (``ide_enabled``/``chrome_enabled``,
-    sourced from ``RepoGroup.ide_enabled``/``chrome_enabled``) — dispatching
-    `jailbee ide`/`jailbee chrome` when the feature is disabled would just fail.
+    of those and gets the full menu. One "Launch <label>" entry appears per
+    :class:`AppMenuEntry` in ``ctx.apps`` (sourced from ``RepoGroup.apps``,
+    itself `apps.resolve_apps`) — offering only apps the repo's own config
+    actually registers, since dispatching `jailbee <verb>` for one that is not
+    would just fail.
 
     For running containers, one "Network: <mode>" entry appears per mode
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
@@ -582,9 +640,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
-    Verbs may carry flags (``"pr --open"``, ``"job log --follow"``): every
-    front-end splits them into argv, and Typer accepts options before the
-    positional container name.
+    Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
+    ``"apps run <name> --container"`` for a config-sourced app — see
+    :func:`_app_menu_verb`): every front-end splits them into argv, and Typer
+    accepts options before the positional container name.
     """
     if not ctx.has_repo:
         return []
@@ -609,10 +668,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
             ("Attach tmux", "tmux"),
             ("Open shell", "shell"),
         ]
-        if ctx.ide_enabled:
-            actions.append(("Launch IDE", "ide"))
-        if ctx.chrome_enabled:
-            actions.append(("Launch Chrome", "chrome"))
+        for app in ctx.apps:
+            actions.append((f"Launch {app.label}", app.verb))
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
                 actions.append((f"Network: {mode}", f"net {mode}"))
@@ -1225,8 +1282,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
             state=container.state,
             has_repo=RepoTarget.of(group) is not None,
             mode=container.mode,
-            ide_enabled=group.ide_enabled,
-            chrome_enabled=group.chrome_enabled,
+            apps=group.apps,
             current_network=container.network,
             pr_number=container.pr_number,
             pr_author=container.pr_author,
@@ -1404,7 +1460,24 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
 # ask the operator to re-read what they were looking at when they acted on the
 # row — hence both dispatch these with `--force`. Shared rather than copied, for
 # the same reason as :data:`PRINTING_VERBS` (`qtui/actions.py` imports this).
-ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome"})
+#
+# `qtui/actions.py` derives `_ASSUME_YES_VERBS` from this at import time,
+# before any `Config` exists, so it must stay a plain module-level constant.
+# The one place that decides `--force` at runtime (`_dispatch_action`, below)
+# takes a `RepoTarget` — repo_root/config_path, no loaded `Config` — so it too
+# reads this constant rather than a repo's own `apps:` entries. A config-aware
+# version would need a real call site with a `Config` in hand before it is
+# worth adding.
+ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome", "firefox", "browser"})
+
+# The verb prefix `_app_menu_verb` composes for a config-sourced `apps:`
+# entry (see its docstring). These are attach verbs too — the app launches
+# in a container exactly like `ide`/`chrome` — but can't join ATTACH_VERBS
+# itself: each carries its own app name, so there is no fixed set of them to
+# enumerate. Checked by prefix instead, in :func:`_dispatch_action` and (the
+# same reason as :data:`PRINTING_VERBS`) `qtui/actions.py`'s own dispatch.
+APPS_RUN_PREFIX = "apps run "
+
 
 # Verbs whose whole point is the text they print, rather than the state they
 # change. Both front-ends need to know which those are — the TUI to keep their
@@ -1537,9 +1610,10 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
     gets ``--config``: a repo with no config file has no path to pass, so the
     working directory is the only thing that says which repo this is.
 
-    Verbs in :data:`ATTACH_VERBS` gain ``--force``; ``--force`` means
-    something different on every other command (and most don't accept it),
-    so nothing else gets it.
+    Verbs in :data:`ATTACH_VERBS`, and any verb `_app_menu_verb` composed
+    with the :data:`APPS_RUN_PREFIX` (a config-sourced `apps:` entry), gain
+    ``--force``; ``--force`` means something different on every other
+    command (and most don't accept it), so nothing else gets it.
 
     The verb's :func:`dispatch_style` decides what happens to its output: a
     pager for the diff (with ``--color`` forced, because the pipe would
@@ -1554,7 +1628,7 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
     :class:`_PagerUnavailableError`.
     """
     argv = ["jailbee", *verb.split(), name, *target.flags()]
-    if verb in ATTACH_VERBS:
+    if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
     if style == "paged":

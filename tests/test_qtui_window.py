@@ -45,7 +45,7 @@ def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
 
 
 def test_menu_labels_match_menu_actions_for_running(qtbot):
-    from jailbee.dashboard import MenuContext, RepoGroup, menu_actions
+    from jailbee.dashboard import AppMenuEntry, MenuContext, RepoGroup, menu_actions
 
     running = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
@@ -53,17 +53,17 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
     stopped = ContainerInfo(
         name="p-bar", state="Stopped", network=None, ip=None, memory_limit=None, repo="p"
     )
-    # ide_enabled/chrome_enabled differ deliberately so this test proves the
-    # window actually threads the group's flags through to menu_actions
+    # apps carries only "ide" (not "chrome") deliberately so this test proves
+    # the window actually threads the group's apps through to menu_actions
     # rather than merely matching two hardcoded defaults.
+    ide_entry = AppMenuEntry("ide", "JetBrains idea")
     groups = [
         RepoGroup(
             "p",
             "/repo",
             Path("/repo/.gie/config.yaml"),
             [running, stopped],
-            ide_enabled=True,
-            chrome_enabled=False,
+            apps=[ide_entry],
         )
     ]
 
@@ -76,15 +76,14 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
             MenuContext(
                 state="Running",
                 has_repo=True,
-                ide_enabled=True,
-                chrome_enabled=False,
+                apps=[ide_entry],
                 current_network="strict",
             )
         )
     ]
     assert win.menu_labels_for("p-foo") == expected
-    assert "Launch IDE" in expected
-    assert "Launch Chrome" not in expected
+    assert "Launch JetBrains idea" in expected
+    assert "Launch chrome" not in expected
     assert "Network: loose" in expected
     assert "Network: strict" not in expected
 

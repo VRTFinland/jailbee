@@ -43,6 +43,10 @@ isolated per-branch development environments using Incus system containers. See
   (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`).
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
+  `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
+  no `subprocess` of their own: they resolve an `AppSpec` and hand it to
+  `gui.launch_detached`, deliberately not adding a second exception to the
+  "one module runs `incus` outside `incus.py`" rule above.
   `registry.py` runs the mirror through the `Incus` wrapper and calls no
   `subprocess` of its own.
 
