@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, submodules
 from jailbee.incus import IncusError
@@ -1442,73 +1442,73 @@ def checkout_from_container(
     branch: str | None = None,
     as_name: str | None = None,
 ) -> CheckoutResult:
-    """Fetch + check out the container's branch on the host.
+    """Fetch + check out the container's branch on the host (ff-only).
+
+    Everything except the working-tree switch is `sync_refs_from_container`:
+    the fetch, the submodule object transport, and placing the host branch
+    (and its submodule branches) at the fetched commit. This adds the
+    checkout and the submodule *working-tree* update on top — the two used
+    to be near-identical code paths.
 
     `branch` selects what is read *from* the container; `as_name` names the
-    branch written *on the host* (default: the container's `user.jailbee.pr_branch`
-    label when set, else the container branch's own name). The two are
-    independent — `--as` never changes which ref gets fetched.
-
-    - If the branch doesn't exist on the host, create it from
-      `refs/jailbee/<short>/<branch>` and set tracking to `origin/<branch>`
-      when that remote-tracking ref exists.
-    - If the branch exists and is the current HEAD, fast-forward it.
-    - If the branch exists but isn't current, check it out then
-      fast-forward.
-    - On non-ff (divergence), raise `SyncError` pointing at `jailbee git pull`.
+    branch written *on the host* (default: the container's
+    `user.jailbee.pr_branch` label when set, else the container branch's own
+    name). The two are independent — `--as` never changes which ref gets
+    fetched. On divergence this raises `SyncError` pointing at
+    `jailbee git pull`.
 
     Returns a `CheckoutResult` so the CLI can print a post-op summary.
     """
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    # force is deliberately left at its default: a checkout must never
+    # overwrite host history the way `jailbee git pull --force` can.
+    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name)
+    target = refs.target
+    status = refs.superproject.status
 
-    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+    match status:
+        case "diverged" | "refused" | "failed" | "checked-out":
+            # None of these moved refs/heads/<target> to new_oid: "diverged"
+            # and "failed" are git's own refusals, "refused" is
+            # _place_host_branch's dirty-tree/no-ff-merge guard, and
+            # "checked-out" is place_branch's backstop for a checked-out
+            # branch it cannot move — unreachable in practice because
+            # _place_host_branch intercepts that case first, but reachable in
+            # the type, and proceeding on it would switch onto a branch that
+            # never moved.
+            raise SyncError(
+                f"Branch '{target}' on host has diverged from container. "
+                f"Use 'jailbee git pull {short}' to merge, or rebase manually."
+            )
+        case "created" | "up-to-date" | "fast-forwarded" | "forced" | "checked-out-ff":
+            # All five leave refs/heads/<target> at new_oid: "created" and
+            # "forced" placed it directly, "up-to-date" found it already
+            # there, "fast-forwarded" moved it there, and "checked-out-ff" is
+            # _place_host_branch's own fast-forward merge when target was
+            # already HEAD's branch (so the working tree is at new_oid too).
+            pass
+        case _ as unreachable:
+            # Forces a decision here if HostPlacementStatus ever grows a new
+            # member: mypy fails this line until it is added to one of the
+            # two cases above.
+            assert_never(unreachable)
 
-    full_name = resolve_container_name(cfg, incus, short)
-    repo_dir = container_repo_dir(cfg, incus, full_name)
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    # git.place_branch's create path is a bare `update_ref`, so tracking is
+    # not part of it the way `git.create_branch(..., track=...)` used to be —
+    # restore it here, once, only for the branch this call actually created.
+    created_new = status == "created"
+    if created_new and git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, target):
+        git.set_upstream(cfg.repo_root, target, f"{cfg.upstream_remote}/{target}")
 
-    container_branch = fetch_result.branch
-    fetched_ref = f"refs/jailbee/{short}/{container_branch}"
-    target = as_name or _container_pr_branch(incus, full_name) or container_branch
-
-    if not git.local_branch_exists(cfg.repo_root, target):
-        track = (
-            f"{cfg.upstream_remote}/{target}"
-            if git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, target)
-            else None
-        )
-        git.create_branch(cfg.repo_root, target, start_point=fetched_ref, track=track)
-        head_oid = git.rev_parse(cfg.repo_root, "HEAD")
-        if head_oid is None:
-            raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
-        submodules.update_submodules_on_host(cfg.repo_root, branch=target)
-        return CheckoutResult(
-            fetch=fetch_result, branch=target, head_oid=head_oid, created_new=True
-        )
-
-    current = git.get_current_branch(cfg.repo_root)
-    if current != target:
+    if git.get_current_branch(cfg.repo_root) != target:
         git.checkout_branch(cfg.repo_root, target)
-
-    try:
-        git.merge_ref(
-            cfg.repo_root,
-            fetched_ref,
-            message=None,
-            no_ff=False,
-            ff_only=True,
-        )
-    except git.GitError as exc:
-        raise SyncError(
-            f"Branch '{target}' on host has diverged from container. "
-            f"Use 'jailbee git pull {short}' to merge, or rebase manually."
-        ) from exc
 
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
         raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
     submodules.update_submodules_on_host(cfg.repo_root, branch=target)
-    return CheckoutResult(fetch=fetch_result, branch=target, head_oid=head_oid, created_new=False)
+    return CheckoutResult(
+        fetch=refs.fetch, branch=target, head_oid=head_oid, created_new=created_new
+    )
 
 
 def checkout_submodules_on_host(
