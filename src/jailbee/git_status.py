@@ -1,7 +1,7 @@
 """Probe git state inside jailbee containers via `incus exec`.
 
 The probe makes one ``incus exec`` round-trip per container, runs a
-small shell snippet that emits ten NUL-separated fields, and the
+small shell snippet that emits twelve NUL-separated fields, and the
 host parses them into a ``GitStatus``. Designed to be safe for
 parallel use from a thread pool.
 """
@@ -16,6 +16,10 @@ from typing import TypedDict
 from jailbee.incus import Incus, IncusError
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
+
+# Values the probe may report for an in-progress operation. "" means
+# "checked, and nothing is in progress" — distinct from "?" (not checked).
+_IN_PROGRESS_VALUES = frozenset({"", "merge", "rebase", "cherry-pick", "revert"})
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,10 @@ class GitStatus:
     # tip — see the module docstring.
     local_diff: str = "?"  # "+12 -3" | "clean" | "?"
     local_count: str = "?"  # "3" | "0" | "?"
+    # The container's ACTUAL state, as opposed to `conflict`, which is a
+    # prediction about a merge nobody ran. "?" means the probe could not say.
+    in_progress: str = "?"  # "" | merge | rebase | cherry-pick | revert | "?"
+    unmerged: int | None = None  # paths with unresolved conflicts; None = unknown
 
 
 def _shortstat_ints(raw: str) -> tuple[int, int]:
@@ -338,9 +346,33 @@ if [ -n "$HOST_HEAD" ] \
   LOCAL_COUNT=$(git rev-list --count "${HOST_HEAD}..HEAD" 2>/dev/null) || LOCAL_COUNT="?"
 fi
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- fields 11-12: the container's ACTUAL in-progress state ---
+# `.git` may be a FILE (linked worktree, submodule), so resolve the real dir.
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null) || GIT_DIR=""
+IN_PROGRESS=""
+if [ -n "$GIT_DIR" ]; then
+  # Rebase is tested first: a conflicted `git rebase --merge` also writes
+  # the ref checked next, and "rebasing" is the more specific, more useful
+  # answer.
+  if [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
+    IN_PROGRESS="rebase"
+  elif git rev-parse --verify --quiet MERGE_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="merge"
+  elif git rev-parse --verify --quiet CHERRY_PICK_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="cherry-pick"
+  elif git rev-parse --verify --quiet REVERT_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="revert"
+  fi
+fi
+# `git ls-files --unmerged` prints one line per stage; count distinct paths.
+UNMERGED=$(git ls-files --unmerged 2>/dev/null \
+  | awk '{print $4}' | sort -u | wc -l | tr -d '[:space:]')
+case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
-  "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT"
+  "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
+  "$IN_PROGRESS" "$UNMERGED"
 """
 
 
@@ -448,6 +480,15 @@ def probe_container_git(
         local_diff = "?"
         local_count = "?"
 
+    if len(parts) >= 12:
+        raw_progress = parts[10].strip()
+        in_progress = raw_progress if raw_progress in _IN_PROGRESS_VALUES else "?"
+        raw_unmerged = parts[11].strip()
+        unmerged = int(raw_unmerged) if raw_unmerged.isdigit() else None
+    else:
+        in_progress = "?"
+        unmerged = None
+
     return GitStatus(
         wt=wt,
         ahead_diff=ahead_diff,
@@ -458,6 +499,8 @@ def probe_container_git(
         remote_contained=remote_contained,
         local_diff=local_diff,
         local_count=local_count,
+        in_progress=in_progress,
+        unmerged=unmerged,
     )
 
 
