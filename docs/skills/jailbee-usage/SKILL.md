@@ -219,8 +219,8 @@ share one prefix, exactly like two clones of one repo do).
 
 This is the subtlest part; get the direction right and everything else follows.
 All of these refuse on **mount-mode** containers (they share the tree — just use
-git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff`/`fetch`/`checkout` ==
-`jailbee git pull`/`push`/`diff`/`fetch`/`checkout`. `jailbee git merge` (below) has **no**
+git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff`/`fetch`/`checkout`/`retarget` ==
+`jailbee git pull`/`push`/`diff`/`fetch`/`checkout`/`retarget`. `jailbee git merge` (below) has **no**
 top-level alias — there is no bare `jailbee merge`, deliberately: that verb used
 to name today's `jailbee git pull`, and a second command reusing it would
 resurrect the ambiguity.
