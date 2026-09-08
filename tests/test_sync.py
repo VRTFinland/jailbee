@@ -7151,7 +7151,9 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
         ),
     )
     to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
-    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["sub"])
+    sub_paths = mocker.patch(
+        "jailbee.submodules._container_submodule_paths", return_value=["sub"]
+    )
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     push = mocker.patch(
         "jailbee.sync.push_to_container",
@@ -7168,6 +7170,17 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     result = sync.merge_container_into_container(cfg, incus, "c1", "c2")
 
     to_host.assert_called_once()
+    # Which container is which. Every one of these travels positionally, so a
+    # swap (relaying INTO the source, or merging INSIDE the source) is
+    # invisible to the kwargs assertions below. `container_repo_dir` is mocked
+    # to "/repo" for both, so the container name is the only discriminator.
+    assert to_host.call_args.args[2] == f"{cfg.container_prefix}-c1"
+    assert to_host.call_args.args[3] == "c1"
+    assert sub_paths.call_args.args[1] == f"{cfg.container_prefix}-c1"
+    assert to_container.call_args.args[2] == f"{cfg.container_prefix}-c2"
+    assert push.call_args.args[2] == "c2"
+    assert merge.call_args.args[1] == f"{cfg.container_prefix}-c2"
+    assert merge.call_args.kwargs.get("short") == "c2"
     # The source container's submodule refs must be relayed under ITS namespace.
     assert to_container.call_args.kwargs.get("source_ns") == "c1"
     assert to_container.call_args.kwargs.get("paths") == ["sub"]
@@ -7229,7 +7242,7 @@ def test_merge_container_into_container_plain_skips_the_merge(mocker, make_cfg, 
     mocker.patch("jailbee.submodules.transport_submodules_to_host")
     mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
-    mocker.patch(
+    push = mocker.patch(
         "jailbee.sync.push_to_container",
         return_value=sync.PushResult(
             source="feat/a",
@@ -7245,6 +7258,9 @@ def test_merge_container_into_container_plain_skips_the_merge(mocker, make_cfg, 
     result = sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True)
 
     merge.assert_not_called()
+    # `plain` stops AFTER the transport — the ref must be in the target for
+    # inspection, so a "plain" that skipped the push too would be wrong.
+    push.assert_called_once()
     # An empty submodule list must not provoke an empty relay push either.
     to_container.assert_not_called()
     assert result.head_oid == "targethead"

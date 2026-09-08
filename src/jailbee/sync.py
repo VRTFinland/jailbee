@@ -272,12 +272,18 @@ class PublishResult:
 
 @dataclass(frozen=True)
 class MergeInContainerResult:
-    """Outcome of a push followed by a git merge inside the container.
+    """Outcome of a push into a container, with or without a merge after it.
 
     Produced by `push_and_merge` (host source) and by
     `merge_container_into_container` (another container's branch, relayed
     through the host). `container_branch` is the target's own checked-out
-    branch — the one the merge lands on — in both cases.
+    branch — the one a merge would land on — in both cases.
+
+    `merge_container_into_container(plain=True)` returns this type for a
+    transport with **no merge at all**: `head_oid` is then the target's
+    unchanged HEAD and `fast_forward_only` is a `False` sentinel meaning "no
+    merge was attempted", not a fact about one. Renderers must not print
+    fast-forward semantics from a plain run.
     """
 
     push: PushResult
@@ -2504,9 +2510,12 @@ def merge_container_into_container(
     """Merge container `source_short`'s branch into container `target_short`.
 
     The host is a relay, not a party: objects travel source -> host -> target and
-    no host branch, index or working tree is touched. The merge itself runs
-    inside the target, on whatever it has checked out, so a conflict is resolved
-    where the work is — `jailbee shell <target>` — rather than on the host.
+    no host branch, index or superproject working tree is touched. (A host
+    *sub*-repo can still be created — `transport_submodules_to_host` clones one
+    for a submodule that was born inside the source container and the host has
+    never seen.) The merge itself runs inside the target, on whatever it has
+    checked out, so a conflict is resolved where the work is —
+    `jailbee shell <target>` — rather than on the host.
 
     The target is preflighted (running, not mount mode, clean tree, no merge or
     rebase already in progress) **before** any transport, so a refusal never
@@ -2526,8 +2535,14 @@ def merge_container_into_container(
     is bare as well: it is `fetch_from_container`'s own output.
 
     `plain` stops after the transport, leaving `refs/jailbee/from/<source>/<branch>`
-    in the target for inspection. Raises `SyncError` for user-visible problems
-    and `MergeConflictError` when the merge leaves conflicts.
+    in the target for inspection. Its `MergeInContainerResult` describes a
+    transport, not a merge: `head_oid` is the target's HEAD *before* any merge
+    (unchanged by this call) and `fast_forward_only` is `False` as a sentinel
+    for "no merge was attempted" — it is not meaningful, and a caller must not
+    render fast-forward semantics from it.
+
+    Raises `SyncError` for user-visible problems and `MergeConflictError` when
+    the merge leaves conflicts.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
