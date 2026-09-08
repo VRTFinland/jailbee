@@ -7123,3 +7123,129 @@ def test_container_status_preflight_timeout_becomes_a_sync_error(mocker):
     incus.exec.side_effect = IncusTimeoutError("`incus exec c ...` timed out after 60s")
     with pytest.raises(sync.SyncError, match="timed out after 60s"):
         sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+
+
+def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg, tmp_path):
+    """Source container -> host -> target container, with the source's own namespaces.
+
+    The superproject ref lands under `from/<source>` (Design Ruling R1) so it can
+    never collide with `refs/jailbee/host/*` or `refs/jailbee/base/*`; the
+    submodule refs keep the bare `<source>` namespace `transport_submodules_to_host`
+    already wrote. The host-side ref that `fetch_from_container` produced is bare
+    too — the asymmetry is deliberate.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=2
+        ),
+    )
+    to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["sub"])
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    merge = mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    to_host.assert_called_once()
+    # The source container's submodule refs must be relayed under ITS namespace.
+    assert to_container.call_args.kwargs["source_ns"] == "c1"
+    assert to_container.call_args.kwargs["paths"] == ["sub"]
+    assert push.call_args.kwargs["namespace"] == "from/c1"
+    assert push.call_args.kwargs["source_ref"] == "refs/jailbee/c1/feat/a"
+    assert merge.call_args.kwargs["ref"] == "refs/jailbee/from/c1/feat/a"
+    assert result.head_oid == "mergedsha"
+
+
+def test_merge_container_into_container_preflights_the_target_before_transport(
+    mocker, make_cfg, tmp_path
+):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch(
+        "jailbee.sync._run_container_preflights",
+        side_effect=sync.SyncError("target has a merge in progress"),
+    )
+    fetch = mocker.patch("jailbee.sync.fetch_from_container")
+    to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch("jailbee.sync.push_to_container")
+
+    with pytest.raises(sync.SyncError, match="merge in progress"):
+        sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    # Nothing may be transported before the target is known to be mergeable —
+    # a refusal must not leave half-populated refs behind.
+    fetch.assert_not_called()
+    to_host.assert_not_called()
+    to_container.assert_not_called()
+    push.assert_not_called()
+
+
+def test_merge_container_into_container_plain_skips_the_merge(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=1
+        ),
+    )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    mocker.patch("jailbee.sync._container_head_oid", return_value="targethead")
+    merge = mocker.patch("jailbee.sync._merge_ref_in_container")
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True)
+
+    merge.assert_not_called()
+    # An empty submodule list must not provoke an empty relay push either.
+    to_container.assert_not_called()
+    assert result.head_oid == "targethead"
+    assert result.fast_forward_only is False

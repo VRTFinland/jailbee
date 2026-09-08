@@ -272,7 +272,13 @@ class PublishResult:
 
 @dataclass(frozen=True)
 class MergeInContainerResult:
-    """Outcome of `push_and_merge` — push followed by git merge in container."""
+    """Outcome of a push followed by a git merge inside the container.
+
+    Produced by `push_and_merge` (host source) and by
+    `merge_container_into_container` (another container's branch, relayed
+    through the host). `container_branch` is the target's own checked-out
+    branch — the one the merge lands on — in both cases.
+    """
 
     push: PushResult
     container_branch: str
@@ -2481,6 +2487,119 @@ def push_and_merge(
     return MergeInContainerResult(
         push=push_result,
         container_branch=container_branch,
+        fast_forward_only=fast_forward_only,
+        head_oid=head_oid,
+    )
+
+
+def merge_container_into_container(
+    cfg: Config,
+    incus: Incus,
+    source_short: str,
+    target_short: str,
+    *,
+    branch: str | None = None,
+    plain: bool = False,
+) -> MergeInContainerResult:
+    """Merge container `source_short`'s branch into container `target_short`.
+
+    The host is a relay, not a party: objects travel source -> host -> target and
+    no host branch, index or working tree is touched. The merge itself runs
+    inside the target, on whatever it has checked out, so a conflict is resolved
+    where the work is — `jailbee shell <target>` — rather than on the host.
+
+    The target is preflighted (running, not mount mode, clean tree, no merge or
+    rebase already in progress) **before** any transport, so a refusal never
+    leaves half-populated `refs/jailbee/*` behind. The source needs no preflight
+    of its own: `fetch_from_container` already refuses a stopped container, a
+    missing clone and an unresolvable branch.
+
+    Two ref namespaces are in play and they are deliberately not the same
+    shape. The superproject lands in the target at
+    `refs/jailbee/from/<source>/<branch>` — the `from/` segment keeps a
+    container literally named `host` out of `refs/jailbee/host/*` (which would
+    re-arm the base-advance `push_to_container` guards against) and one named
+    `base` out of `refs/jailbee/base/*`. The submodules keep the bare
+    `refs/jailbee-sub/<source>/<path>/...` layout that
+    `submodules.transport_submodules_to_host` wrote on the host, so the relay
+    is a namespace-to-namespace copy. The host-side superproject ref read here
+    is bare as well: it is `fetch_from_container`'s own output.
+
+    `plain` stops after the transport, leaving `refs/jailbee/from/<source>/<branch>`
+    in the target for inspection. Raises `SyncError` for user-visible problems
+    and `MergeConflictError` when the merge leaves conflicts.
+    """
+    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+
+    target_full = resolve_container_name(cfg, incus, target_short)
+
+    mode = incus.config_get(target_full, "user.jailbee.mode")
+    if mode == "mount":
+        raise SyncError(
+            f"container '{target_short}' is in mount mode — host and container "
+            f"share the working tree, so a merge into it is not applicable."
+        )
+    if not _container_is_running(incus, target_full):
+        raise SyncError(
+            f"Container '{target_short}' is not running. "
+            f"Start it with: jailbee start {target_short}"
+        )
+
+    target_repo_dir = container_repo_dir(cfg, incus, target_full)
+    uid = cfg.container_user.uid
+    target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
+
+    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch)
+    source_full = resolve_container_name(cfg, incus, source_short)
+    source_repo_dir = container_repo_dir(cfg, incus, source_full)
+    submodules.transport_submodules_to_host(
+        cfg, incus, source_full, source_short, repo_dir=source_repo_dir
+    )
+    sub_paths = submodules._container_submodule_paths(
+        incus, source_full, source_repo_dir, uid=uid
+    )
+    if sub_paths:
+        submodules.transport_submodules_to_container(
+            cfg,
+            incus,
+            target_full,
+            repo_dir=target_repo_dir,
+            source_ns=source_short,
+            paths=sub_paths,
+        )
+
+    push_result = push_to_container(
+        cfg,
+        incus,
+        target_short,
+        source=fetch_result.branch,
+        source_ref=f"refs/jailbee/{source_short}/{fetch_result.branch}",
+        namespace=f"from/{source_short}",
+    )
+
+    if plain:
+        return MergeInContainerResult(
+            push=push_result,
+            container_branch=target_branch,
+            fast_forward_only=False,
+            head_oid=_container_head_oid(incus, target_full, target_repo_dir, uid=uid),
+        )
+
+    fast_forward_only = target_branch == fetch_result.branch
+    head_oid = _merge_ref_in_container(
+        incus,
+        target_full,
+        target_repo_dir,
+        ref=push_result.container_ref,
+        label=fetch_result.branch,
+        message=f"Merge branch '{fetch_result.branch}' from container {source_short}",
+        short=target_short,
+        uid=uid,
+        ff_only=fast_forward_only,
+    )
+    return MergeInContainerResult(
+        push=push_result,
+        container_branch=target_branch,
         fast_forward_only=fast_forward_only,
         head_oid=head_oid,
     )
