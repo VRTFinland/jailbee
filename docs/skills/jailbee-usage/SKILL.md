@@ -286,9 +286,10 @@ resurrect the ambiguity.
 
 - `jailbee git merge <source…> --into <target>` — merge one container's branch
   into another **without a host checkout**: objects travel source → host →
-  target, no host branch or working tree is touched. The merge runs inside the
-  target on whatever it has checked out, so conflicts are resolved there, in
-  `jailbee shell <target>`.
+  target, no host branch, index or superproject working tree is touched (a
+  host sub-repo can still be created, for a submodule born in the source
+  container). The merge runs inside the target on whatever it has checked
+  out, so conflicts are resolved there, in `jailbee shell <target>`.
   - `--into <target>` — **required**; nothing is inferred.
   - `-b <branch>` — read this branch from the source container (only valid with
     one source).

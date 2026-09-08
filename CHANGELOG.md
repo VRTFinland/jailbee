@@ -479,8 +479,10 @@
   new picker uses, so a script grepping that listing sees more than before.
 - **`jailbee git merge <source…> --into <target>`** merges one container's
   branch into another through the host, submodules included, **without a
-  host checkout** — objects travel source → host → target and no host branch
-  or working tree is touched. `--into` is required; nothing is inferred.
+  host checkout** — objects travel source → host → target and no host
+  branch, index or superproject working tree is touched (a host sub-repo can
+  still be created, for a submodule born in the source container). `--into`
+  is required; nothing is inferred.
   Several sources are merged one at a time, in the order given; the run
   stops at the first conflict or failure and always reports what landed,
   what stopped it, what was not attempted, and the command to resume.

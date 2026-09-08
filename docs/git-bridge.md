@@ -205,11 +205,12 @@ jailbee git merge c1 --into c4 --plain   # transport only
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```
 
-Objects travel source → host → target; **no host branch or working tree is
-touched** — this is the one bridge command with no host-side effect at all.
-`--into <target>` is required, nothing is inferred. The merge runs inside the
-target on whatever it has checked out, so conflicts are resolved there, in
-`jailbee shell <target>`.
+Objects travel source → host → target; **no host branch, index or
+superproject working tree is touched** (a host sub-repo can still be
+created, for a submodule born in the source container that the host has
+never seen). `--into <target>` is required, nothing is inferred. The merge
+runs inside the target on whatever it has checked out, so conflicts are
+resolved there, in `jailbee shell <target>`.
 
 Several sources are merged **one at a time, in the order given**. The run
 stops at the first conflict or failure and always prints what landed, what

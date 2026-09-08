@@ -649,9 +649,11 @@ diverged/failed, and nothing when the branch was already current or is HEAD's.
 ### `jailbee git merge SOURCES... --into TARGET`
 
 Merge one container's branch into another, **without a host checkout** —
-objects travel source → host → target and no host branch or working tree is
-touched. The merge runs inside the target on whatever it has checked out, so
-conflicts are resolved there, in `jailbee shell <target>`.
+objects travel source → host → target and no host branch, index or
+superproject working tree is touched (a host sub-repo can still be created,
+for a submodule born in the source container). The merge runs inside the
+target on whatever it has checked out, so conflicts are resolved there, in
+`jailbee shell <target>`.
 
 | Flag | Effect |
 |---|---|
