@@ -317,11 +317,24 @@ merge-based — never rebase a branch with work stacked on it. When PR1 merges,
 ### Three containers, one branch — where do I resolve the conflicts?
 
 In a container, not on the host: the host is the one place with no test suite,
-no lint gate and no agent. Send each branch into *one* of the containers with
-`jailbee git push feat-c --current --merge`, resolve there, then
+no lint gate and no agent. `jailbee git merge feat-a feat-b --into feat-c`
+merges each source directly into the target container, one at a time,
+stopping at the first conflict; resolve inside `jailbee shell feat-c`, then
 `jailbee git pull feat-c --current` onto the host.
 
 → [Merging several containers through one](git-bridge.md#merging-several-containers-through-one)
+
+### How do I merge one container's branch into another?
+
+`jailbee git merge <source…> --into <target>` — objects travel source → host
+→ target without a host checkout or working-tree change. `--into` is
+required; several sources run one at a time in the order given, and the run
+stops at the first conflict with a summary naming what landed, what didn't,
+and the resume command. `--plain` transports the refs without merging. There
+is no top-level `jailbee merge` alias — that bare verb used to name today's
+`jailbee git pull`.
+
+→ [Merging one container into another](git-bridge.md#merging-one-container-into-another--jailbee-git-merge)
 
 ## Network and ports
 

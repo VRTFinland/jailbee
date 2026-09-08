@@ -193,10 +193,17 @@ transporting a feature branch's worth of commits is tens of kilobytes,
 independent of overall repo size. `jailbee git fetch/checkout/pull` pull a
 container's commits back to the host over an `ext::incus exec ... git
 upload-pack` transport, landing them under `refs/jailbee/<container>/<branch>`
-without ever touching GitHub. `jailbee git push` is the inverse: it transports a
+without ever touching GitHub; `fetch` additionally points the host branch (and
+each submodule's branch of the same name) at that state without switching the
+working tree, and `checkout` does the same and then switches onto it.
+`jailbee git push` is the inverse: it transports a
 host branch into the container under `refs/jailbee/host/<branch>`, fast-forwards
 the container's own `refs/heads/<branch>` to match where it safely can, and can
-then merge or rebase the pushed ref inside the container. `jailbee pr` fetches a container's
+then merge or rebase the pushed ref inside the container. `jailbee git merge`
+chains two of these transports without a host checkout at all — a source
+container's branch travels to the host and on into a target container, which
+runs the merge itself, so the host stays a hub even when neither branch ever
+becomes a host branch. `jailbee pr` fetches a container's
 branch to the host and opens or updates a GitHub PR from it via `gh`. None of
 this requires network egress from the container beyond what the operator
 explicitly allows.

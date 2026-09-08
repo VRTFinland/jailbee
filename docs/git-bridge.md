@@ -17,18 +17,31 @@ the **base branch** it was forked from (`user.jailbee.base_branch`, set at
 **Container → host:**
 
 ```bash
-jailbee git fetch feat-foo       # → refs/jailbee/<short>/<branch> (transport only)
-jailbee git checkout feat-foo    # fetch + fast-forward/create the host branch
+jailbee git fetch feat-foo       # places the host branch + submodule branches, no checkout
+jailbee git fetch feat-foo --as alt        # write host branch 'alt' instead
+jailbee git fetch feat-foo --force         # overwrite a diverged host branch
+jailbee git checkout feat-foo    # fetch + fast-forward/create the host branch, AND switch onto it
 jailbee git checkout feat-foo --as alt     # …under a different host branch name
 jailbee git pull feat-foo        # fetch + merge the container branch into its BASE branch
 jailbee git pull feat-foo --current        # merge into the host's checked-out branch
 ```
 
+`jailbee git fetch` fetches into `refs/jailbee/<short>/<branch>`, transports the
+submodule objects, then points the host branch **and every submodule's branch
+of the same name** at what the container has — without switching the working
+tree. `jailbee git checkout` does the same and then switches onto it. A host
+branch that has diverged is left alone with a warning; `fetch`'s `--force`
+overwrites it, except when it is the branch currently checked out (always
+refused there, since moving it out from under the checkout would desync the
+index and working tree). To move the tree onto what `fetch` just placed, run
+`jailbee branch <branch>` afterwards.
+
 On every container → host command, `-b/--branch` selects which branch is read
 **inside the container** — it never names the host-side branch. Naming the host
-side is a separate flag per command: `jailbee git checkout --as <name>`,
-`jailbee git pull --into <name>`. A `-b` naming a branch the container doesn't have
-is rejected up front, with the container's actual branch names listed.
+side is a separate flag per command: `jailbee git fetch --as <name>`,
+`jailbee git checkout --as <name>`, `jailbee git pull --into <name>`. A `-b`
+naming a branch the container doesn't have is rejected up front, with the
+container's actual branch names listed.
 
 `jailbee git pull` defaults to a `--no-ff` merge commit into the recorded base branch
 (not the host's current HEAD). `--into <branch>` retargets it, `--current` merges
@@ -174,11 +187,39 @@ Both `jailbee git push` and `jailbee git pull` print a one-line
 `<source> (…) ──▶ <target> (…)` banner before the detailed summary, so the
 direction of the sync is always unambiguous at a glance.
 
-`jailbee pull` / `jailbee push` / `jailbee diff` are top-level aliases. `jailbee pr` is a
-first-class top-level command in its own right (`jailbee git pr` is its hidden
-alias). **There is no `jailbee git merge`** — it was replaced by `jailbee git pull`.
-All bridge commands refuse on mount-mode containers (they share the host
-tree — use git on the host directly).
+`jailbee pull` / `jailbee push` / `jailbee diff` / `jailbee fetch` / `jailbee checkout` /
+`jailbee retarget` are top-level aliases. `jailbee pr` is a first-class top-level
+command in its own right (`jailbee git pr` is its hidden alias). `jailbee git
+merge` (below) has **no** top-level alias — there is deliberately no bare
+`jailbee merge`: that verb used to name today's `jailbee git pull`, and a second
+command answering to it would resurrect the ambiguity. All bridge commands
+refuse on mount-mode containers (they share the host tree — use git on the
+host directly).
+
+## Merging one container into another — `jailbee git merge`
+
+```bash
+jailbee git merge c1 --into c4
+jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+jailbee git merge c1 --into c4 --plain   # transport only
+jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
+```
+
+Objects travel source → host → target; **no host branch or working tree is
+touched** — this is the one bridge command with no host-side effect at all.
+`--into <target>` is required, nothing is inferred. The merge runs inside the
+target on whatever it has checked out, so conflicts are resolved there, in
+`jailbee shell <target>`.
+
+Several sources are merged **one at a time, in the order given**. The run
+stops at the first conflict or failure and always prints what landed, what
+stopped it, what was not attempted, and the command that resumes where it left
+off — that report is the reason multi-source is allowed at all.
+
+`--plain` transports the refs only and runs no merge; its report says
+"transported", not "merged" — do not read `--plain` as a kind of merge.
+`-b`/`--branch` reads a specific branch from the source and only applies with
+exactly one source.
 
 ## Submodules
 
@@ -195,12 +236,15 @@ fetched over the network, and every submodule lands on the container's
 branch. Set `new.submodules: false` to skip the whole step (see
 [config.md](config.md#new)).
 
-**On `jailbee git push` / `pull` / `checkout`.** Submodule objects travel over
-the same `ext::` transport the superproject uses. A sub-repo the peer is
-missing is created there first, so adding a submodule on one side and
-syncing works without preparing the other side by hand. Failures are loud:
-a `SubmoduleError` stops the operation rather than leaving the peer with a
-superproject whose gitlinks point at objects it doesn't have.
+**On `jailbee git fetch` / `checkout` / `pull` / `push` / `merge`.** Submodule
+objects travel over the same `ext::` transport the superproject uses. A
+sub-repo the peer is missing is created there first, so adding a submodule on
+one side and syncing works without preparing the other side by hand. Failures
+are loud: a `SubmoduleError` stops the operation rather than leaving the peer
+with a superproject whose gitlinks point at objects it doesn't have. `fetch`
+additionally points each submodule's branch of the same name at the
+container's state, exactly as it does for the superproject branch — without
+switching any working tree.
 
 **What you see.** `jailbee pull` prints a delimited `── Submodules` block
 after git's own output — per submodule `new → <sha>`, `<sha> → removed`, or
@@ -321,12 +365,30 @@ branch into *one* of the containers instead and resolve every conflict there,
 where those things already are. The host stays what it is everywhere else in
 this document: a transport hub that resolves nothing.
 
+Since all three sources are themselves containers here, `jailbee git merge`
+does this directly, without a host checkout for each source:
+
 ```bash
 jailbee new feat/a
 jailbee new feat/b
 jailbee new feat/c
 #   ... work in each container ...
 
+jailbee git merge feat-a feat-b --into feat-c   # one at a time, stop on conflict
+#   conflict? resolve inside feat-c, run the gates there, commit the merge,
+#   then re-run from the resume command the summary prints
+
+git checkout main
+jailbee git pull feat-c --current    # all three features land on main
+```
+
+### The long way — through `push --current`
+
+The equivalent using only commands that predate `jailbee git merge`, and still
+what to reach for when a source is a plain host branch with no container of
+its own:
+
+```bash
 jailbee git checkout feat-a          # host HEAD → feat/a, ff-only, from the container
 jailbee git push feat-c --current    # feat/a into container c, merged into its branch
 jailbee shell feat-c                 # resolve, run the gates, commit the merge

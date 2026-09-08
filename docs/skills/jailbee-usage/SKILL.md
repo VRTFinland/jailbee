@@ -219,16 +219,24 @@ share one prefix, exactly like two clones of one repo do).
 
 This is the subtlest part; get the direction right and everything else follows.
 All of these refuse on **mount-mode** containers (they share the tree — just use
-git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff` ==
-`jailbee git pull`/`push`/`diff`. (There is no `jailbee git merge` — it was replaced by
-`jailbee git pull`.)
+git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff`/`fetch`/`checkout` ==
+`jailbee git pull`/`push`/`diff`/`fetch`/`checkout`. `jailbee git merge` (below) has **no**
+top-level alias — there is no bare `jailbee merge`, deliberately: that verb used
+to name today's `jailbee git pull`, and a second command reusing it would
+resurrect the ambiguity.
 
 **Container → host (pulling the container's work back):**
 
-- `jailbee git fetch <name>` — fetch the container's branch into
-  `refs/jailbee/<short>/<branch>` on the host. Pure transport; touches no working branch.
+- `jailbee git fetch <name>` — fetch into `refs/jailbee/<short>/<branch>`,
+  transport the submodule objects, then point the host branch **and every
+  submodule's branch of the same name** at what the container has — **without
+  switching the working tree**. A host branch that has diverged is left alone
+  with a warning.
+  - `--force` — overwrite a diverged host branch anyway; always refused for the
+    branch currently checked out.
+  - Switch the tree onto what was just fetched with `jailbee branch <branch>`.
 - `jailbee git checkout <name>` — fetch, then fast-forward (or create) the matching
-  host branch. Refuses on divergence and points you at `jailbee git pull`.
+  host branch **and switch onto it**. Refuses on divergence and points you at `jailbee git pull`.
   - `--as <branch>` — land it on a differently named host branch (the default is
     the container's branch, or its PR head when the container has one).
   - `-b <branch>` — read a different branch **from the container**; it never
@@ -274,6 +282,29 @@ git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff` ==
   - **No name + a TTY** → multi-select picker; source/action chosen once, applied to
     all, failures don't stop the batch (summary at the end).
 
+**Container → container (merging one container's branch into another):**
+
+- `jailbee git merge <source…> --into <target>` — merge one container's branch
+  into another **without a host checkout**: objects travel source → host →
+  target, no host branch or working tree is touched. The merge runs inside the
+  target on whatever it has checked out, so conflicts are resolved there, in
+  `jailbee shell <target>`.
+  - `--into <target>` — **required**; nothing is inferred.
+  - `-b <branch>` — read this branch from the source container (only valid with
+    one source).
+  - `--plain` — transport the refs only; run no merge. The summary then says
+    "transported", not "merged" — `--plain` is not a kind of merge.
+  - Several sources are merged **one at a time, in the order given**; the run
+    stops at the first conflict or failure and always reports what landed,
+    what stopped it, what was not attempted, and the command to resume.
+
+  ```bash
+  jailbee git merge c1 --into c4
+  jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+  jailbee git merge c1 --into c4 --plain   # transport only
+  jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
+  ```
+
 **Inspecting the difference:**
 
 - `jailbee git diff <name>` — by default the commits `jailbee git pull` would bring (3-dot
@@ -282,8 +313,23 @@ git on the host). Top-level aliases exist: `jailbee pull`/`push`/`diff` ==
 
 `jailbee ls` surfaces the same picture per container without a diff: **BASE** (base
 branch), **WT** (uncommitted changes), **AHEAD ±**/**↑** (commits ahead of base),
-**MERGE** (`ok`/`conflict`/`?`/`—` — would the branch merge cleanly into base).
-Stopped and mount-mode containers show `—` in the git columns.
+and **MERGE**. Stopped and mount-mode containers show `—` in the git columns.
+
+**MERGE**'s values, in priority order — a live state always outranks a
+prediction:
+
+| Value | Meaning |
+|---|---|
+| `conflict!` | Unresolved conflict in the container **right now** (unmerged paths). |
+| `merging` / `rebasing` / `cherry-picking` / `reverting` | That operation is in progress — conflicts resolved, the commit is pending. |
+| `conflict` | *Prediction only:* merging this branch into its base would conflict. Nothing is running. |
+| `ok` | *Prediction only:* would merge cleanly. |
+| `?` | The live state couldn't be probed. |
+| `—` | No data — stopped or mount-mode container. |
+
+So a container left mid-merge by `jailbee git push --current` reads
+`conflict!`, not `ok`, even though a clean merge to base is still predicted —
+that's the whole point of tracking the live state separately.
 
 Two more git-status columns exist but are **off by default** (opt in with
 `--fields` or the `ls:` config block — see [Configuration](../../config.md#ls--dashboard--remembered-columns)):
@@ -328,7 +374,20 @@ scripting.
 
 **Recipe — merging several containers through one.** Three features built in
 parallel become one branch without resolving anything on the host, which is the
-one place with no tests, no lint gate and no agent:
+one place with no tests, no lint gate and no agent. The direct way, since all
+three sources are themselves containers, is `jailbee git merge`:
+
+```bash
+jailbee git merge feat-a feat-b --into feat-c   # one at a time, stop on conflict
+#   conflict? resolve inside container c, run the gates there, commit the merge
+#   (resume from wherever it stopped — the summary names the exact command)
+git checkout main
+jailbee git pull feat-c --current               # all three land on main at once
+```
+
+The older, manual way — still what to use when a source is a plain host branch
+with no container of its own — sends each branch through the target via
+`push --current`:
 
 ```bash
 jailbee git checkout feat-a          # host HEAD → feat/a, taken from its container
@@ -340,10 +399,11 @@ git checkout main
 jailbee git pull feat-c --current    # all three land on main at once
 ```
 
-`--current` is load-bearing: `push`'s default source is the container's *base*
-branch, so without it you would send `main` into c. The action must be a merge
-or rebase — `plain` transports the ref without applying it, so no conflict ever
-appears. Containers a and b survive the last pull and are destroyed by hand.
+`--current` is load-bearing there: `push`'s default source is the container's
+*base* branch, so without it you would send `main` into c. The action must be
+a merge or rebase — `plain` transports the ref without applying it, so no
+conflict ever appears. Containers a and b survive the last pull and are
+destroyed by hand either way.
 Full version with the cleanup rules: [Git bridge](../../git-bridge.md#merging-several-containers-through-one).
 
 ## Network modes — `jailbee net`

@@ -31,6 +31,11 @@ jailbee destroy feat-smoke --force
 
 ## `jailbee git fetch / checkout` smoke test
 
+`jailbee git fetch` fetches into `refs/jailbee/<short>/<branch>`, then points
+the host branch (and any submodule branches of the same name) at what the
+container has, **without switching the working tree**. `jailbee git checkout`
+does the same and then switches onto it.
+
 ```bash
 jailbee new feat/smoke
 jailbee shell feat-smoke
@@ -41,9 +46,46 @@ exit
 
 jailbee git fetch feat-smoke       # should report 1 new commit
 git log refs/jailbee/feat-smoke/feat/smoke
-jailbee git checkout feat-smoke    # creates host branch feat/smoke, ff-applies
+git log feat/smoke                 # host branch 'feat/smoke' now exists and holds the commit too
+git symbolic-ref --short HEAD      # unchanged — fetch never switches the tree
+jailbee git fetch feat-smoke --as alt   # same fetch, written under host branch 'alt' instead
+git log alt --oneline -1
+git branch -D alt
+
+jailbee git checkout feat-smoke    # creates/ff's host branch feat/smoke, AND switches onto it
+git symbolic-ref --short HEAD      # now feat/smoke
 jailbee destroy feat-smoke --force
+git branch -D feat/smoke
 git for-each-ref refs/jailbee/  # should be empty
+```
+
+### `--force` smoke test
+
+```bash
+jailbee new feat/forcesmoke
+git fetch origin   # unrelated: keep origin/main current for the next diverging commit
+git checkout -b feat/forcesmoke   # host branch diverges from the container from here
+echo "host-side" > host-only.txt && git add . && git commit -m "host divergence"
+
+jailbee shell feat-forcesmoke
+cd ~/SampleApp && echo "container-side" > c.txt && git add . && git commit -m "container commit" && exit
+
+jailbee git fetch feat-forcesmoke
+# expect: warning — 'feat/forcesmoke' has diverged, left alone; --force to overwrite
+
+git checkout main   # feat/forcesmoke must not be the checked-out branch for the next line
+jailbee git fetch feat-forcesmoke --force
+# expect: host branch feat/forcesmoke overwritten with the container's tip
+
+git checkout feat/forcesmoke   # now IS the checked-out branch
+jailbee shell feat-forcesmoke
+cd ~/SampleApp && echo "container commit 2" > c2.txt && git add . && git commit -m "second" && exit
+jailbee git fetch feat-forcesmoke --force
+# expect: refused even with --force — never move the branch out from under its own checkout
+
+git checkout main
+jailbee destroy feat-forcesmoke --force
+git branch -D feat/forcesmoke
 ```
 
 ## `jailbee git pull --cleanup` smoke test
@@ -625,6 +667,65 @@ jailbee destroy mount-push --force
 jailbee destroy feat-conflict --force
 ```
 
+## `jailbee git merge` smoke test
+
+Merges one container's branch into another **without a host checkout** —
+objects travel source → host → target, and no host branch or working tree is
+touched.
+
+```bash
+# 1. Two-source merge, no conflicts.
+jailbee new feat/merge-a
+jailbee shell feat-merge-a
+cd ~/SampleApp && echo "a" > a.txt && git add . && git commit -m "feature a" && exit
+
+jailbee new feat/merge-b
+jailbee shell feat-merge-b
+cd ~/SampleApp && echo "b" > b.txt && git add . && git commit -m "feature b" && exit
+
+jailbee new feat/merge-target
+jailbee git merge feat-merge-a feat-merge-b --into feat-merge-target
+# expect: both merges reported, in order, and neither touches a host branch
+git symbolic-ref --short HEAD   # unchanged — jailbee git merge never touches the host tree
+jailbee shell feat-merge-target
+cd ~/SampleApp && test -f a.txt && test -f b.txt && echo "both landed" && exit
+
+# 2. Three sources, a conflict in the middle one — the run stops there.
+jailbee new feat/merge-c
+jailbee shell feat-merge-c
+cd ~/SampleApp && echo "c" > a.txt && git add . && git commit -m "conflicting a" && exit
+# feat-merge-c's a.txt now conflicts with feat-merge-a's a.txt, already merged above.
+
+jailbee new feat/merge-d
+jailbee shell feat-merge-d
+cd ~/SampleApp && echo "d" > d.txt && git add . && git commit -m "feature d" && exit
+
+jailbee git merge feat-merge-a feat-merge-c feat-merge-d --into feat-merge-target
+# expect: feat-merge-a reported as already merged/landed, feat-merge-c stops
+# the run with a conflict report, feat-merge-d listed as "not attempted", and
+# a resume command naming feat-merge-c and feat-merge-d
+jailbee shell feat-merge-target
+cd ~/SampleApp && git status | grep -i "unmerged"
+git merge --abort && exit
+
+# 3. --plain transports without merging.
+jailbee git merge feat-merge-d --into feat-merge-target --plain
+# expect: report says "transported", never "merged"
+jailbee shell feat-merge-target
+cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline -1 && exit
+
+# 4. --into is required.
+jailbee git merge feat-merge-a
+# expect: exit 2, "Missing option '--into'."
+
+# Cleanup (one name per invocation)
+jailbee destroy feat-merge-a --force
+jailbee destroy feat-merge-b --force
+jailbee destroy feat-merge-c --force
+jailbee destroy feat-merge-d --force
+jailbee destroy feat-merge-target --force
+```
+
 ## `jailbee git push` source-ref smoke test
 
 > **Host-only.** Verifies that a push carries the *fetched* upstream tip,
@@ -1091,20 +1192,23 @@ then fix it while the prompt waits.
 ## `jailbee git` top-level alias smoke test
 
 > Host-only. Every `jailbee git <sub>` command has a top-level alias
-> (`jailbee fetch`/`checkout`/`pull`/`retarget`/`diff`/`push`).
+> (`jailbee fetch`/`checkout`/`pull`/`retarget`/`diff`/`push`) **except
+> `jailbee git merge`**, which has none — deliberately: the bare `merge` verb
+> used to name today's `jailbee git pull`, and a second command answering to
+> it would resurrect that ambiguity.
 > The aliases are **hidden** from `jailbee --help` — the top-level list stays
 > short — but stay invocable, and the canonical forms are listed under
 > `jailbee git --help`. `jailbee pr` is the mirror-image exception: it is the
 > visible, canonical top-level command, and `jailbee git pr` is its hidden
 > alias — so it does NOT show up under `jailbee git --help`. Also verifies
-> `jailbee git merge` and `jailbee git create-pr` no longer exist.
+> `jailbee git create-pr` (removed pre-1.0 name) no longer exists.
 
 ```bash
 # Aliases are HIDDEN from the top-level help (no "Alias for" rows).
 uv run jailbee --help | grep -c "Alias for"          # -> 0
 
 # Canonical subcommands are listed under the git group.
-uv run jailbee git --help | grep -E "fetch|checkout|pull|retarget|diff|push"
+uv run jailbee git --help | grep -E "fetch|checkout|pull|retarget|diff|push|merge"
 
 # `pr` is the exception: visible at the top level, hidden under `jailbee git`.
 uv run jailbee --help | grep " pr "        # expect: listed as a normal top-level command
@@ -1119,8 +1223,10 @@ uv run jailbee diff --help     | grep "jailbee git diff"
 # (The full docstring with Examples lives on the canonical form:)
 uv run jailbee git pull --help | grep "Examples:"
 
+# `merge` is the one canonical subcommand with no top-level alias.
+uv run jailbee merge 2>&1 | grep -i "no such command"
+
 # The old commands are gone.
-uv run jailbee git merge 2>&1 | grep -i "no such command"
 uv run jailbee git create-pr 2>&1 | grep -i "no such command"
 
 # Functional smoke: alias and canonical produce identical behaviour.
@@ -1622,10 +1728,19 @@ i.e. "PR view"), where `<base>` resolves in order:
 `origin/<default>`. `jailbee git diff` uses the same base resolution so its
 output stays consistent with what AHEAD shows.
 
-The **MERGE** column shows a best-effort conflict indicator against the base:
-- blank / `ok` — container branch merges cleanly into its base branch
-- `conflict` — would conflict
-- `?` — base ref not found in the host repo
+The **MERGE** column shows the container's live merge/rebase state when one is
+active, and otherwise a best-effort conflict prediction against the base. An
+active state always outranks the prediction — see priority order below:
+- `conflict!` — unresolved conflict in the container **right now** (unmerged
+  paths), e.g. left mid-merge by `jailbee git push --current`
+- `merging` / `rebasing` / `cherry-picking` / `reverting` — that operation is
+  in progress, conflicts already resolved, the commit is pending
+- `conflict` — *prediction only*: would conflict if merged into base; nothing
+  is running
+- blank / `ok` — *prediction only*: container branch merges cleanly into its
+  base branch
+- `?` — base ref not found in the host repo, or the live state couldn't be
+  probed
 - `—` — container is stopped or in mount mode (no git access)
 
 ```bash
@@ -1655,6 +1770,23 @@ git add dirty.txt
 git commit -m "host conflict"
 jailbee ls
 # expect: feat-lsstat MERGE=conflict (same file modified on both sides)
+
+# 2b. MERGE=conflict! — a *live* conflict outranks the prediction above.
+# Push that same conflicting commit into the container and leave it unresolved.
+jailbee git push feat-lsstat --merge --from-local
+# expect: conflict message, hint pointing to 'jailbee shell feat-lsstat'
+jailbee ls
+# expect: feat-lsstat MERGE=conflict! (unresolved conflict right now, not
+# the merge-would-conflict prediction from step 2)
+
+jailbee shell feat-lsstat
+cd ~/SampleApp && git merge --abort && exit
+jailbee ls
+# expect: feat-lsstat MERGE=conflict again (prediction only; nothing in
+# progress once the merge is aborted) — `merging`/`rebasing`/`cherry-picking`/
+# `reverting` are the same "active" family for the matching git op, reachable
+# the same way (`git merge --no-commit`, `git rebase`, `git cherry-pick -n`,
+# `git revert -n`, left uncommitted inside the container).
 
 # Undo the host commit to restore a clean baseline for remaining steps.
 git revert HEAD --no-edit
