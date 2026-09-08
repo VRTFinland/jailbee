@@ -1,9 +1,13 @@
-"""CLI tests for the hidden top-level `jailbee git` aliases and the `jailbee git merge` removal.
+"""CLI tests for the hidden top-level `jailbee git` aliases.
 
 Every `jailbee git <sub>` command has a top-level alias (e.g. `jailbee checkout` ==
 `jailbee git checkout`). The aliases are hidden from `jailbee --help` so the top-level
 command list stays short, but they remain invocable and the canonical forms
 are listed under `jailbee git --help`.
+
+`jailbee git merge` is the exception and has no top-level alias — see
+`test_jailbee_git_merge_needs_an_explicit_target` and the note beside the
+command in `cli.py`.
 """
 
 from __future__ import annotations
@@ -18,12 +22,33 @@ from jailbee.lifecycle import ResolvedContainer
 ALIASES = ["fetch", "checkout", "pull", "retarget", "diff", "push"]
 
 
-def test_jailbee_git_merge_returns_no_such_command():
-    """`jailbee git merge feat-foo` must fail — the command was renamed to `pull`."""
+def test_jailbee_git_merge_needs_an_explicit_target():
+    """`jailbee git merge feat-foo` must fail — it never merges into a guess.
+
+    Historically it failed with "no such command": the old container->host
+    `jailbee git merge` was renamed to `jailbee git pull`, and this test kept
+    the name dead so the ambiguous form could not come back. The name now
+    belongs to the container->container merge, whose `--into` is *required* —
+    so the bare one-argument form the old command accepted is still an error,
+    now a missing-option usage error instead of an unknown command.
+    """
     result = CliRunner().invoke(app, ["git", "merge", "feat-foo"])
-    assert result.exit_code != 0
+    assert result.exit_code == 2
     combined = (result.output or "") + (result.stderr or "")
     assert "merge" in combined.lower()
+    assert "missing option" in combined.lower()
+    assert "--into" in combined
+
+
+def test_jailbee_merge_has_no_top_level_alias():
+    """`jailbee merge` is deliberately not registered — unlike every other sub.
+
+    A bare `merge` verb is exactly the ambiguity the earlier removal was about,
+    and `--into` reads worse without the `git` qualifier.
+    """
+    result = CliRunner().invoke(app, ["merge", "c1", "--into", "c4"])
+    assert result.exit_code != 0
+    combined = (result.output or "") + (result.stderr or "")
     assert "no such command" in combined.lower()
 
 
