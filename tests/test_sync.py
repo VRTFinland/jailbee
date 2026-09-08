@@ -6606,3 +6606,236 @@ def test_container_status_preflight_timeout_becomes_a_sync_error(mocker):
     incus.exec.side_effect = IncusTimeoutError("`incus exec c ...` timed out after 60s")
     with pytest.raises(sync.SyncError, match="timed out after 60s"):
         sync._container_status_dirty(incus, "c", "/home/dev/repo", uid=53023)
+
+
+# --- push_and_merge: the fast-forward decision -----------------------------
+#
+# `--merge` forced `--ff-only` whenever the container was already on the
+# branch being pushed, which is *always* true for `jailbee push --pr --merge`.
+# A container with its own commits and a PR head that had moved on could
+# therefore not be merged at all:
+#
+#   ✗ git merge failed in container 'feature-15319-…':
+#     fatal: Not possible to fast-forward, aborting.
+#
+# These pin the six-way decision (auto / --ff / --no-ff × divergent or not)
+# and the prompt that makes the auto case recoverable.
+
+
+def _merge_dispatch(mocker, make_cfg, tmp_path, *, head_branch, rev_list_count):
+    """A push_and_merge rig whose divergence probe answers `rev_list_count`.
+
+    `rev_list_count` is `git rev-list --left-right --count HEAD...<ref>`
+    output: "<commits only on HEAD>\t<commits only on the pushed ref>".
+    """
+    from jailbee.incus import IncusError
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": f"{head_branch}\n",
+            "rev_parse_gie": "",
+            "rev_list_count": rev_list_count,
+            "merge": "",
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    return cfg, incus
+
+
+def _merge_cmd(incus):
+    """The one `git merge` command run, or None if none was."""
+    calls = [
+        c
+        for c in incus.exec.call_args_list
+        if "merge" in c.args[1] and "rev-parse" not in c.args[1] and "rev-list" not in c.args[1]
+    ]
+    assert len(calls) <= 1, f"expected at most one merge, got {[c.args[1] for c in calls]}"
+    return calls[0].args[1] if calls else None
+
+
+def test_same_branch_without_divergence_still_fast_forwards(mocker, make_cfg, tmp_path):
+    """The behaviour that was always right, pinned so the fix cannot widen it
+    into "always make a merge commit"."""
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="0\t2\n"
+    )
+
+    result = push_and_merge(cfg, incus, "feat-foo")
+
+    assert result.fast_forward_only is True
+    assert "--ff-only" in _merge_cmd(incus)
+
+
+def test_diverged_same_branch_merges_when_the_user_says_yes(mocker, make_cfg, tmp_path):
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+
+    result = push_and_merge(cfg, incus, "feat-foo", confirm=lambda _msg: True)
+
+    cmd = _merge_cmd(incus)
+    assert "--ff-only" not in cmd
+    assert "-m" in cmd
+    assert result.fast_forward_only is False
+
+
+def test_diverged_same_branch_aborts_when_the_user_says_no(mocker, make_cfg, tmp_path):
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+
+    with pytest.raises(SyncError, match="not possible"):
+        push_and_merge(cfg, incus, "feat-foo", confirm=lambda _msg: False)
+
+    assert _merge_cmd(incus) is None, "declining must not run git merge at all"
+
+
+def test_diverged_same_branch_without_a_tty_names_the_flag(mocker, make_cfg, tmp_path):
+    """`confirm=None` is the non-interactive path — a script, or the detached
+    background worker. It must say what flag unblocks it rather than leave
+    the user to read git's fast-forward hint and guess."""
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+
+    with pytest.raises(SyncError, match="--no-ff"):
+        push_and_merge(cfg, incus, "feat-foo", confirm=None)
+
+    assert _merge_cmd(incus) is None
+
+
+def test_the_prompt_reports_both_sides_of_the_divergence(mocker, make_cfg, tmp_path, capsys):
+    """The counts are the whole reason to ask rather than just fail: they are
+    what tells the user whether a merge commit is what they want. A bare
+    "merge anyway?" with no numbers is not an informed choice."""
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+    seen: list[str] = []
+
+    def _confirm(msg: str) -> bool:
+        seen.append(msg)
+        return True
+
+    push_and_merge(cfg, incus, "feat-foo", confirm=_confirm)
+
+    assert seen, "expected the user to be asked"
+    out = capsys.readouterr().out
+    assert "diverged" in out
+    assert "3 commit(s) not on the pushed ref" in out
+    assert "2 commit(s) not in the container" in out
+    # Both branch names, so the report says which two things diverged.
+    assert "'main'" in out
+
+
+def test_the_non_interactive_error_carries_the_same_counts(mocker, make_cfg, tmp_path):
+    """A script's operator has no prompt to read, so the counts must be in
+    the exception itself — not printed alongside it and lost."""
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+
+    with pytest.raises(SyncError) as excinfo:
+        push_and_merge(cfg, incus, "feat-foo", confirm=None)
+
+    msg = str(excinfo.value)
+    assert "3 commit(s) not on the pushed ref" in msg
+    assert "2 commit(s) not in the container" in msg
+    assert "--no-ff" in msg
+
+
+def test_no_ff_true_makes_a_merge_commit_on_a_matching_branch(mocker, make_cfg, tmp_path):
+    """`--no-ff` skips the prompt entirely — the user already answered it."""
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="3\t2\n"
+    )
+
+    def _confirm(_msg: str) -> bool:
+        raise AssertionError("--no-ff must not ask")
+
+    result = push_and_merge(cfg, incus, "feat-foo", no_ff=True, confirm=_confirm)
+
+    cmd = _merge_cmd(incus)
+    assert "--ff-only" not in cmd
+    assert "-m" in cmd
+    assert result.fast_forward_only is False
+
+
+def test_no_ff_false_demands_a_fast_forward_across_branches(mocker, make_cfg, tmp_path):
+    """`--ff` is the other half of the tri-state: it forces `--ff-only` even
+    where the automatic choice would have made a merge commit."""
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="feat/foo", rev_list_count="0\t2\n"
+    )
+
+    result = push_and_merge(cfg, incus, "feat-foo", no_ff=False)
+
+    assert "--ff-only" in _merge_cmd(incus)
+    assert result.fast_forward_only is True
+
+
+def test_a_different_branch_still_gets_a_merge_commit_by_default(mocker, make_cfg, tmp_path):
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="feat/foo", rev_list_count="3\t2\n"
+    )
+
+    def _confirm(_msg: str) -> bool:
+        raise AssertionError("a cross-branch merge was never ff-only, so nothing to ask")
+
+    result = push_and_merge(cfg, incus, "feat-foo", confirm=_confirm)
+
+    assert "--ff-only" not in _merge_cmd(incus)
+    assert result.fast_forward_only is False
+
+
+def test_an_unreadable_divergence_keeps_the_fast_forward(mocker, make_cfg, tmp_path):
+    """"Cannot tell" must not become "no divergence".
+
+    Silently making a merge commit because a probe failed would rewrite the
+    container's history on the strength of an error. Falling through to
+    `--ff-only` leaves git to produce its own diagnosis, which is what
+    happened before the probe existed.
+    """
+    from jailbee.sync import push_and_merge
+
+    cfg, incus = _merge_dispatch(
+        mocker, make_cfg, tmp_path, head_branch="main", rev_list_count="not a count\n"
+    )
+
+    def _confirm(_msg: str) -> bool:
+        raise AssertionError("an unknown divergence must not prompt")
+
+    result = push_and_merge(cfg, incus, "feat-foo", confirm=_confirm)
+
+    assert "--ff-only" in _merge_cmd(incus)
+    assert result.fast_forward_only is True

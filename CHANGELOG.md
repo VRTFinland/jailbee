@@ -33,6 +33,25 @@
 
 ### Fixed
 
+- **`jailbee push --pr --merge` could not merge a diverged PR head.** The
+  merge ran `--ff-only` whenever the container was already on the branch
+  being pushed — and a `--pr` push sends the PR head, so a review container
+  is on that branch by construction. The moment the container had commits of
+  its own and the PR head had moved on, the command was a dead end with no
+  flag and no prompt to get past it:
+
+      ✗ git merge failed in container 'feature-15319-…':
+        fatal: Not possible to fast-forward, aborting.
+
+  `--merge` now checks whether the fast-forward is possible *before* running
+  git, and when it is not, reports both commit counts and asks whether to
+  make a merge commit instead. `--no-ff` answers that up front and `--ff`
+  refuses it, failing on divergence as `--ff-only` always did. Off a TTY the
+  divergence is an error naming `--no-ff`, never a silent choice. A probe
+  that cannot be read falls through to the old `--ff-only` behaviour rather
+  than guessing "no divergence" — a failed probe must not write a merge
+  commit into the container's history.
+
 - **The legacy `chrome:` deprecation notice printed three times on
   `jailbee new`.** The command loads the config three times — the CLI's
   own load, plus the privilege baseline and the branch's own autostart

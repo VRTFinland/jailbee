@@ -9288,3 +9288,156 @@ def test_new_prints_no_notice_for_a_configured_repo(tmp_path, mocker):
     # Merged output (not just stderr): the notice must not print on *any*
     # channel for a configured repo.
     assert "has no .jailbee/config.yaml" not in collapsed
+
+
+# --- push --ff / --no-ff ---------------------------------------------------
+
+
+def _ff_flag_rig(mocker):
+    """A `jailbee git push feat-x --pr --merge` rig, mocked to the merge call."""
+    from jailbee.pr import FetchResult, PrInfo
+    from jailbee.sync import MergeInContainerResult, PushResult
+
+    cfg = _push_cfg_factory(action="ask", source="ask")
+    incus = _pr_incus_mock(mocker)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "full-name"))
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
+    mocker.patch(
+        "jailbee.pr.resolve_pr",
+        return_value=PrInfo(
+            number=1234,
+            head_ref="feat/pr-branch",
+            head_sha="newsha",
+            state="OPEN",
+            base_ref="main",
+        ),
+    )
+    mocker.patch(
+        "jailbee.pr.fetch_pr_head",
+        return_value=FetchResult(
+            updated=True, prev_sha="old", new_sha="newsha", ref="refs/jailbee/pr/1234/head"
+        ),
+    )
+    push_result = PushResult(
+        source="feat/pr-branch",
+        source_ref="refs/heads/feat/pr-branch",
+        container_ref="refs/jailbee/host/feat/pr-branch",
+        old_oid=None,
+        new_oid="oid",
+    )
+    return mocker.patch(
+        "jailbee.sync.push_and_merge",
+        return_value=MergeInContainerResult(
+            push=push_result,
+            container_branch="feat/pr-branch",
+            fast_forward_only=False,
+            head_oid="chead",
+        ),
+    )
+
+
+def test_cli_push_no_ff_flag_reaches_push_and_merge(mocker):
+    """`--no-ff` is the reported bug's escape hatch: `--pr --merge` always
+    puts the container on the pushed branch, so the automatic choice is
+    ff-only and a diverged review container had no way through."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mock_merge = _ff_flag_rig(mocker)
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge", "--no-ff"])
+
+    assert result.exit_code == 0, result.output
+    assert mock_merge.call_args.kwargs.get("no_ff") is True
+
+
+def test_cli_push_ff_flag_reaches_push_and_merge_as_false(mocker):
+    """`--ff` is the other half of the tri-state, and must arrive as
+    `no_ff=False`, not as `None` — `None` would silently mean "decide for
+    me", which is what the user just declined to have happen."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mock_merge = _ff_flag_rig(mocker)
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge", "--ff"])
+
+    assert result.exit_code == 0, result.output
+    assert mock_merge.call_args.kwargs.get("no_ff") is False
+
+
+def test_cli_push_without_either_flag_leaves_the_choice_automatic(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mock_merge = _ff_flag_rig(mocker)
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge"])
+
+    assert result.exit_code == 0, result.output
+    # `in kwargs` before the value: `.get(...) is None` alone would pass on a
+    # build that never forwards the argument at all.
+    assert "no_ff" in mock_merge.call_args.kwargs
+    assert mock_merge.call_args.kwargs["no_ff"] is None
+
+
+def test_cli_push_passes_a_confirm_callable_for_the_divergence_prompt(mocker):
+    """Without this, `push_and_merge` sees `confirm=None` and raises instead
+    of asking, which is the non-interactive contract — the prompt would
+    never appear no matter what terminal the user is in."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mock_merge = _ff_flag_rig(mocker)
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge"])
+
+    assert result.exit_code == 0, result.output
+    assert callable(mock_merge.call_args.kwargs.get("confirm"))
+
+
+def test_cli_push_passes_no_confirm_without_a_tty(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mock_merge = _ff_flag_rig(mocker)
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge"])
+
+    assert result.exit_code == 0, result.output
+    assert "confirm" in mock_merge.call_args.kwargs
+    assert mock_merge.call_args.kwargs["confirm"] is None
+
+
+def test_cli_push_rejects_ff_flags_alongside_rebase(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_push_cfg_factory())
+
+    for flag in ("--ff", "--no-ff"):
+        result = CliRunner().invoke(app, ["git", "push", "feat-x", "--rebase", flag])
+        assert result.exit_code == 2, f"{flag}: {result.output}"
+        assert "only applies to --merge" in result.output
+
+
+def test_cli_push_rejects_ff_flags_alongside_force_and_plain(mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_push_cfg_factory())
+
+    for other in ("--plain", "--force"):
+        result = CliRunner().invoke(app, ["git", "push", "feat-x", other, "--no-ff"])
+        assert result.exit_code == 2, f"{other}: {result.output}"
+        assert "only applies to --merge" in result.output
