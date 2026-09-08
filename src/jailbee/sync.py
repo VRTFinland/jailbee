@@ -2181,9 +2181,11 @@ def _merge_ref_in_container(
     gitlink conflict resolver, the index-lock discrimination and the
     `MergeConflictError` report exist once.
 
-    Raises `SyncError` on a failed merge and `MergeConflictError` when
-    conflicts remain after the gitlink resolver has run; the container is left
-    in merge state for manual resolution either way.
+    Raises `SyncError` on an index-lock timeout or another failed merge, and
+    `MergeConflictError` when conflicts remain after the gitlink resolver has
+    run. Only the `MergeConflictError` path guarantees the container is left
+    in merge state for manual resolution; a `SyncError` leaves it as git left
+    it, which for a plain merge failure is no merge in progress at all.
     """
     from jailbee.config import CONTAINER_USERNAME
 
