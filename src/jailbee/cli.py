@@ -3313,7 +3313,7 @@ def fetch(
     Fetches into refs/jailbee/<short>/<branch>, transports the submodule
     objects, then points the host branch and every submodule's branch of the
     same name at what the container has. The working tree is not moved — switch
-    to it afterwards with `jailbee submodule checkout -b <branch>`.
+    to it afterwards with `jailbee branch <branch>`.
 
     A host branch that has diverged is left alone with a warning; --force
     overwrites it, except when it is the branch you have checked out.
