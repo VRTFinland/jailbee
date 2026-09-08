@@ -950,36 +950,6 @@ def host_tree_dirty(repo_root: Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def create_branch(
-    repo_root: Path,
-    branch: str,
-    *,
-    start_point: str,
-    track: str | None,
-) -> None:
-    """Create branch `branch` at `start_point` and check it out.
-
-    Output goes to the terminal. If `track` is given, sets the new branch's
-    upstream via `git branch --set-upstream-to`. We don't use
-    `git checkout -b --track` because the start point is `refs/jailbee/...`
-    and the tracking target is `origin/...` — two different refs.
-    """
-    returncode = subprocess.call(
-        ["git", "checkout", "-b", branch, start_point],
-        cwd=repo_root,
-    )
-    if returncode != 0:
-        raise GitError(f"git checkout -b failed (exit {returncode})")
-
-    if track is not None:
-        returncode = subprocess.call(
-            ["git", "branch", f"--set-upstream-to={track}", branch],
-            cwd=repo_root,
-        )
-        if returncode != 0:
-            raise GitError(f"git branch --set-upstream-to failed (exit {returncode})")
-
-
 def checkout_branch(repo_root: Path, branch: str) -> None:
     """Run `git checkout <branch>`. Output goes to the terminal.
 
