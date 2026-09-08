@@ -244,6 +244,39 @@ def test_legacy_chrome_block_warns_where_it_moved(capsys):
     assert "chrome:" in err and "browsers.chrome" in err
 
 
+def test_the_legacy_chrome_notice_prints_once_per_process(capsys):
+    """Three folds, one line.
+
+    `jailbee new` loads the config three times — the CLI's own
+    `_load_or_exit`, then `branch_config._baseline_autostart` and
+    `branch_config.load_branch_autostart`, each of which builds a whole
+    `Config` through `load_config_from_text` — and an unguarded notice
+    printed once per load, so the user saw the same sentence three times.
+    """
+    from jailbee.config.loader import resolve_browsers_raw
+
+    for _ in range(3):
+        resolve_browsers_raw({"chrome": {"enabled": True}})
+    assert capsys.readouterr().err.count("browsers.chrome") == 1
+
+
+def test_the_notice_prints_once_across_three_real_loads(tmp_path, capsys):
+    """The same guarantee through the loader `jailbee new` actually calls.
+
+    The unit above folds a dict directly; this reproduces the reported
+    shape — three full `load_config_from_text` builds in one process — so
+    a guard placed too close to `resolve_browsers_raw`'s internals (and
+    bypassed by the real path) still fails here.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    text = "container_prefix: myrepo\nchrome:\n  enabled: true\n"
+    path = tmp_path / ".jailbee" / "config.yaml"
+    for _ in range(3):
+        load_config_from_text(text, path)
+    assert capsys.readouterr().err.count("browsers.chrome") == 1
+
+
 def test_an_explicit_browsers_block_wins_over_the_legacy_one():
     from jailbee.config.loader import resolve_browsers_raw
 

@@ -7,6 +7,7 @@ deep-merge. See `common.deep_merge()` and docs/config.md for details.
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -191,6 +192,37 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     return result
 
 
+@functools.cache
+def _warn_legacy_chrome_block() -> None:
+    """Print the legacy `chrome:` notice once per process.
+
+    One command loads the config many times, and each load folds the block
+    again. `jailbee new` is the worst case at three — the CLI's own
+    `_load_or_exit`, then `branch_config._baseline_autostart` and
+    `branch_config.load_branch_autostart`, the latter two building a whole
+    `Config` apiece through `load_config_from_text` — and it printed the
+    same sentence three times. The dashboard refresh loop reloads too.
+
+    Cached rather than flag-guarded, and cached *here* rather than
+    suppressed with `emit_hint=False` at each extra call site: a fourth
+    load added later stays quiet by construction instead of re-arming the
+    bug. Takes no arguments because the notice names no path — unlike
+    `paths._warn_legacy_config_dir`, whose message quotes the directory
+    and so keys on it. A `chrome:` block in both `global.yaml` and a repo
+    config is still one line, which is the right count: the advice is
+    identical and applies to both.
+
+    `tests/conftest.py` clears the cache between tests via the autouse
+    `_reset_deprecation_notices` fixture.
+    """
+    hint(
+        [
+            "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+            "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+        ]
+    )
+
+
 def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> dict[str, object]:
     """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
 
@@ -208,26 +240,24 @@ def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> d
     this runs on every config load, and stdout is where `jailbee ls --format
     json` and friends put script-parsed output. `warn` would inject
     `⚠ ...` ahead of that payload for any host with a legacy `chrome:`
-    block. See `hint`'s own docstring for the same reasoning.
+    block. See `hint`'s own docstring for the same reasoning. It prints at
+    most once per process, however many times the config is loaded — see
+    `_warn_legacy_chrome_block`.
 
     `emit_hint=False` suppresses that notice without changing the fold
-    itself. `config_edit.layers.resolve` needs the fold — so a legacy
-    `chrome:` block still reports a real origin instead of "default" — but
-    calls it on every reload, including while the full-screen editor
-    `Application` is running; printing to the terminal mid-session would
-    corrupt the display, and the CLI's own load of the same file already
-    prints the notice once elsewhere.
+    itself, and without consuming the once-per-process budget.
+    `config_edit.layers.resolve` needs the fold — so a legacy `chrome:`
+    block still reports a real origin instead of "default" — but calls it
+    on every reload, including while the full-screen editor `Application`
+    is running; printing to the terminal mid-session would corrupt the
+    display, and the CLI's own load of the same file already prints the
+    notice once elsewhere.
     """
     legacy = raw.get("chrome")
     if not isinstance(legacy, dict):
         return raw
     if emit_hint:
-        hint(
-            [
-                "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
-                "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
-            ]
-        )
+        _warn_legacy_chrome_block()
     merged = deep_merge({"source": "host", **legacy}, {})
     browsers = raw.get("browsers")
     overlay = browsers if isinstance(browsers, dict) else {}
@@ -411,8 +441,10 @@ def load_config_from_layers(
 
     `emit_hint` reaches `resolve_browsers_raw` through `_build_config_from_dict`
     unchanged. The default `True` is right for every real load — the CLI path
-    (`_load_config_from_repo_raw`) never overrides it, so the legacy `chrome:`
-    deprecation notice still prints exactly once per ordinary command.
+    (`_load_config_from_repo_raw`) never overrides it, and the notice is
+    capped at one line per process by `_warn_legacy_chrome_block`, so a
+    command that loads the config several times (`jailbee new` loads it
+    three times) still prints it once.
     `config_edit.layers.validate` passes `False`: it calls this function
     synchronously from the editor's save handler, while the full-screen
     `Application` is live, and `hint()` writes straight to a Rich stderr

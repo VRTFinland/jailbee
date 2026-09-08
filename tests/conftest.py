@@ -263,6 +263,29 @@ def _isolate_global_config(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_deprecation_notices():
+    """Clear the once-per-process deprecation caches between tests.
+
+    Both notices are `functools.cache`-guarded so a command that loads the
+    config several times prints them once (see
+    `config.loader._warn_legacy_chrome_block` and
+    `paths._warn_legacy_config_dir`). In one pytest process that cap spans
+    the whole session, so without this fixture the first test to fold a
+    legacy block would be the only one able to assert on the line, and
+    every later test would read an empty stderr — a failure whose cause is
+    an unrelated test that happened to run first.
+    """
+    from jailbee.config.loader import _warn_legacy_chrome_block
+    from jailbee.paths import _warn_legacy_config_dir
+
+    _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_config_dir.cache_clear()
+    yield
+    _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_config_dir.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_state_dir(tmp_path_factory, monkeypatch):
     """Redirect XDG_STATE_HOME to a tmp dir so tests never touch ~/.local/state/jailbee/.
 
