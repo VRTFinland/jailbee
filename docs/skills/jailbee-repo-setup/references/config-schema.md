@@ -378,9 +378,9 @@ Chrome and Firefox, each the same `BrowserConfig` shape under
 Each enabled browser gets its own per-container profile pool
 (`chrome-profile` / `firefox-profile`), so two containers never fight over
 one profile directory. **The top-level `chrome:` block from before 1.3.0
-still works** in 1.3.x, folded into `browsers.chrome` at load time with a
-one-time deprecation hint — write `browsers.chrome` in anything you
-generate. It is removed in 1.4.0.
+still works**, folded into `browsers.chrome` at load time with a deprecation
+hint — write `browsers.chrome` in anything you generate. It is removed in
+2.0.0.
 
 ## `apps`
 

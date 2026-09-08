@@ -998,13 +998,14 @@ Each enabled browser gets its own per-container profile pool
 so two containers running the same browser never fight over one profile
 directory.
 
-**The top-level `chrome:` block from before 1.3.0 still works** in 1.3.x,
-folded into `browsers.chrome` at load time with a one-time deprecation hint
-on stderr naming `docs/config.md`. Unlike the `agents`/`claude` legacy
-alias, defining both is not an error: an explicit `browsers.chrome` overlays
-the folded legacy block field-by-field, so a half-migrated config behaves
-the way the newer spelling says. It is removed entirely in 1.4.0 — migrate
-to `browsers.chrome`.
+**The top-level `chrome:` block from before 1.3.0 still works**, folded into
+`browsers.chrome` at load time with a deprecation hint on stderr naming
+`docs/config.md` — once per process, however many times the config is
+loaded. Unlike the `agents`/`claude` legacy alias, defining both is not an
+error: an explicit `browsers.chrome` overlays the folded legacy block
+field-by-field, so a half-migrated config behaves the way the newer spelling
+says. It is removed entirely in 2.0.0, alongside `.gie/config.yaml` —
+migrate to `browsers.chrome`.
 
 The fold runs on the **merged** global+repo dict, so `browsers:` wins over
 `chrome:` regardless of which layer each one sits in — a `browsers.chrome`

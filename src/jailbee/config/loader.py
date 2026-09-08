@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.config.common import (
     SCRATCH_ORIGIN_SUFFIX,
     _copy,
@@ -218,7 +219,8 @@ def _warn_legacy_chrome_block() -> None:
     hint(
         [
             "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
-            "see docs/config.md. It still works in 1.3.x and is removed in 1.4.0."
+            f"see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
+            "where it is removed."
         ]
     )
 
@@ -227,10 +229,13 @@ def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> d
     """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
 
     `chrome:` was the only browser block through 1.2.x. Rather than the hard
-    `retired.py` error other renames got, it is accepted for one release with
-    a warning: it lives in `~/.config/jailbee/global.yaml` on every host that
-    ever enabled Chrome, and a hard error there would break every command in
-    every repo at once. Retire in 1.4.0.
+    `retired.py` error other renames got, it is accepted with a warning: it
+    lives in `~/.config/jailbee/global.yaml` on every host that ever enabled
+    Chrome, and a hard error there would break every command in every repo at
+    once. Retire in 2.0.0, alongside `.gie/config.yaml` — the two legacy
+    spellings share a removal so there is one break, not two, and the cost of
+    carrying this one is inert: with no `chrome:` key the function returns at
+    its first branch.
 
     An explicit `browsers:` block wins, so a half-migrated config behaves the
     way the newer spelling says. The legacy block predates `source:`, so it

@@ -296,9 +296,9 @@ class BrowsersConfig(BaseModel):
         return _backfill_firefox_default_source(v)
 
 
-# Kept as a name for one release so `from jailbee.config import ChromeConfig`
-# keeps working while `chrome:` is still an accepted alias. Retire in 1.4.0
-# together with the alias itself.
+# Kept as a name so `from jailbee.config import ChromeConfig` keeps working
+# while `chrome:` is still an accepted alias. Retire in 2.0.0 together with
+# the alias itself (see `loader.resolve_browsers_raw`).
 ChromeConfig = BrowserConfig
 
 

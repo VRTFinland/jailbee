@@ -2,7 +2,33 @@
 
 ## Unreleased
 
+### Changed
+
+- **Every legacy spelling now names one removal release: 2.0.0.** The four
+  pre-1.3.0 spellings still accepted disagreed about how long they had.
+  `chrome:` promised removal in 1.4.0 — one minor release of grace for a
+  block that lives in `~/.config/jailbee/global.yaml` on every host that
+  ever enabled Chrome, where a hard error breaks every command in every
+  repo at once. `.gie/config.yaml` promised 2.0.0. `jailbee chrome-pool`
+  and `jailbee submodule checkout` named no release at all, so their
+  notices told users to migrate without saying by when. All four now
+  interpolate `constants.LEGACY_REMOVAL_VERSION`, so they cannot drift
+  apart again, and grep on that name enumerates what the release drops.
+
+  `golden.python`, `dashboard:` and `global.dashboard` deliberately keep
+  no removal release: those keys are already ignored rather than honoured,
+  so nothing changes the day they stop being read — the advice is "delete
+  the key", not "you have until X".
+
 ### Fixed
+
+- **The legacy `chrome:` deprecation notice printed three times on
+  `jailbee new`.** The command loads the config three times — the CLI's
+  own load, plus the privilege baseline and the branch's own autostart
+  config, the latter two each building a whole `Config` and re-reading
+  `global.yaml` — and the notice went out on every one. It is now capped
+  at one line per process, matching the `.gie/config.yaml` notice, which
+  already worked this way.
 
 - **`jailbee net egress add <host> <container>` actually opens the hole
   now.** The default (container) scope reported success, stored the label,
@@ -453,10 +479,11 @@
   instead of the terminal. Needed for a GUI app run by hand
   (`jailbee exec <name> -d -- firefox`), useful for anything long-running.
 
-  The top-level `chrome:` block is **deprecated**: it still works in 1.3.x,
-  folded into `browsers.chrome` at load time with a one-time hint on
-  stderr, and is removed in 1.4.0. See
-  [`browsers`](docs/config.md#browsers) and [`apps`](docs/config.md#apps).
+  The top-level `chrome:` block is **deprecated**: it is folded into
+  `browsers.chrome` at load time with a hint on stderr (once per process),
+  and is removed in 2.0.0 — the same release that drops
+  `.gie/config.yaml`. See [`browsers`](docs/config.md#browsers) and
+  [`apps`](docs/config.md#apps).
 - **`jailbee branch [BRANCH] [--container NAME] [--submodules-only]`** puts
   the whole tree, superproject and submodules, on one branch. Replaces
   `jailbee submodule checkout`, which stays as a hidden deprecated alias with

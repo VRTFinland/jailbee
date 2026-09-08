@@ -13,6 +13,7 @@ import yaml
 
 from jailbee import __version__, completion, table_format
 from jailbee.config import ConfigError, load_config, load_config_unsanitized
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.global_config import (
     GlobalConfig,
     default_global_config_path,
@@ -5644,7 +5645,8 @@ def submodule_checkout(
     cfg = _load_or_exit(config)
     hint(
         [
-            "`jailbee submodule checkout` is now `jailbee branch`.",
+            "`jailbee submodule checkout` is now `jailbee branch`. It keeps "
+            f"working until {LEGACY_REMOVAL_VERSION}, where it is removed.",
             "  jailbee branch [BRANCH] [--container NAME] [--submodules-only]",
         ]
     )
@@ -9914,14 +9916,20 @@ def chrome_pool_ls_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Deprecated: use `jailbee pool ls chrome-profile`."""
-    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    warn(
+        "`jailbee chrome-pool` is deprecated — use `jailbee pool` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     pool_ls_cmd(name="chrome-profile", fmt=fmt, fields=fields, config=config)
 
 
 @chrome_pool_app.command("prune")
 def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
     """Deprecated: use `jailbee pool prune chrome-profile`."""
-    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    warn(
+        "`jailbee chrome-pool` is deprecated — use `jailbee pool` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     pool_prune_cmd(name="chrome-profile", config=config)
 
 
