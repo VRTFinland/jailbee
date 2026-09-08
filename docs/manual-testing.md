@@ -719,12 +719,59 @@ cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline 
 jailbee git merge feat-merge-a
 # expect: exit 2, "Missing option '--into'."
 
+# 5. A submodule born inside the source container — the least-travelled
+#    line in this branch (submodules.py's create-then-`checkout --detach`
+#    path) and the one the whole-branch review most wants host-verified.
+#    Neither the source's host sub-repo nor the target's exists yet.
+jailbee new feat/merge-sub-src
+jailbee shell feat-merge-sub-src
+cd ~/SampleApp && git submodule add https://github.com/octocat/Hello-World libs/hello \
+  && git commit -m "add libs/hello submodule" && exit
+
+jailbee new feat/merge-sub-tgt
+jailbee git merge feat-merge-sub-src --into feat-merge-sub-tgt
+# expect: reported as landed, no error about a missing or unresolvable
+# submodule ref
+
+# 5a. Target sub-repo exists and is at the source's commit — proves the
+#     create + checkout --detach path ran and actually resolved.
+jailbee shell feat-merge-sub-tgt
+cd ~/SampleApp && test -d libs/hello/.git && echo "subrepo present"
+git -C libs/hello rev-parse HEAD && exit
+jailbee shell feat-merge-sub-src
+git -C ~/SampleApp/libs/hello rev-parse HEAD && exit
+# expect: the two rev-parse outputs above are identical
+
+# 5b. The checkout landed on the SOURCE's ref namespace, not `host`'s —
+#     this is the ruling-R18 change. Getting it wrong is silent: the merge
+#     in step 5 would either fail outright (checking out a ref that was
+#     never pushed) or silently resolve to a stale `host` ref if one
+#     happened to already exist, so "the merge landed" does not by itself
+#     prove this.
+jailbee shell feat-merge-sub-tgt
+git -C ~/SampleApp/libs/hello for-each-ref refs/jailbee-sub && exit
+# expect: refs/jailbee-sub/feat-merge-sub-src/libs/hello/HEAD (+ .../heads/*)
+# — NOT anything under refs/jailbee-sub/host/...
+
+# 5c. Host side: a new sub-repo directory appears in the superproject
+#     working tree. Per item 2's docstring correction this is expected,
+#     not a bug — it's how the relay reaches a submodule neither side had
+#     cloned before. No host branch, index or superproject commit is
+#     touched; `libs/hello` is untracked (`git status` shows it as such).
+git symbolic-ref --short HEAD   # unchanged, same as scenario 1's check
+test -d libs/hello/.git && echo "host sub-repo created"
+git -C libs/hello remote get-url origin   # the real upstream URL, never ext::
+git status --short libs/hello             # untracked — no gitlink was ever recorded
+
 # Cleanup (one name per invocation)
 jailbee destroy feat-merge-a --force
 jailbee destroy feat-merge-b --force
 jailbee destroy feat-merge-c --force
 jailbee destroy feat-merge-d --force
 jailbee destroy feat-merge-target --force
+jailbee destroy feat-merge-sub-src --force
+jailbee destroy feat-merge-sub-tgt --force
+rm -rf libs/hello   # the host sub-repo from step 5c; no host commit to reset
 ```
 
 ## `jailbee git push` source-ref smoke test
