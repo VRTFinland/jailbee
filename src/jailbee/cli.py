@@ -2548,8 +2548,7 @@ def _placement_remedy(status: str, *, name: str, short: str) -> str:
     # "failed": the ref write itself was refused (e.g. a lost update-ref race,
     # or the gitlink commit could not be read from the fetched tree).
     return (
-        f"{name}: failed — the ref write was refused "
-        f"(or the fetched commit has no gitlink for it)."
+        f"{name}: failed — the ref write was refused (or the fetched commit has no gitlink for it)."
     )
 
 

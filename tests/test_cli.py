@@ -3534,9 +3534,7 @@ def test_git_fetch_summary_survives_bracketed_branch_name(mocker, tmp_path):
                 commits_added=1,
             ),
             target="feat/[wip]",
-            superproject=BranchPlacement(
-                "refs/heads/feat/[wip]", "created", None, "newsha1234567"
-            ),
+            superproject=BranchPlacement("refs/heads/feat/[wip]", "created", None, "newsha1234567"),
             submodules=(),
         ),
     )
