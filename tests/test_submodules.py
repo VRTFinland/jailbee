@@ -575,9 +575,7 @@ def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocke
     enumerate_host.assert_not_called()
 
 
-def test_transport_to_container_relay_created_subrepo_checks_out_source_namespace(
-    mocker, tmp_path
-):
+def test_transport_to_container_relay_created_subrepo_checks_out_source_namespace(mocker, tmp_path):
     """R18: when the target has no sub-repo yet, the checkout after the push
     must detach at the ref namespace that was just pushed — `refs/jailbee-sub/
     <source_ns>/<path>/HEAD` — never a hardcoded `host`. On a relay, only

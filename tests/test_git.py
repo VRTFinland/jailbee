@@ -950,9 +950,7 @@ def test_place_branch_refuses_to_move_the_checked_out_branch(mocker, tmp_path):
     from jailbee import git
 
     # A clean fast-forward — refused anyway, because "x" is checked out here.
-    update_ref, run_capture = _place_branch_mocks(
-        mocker, old_oid="old", ancestor=True, current="x"
-    )
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="old", ancestor=True, current="x")
 
     assert git.place_branch(tmp_path, "x", "new") == ("checked-out", "old")
     # Moving the ref would leave this repo's index and working tree describing

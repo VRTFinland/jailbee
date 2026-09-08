@@ -92,9 +92,7 @@ def _conflict_report() -> ConflictReport:
 def test_git_merge_processes_sources_in_order(merge_repo, mocker):
     """Each source is merged into the target, one at a time, in the order given."""
     cfg, incus = merge_repo
-    called = mocker.patch(
-        "jailbee.sync.merge_container_into_container", return_value=_result()
-    )
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
 
@@ -138,9 +136,7 @@ def test_git_merge_passes_the_branch_override_through(merge_repo, mocker):
 
 def test_git_merge_plain_reports_a_transport_not_a_merge(merge_repo, mocker):
     """`--plain` runs no merge at all, so the summary must not say "merged"."""
-    called = mocker.patch(
-        "jailbee.sync.merge_container_into_container", return_value=_result()
-    )
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4", "--plain"])
 
@@ -167,9 +163,7 @@ def test_git_merge_stops_at_the_first_conflict_and_says_what_landed(merge_repo, 
             raise MergeConflictError("conflicts", report=report)
         return _result(source=source)
 
-    called = mocker.patch(
-        "jailbee.sync.merge_container_into_container", side_effect=side_effect
-    )
+    called = mocker.patch("jailbee.sync.merge_container_into_container", side_effect=side_effect)
 
     result = runner.invoke(app, ["git", "merge", "c1", "c2", "c3", "--into", "c4"])
 
@@ -350,9 +344,7 @@ def test_git_merge_resolves_every_source_before_merging_any(merge_repo, mocker):
         return (incus, f"sampleapp-{name}")
 
     mocker.patch("jailbee.cli._resolve_existing", side_effect=resolve)
-    called = mocker.patch(
-        "jailbee.sync.merge_container_into_container", return_value=_result()
-    )
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "c1", "c2typo", "c3", "--into", "c4"])
 

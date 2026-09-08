@@ -3402,9 +3402,7 @@ def _sync_refs_result(status: str = "created", submodules: tuple = ()):
 
 def test_git_fetch_calls_sync_refs_and_prints_the_branch(mocker, tmp_path):
     _fetch_setup(mocker, tmp_path)
-    called = mocker.patch(
-        "jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result()
-    )
+    called = mocker.patch("jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result())
 
     result = runner.invoke(app, ["git", "fetch", "feat-foo"])
 
@@ -3416,9 +3414,7 @@ def test_git_fetch_calls_sync_refs_and_prints_the_branch(mocker, tmp_path):
 
 def test_git_fetch_forwards_as_and_force(mocker, tmp_path):
     _fetch_setup(mocker, tmp_path)
-    called = mocker.patch(
-        "jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result()
-    )
+    called = mocker.patch("jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result())
 
     result = runner.invoke(app, ["git", "fetch", "feat-foo", "--as", "alt", "--force"])
 

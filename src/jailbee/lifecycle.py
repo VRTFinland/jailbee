@@ -2013,6 +2013,19 @@ def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
     return rows
 
 
+# Rich style per `git_status.merge_label` kind. Module-level because it is a
+# constant with no dependency on `ls_field_specs`' arguments — rebuilding it per
+# call bought nothing, and at function scope the `_UPPER` name (this module's
+# convention for constants, cf. `_SUBSEC_RE`) is a ruff N806 violation.
+_MERGE_KIND_STYLE: dict[str, str] = {
+    "none": "dim",
+    "ok": "dim",
+    "predicted": "red",
+    "active": "red",
+    "unknown": "yellow",
+}
+
+
 def ls_field_specs(
     *, now: datetime, all_repos: bool = False, show_submodules: bool = False
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
@@ -2057,14 +2070,6 @@ def ls_field_specs(
             return getattr(c.git_status, attr)  # type: ignore[no-any-return]
 
         return get
-
-    _MERGE_KIND_STYLE = {
-        "none": "dim",
-        "ok": "dim",
-        "predicted": "red",
-        "active": "red",
-        "unknown": "yellow",
-    }
 
     def _conflict_cell(c: ContainerInfo) -> str:
         text, kind = merge_label(c.git_status)

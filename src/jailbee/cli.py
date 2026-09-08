@@ -3866,9 +3866,7 @@ app.command(
 )(retarget)
 
 
-def _print_local_branch_update(
-    short: str, upd: "LocalBranchUpdate", *, container_ref: str
-) -> None:
+def _print_local_branch_update(short: str, upd: "LocalBranchUpdate", *, container_ref: str) -> None:
     """Report what the push did to the container's own `refs/heads/<source>`.
 
     Silent for the two benign no-ops, which are also the common ones: a branch

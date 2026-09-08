@@ -1021,9 +1021,7 @@ def test_checkout_forwards_branch_and_as_name_without_forcing(mocker, make_cfg, 
         cfg, incus, "feat-foo", branch="other/branch", as_name="mine"
     )
 
-    sync_refs.assert_called_once_with(
-        cfg, incus, "feat-foo", branch="other/branch", as_name="mine"
-    )
+    sync_refs.assert_called_once_with(cfg, incus, "feat-foo", branch="other/branch", as_name="mine")
     assert result.branch == "mine"
     checkout.assert_called_once_with(cfg.repo_root, "mine")
     update_subs.assert_called_once_with(cfg.repo_root, branch="mine")
@@ -7151,9 +7149,7 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
         ),
     )
     to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
-    sub_paths = mocker.patch(
-        "jailbee.submodules._container_submodule_paths", return_value=["sub"]
-    )
+    sub_paths = mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["sub"])
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     call_order: list[str] = []
     to_host.side_effect = lambda *a, **k: call_order.append("to_host")

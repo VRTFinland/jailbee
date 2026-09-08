@@ -840,9 +840,7 @@ def fast_forward_branch(repo_root: Path, branch: str, source_ref: str) -> bool:
     return result.returncode == 0
 
 
-def update_ref(
-    repo_root: Path, ref: str, new_oid: str, *, old_oid: str | None = None
-) -> bool:
+def update_ref(repo_root: Path, ref: str, new_oid: str, *, old_oid: str | None = None) -> bool:
     """Point `ref` at `new_oid`. Return True on success, False on refusal.
 
     With `old_oid`, uses `update-ref`'s three-argument compare-and-swap form:
@@ -857,9 +855,7 @@ def update_ref(
     if old_oid is not None:
         args.append(old_oid)
     try:
-        result = subprocess.run(
-            args, cwd=repo_root, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(args, cwd=repo_root, capture_output=True, text=True, check=False)
     except (FileNotFoundError, OSError):
         return False
     return result.returncode == 0
