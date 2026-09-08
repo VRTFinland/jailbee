@@ -2585,6 +2585,81 @@ def test_push_to_container_no_base_refspec_when_source_not_base(mocker, make_cfg
     assert mock_push.call_args.args[2] == "+refs/heads/dev:refs/jailbee/host/dev"
 
 
+def test_push_to_container_uses_the_from_namespace(mocker, make_cfg, tmp_path):
+    """A non-host `namespace` relays a source ref into its own container-side path.
+
+    Per Ruling R19: the container-side ref carries a `from/` prefix
+    (`refs/jailbee/from/<short>/<branch>`), not the bare container short name —
+    a container literally named "host" or "base" must not collide with the
+    `refs/jailbee/host/*` / `refs/jailbee/base/*` namespaces.
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-target"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="newsha")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    mocker.patch("jailbee.sync.ff_container_branch", return_value=None)
+    push = mocker.patch("jailbee.sync.git.push_url")
+
+    result = sync.push_to_container(
+        cfg,
+        incus,
+        "target",
+        source="feat/a",
+        source_ref="refs/jailbee/c1/feat/a",
+        namespace="from/c1",
+    )
+
+    assert result.container_ref == "refs/jailbee/from/c1/feat/a"
+    assert push.call_args[0][2] == "+refs/jailbee/c1/feat/a:refs/jailbee/from/c1/feat/a"
+
+
+def test_push_to_container_does_not_advance_base_across_containers(mocker, make_cfg, tmp_path):
+    """A relayed branch that happens to share the target's base name must not
+    re-anchor `refs/jailbee/base/<base>` — that would silently change what
+    `jailbee ls`'s AHEAD column measures against. Discriminates the
+    `namespace == "host"` guard: without it, this exact scenario (relayed
+    source name == target's base branch) would hit the `push_url_multi` arm,
+    since `base_branch is not None and resolved_source == base_branch` is
+    True here regardless of namespace.
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-target"
+    _mock_container_running(incus, full)
+    # The target's base branch has the same NAME as the source's branch.
+    incus.config_get.side_effect = lambda name, key: (
+        "main" if key == "user.jailbee.base_branch" else None
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="newsha")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    mocker.patch("jailbee.sync.ff_container_branch", return_value=None)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    push = mocker.patch("jailbee.sync.git.push_url")
+
+    sync.push_to_container(
+        cfg,
+        incus,
+        "target",
+        source="main",
+        source_ref="refs/jailbee/c1/main",
+        namespace="from/c1",
+    )
+
+    push_multi.assert_not_called()
+    push.assert_called_once()
+
+
 # ----------------------------------------------------------------------
 # Fast-forwarding the container's own refs/heads/<source>
 #

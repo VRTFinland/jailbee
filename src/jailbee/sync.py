@@ -225,7 +225,8 @@ class PushResult:
     host ref pushed from — `refs/remotes/origin/<source>` or
     `refs/heads/<source>`, in the order set by the effective
     `SourcePref` (see `_resolve_host_source_ref`). `container_ref` is the
-    destination inside the container (`refs/jailbee/host/<source>`).
+    destination inside the container — `refs/jailbee/<namespace>/<source>`,
+    `refs/jailbee/host/<source>` for the default host-origin `namespace`.
     `old_oid` reflects the destination ref's value inside the container
     before the push, or None if it didn't exist.
 
@@ -2020,8 +2021,9 @@ def push_to_container(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    namespace: str = "host",
 ) -> PushResult:
-    """Push host's `source` branch into container `short` as refs/jailbee/host/<source>.
+    """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
     Transport only — does not run merge or rebase inside the container.
     Raises `SyncError` for user-visible problems (stopped container, mount
@@ -2036,11 +2038,23 @@ def push_to_container(
     failure is reported through `PushResult.fetch_error` rather than raised.
 
     `source_ref` overrides that resolution with an exact host ref, and
-    `source` degrades to a label for the container-side `refs/jailbee/host/<source>`
-    destination. A PR head lives in jailbee's own `refs/jailbee/pr/<N>/head` (see
-    `pr.pr_head_ref`) and deliberately in no branch at all, so nothing on the
-    host is looked up or fetched — a same-named local branch, stale or ahead,
-    must not decide what a `--pr` push sends.
+    `source` degrades to a label for the container-side
+    `refs/jailbee/<namespace>/<source>` destination. A PR head lives in
+    jailbee's own `refs/jailbee/pr/<N>/head` (see `pr.pr_head_ref`) and
+    deliberately in no branch at all, so nothing on the host is looked up or
+    fetched — a same-named local branch, stale or ahead, must not decide what
+    a `--pr` push sends.
+
+    `namespace` defaults to `"host"` for a push originating on the host.
+    Task 12 passes a source container's short name (as `"from/<short>"`) when
+    relaying that container's branch instead, so the ref lands at
+    `refs/jailbee/from/<short>/<source>` rather than colliding with the
+    `refs/jailbee/host/*` namespace a real host push uses. The base-advance
+    described below — re-anchoring `refs/jailbee/base/<base>` — is skipped
+    whenever `namespace != "host"`: a same-named branch relayed from another
+    container is a different branch that happens to share a name with this
+    container's base, and must not silently change what `jailbee ls`'s AHEAD
+    column measures against.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -2090,7 +2104,7 @@ def push_to_container(
     if new_oid is None:
         raise SyncError(f"Source ref '{host_ref}' did not resolve on host.")
 
-    container_ref = f"refs/jailbee/host/{resolved_source}"
+    container_ref = f"refs/jailbee/{namespace}/{resolved_source}"
     repo_dir = container_repo_dir(cfg, incus, full_name)
     old_oid = _container_ref_oid(
         incus, full_name, repo_dir, container_ref, uid=cfg.container_user.uid
@@ -2101,9 +2115,12 @@ def push_to_container(
 
     base_label = incus.config_get(full_name, "user.jailbee.base_branch")
     base_branch = base_label if isinstance(base_label, str) and base_label else None
-    if base_branch is not None and resolved_source == base_branch:
+    if namespace == "host" and base_branch is not None and resolved_source == base_branch:
         # Pushing the container's base branch — also advance the jailbee-managed
-        # base ref so `jailbee ls` reflects the fresh base.
+        # base ref so `jailbee ls` reflects the fresh base. Restricted to a real
+        # host push: a same-named branch relayed from another container
+        # (namespace != "host") is a different branch that happens to share a
+        # name, and must not re-anchor the base.
         git.push_url_multi(
             cfg.repo_root,
             url,
