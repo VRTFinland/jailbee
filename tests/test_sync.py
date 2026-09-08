@@ -7186,6 +7186,9 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     assert push.call_args.kwargs.get("namespace") == "from/c1"
     assert push.call_args.kwargs.get("source_ref") == "refs/jailbee/c1/feat/a"
     assert merge.call_args.kwargs.get("ref") == "refs/jailbee/from/c1/feat/a"
+    # target_branch ("feat/b") differs from the fetched branch ("feat/a"), so
+    # the merge must not be pinned to fast-forward-only.
+    assert merge.call_args.kwargs["ff_only"] is False
     # Host first, then container — not arbitrary sequence-pinning. For a
     # submodule born inside the source container the host has no sub-repo yet;
     # `transport_submodules_to_host` clones one, and only then can
@@ -7195,6 +7198,49 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     # downstream in this call path errors.
     assert call_order == ["to_host", "to_container"]
     assert result.head_oid == "mergedsha"
+
+
+def test_merge_container_into_container_same_branch_uses_ff_only(mocker, make_cfg, tmp_path):
+    """target_branch == fetch_result.branch pins the merge to fast-forward-only.
+
+    Mirrors `test_push_and_merge_same_branch_uses_ff_only`'s coverage of the
+    same decision in the push-and-merge path.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/a")
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=2
+        ),
+    )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    merge = mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert merge.call_args.kwargs["ff_only"] is True
+    assert result.fast_forward_only is True
 
 
 def test_merge_container_into_container_preflights_the_target_before_transport(
