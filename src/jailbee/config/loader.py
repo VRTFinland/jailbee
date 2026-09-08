@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.config.common import (
     SCRATCH_ORIGIN_SUFFIX,
     _copy,
@@ -43,6 +42,7 @@ from jailbee.config.retired import (
     _check_retired_keys,
 )
 from jailbee.config.root import Config
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
 from jailbee.tui import hint

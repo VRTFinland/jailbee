@@ -2318,7 +2318,6 @@ if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
-    from jailbee.tui import ConfirmFn
     from jailbee.sync import (
         BridgePlan,
         FetchResult,
@@ -2327,6 +2326,7 @@ if TYPE_CHECKING:
         PushResult,
         SourcePref,
     )
+    from jailbee.tui import ConfirmFn
 
 
 def _resolve_existing(

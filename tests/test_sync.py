@@ -6618,7 +6618,7 @@ def test_container_status_preflight_timeout_becomes_a_sync_error(mocker):
 #   ✗ git merge failed in container 'feature-15319-…':
 #     fatal: Not possible to fast-forward, aborting.
 #
-# These pin the six-way decision (auto / --ff / --no-ff × divergent or not)
+# These pin the six-way decision (auto / --ff / --no-ff, divergent or not)
 # and the prompt that makes the auto case recoverable.
 
 
@@ -6819,7 +6819,7 @@ def test_a_different_branch_still_gets_a_merge_commit_by_default(mocker, make_cf
 
 
 def test_an_unreadable_divergence_keeps_the_fast_forward(mocker, make_cfg, tmp_path):
-    """"Cannot tell" must not become "no divergence".
+    """An unreadable probe means "cannot tell", never "no divergence".
 
     Silently making a merge commit because a probe failed would rewrite the
     container's history on the strength of an error. Falling through to
