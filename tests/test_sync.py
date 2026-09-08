@@ -7155,6 +7155,9 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
         "jailbee.submodules._container_submodule_paths", return_value=["sub"]
     )
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    call_order: list[str] = []
+    to_host.side_effect = lambda *a, **k: call_order.append("to_host")
+    to_container.side_effect = lambda *a, **k: call_order.append("to_container")
     push = mocker.patch(
         "jailbee.sync.push_to_container",
         return_value=sync.PushResult(
@@ -7187,6 +7190,14 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     assert push.call_args.kwargs.get("namespace") == "from/c1"
     assert push.call_args.kwargs.get("source_ref") == "refs/jailbee/c1/feat/a"
     assert merge.call_args.kwargs.get("ref") == "refs/jailbee/from/c1/feat/a"
+    # Host first, then container — not arbitrary sequence-pinning. For a
+    # submodule born inside the source container the host has no sub-repo yet;
+    # `transport_submodules_to_host` clones one, and only then can
+    # `transport_submodules_to_container`'s creation path read
+    # `_submodule_upstream_url(repo_root / path)` to give the new container-side
+    # sub-repo an origin. Reversed, that origin is silently empty and nothing
+    # downstream in this call path errors.
+    assert call_order == ["to_host", "to_container"]
     assert result.head_oid == "mergedsha"
 
 
