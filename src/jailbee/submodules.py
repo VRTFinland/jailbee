@@ -1110,16 +1110,41 @@ def _create_container_subrepo(
 
 
 def transport_submodules_to_container(
-    cfg: Config, incus: Incus, container: str, *, repo_dir: str
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    repo_dir: str,
+    source_ns: str = "host",
+    paths: list[str] | None = None,
 ) -> None:
-    """Push each host submodule's objects into the matching container sub-repo.
+    """Push submodule objects into `container`'s matching sub-repos.
 
-    Enumerates submodule paths on the host (sender). For a submodule added on
-    the host the container has no repo for, creates one first (mirror of
-    `transport_submodules_to_host`'s clone-from-container fallback) and leaves
-    it on the pushed tip: `git receive-pack` needs the repo to exist, and the
-    later `submodule update --init` needs a current revision in it — an unborn
-    HEAD fails with "Unable to find current revision in submodule path".
+    `source_ns` names whose objects these are, and becomes the
+    `refs/jailbee-sub/<source_ns>/<path>/...` namespace inside the target sub-repo.
+    The default `"host"` keeps the original behaviour: the host working tree's
+    own submodules, enumerated from `git.submodule_status_paths` when `paths`
+    is not given, pushed from their `HEAD` and `refs/heads/*`.
+
+    A non-host `source_ns` relays another container's work instead. Those
+    objects were fetched into the host sub-repos under
+    `refs/jailbee-sub/<source_ns>/<path>/*` by `transport_submodules_to_host`
+    and live in *neither* default refspec, so the refspecs become
+    namespace-to-namespace copies of that ref tree. `paths` must then be the
+    source container's submodule paths — the host working tree may not have
+    the same ones, or any, so host enumeration is skipped whenever `paths` is
+    given explicitly.
+
+    For a submodule the target container has no repo for yet, creates one
+    first (mirror of `transport_submodules_to_host`'s clone-from-container
+    fallback) and checks out the pushed tip: `git receive-pack` needs the repo
+    to exist, and the later `submodule update --init` needs a current
+    revision in it — an unborn HEAD fails with "Unable to find current
+    revision in submodule path". The checkout target is always the ref that
+    was just pushed under this call's own `source_ns`, never a hardcoded
+    `host` — a relay's target sub-repo only ever receives
+    `refs/jailbee-sub/<source_ns>/...`, so checking out `.../host/...` there
+    would reference a ref that was never pushed.
 
     An *existing* container sub-repo is only pushed into: it may hold the
     user's own in-container work, so its HEAD and working tree stay untouched.
@@ -1127,7 +1152,8 @@ def transport_submodules_to_container(
     """
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
-    for path in git.submodule_status_paths(repo_root):
+    sub_paths = paths if paths is not None else git.submodule_status_paths(repo_root)
+    for path in sub_paths:
         url = _sub_receive_pack_url(cfg, container, repo_dir, path)
         sub_dir = f"{repo_dir}/{path}"
         created = not _container_subrepo_exists(incus, container, repo_dir, path, uid=uid)
@@ -1140,14 +1166,16 @@ def transport_submodules_to_container(
                 uid=uid,
                 gid=cfg.container_user.gid,
             )
-        git.push_url_multi(
-            repo_root / path,
-            url,
-            [
-                f"+HEAD:refs/jailbee-sub/host/{path}/HEAD",
-                f"+refs/heads/*:refs/jailbee-sub/host/{path}/heads/*",
-            ],
-        )
+        ns = f"refs/jailbee-sub/{source_ns}/{path}"
+        head_ref = f"{ns}/HEAD"
+        if source_ns == "host":
+            refspecs = [
+                f"+HEAD:{head_ref}",
+                f"+refs/heads/*:{ns}/heads/*",
+            ]
+        else:
+            refspecs = [f"+{ns}/HEAD:{head_ref}", f"+{ns}/heads/*:{ns}/heads/*"]
+        git.push_url_multi(repo_root / path, url, refspecs)
         if created:
             incus.exec(
                 container,
@@ -1157,7 +1185,7 @@ def transport_submodules_to_container(
                     sub_dir,
                     "checkout",
                     "--detach",
-                    f"refs/jailbee-sub/host/{path}/HEAD",
+                    head_ref,
                 ],
                 uid=uid,
                 gid=cfg.container_user.gid,

@@ -517,6 +517,93 @@ def test_transport_to_container_never_touches_an_existing_subrepo(mocker, tmp_pa
     push.assert_called_once()
 
 
+def test_transport_to_container_defaults_to_the_host_namespace(mocker, tmp_path):
+    """Default `source_ns="host"` must keep the original refspecs — the fix
+    for the relay case must not silently invert the common case.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["sub"])
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(cfg, incus, "c", repo_dir="/repo")
+
+    refspecs = push.call_args[0][2]
+    assert "+HEAD:refs/jailbee-sub/host/sub/HEAD" in refspecs
+    assert "+refs/heads/*:refs/jailbee-sub/host/sub/heads/*" in refspecs
+
+
+def test_transport_to_container_relays_another_containers_refs(mocker, tmp_path):
+    """A relay (non-host `source_ns`) must push the namespace the objects were
+    actually fetched into by `transport_submodules_to_host` — not the host
+    sub-repo's own HEAD/branches, which may not even be on the same commit.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    refspecs = push.call_args[0][2]
+    # The objects fetched from c1 live under refs/jailbee-sub/c1/*, so THOSE
+    # are what must travel — not the host sub-repo's own branches.
+    assert refspecs == [
+        "+refs/jailbee-sub/c1/sub/HEAD:refs/jailbee-sub/c1/sub/HEAD",
+        "+refs/jailbee-sub/c1/sub/heads/*:refs/jailbee-sub/c1/sub/heads/*",
+    ]
+
+
+def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocker, tmp_path):
+    """`paths` is the source container's own submodule set (Task 12's caller) —
+    the host working tree may not have the same submodules, or any, so passing
+    `paths` must bypass `git.submodule_status_paths` entirely.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    enumerate_host = mocker.patch("jailbee.submodules.git.submodule_status_paths")
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    enumerate_host.assert_not_called()
+
+
+def test_transport_to_container_relay_created_subrepo_checks_out_source_namespace(
+    mocker, tmp_path
+):
+    """R18: when the target has no sub-repo yet, the checkout after the push
+    must detach at the ref namespace that was just pushed — `refs/jailbee-sub/
+    <source_ns>/<path>/HEAD` — never a hardcoded `host`. On a relay, only
+    `refs/jailbee-sub/<source_ns>/...` was ever pushed into the fresh
+    container sub-repo; a `host`-hardcoded checkout there references a ref
+    that was never written and `_create_container_subrepo` exists precisely to
+    serve this missing-sub-repo case.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=False)
+    # Avoid the real _submodule_upstream_url -> git.detect_upstream_remote /
+    # git.get_remote_url path, which would shell out for real against a
+    # tmp_path sub-directory that doesn't exist as a git repo (R5).
+    mocker.patch("jailbee.submodules._submodule_upstream_url", return_value=None)
+    mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    checkout_call = next(c for c in incus.exec.call_args_list if "checkout" in c.args[1])
+    assert checkout_call.args[1][-1] == "refs/jailbee-sub/c1/sub/HEAD"
+    assert "host" not in checkout_call.args[1][-1]
+
+
 def test_prune_host_submodule_refs_deletes_each(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
