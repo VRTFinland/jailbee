@@ -670,8 +670,9 @@ jailbee destroy feat-conflict --force
 ## `jailbee git merge` smoke test
 
 Merges one container's branch into another **without a host checkout** —
-objects travel source → host → target, and no host branch or working tree is
-touched.
+objects travel source → host → target, and no host branch, index or
+superproject working tree is touched (a host sub-repo can still be created,
+for a submodule born in the source container).
 
 ```bash
 # 1. Two-source merge, no conflicts.
