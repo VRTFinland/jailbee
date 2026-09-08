@@ -1885,13 +1885,21 @@ def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_
     (tmp_path / "mid" / ".git").mkdir(parents=True)
     (tmp_path / "mid" / "inner" / ".git").mkdir(parents=True)
 
+    calls: list[tuple[str, str]] = []
+
     def paths_at(run, repo_dir, commit):
-        # Real call shape is (run, repo_dir, commit). "mid" declares one
-        # nested submodule; one level below that ("mid/inner") declares
-        # none, which is what stops the recursion at the expected depth.
-        if str(repo_dir) == str(tmp_path):
+        # Real call shape is (run, repo_dir, commit). Keyed on (repo_dir,
+        # commit) together, not repo_dir alone: the nested call MUST read
+        # "mid"'s `.gitmodules` at "midsha" — the gitlink sha `_gitlink_at`
+        # recorded for "mid" — not at the top-level commit "topsha". A walk
+        # that recurses with the wrong commit (e.g. re-passing `at_commit`
+        # instead of the gitlink `sha`) would ask for ("mid", "topsha"),
+        # which is absent here and returns [], silently truncating the
+        # recursion instead of erroring.
+        calls.append((str(repo_dir), commit))
+        if str(repo_dir) == str(tmp_path) and commit == "topsha":
             return [("mid", "mid")]
-        if str(repo_dir) == str(tmp_path / "mid"):
+        if str(repo_dir) == str(tmp_path / "mid") and commit == "midsha":
             return [("inner", "inner")]
         return []
 
@@ -1906,6 +1914,9 @@ def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_
     result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
 
     assert [p.path for p in result] == ["mid", "mid/inner"]
+    # The nested lookup must have used the gitlink sha ("midsha"), not the
+    # commit it was walked from.
+    assert (str(tmp_path / "mid"), "midsha") in calls
 
 
 def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
