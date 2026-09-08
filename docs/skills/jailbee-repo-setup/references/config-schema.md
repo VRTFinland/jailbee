@@ -19,7 +19,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `gpg` | `{enabled}` | `enabled: false` (opt-in) | global |
 | `ssh` | `{enabled, seed_from_host}` | `enabled: false`, `seed_from_host: true` | global |
 | `jetbrains` | `{enabled, ide, userprefs_from_host, autostart, toolbox_host_path}` | `enabled: false` (opt-in), rest see below | mixed (see per-key table) |
-| `chrome` | `{enabled, url, dark_mode, autostart, host_path}` | `enabled: false` (opt-in), rest see below | mixed (see per-key table) |
+| `browsers` | `{default, url, chrome, firefox}`, each browser `{enabled, source, host_path, url, dark_mode, autostart}` | `enabled: false` (opt-in), rest see below | mixed (see per-key table) |
 | `host_mounts` | list of `{host, container, readonly}` | `[]` | global for personal, repo for stack |
 | `optional_mounts` | dict of name → `{host, container, readonly, description}` | `{}` | repo |
 | `host_devices` | list of `{path, source, type, mode, gid, uid, group}` | `[]` | repo |
@@ -363,7 +363,8 @@ When `userprefs_from_host` is on, `egress_allow` is auto-extended (in strict-mod
 ## `browsers`
 
 Chrome and Firefox, each the same `BrowserConfig` shape under
-`browsers.chrome` / `browsers.firefox`, plus `browsers.default`.
+`browsers.chrome` / `browsers.firefox`, plus `browsers.default` and
+`browsers.url`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -371,7 +372,8 @@ Chrome and Firefox, each the same `BrowserConfig` shape under
 | `<name>.enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` / `jailbee firefox` exits 2, the browser is hidden from `jailbee apps ls`, autostart skips its launch, and the `host_path` auto-mount is omitted. |
 | `<name>.source` | `host` \| `image` | `host` (Chrome), `image` (Firefox) | `host` RO-mounts an existing host install; `image` installs it into the golden image during `jailbee base build`. **Changing this needs `jailbee base build` (image) or `jailbee apply` (host) to take effect.** Firefox defaults to `image` because Ubuntu's own Firefox is a snap, not usefully mountable. |
 | `<name>.host_path` | path \| null | `/opt/google/chrome` (Chrome), `null` (Firefox) | Host path RO-mounted into the container under `source: host` (must be `null` under `source: image`). The container-side mount target is hardcoded per browser (`/opt/google/chrome`, `/opt/firefox`). `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with a matching `container:` wins. Setting this on Firefox without a `source` implies `source: host`. |
-| `<name>.url` | string \| null | `null` | URL the browser opens. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override. |
+| `url` | string \| null | `null` | URL every enabled browser opens, unless that browser sets its own. Prefer this over writing the same URL twice. A browser cannot opt back out of it — `url: null` on a browser inherits. |
+| `<name>.url` | string \| null | `null` | URL this browser opens, overriding the shared `browsers.url`. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override both. |
 | `<name>.dark_mode` | bool | `false` | Asymmetric: Chrome gets `--force-dark-mode --enable-features=WebContentsForceDark` (darkens page content too); Firefox gets `GTK_THEME=Adwaita:dark` instead (browser UI only — Firefox has no page-darkening flag). |
 | `<name>.autostart` | bool | `false` | Launch this browser after autostart steps. Ignored when `enabled: false`. |
 

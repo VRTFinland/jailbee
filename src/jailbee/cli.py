@@ -8450,7 +8450,10 @@ def chrome_cmd(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Argument(help="URL to open. Falls back to `browsers.chrome.url` config."),
+        typer.Argument(
+            help="URL to open. Falls back to `browsers.chrome.url`, then to the "
+            "shared `browsers.url`."
+        ),
     ] = None,
     force: Annotated[
         bool,
@@ -8478,7 +8481,10 @@ def firefox_cmd(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Argument(help="URL to open. Falls back to `browsers.firefox.url` config."),
+        typer.Argument(
+            help="URL to open. Falls back to `browsers.firefox.url`, then to the "
+            "shared `browsers.url`."
+        ),
     ] = None,
     force: Annotated[
         bool,

@@ -1103,7 +1103,7 @@ throw away a name nothing can supply again until a container runs Claude.
 | Command | Notes |
 |---|---|
 | `jailbee ide [NAME] [--app idea\|webstorm\|pycharm\|...]` | Launch a JetBrains IDE in the container. Needs `jetbrains.enabled`. One IDE at a time across containers (shared profile). |
-| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`. |
+| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`, then to the shared `browsers.url`. |
 | `jailbee firefox [NAME] [URL]` | Launch Firefox (per-container profile slot). Needs `browsers.firefox.enabled`. URL falls back to `browsers.firefox.url`. Defaults to `source: image` — installed into the golden image, since the host's Firefox is normally a snap and not usefully mountable. |
 | `jailbee browser [NAME] [URL]` | Launch the default browser: `browsers.default` when set, otherwise the single enabled browser. Errors and names what to set if that's ambiguous (none, or more than one, enabled). |
 | `jailbee apps ls [NAME] [-o json] [--fields ...] [--force]` | List every GUI app this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without `NAME` this is config only; with it, a STATUS column probes each app for real (`present`/`missing`). |

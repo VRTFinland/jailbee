@@ -61,7 +61,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `jetbrains.ide` | repo | Repo's stack determines the IDE |
 | `jetbrains.autostart` | repo | Repo decides whether autostart launches IDE |
 | `jetbrains.share_idea` | repo | Repo decides whether to shadow VCS-tracked `.idea/*` with a per-repo shared mount |
-| `browsers.chrome.url` / `browsers.firefox.url` | repo | Repo's app URL |
+| `browsers.url` (or per-browser `browsers.chrome.url`) | repo | Repo's app URL |
 | `browsers.chrome.autostart` / `browsers.firefox.autostart` | repo | Repo's autostart workflow |
 | `autostart.on_create`, `autostart.on_start` | repo | Repo-specific runtime workflow |
 | `container.env` | repo | Repo-specific runtime env (`NODE_OPTIONS`, app feature flags, …) |
@@ -978,6 +978,7 @@ changing `source` to `image`.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `default` | `chrome` \| `firefox` \| `null` | `null` | Which browser `jailbee browser` opens. `null` resolves at command time: the single enabled browser if exactly one is, otherwise the command asks you to set this or name one directly (`jailbee chrome` / `jailbee firefox`). Naming a disabled browser here is a config error. |
+| `url` | string \| null | `null` | URL every enabled browser opens on launch, unless that browser sets its own `url`. Most repos have one app URL and no reason to write it twice. A browser cannot opt back out: `url: null` on a browser reads the same as not setting it, so it inherits — set the URL per browser instead when one should launch bare. |
 | `chrome` | `BrowserConfig` | see below | Google Chrome. |
 | `firefox` | `BrowserConfig` | see below | Mozilla Firefox. |
 
@@ -989,7 +990,7 @@ shape:
 | `enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` / `jailbee firefox` exits 2 with a clear message, the browser is hidden from `jailbee apps ls`, autostart skips its launch, and the `host_path` auto-mount is omitted from `effective_host_mounts`. |
 | `source` | `host` \| `image` | `host` for Chrome, `image` for Firefox | `host` RO-mounts an existing host install (see `host_path`); `image` installs the browser into the golden image during `jailbee base build` — no host install needed. **Changing `source` needs a re-run to take effect: `jailbee base build` for `image`, `jailbee apply` for `host`.** Firefox defaults to `image` because on Ubuntu the host's Firefox is a snap and `/snap/firefox` is not usefully mountable into a container; Chrome defaults to `host`, matching how it has always worked. |
 | `host_path` | path \| null | `/opt/google/chrome` for Chrome, `null` for Firefox | Host path RO-mounted into the container when `source: host` (must be `null` under `source: image`). The container-side mount target is hardcoded per browser (`/opt/google/chrome`, `/opt/firefox`) — `browsers.py`'s `BROWSER_BINARIES` map is what actually invokes the binary there. Override for a non-standard install (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with a matching `container:` wins. Firefox has no default here because its host install is normally a snap — but setting `host_path` on Firefox without also setting `source` implies `source: host`, so naming a real install is enough. |
-| `url` | string \| null | `null` | URL the browser opens on launch. `null` = no URL. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override this per-call. |
+| `url` | string \| null | `null` | URL this browser opens on launch, overriding the shared `browsers.url`. `null` (default) inherits `browsers.url`, and means no URL when that is unset too. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override both per-call. |
 | `dark_mode` | bool | `false` | Force a dark theme — **asymmetric between the two browsers**. Chrome gets `--force-dark-mode --enable-features=WebContentsForceDark`, which darkens page content as well as the browser chrome. Firefox has no equivalent flag, so it gets `GTK_THEME=Adwaita:dark` instead, which darkens the browser UI only — pages render exactly as the site sends them; forcing dark page content in Firefox is an extension's job, not jailbee's. |
 | `autostart` | bool | `false` | Launch this browser after autostart steps. No-op if no graphical session is detected, or when `enabled: false`. |
 

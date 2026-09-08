@@ -244,6 +244,54 @@ def test_legacy_chrome_block_warns_where_it_moved(capsys):
     assert "chrome:" in err and "browsers.chrome" in err
 
 
+def test_effective_url_falls_back_to_the_shared_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"url": "https://shared.test", "chrome": {"enabled": True}})
+    assert cfg.browsers.effective_url("chrome") == "https://shared.test"
+    assert cfg.browsers.effective_url("firefox") == "https://shared.test"
+    # The per-browser field itself is untouched — the fallback is a read-time
+    # resolution, not a mutation of the loaded Config (which is read-only).
+    assert cfg.browsers.chrome.url is None
+
+
+def test_effective_url_prefers_the_per_browser_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={"url": "https://shared.test", "chrome": {"url": "https://own.test"}},
+    )
+    assert cfg.browsers.effective_url("chrome") == "https://own.test"
+
+
+def test_effective_url_is_none_when_nothing_sets_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path).browsers.effective_url("chrome") is None
+
+
+def test_a_legacy_chrome_url_still_wins_over_a_shared_one(tmp_path):
+    """The fold puts the legacy `chrome.url` at `browsers.chrome.url`, which
+    is a per-browser value and must therefore beat `browsers.url` — the same
+    precedence an explicitly written `browsers.chrome.url` gets. A host that
+    has not migrated its `global.yaml` keeps the URL it configured.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    text = (
+        "container_prefix: myrepo\n"
+        "chrome:\n"
+        "  enabled: true\n"
+        "  url: https://legacy.test\n"
+        "browsers:\n"
+        "  url: https://shared.test\n"
+    )
+    cfg = load_config_from_text(text, tmp_path / ".jailbee" / "config.yaml")
+    assert cfg.browsers.effective_url("chrome") == "https://legacy.test"
+    assert cfg.browsers.effective_url("firefox") == "https://shared.test"
+
+
 def test_the_legacy_chrome_notice_prints_once_per_process(capsys):
     """Three folds, one line.
 

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **`browsers.url` — one URL for every browser.** Most repos have a single
+  app URL, and writing it once per browser was the only way to say so. A
+  browser's own `browsers.<name>.url` still wins where it is set, which is
+  also what keeps a legacy `chrome.url` (folded to `browsers.chrome.url`)
+  ahead of a newly added shared one. The one thing the shared field cannot
+  express is a browser opting back out: `url: null` on a browser reads the
+  same as not setting it, so it inherits — set the URL per browser instead
+  when one of them should launch bare.
+
 ### Changed
 
 - **Every legacy spelling now names one removal release: 2.0.0.** The four

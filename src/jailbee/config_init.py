@@ -33,14 +33,15 @@ _TEMPLATE = """\
 # Per-repo overrides for credential / IDE / browser blocks. Each block
 # defaults to `enabled: false` — opt-in lives in ~/.config/jailbee/global.yaml.
 # Override here only when the repo needs to deviate (e.g. force a different
-# IDE for this stack, or pin browsers.chrome.url to the repo's app URL).
+# IDE for this stack, or pin browsers.url to the repo's app URL).
 # See docs/config.md for the full schema.
 #
 # jetbrains:
 #   ide: pycharm        # repo's IDE flavour for `jailbee ide` / autostart
 # browsers:
+#   url: https://app.example.com   # auto-opened URL, whichever browser runs
 #   chrome:
-#     url: https://app.example.com   # auto-opened URL on `jailbee chrome`
+#     url: https://app.example.com/admin   # override for this browser only
 #   firefox:
 #     enabled: true      # defaults to source: image (no host Firefox to mount)
 
@@ -246,6 +247,7 @@ GLOBAL_SEED: dict[str, object] = {
     # promise a browser no golden image has installed yet.
     "browsers": {
         "default": None,
+        "url": None,
         "chrome": {
             "enabled": True,
             "url": None,
