@@ -183,6 +183,7 @@ def test_git_merge_stops_at_the_first_conflict_and_says_what_landed(merge_repo, 
     # The resume recipe, so the user knows how to continue. The conflicted
     # source is re-run too: finishing the merge by hand makes that a no-op.
     assert "jailbee shell c4" in flat
+    assert "resolve the conflict, git add, git commit" in flat
     assert "jailbee git merge c2 c3 --into c4" in flat
 
 
