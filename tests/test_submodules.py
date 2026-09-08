@@ -1881,6 +1881,25 @@ def test_place_branches_from_commit_reports_a_missing_subrepo_loudly(mocker, tmp
     update.assert_not_called()
 
 
+def test_place_branches_from_commit_reports_a_missing_gitlink_as_failed(mocker, tmp_path):
+    """`_gitlink_at` returning None (the fetched commit does not record a
+    gitlink for this submodule) must be reported as "failed", same as a
+    refused `update-ref` — see `_placement_remedy`, which describes both
+    with one sentence ("the ref write was refused"), even though this path
+    never reaches `update_ref` at all.
+    """
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", return_value=[("sub", "sub")])
+    mocker.patch("jailbee.submodules._gitlink_at", return_value=None)
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert result[0].status == "failed"
+    assert result[0].new_oid == ""
+    update.assert_not_called()
+
+
 def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_path):
     (tmp_path / "mid" / ".git").mkdir(parents=True)
     (tmp_path / "mid" / "inner" / ".git").mkdir(parents=True)

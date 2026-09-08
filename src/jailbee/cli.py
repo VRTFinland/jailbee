@@ -2547,7 +2547,10 @@ def _placement_remedy(status: str, *, name: str, short: str) -> str:
         return f"{name}: unreachable — the sub-repo is not on disk."
     # "failed": the ref write itself was refused (e.g. a lost update-ref race,
     # or the gitlink commit could not be read from the fetched tree).
-    return f"{name}: failed — the ref write was refused."
+    return (
+        f"{name}: failed — the ref write was refused "
+        f"(or the fetched commit has no gitlink for it)."
+    )
 
 
 def _print_placement_report(result: "SyncRefsResult", short: str) -> None:
