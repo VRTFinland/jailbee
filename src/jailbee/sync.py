@@ -2156,6 +2156,96 @@ def _sub_merge_message(branch: str) -> str:
     return f"Merge for superproject merge of '{branch}'"
 
 
+def _merge_ref_in_container(
+    incus: Incus,
+    full_name: str,
+    repo_dir: str,
+    *,
+    ref: str,
+    label: str,
+    message: str,
+    short: str,
+    uid: int,
+    ff_only: bool,
+) -> str:
+    """Merge `ref` into whatever `full_name` has checked out; return the new HEAD.
+
+    `label` is the user-facing name of what is being merged (a branch name),
+    used in the errors and in the gitlink resolver's commit. `message` is the
+    merge commit message, passed in rather than built here: a host push and a
+    cross-container merge word it differently, and threading a sentence through
+    `label` to fake that would be a lie in every error string. Ignored when
+    `ff_only`.
+
+    Shared by `push_and_merge` and `merge_container_into_container` so the
+    gitlink conflict resolver, the index-lock discrimination and the
+    `MergeConflictError` report exist once.
+
+    Raises `SyncError` on a failed merge and `MergeConflictError` when
+    conflicts remain after the gitlink resolver has run; the container is left
+    in merge state for manual resolution either way.
+    """
+    from jailbee.config import CONTAINER_USERNAME
+
+    merge_cmd = ["git", "-C", repo_dir, "merge"]
+    if ff_only:
+        merge_cmd.append("--ff-only")
+    else:
+        merge_cmd.extend(["-m", message])
+    merge_cmd.append(ref)
+
+    # `incus exec --user UID` doesn't derive HOME/USER/LOGNAME from
+    # /etc/passwd. Git needs HOME to find the bind-mounted ~/.gitconfig
+    # for user.name / user.email — without it, the merge commit fails
+    # with "Committer identity unknown". See _attach_shell in cli.py.
+    git_env = {
+        "HOME": f"/home/{CONTAINER_USERNAME}",
+        "USER": CONTAINER_USERNAME,
+        "LOGNAME": CONTAINER_USERNAME,
+    }
+
+    try:
+        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
+    except IncusError as exc:
+        # Checked before the merge-state probe: a lock failure is never a
+        # conflict, but `git merge` can have written MERGE_HEAD before it hit
+        # the lock, which would send an unfinished merge down the gitlink
+        # conflict resolver.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
+        if not _container_has_merge_in_progress(incus, full_name, repo_dir):
+            raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
+        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
+        report = submodules.resolve_gitlink_conflicts(
+            run, repo_dir, message=_sub_merge_message(label)
+        )
+        if submodules._has_unmerged(run, repo_dir):
+            raise MergeConflictError(
+                f"Merge of '{label}' in container '{short}' hit "
+                f"conflicts — see the submodule report below.",
+                report=ConflictReport(
+                    resolution=report,
+                    nongitlink=submodules._nongitlink_unmerged_paths(run, repo_dir),
+                    branch=label,
+                    location=f"jailbee shell {short}\ncd {repo_dir}",
+                ),
+            ) from exc
+        # All conflicts were gitlink pointers the resolver staged — finalize.
+        incus.exec(
+            full_name,
+            ["git", "-C", repo_dir, "commit", "--no-edit"],
+            uid=uid,
+            env=git_env,
+        )
+        # Fall through to the post-merge tail (update_submodules_in_container + head).
+
+    submodules.update_submodules_in_container(
+        incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
+    )
+
+    return _container_head_oid(incus, full_name, repo_dir, uid=uid)
+
+
 def compute_submodule_moves(
     repo_root: Path, old: str | None, new: str | None
 ) -> list[SubmoduleMove]:
@@ -2346,7 +2436,6 @@ def push_and_merge(
 
     `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
     """
-    from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
     full_name = resolve_container_name(cfg, incus, short)
@@ -2376,63 +2465,17 @@ def push_and_merge(
     )
 
     fast_forward_only = container_branch == push_result.source
-    merge_cmd = ["git", "-C", repo_dir, "merge"]
-    if fast_forward_only:
-        merge_cmd.append("--ff-only")
-    else:
-        merge_cmd.extend(["-m", f"Merge '{push_result.source}' from host"])
-    merge_cmd.append(push_result.container_ref)
-
-    # `incus exec --user UID` doesn't derive HOME/USER/LOGNAME from
-    # /etc/passwd. Git needs HOME to find the bind-mounted ~/.gitconfig
-    # for user.name / user.email — without it, the merge commit fails
-    # with "Committer identity unknown". See _attach_shell in cli.py.
-    git_env = {
-        "HOME": f"/home/{CONTAINER_USERNAME}",
-        "USER": CONTAINER_USERNAME,
-        "LOGNAME": CONTAINER_USERNAME,
-    }
-
-    try:
-        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
-    except IncusError as exc:
-        # Checked before the merge-state probe: a lock failure is never a
-        # conflict, but `git merge` can have written MERGE_HEAD before it hit
-        # the lock, which would send an unfinished merge down the gitlink
-        # conflict resolver.
-        if _index_lock_held(exc):
-            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
-        if not _container_has_merge_in_progress(incus, full_name, repo_dir):
-            raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
-        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
-        report = submodules.resolve_gitlink_conflicts(
-            run, repo_dir, message=_sub_merge_message(push_result.source)
-        )
-        if submodules._has_unmerged(run, repo_dir):
-            raise MergeConflictError(
-                f"Merge of '{push_result.source}' in container '{short}' hit "
-                f"conflicts — see the submodule report below.",
-                report=ConflictReport(
-                    resolution=report,
-                    nongitlink=submodules._nongitlink_unmerged_paths(run, repo_dir),
-                    branch=push_result.source,
-                    location=f"jailbee shell {short}\ncd {repo_dir}",
-                ),
-            ) from exc
-        # All conflicts were gitlink pointers the resolver staged — finalize.
-        incus.exec(
-            full_name,
-            ["git", "-C", repo_dir, "commit", "--no-edit"],
-            uid=uid,
-            env=git_env,
-        )
-        # Fall through to the post-merge tail (update_submodules_in_container + head).
-
-    submodules.update_submodules_in_container(
-        incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
+    head_oid = _merge_ref_in_container(
+        incus,
+        full_name,
+        repo_dir,
+        ref=push_result.container_ref,
+        label=push_result.source,
+        message=f"Merge '{push_result.source}' from host",
+        short=short,
+        uid=uid,
+        ff_only=fast_forward_only,
     )
-
-    head_oid = _container_head_oid(incus, full_name, repo_dir, uid=uid)
     return MergeInContainerResult(
         push=push_result,
         container_branch=container_branch,

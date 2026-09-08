@@ -3734,6 +3734,46 @@ def test_push_and_merge_conflict_emits_resolution_hint(mocker, make_cfg, tmp_pat
     assert "jailbee shell feat-foo" in block
 
 
+def test_push_and_merge_reports_a_plain_merge_failure(mocker, make_cfg, tmp_path):
+    """A `git merge` failure that is neither an index-lock nor a conflict (no
+    MERGE_HEAD appears afterwards — e.g. the container ran out of disk) must
+    surface as a plain SyncError naming the container, not fall through to the
+    gitlink conflict resolver."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import SyncError, push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": IncusError("fatal: unable to write new index file"),
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+
+    with pytest.raises(SyncError) as excinfo:
+        push_and_merge(cfg, incus, "feat-foo")
+
+    assert type(excinfo.value) is SyncError, (
+        "a merge failure with no MERGE_HEAD is not a conflict — it must not "
+        "become a MergeConflictError"
+    )
+    assert "git merge failed in container 'feat-foo'" in str(excinfo.value)
+    assert "unable to write new index file" in str(excinfo.value)
+
+
 def test_push_and_rebase_happy_path(mocker, make_cfg, tmp_path):
     from jailbee.incus import IncusError
     from jailbee.sync import push_and_rebase
