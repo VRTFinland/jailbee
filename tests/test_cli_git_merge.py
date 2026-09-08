@@ -11,6 +11,7 @@ terminal, and a wrapped line is still the right line.
 from __future__ import annotations
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -100,8 +101,7 @@ def test_git_merge_processes_sources_in_order(merge_repo, mocker):
     assert result.exit_code == 0, result.output
     assert [c.args[2] for c in called.call_args_list] == ["c1", "c2"]
     assert all(c.args[3] == "c4" for c in called.call_args_list)
-    # cfg and incus are threaded through, and the target's Incus is the one
-    # every merge runs on.
+    # cfg and incus are threaded through.
     assert all(c.args[0] is cfg and c.args[1] is incus for c in called.call_args_list)
     assert all(c.kwargs == {"branch": None, "plain": False} for c in called.call_args_list)
     assert "merged into c4: c1, c2" in flat_output(result.output)
@@ -245,7 +245,11 @@ def test_git_merge_resume_recipe_carries_the_branch_override(merge_repo, mocker)
     result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", "-b", "feat/x"])
 
     assert result.exit_code == 1
-    assert "jailbee git merge c1 --into c4 -b feat/x" in flat_output(result.output)
+    flat = flat_output(result.output)
+    assert "jailbee git merge c1 --into c4 -b feat/x" in flat
+    # Nothing followed the failing source, so there is no "not attempted" line
+    # to print — an empty one would be noise, not information.
+    assert "not attempted" not in flat
 
 
 # --- the two outcomes that used to surface as raw git text ---------------------
@@ -328,6 +332,34 @@ def test_git_merge_stays_silent_about_a_benign_local_branch(status, merge_repo, 
     assert "local 'feat/a'" not in flat_output(result.output)
 
 
+def test_git_merge_resolves_every_source_before_merging_any(merge_repo, mocker):
+    """An unresolvable source name must fail before anything lands in the target.
+
+    `_resolve_existing` exits the process itself (`error` + `typer.Exit(1)`),
+    so resolving inside the merge loop would abandon a half-applied
+    multi-source run — killed after `c1` had already landed and *past* the
+    summary, so the user is told nothing about what landed, what stopped it or
+    how to resume. Resolution is all-or-nothing instead, which is stronger than
+    printing a summary: with nothing attempted, no summary is owed.
+    """
+    _cfg, incus = merge_repo
+
+    def resolve(_cfg, name):
+        if name == "c2typo":
+            raise typer.Exit(1)  # what `_resolve_existing` does for an unknown name
+        return (incus, f"sampleapp-{name}")
+
+    mocker.patch("jailbee.cli._resolve_existing", side_effect=resolve)
+    called = mocker.patch(
+        "jailbee.sync.merge_container_into_container", return_value=_result()
+    )
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2typo", "c3", "--into", "c4"])
+
+    assert result.exit_code == 1
+    called.assert_not_called()
+
+
 # --- argument validation -------------------------------------------------------
 
 
@@ -361,4 +393,6 @@ def test_git_merge_requires_at_least_one_source(merge_repo, mocker):
     result = runner.invoke(app, ["git", "merge", "--into", "c4"])
 
     assert result.exit_code == 2
+    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert "Missing argument" in combined
     called.assert_not_called()

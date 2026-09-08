@@ -5130,6 +5130,14 @@ def _ff_only_divergence_hint(
 
     Returns None for every other failure. The exception's own text is reported
     either way; this is an addition to it, never a replacement.
+
+    Takes no `plain` flag on purpose: the closing advice names `--plain`
+    unconditionally because this cannot fire during a plain run.
+    `merge_container_into_container(plain=True)` returns before
+    `_merge_ref_in_container` is reached, so no merge — and no `--ff-only`
+    refusal — can happen there, and `ff_container_branch`, which does run under
+    `plain`, is best-effort and never raises. Should a plain run ever grow a
+    merge, this needs the flag.
     """
     if "Not possible to fast-forward" not in reason:
         return None
@@ -5263,12 +5271,23 @@ def git_merge(
     incus, target_full = _resolve_existing(cfg, into)
     target_short = short_name(cfg, target_full)
 
+    # Every source name is resolved up front, before anything is merged.
+    # `_resolve_existing` exits the process itself on a name it cannot resolve,
+    # and doing that from inside the loop would kill the run *after* an earlier
+    # source had already landed in the target — and past
+    # `_print_merge_summary`, so the user would never learn what landed, what
+    # stopped the run, or how to resume, with a half-applied multi-source merge
+    # on disk. Resolution is therefore all-or-nothing: the same
+    # fail-before-acting shape as the `-b` guard above.
+    resolved: list[str] = []
+    for name in sources:
+        _, source_full = _resolve_existing(cfg, name)
+        resolved.append(short_name(cfg, source_full))
+
     merged: list[str] = []
     failure: _MergeFailure | None = None
     remaining: list[str] = []
-    for index, name in enumerate(sources):
-        _, source_full = _resolve_existing(cfg, name)
-        source_short = short_name(cfg, source_full)
+    for index, source_short in enumerate(resolved):
         try:
             result = sync.merge_container_into_container(
                 cfg, incus, source_short, target_short, branch=branch, plain=plain
@@ -5279,7 +5298,7 @@ def git_merge(
             # A short reason, not `str(exc)`: the exception's own text was just
             # printed in full, and the summary is a summary.
             failure = _MergeFailure(source_short, "merge conflicts", conflict=True)
-            remaining = list(sources[index + 1 :])
+            remaining = list(resolved[index + 1 :])
             break
         except (sync.SyncError, git_helpers.GitError) as exc:
             error_plain(str(exc))
@@ -5292,7 +5311,7 @@ def git_merge(
             # the whole of it is already above, unabridged.
             lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
             failure = _MergeFailure(source_short, lines[0] if lines else str(exc), conflict=False)
-            remaining = list(sources[index + 1 :])
+            remaining = list(resolved[index + 1 :])
             break
         _print_container_merge_result(source_short, target_short, result, plain=plain)
         merged.append(source_short)
