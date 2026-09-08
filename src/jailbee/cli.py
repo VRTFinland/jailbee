@@ -2484,33 +2484,40 @@ def _resolve_attachable(
 
 
 def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> None:
-    """Print the same summary `jailbee git fetch` prints, reused by checkout/pull."""
+    """Print the same summary `jailbee git fetch` prints, reused by checkout/pull.
+
+    Every line here embeds a ref (which embeds the branch name) or a commit
+    subject — both arbitrary, uncontrolled text — so all of it goes through
+    `info_plain`, not `info`: Rich's markup parser silently deletes bracketed
+    content, so a branch named `feat/[wip]` (or a commit subject containing
+    `[...]`) would otherwise render with the bracketed part gone.
+    """
     from jailbee import git as git_helpers
 
     ref = f"refs/jailbee/{short}/{result.branch}"
     if result.commits_added == 0:
-        info(f"{ref}: already up to date ({result.new_oid[:7]}).")
+        info_plain(f"{ref}: already up to date ({result.new_oid[:7]}).")
         return
 
     if result.old_oid is None:
         if result.base_oid is not None:
-            info(
+            info_plain(
                 f"{ref}: new ref at {result.new_oid[:7]} "
                 f"({result.commits_added} commit(s) ahead of HEAD)."
             )
             range_spec = f"{result.base_oid}..{result.new_oid}"
         else:
-            info(f"{ref}: fetched {result.commits_added} commit(s).")
+            info_plain(f"{ref}: fetched {result.commits_added} commit(s).")
             range_spec = result.new_oid
     else:
-        info(
+        info_plain(
             f"{ref}: {result.old_oid[:7]}..{result.new_oid[:7]} "
             f"({result.commits_added} new commits)"
         )
         range_spec = f"{result.old_oid}..{result.new_oid}"
 
     for line in git_helpers.log_oneline(cfg.repo_root, range_spec):
-        info(f"  {line}")
+        info_plain(f"  {line}")
 
 
 def _placement_remedy(status: str, *, name: str, short: str) -> str:

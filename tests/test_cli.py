@@ -3512,6 +3512,45 @@ def test_git_fetch_quiet_success_survives_bracketed_submodule_path(mocker, tmp_p
     assert "vendor[legacy]" in result.output
 
 
+def test_git_fetch_summary_survives_bracketed_branch_name(mocker, tmp_path):
+    """`_print_fetch_summary`'s `ref` embeds the fetched branch name verbatim,
+    with no git ref-format restriction against square brackets — a branch
+    named `feat/[wip]` is legal. Before this fix the summary line went
+    through `info` (Rich markup on), so `[wip]` was read as a style tag and
+    silently deleted; it must now survive via `info_plain` the same way
+    `_print_placement_report` already protects `SubBranchPlacement.path`.
+    """
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=SyncRefsResult(
+            fetch=FetchResult(
+                branch="feat/[wip]",
+                old_oid=None,
+                new_oid="newsha1234567",
+                base_oid=None,
+                commits_added=1,
+            ),
+            target="feat/[wip]",
+            superproject=BranchPlacement(
+                "refs/heads/feat/[wip]", "created", None, "newsha1234567"
+            ),
+            submodules=(),
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    # The full fetch-summary line, not just the substring "feat/[wip]" — that
+    # substring also appears (unbracketed hazard notwithstanding) in the
+    # placement report's superproject line below it, which already goes
+    # through `info_plain` and would mask a regression in the summary alone.
+    assert "refs/jailbee/feat-foo/feat/[wip]: fetched 1 commit(s)." in result.output
+
+
 def test_cli_pull_invokes_sync(mocker, tmp_path):
     runner = CliRunner()
     cfg_mock = mocker.MagicMock()
