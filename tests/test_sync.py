@@ -7169,11 +7169,11 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
 
     to_host.assert_called_once()
     # The source container's submodule refs must be relayed under ITS namespace.
-    assert to_container.call_args.kwargs["source_ns"] == "c1"
-    assert to_container.call_args.kwargs["paths"] == ["sub"]
-    assert push.call_args.kwargs["namespace"] == "from/c1"
-    assert push.call_args.kwargs["source_ref"] == "refs/jailbee/c1/feat/a"
-    assert merge.call_args.kwargs["ref"] == "refs/jailbee/from/c1/feat/a"
+    assert to_container.call_args.kwargs.get("source_ns") == "c1"
+    assert to_container.call_args.kwargs.get("paths") == ["sub"]
+    assert push.call_args.kwargs.get("namespace") == "from/c1"
+    assert push.call_args.kwargs.get("source_ref") == "refs/jailbee/c1/feat/a"
+    assert merge.call_args.kwargs.get("ref") == "refs/jailbee/from/c1/feat/a"
     assert result.head_oid == "mergedsha"
 
 
@@ -7249,3 +7249,64 @@ def test_merge_container_into_container_plain_skips_the_merge(mocker, make_cfg, 
     to_container.assert_not_called()
     assert result.head_oid == "targethead"
     assert result.fast_forward_only is False
+
+
+def test_merge_container_into_container_mount_mode_raises(mocker, make_cfg, tmp_path):
+    """A mount-mode target shares the host's tree, so nothing may be relayed into it.
+
+    The refusal must land before any transport: a guard that raised only after
+    `fetch_from_container` had run would satisfy `pytest.raises` and still have
+    written `refs/jailbee/*` on the host. The whole downstream is therefore
+    mocked, so removing the guard reaches a clean "DID NOT RAISE" rather than
+    exploding somewhere further along.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-c2"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = "mount"
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    fetch = mocker.patch("jailbee.sync.fetch_from_container")
+    to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch("jailbee.sync.push_to_container")
+    mocker.patch("jailbee.sync._merge_ref_in_container")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="targethead")
+
+    with pytest.raises(sync.SyncError, match="mount mode"):
+        sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    fetch.assert_not_called()
+    to_host.assert_not_called()
+    to_container.assert_not_called()
+    push.assert_not_called()
+
+
+def test_merge_container_into_container_stopped_raises(mocker, make_cfg, tmp_path):
+    """A stopped target cannot be merged into, and is refused before any transport."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-c2"
+    _mock_container_stopped(incus, full)
+    incus.config_get.return_value = None
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    fetch = mocker.patch("jailbee.sync.fetch_from_container")
+    to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch("jailbee.sync.push_to_container")
+    mocker.patch("jailbee.sync._merge_ref_in_container")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="targethead")
+
+    with pytest.raises(sync.SyncError, match="not running"):
+        sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    fetch.assert_not_called()
+    to_host.assert_not_called()
+    to_container.assert_not_called()
+    push.assert_not_called()
