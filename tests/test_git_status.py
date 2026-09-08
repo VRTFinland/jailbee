@@ -735,6 +735,14 @@ def test_probe_snippet_checks_rebase_before_merge():
             ("rebasing", "active"),
         ),
         (
+            GitStatus("clean", "clean", "0", "ok", in_progress="cherry-pick", unmerged=0),
+            ("cherry-picking", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="revert", unmerged=0),
+            ("reverting", "active"),
+        ),
+        (
             GitStatus("clean", "clean", "0", "conflict", in_progress="", unmerged=0),
             ("conflict", "predicted"),
         ),
