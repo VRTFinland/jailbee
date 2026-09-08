@@ -508,6 +508,25 @@ def test_confirm_fn_alias_is_str_to_bool():
     assert ConfirmFn == Callable[[str], bool]
 
 
+def test_info_plain_keeps_bracketed_text_verbatim(capsys):
+    """The hazard `info_plain` exists for: a submodule path with no git
+    ref-format restriction (`vendor[legacy]`) has its bracketed suffix read
+    as a Rich style tag and silently deleted by plain `info`.
+
+    Real module-level Console, no mocking — the contrast assertion below on
+    `info` is what makes the difference load-bearing rather than incidental.
+    """
+    from jailbee import tui
+
+    tui.info_plain("submodule 'vendor[legacy]': fast-forwarded → newsub123")
+    plain = capsys.readouterr().out
+    assert "vendor[legacy]" in plain
+
+    tui.info("submodule 'vendor[legacy]': fast-forwarded → newsub123")
+    marked_up = capsys.readouterr().out
+    assert "[legacy]" not in marked_up  # silently deleted as a style tag
+
+
 def test_warn_plain_keeps_bracketed_text_verbatim(capsys):
     """The hazard `warn_plain` exists for: Rich reads `[wip]` as a style tag.
 

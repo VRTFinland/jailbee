@@ -3166,8 +3166,13 @@ def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude
     assert "install_jailbee_skills: true" in stripped_lines
 
 
-def test_cli_fetch_invokes_sync(mocker, tmp_path):
-    from jailbee.sync import FetchResult
+def test_cli_fetch_invokes_sync_refs_from_container(mocker, tmp_path):
+    """`fetch()` delegates to `sync.sync_refs_from_container` (Task 8), not the
+    older `sync.fetch_from_container` this test mocked before — repointed per
+    review finding 2 (2026-09-06-git-operations-plan task-8 fix round 1) so it
+    no longer falls through to real, unmocked `subprocess` calls.
+    """
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
 
     runner = CliRunner()
 
@@ -3180,21 +3185,28 @@ def test_cli_fetch_invokes_sync(mocker, tmp_path):
         return_value=(mocker.MagicMock(), "sampleapp-feat-foo"),
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
-    mock_fetch = mocker.patch(
-        "jailbee.sync.fetch_from_container",
-        return_value=FetchResult(
-            branch="feat/foo",
-            old_oid="abc1234aa",
-            new_oid="def5678bb",
-            base_oid="abc1234aa",
-            commits_added=2,
+    mock_sync_refs = mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=SyncRefsResult(
+            fetch=FetchResult(
+                branch="feat/foo",
+                old_oid="abc1234aa",
+                new_oid="def5678bb",
+                base_oid="abc1234aa",
+                commits_added=2,
+            ),
+            target="feat/foo",
+            superproject=BranchPlacement(
+                "refs/heads/feat/foo", "up-to-date", "abc1234aa", "abc1234aa"
+            ),
+            submodules=(),
         ),
     )
     mocker.patch("jailbee.git.log_oneline", return_value=["def5678 fix"])
 
     result = runner.invoke(app, ["git", "fetch", "feat-foo"])
     assert result.exit_code == 0, result.output
-    mock_fetch.assert_called_once()
+    mock_sync_refs.assert_called_once()
     assert "feat/foo" in result.output
     assert "2 new commits" in result.output
 
@@ -3475,6 +3487,33 @@ def test_git_fetch_reports_submodule_placements(mocker, tmp_path):
     assert "fast-forwarded" in result.output
     assert "other" in result.output
     assert "unreachable" in result.output
+
+
+def test_git_fetch_quiet_success_survives_bracketed_submodule_path(mocker, tmp_path):
+    """`SubBranchPlacement.path` is a bare filesystem path with no git
+    ref-format restriction, so a submodule directory can legitimately be
+    named e.g. `vendor[legacy]`. On a quiet-success status (not loud), the
+    placement report must render that bracketed text verbatim rather than
+    having it silently deleted by Rich markup parsing — the same hazard
+    `warn_plain` already guards against on the loud branches, now guarded on
+    the info branches by `info_plain` (review finding 1, fix round 1).
+    """
+    from jailbee.submodules import SubBranchPlacement
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(
+            submodules=(
+                SubBranchPlacement("vendor[legacy]", "fast-forwarded", "oldsub12", "newsub123"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "vendor[legacy]" in result.output
 
 
 def test_cli_pull_invokes_sync(mocker, tmp_path):

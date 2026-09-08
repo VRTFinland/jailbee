@@ -100,6 +100,22 @@ def info(msg: str) -> None:
     console.print(msg)
 
 
+def info_plain(msg: str) -> None:
+    """Like `info`, but the body is never reinterpreted as Rich markup.
+
+    The `warn` / `warn_plain` hazard, on the info path: a `jailbee git fetch`
+    placement line embeds a submodule's filesystem path
+    (`SubBranchPlacement.path`), which has no git ref-format restriction — a
+    submodule directory named ``vendor[legacy]`` has its ``[legacy]`` read as
+    a style tag and *silently deleted* by `info`'s Rich markup parsing.
+    Highlighting is off too, so Rich doesn't recolour paths or numbers inside
+    the body.
+
+    `info` has no styled marker, so the body here is the whole message.
+    """
+    console.print(Text(msg), highlight=False)
+
+
 def success(msg: str) -> None:
     console.print(f"[green]✓[/green] {msg}")
 

@@ -25,6 +25,7 @@ from jailbee.tui import (
     error,
     error_plain,
     info,
+    info_plain,
     success,
     success_plain,
     warn,
@@ -2546,12 +2547,17 @@ def _print_placement_report(result: "SyncRefsResult", short: str) -> None:
 
     `"up-to-date"` needs no line — nothing moved, nothing to explain. Every
     other quiet status ("created", "fast-forwarded", "forced",
-    "checked-out-ff") gets one plain info line. The four failure statuses
-    common to both vocabularies plus submodule-only `"unreachable"` are loud:
-    each gets its own remedy from `_placement_remedy`, given via `warn_plain`
-    rather than `warn` — a branch or submodule path can legitimately contain
-    square brackets (`feat/[wip]`), which `warn`'s Rich markup parsing would
-    silently delete.
+    "checked-out-ff") gets one plain info line. Three failure statuses
+    ("diverged", "checked-out", "failed") are common to both vocabularies;
+    "refused" is host-only and "unreachable" is submodule-only. All five are
+    loud: each gets its own remedy from `_placement_remedy`, given via
+    `warn_plain` rather than `warn` — a branch or submodule path can
+    legitimately contain square brackets (`feat/[wip]`), which `warn`'s Rich
+    markup parsing would silently delete. The quiet-success lines use
+    `info_plain` for the same reason: `SubBranchPlacement.path` is a
+    filesystem path with no git ref-format restriction, so a submodule
+    directory named `vendor[legacy]` would otherwise be silently truncated
+    by `info`'s markup parsing.
     """
     quiet = {"up-to-date"}
     loud = {"diverged", "refused", "checked-out", "failed", "unreachable"}
@@ -2560,14 +2566,14 @@ def _print_placement_report(result: "SyncRefsResult", short: str) -> None:
     if sup.status in loud:
         warn_plain(_placement_remedy(sup.status, name=sup.name, short=short))
     elif sup.status not in quiet:
-        info(f"{sup.name}: {sup.status} → {sup.new_oid[:7]}")
+        info_plain(f"{sup.name}: {sup.status} → {sup.new_oid[:7]}")
 
     for sub in result.submodules:
         label = f"submodule '{sub.path}'"
         if sub.status in loud:
             warn_plain(_placement_remedy(sub.status, name=label, short=short))
         elif sub.status not in quiet:
-            info(f"{label}: {sub.status} → {sub.new_oid[:7]}")
+            info_plain(f"{label}: {sub.status} → {sub.new_oid[:7]}")
 
 
 def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult") -> None:
