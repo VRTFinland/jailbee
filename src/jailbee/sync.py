@@ -2521,7 +2521,12 @@ def merge_container_into_container(
     rebase already in progress) **before** any transport, so a refusal never
     leaves half-populated `refs/jailbee/*` behind. The source needs no preflight
     of its own: `fetch_from_container` already refuses a stopped container, a
-    missing clone and an unresolvable branch.
+    missing clone and an unresolvable branch. That guarantee ends once the
+    preflight passes: a failure partway through transport (in
+    `transport_submodules_to_container` or `push_to_container`) can leave
+    objects — and possibly a newly `git init`'d, still-detached sub-repo — in
+    the target, alongside the refs already written on the host, with nothing
+    rolled back.
 
     Two ref namespaces are in play and they are deliberately not the same
     shape. The superproject lands in the target at
