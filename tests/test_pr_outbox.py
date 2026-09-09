@@ -1260,3 +1260,57 @@ def test_pending_indices_skips_what_already_landed():
     assert pending_indices(manifest, Progress(applied=frozenset(), urls={})) == [0, 1, 2]
     assert pending_indices(manifest, Progress(applied=frozenset({1}), urls={})) == [0, 2]
     assert pending_indices(manifest, Progress(applied=frozenset({0, 1, 2}), urls={})) == []
+
+
+def test_show_lines_render_every_body_in_full():
+    """`show_lines` is the untruncated counterpart of `plan_lines`."""
+    from jailbee.pr_outbox import parse_manifest, show_lines
+
+    long_body = "x" * 400
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {
+                    "type": "review",
+                    "body": long_body,
+                    "comments": [
+                        {
+                            "path": "src/a.py",
+                            "line": 134,
+                            "start_line": 120,
+                            "body": "line one\nline two",
+                        }
+                    ],
+                },
+                {"type": "comment", "body": "general", "reply_to": 4455},
+                {"type": "description", "title": "T", "branch": "b", "body": "new body"},
+            ]
+        ),
+        {},
+    )
+
+    lines = show_lines(manifest)
+
+    assert lines[0] == "001-x.json  acme/widgets  PR #1234"
+    assert long_body in lines, "no truncation, and no re-wrapping"
+    assert "  src/a.py:120-134" in lines
+    # A multi-line body arrives as its own lines, so a caller printing line by
+    # line reproduces it exactly.
+    assert ["line one", "line two"] == lines[lines.index("  src/a.py:120-134") + 1 :][:2]
+    assert "action 1 · COMMENT (general), replying to general comment #4455" in lines
+    assert "  title: T" in lines
+    assert "  branch: b" in lines
+    assert "new body" in lines
+
+
+def test_show_lines_name_a_manifest_with_no_pr_yet():
+    from jailbee.pr_outbox import parse_manifest, show_lines
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(pr=None, actions=[{"type": "description", "body": "b"}]),
+        {},
+    )
+
+    assert show_lines(manifest)[0].endswith("no PR yet")

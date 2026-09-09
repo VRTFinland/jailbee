@@ -170,11 +170,13 @@ def test_apply_refuses_a_stopped_container(mocker, tmp_path):
         "jailbee.pr_outbox.read_outbox",
         side_effect=OutboxReadError("could not read the outbox in acme-feat-foo: not running"),
     )
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
     result = runner.invoke(app, ["review", "apply", "feat-foo"])
 
     assert result.exit_code == 2
     assert "jailbee start" in result.output
+    apply_mock.assert_not_called()
 
 
 def test_dry_run_never_prompts_and_never_publishes(mocker, tmp_path):
@@ -301,6 +303,151 @@ def test_apply_reports_a_finalize_failure_and_exits_1(mocker, tmp_path):
     # What landed is still reported, next to why it could not be recorded.
     assert "https://x/c" in result.output
     assert "sidecar could not be written" in result.output
+
+
+def test_apply_passes_force_through_to_the_gate(mocker, tmp_path):
+    """--force relaxes the staleness gate; it must actually reach it."""
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "--dry-run", "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["force"] is True
+
+
+def test_apply_without_force_does_not_relax_the_gate(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    runner.invoke(app, ["review", "apply", "feat-foo", "--dry-run"])
+
+    assert resolve.call_args.kwargs["force"] is False
+
+
+def test_dry_run_still_exits_1_when_a_manifest_was_refused(mocker, tmp_path):
+    """A refusal means something written will not be published — on every path."""
+    from jailbee.pr_outbox import GateError
+
+    _setup(
+        mocker,
+        tmp_path,
+        files={"001-x.json": _manifest_text(), "002-y.json": _manifest_text()},
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=[GateError("manifest 001-x.json targets acme/other"), _a_target("002-y.json")],
+    )
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "--dry-run"])
+
+    assert result.exit_code == 1
+    assert "acme/other" in result.output
+
+
+def test_apply_deletes_a_body_file_shared_by_two_completed_manifests(mocker, tmp_path):
+    """The snapshot must shrink between manifests, or a shared `.md` survives both."""
+    from jailbee.pr_outbox import ApplyOutcome, Target, parse_manifest
+
+    text = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
+    bodies = {"shared.md": "the body"}
+    _, incus = _setup(
+        mocker,
+        tmp_path,
+        files={"001-x.json": text, "002-y.json": text, "shared.md": "the body"},
+    )
+
+    def _target(name):
+        return Target(manifest=parse_manifest(name, text, bodies), pr=_a_target().pr, stale=False)
+
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=[_target("001-x.json"), _target("002-y.json")],
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.apply_manifest",
+        return_value=ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+    )
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 0, result.output
+    removals = [" ".join(c.args[1]) for c in incus.exec.call_args_list if c.args[1][0] == "rm"]
+    assert len(removals) == 2, removals
+    assert "shared.md" not in removals[0], "002-y.json still references it"
+    assert "shared.md" in removals[1], "nothing references it once both are gone"
+
+
+def test_apply_asks_which_container_when_several_may_be_pending(mocker, tmp_path):
+    from jailbee.pr_outbox import Outbox
+
+    _setup(mocker, tmp_path)
+    read = mocker.patch(
+        "jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-x.json": _manifest_text()})
+    )
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],
+    )
+    pick = mocker.patch("jailbee.tui.pick_container", return_value="acme-feat-b")
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    result = runner.invoke(app, ["review", "apply", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    pick.assert_called_once()
+    assert read.call_args.args[1] == "acme-feat-b"
+
+
+def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path):
+    """`tui.pick_container` renders unconditionally; a scripted run must not reach it."""
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],
+    )
+    pick = mocker.patch("jailbee.tui.pick_container")
+
+    result = runner.invoke(app, ["review", "apply"])
+
+    assert result.exit_code == 2
+    pick.assert_not_called()
+    assert "feat-a" in result.output and "feat-b" in result.output
+
+
+def test_apply_reads_a_container_whose_pending_count_is_unknown(mocker, tmp_path):
+    """`None` means the probe could not say — never "nothing pending"."""
+    from jailbee.pr_outbox import Outbox
+
+    _setup(mocker, tmp_path)
+    read = mocker.patch(
+        "jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-x.json": _manifest_text()})
+    )
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[_running_ci(name="acme-feat-a", pending=None)],
+    )
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    result = runner.invoke(app, ["review", "apply", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert read.call_args.args[1] == "acme-feat-a"
+    assert "looks good" in result.output, "the manifest must be shown, not assumed away"
+
+
+def test_apply_ignores_a_stopped_container_when_choosing(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[_running_ci(name="acme-old", pending=None, state="Stopped")],
+    )
+
+    result = runner.invoke(app, ["review", "apply"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing pending" in result.output.lower()
 
 
 def test_apply_stops_before_the_next_manifest_after_a_failed_publish(mocker, tmp_path):

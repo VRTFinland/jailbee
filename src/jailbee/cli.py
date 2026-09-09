@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple, assert_never
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
 
 import typer
 import yaml
@@ -8580,11 +8580,19 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
 
     With an explicit ``name`` this is the usual :func:`_resolve_existing`.
     Without one the candidate set is narrower than that helper's — only
-    containers whose status probe counted waiting manifests — so the common
-    case (one container wrote a review, six others did not) never asks.
+    running containers the status probe did not report as empty — so the
+    common case (one container wrote a review, six others did not) never
+    asks.
+
+    Only an explicit count of 0 means "nothing here". An unknown count
+    (``None``: a pre-upgrade container, a probe early-exit on a non-checkout,
+    an unparseable value) makes the container a candidate and its outbox is
+    read, exactly as `review ls` does — inferring "nothing pending" from "the
+    probe could not say" is how a written review gets silently lost, which is
+    the one thing this feature exists to prevent.
     """
     from jailbee.incus import Incus
-    from jailbee.lifecycle import list_containers
+    from jailbee.lifecycle import _stdin_is_interactive, list_containers
     from jailbee.tui import pick_container
 
     if name is not None:
@@ -8594,12 +8602,26 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     pending = [
         c
         for c in list_containers(cfg, incus, with_git_status=True)
-        if c.git_status is not None and c.git_status.pending_pr_actions
+        # A stopped container's outbox cannot be read at all, so it is never a
+        # candidate — `review ls` skips it the same way and names it instead.
+        if c.state == "Running" and (c.git_status is None or c.git_status.pending_pr_actions != 0)
     ]
     if not pending:
         return incus, None
     if len(pending) == 1:
         return incus, pending[0].name
+    # `tui.pick_container` renders unconditionally and leaves the TTY check to
+    # its caller (its own docstring says so), so a scripted run must refuse
+    # here rather than drop prompt_toolkit onto a pipe — the same rule
+    # `lifecycle.resolve_container_for_interactive_detailed` follows, and the
+    # same rule the confirmation below follows.
+    if not _stdin_is_interactive():
+        names = ", ".join(c.display_name for c in pending)
+        error_plain(
+            f"several containers may have PR actions waiting; name one explicitly "
+            f"(or run in a TTY): {names}"
+        )
+        raise typer.Exit(2)
     picked = pick_container(pending)
     if picked is None:
         raise typer.Exit(1)
@@ -8828,7 +8850,10 @@ def review_apply_cmd(
 
     if dry_run:
         info("Dry run: nothing was published.")
-        return
+        # A refusal sets the exit code on every path: something the container
+        # wrote will not be published, and a script has to be able to see that
+        # whether or not this run was going to publish anything anyway.
+        raise typer.Exit(1 if refusals else 0)
     if total == 0:
         # Everything here landed on an earlier run that then failed to record
         # it. There is nothing to publish and so nothing to confirm — only the
@@ -8862,6 +8887,18 @@ def review_apply_cmd(
             error_plain(f"{target.manifest.name}: {outcome.failure}")
             warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
             stop = True
+        # `finalize` deletes a spent manifest together with the body files no
+        # *other* manifest in this snapshot references. Drop the spent one from
+        # the snapshot so a `.md` shared by two completed manifests doesn't
+        # look referenced by each of them in turn and outlive them both — the
+        # same hazard `review drop` guards against below.
+        if not pr_outbox.pending_indices(
+            target.manifest,
+            pr_outbox.Progress(applied=progress.applied | set(outcome.applied), urls={}),
+        ):
+            outbox = pr_outbox.Outbox(
+                files={k: v for k, v in outbox.files.items() if k != target.manifest.name}
+            )
         if stop:
             failed = True
             left = [t.manifest.name for t, _ in plans[position + 1 :]]
@@ -9034,66 +9071,22 @@ def review_ls_cmd(
         )
 
 
-def _print_body(text: str) -> None:
-    """Print one body exactly as the container wrote it.
-
-    ``markup=False`` keeps a ``[note]`` from being read as a style tag and
-    silently dropped; ``soft_wrap=True`` keeps a long body from being
-    re-wrapped or cropped to the terminal width. `jailbee review show` exists
-    precisely so the text can be read as written before it is published.
-    """
-    from jailbee.tui import console
-
-    console.print(text, markup=False, highlight=False, soft_wrap=True)
-
-
 def _print_manifest_bodies(manifest: "Manifest") -> None:
-    """Print one manifest's actions, every body in full."""
-    from rich.markup import escape
+    """Print one manifest's actions, every body in full.
 
+    The rendering is `pr_outbox.show_lines`; this only decides how the lines
+    reach the terminal. ``markup=False`` keeps a ``[note]`` in a
+    container-written body from being read as a style tag and silently
+    dropped, and ``soft_wrap=True`` keeps a long line from being re-wrapped or
+    cropped — `jailbee review show` exists precisely so the text can be read
+    as written before it is published.
+    """
     from jailbee import pr_outbox
     from jailbee.tui import console
 
-    pr_label = f"PR #{manifest.pr}" if manifest.pr is not None else "no PR yet"
     console.print()
-    console.print(f"[bold]{escape(manifest.name)}[/bold]  {escape(manifest.repo)}  {pr_label}")
-    for index, action in enumerate(manifest.actions):
-        console.print()
-        if isinstance(action, pr_outbox.ReviewAction):
-            console.print(f"action {index} · REVIEW ({action.event})")
-            _print_body(action.body)
-            for comment in action.comments:
-                console.print()
-                console.print(
-                    f"  {pr_outbox.comment_anchor(comment)}",
-                    markup=False,
-                    highlight=False,
-                    soft_wrap=True,
-                )
-                _print_body(comment.body)
-        elif isinstance(action, pr_outbox.ReplyAction):
-            console.print(f"action {index} · REPLY to review comment #{action.comment_id}")
-            _print_body(action.body)
-        elif isinstance(action, pr_outbox.CommentAction):
-            reply = (
-                f", replying to general comment #{action.reply_to}"
-                if action.reply_to is not None
-                else ""
-            )
-            console.print(f"action {index} · COMMENT (general){reply}")
-            _print_body(action.body)
-        elif isinstance(action, pr_outbox.DescriptionAction):
-            console.print(f"action {index} · DESCRIPTION")
-            if action.title is not None:
-                console.print(f"  title: {escape(action.title)}")
-            if action.branch is not None:
-                console.print(f"  branch: {escape(action.branch)}")
-            _print_body(action.body)
-        else:
-            # `Action` is a closed union; a fifth variant must be printed
-            # here rather than silently omitted from the one command whose
-            # whole purpose is showing everything.
-            assert_never(action)
+    for line in pr_outbox.show_lines(manifest):
+        console.print(line, markup=False, highlight=False, soft_wrap=True)
 
 
 @review_app.command("show")

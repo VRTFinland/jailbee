@@ -583,12 +583,11 @@ def _first_line(body: str, width: int = 68) -> str:
     return line
 
 
-def comment_anchor(comment: LineComment) -> str:
+def _comment_anchor(comment: LineComment) -> str:
     """One line comment's anchor: ``src/x.py:88`` or ``src/x.py:120-134``.
 
-    Public because `jb review show` prints the same anchor above the body it
-    shows in full, and two spellings of "where this comment lands" would be
-    two things to keep in step.
+    Shared by `plan_lines` and `show_lines` so "where this comment lands" has
+    one spelling.
     """
     if comment.start_line is not None:
         return f"{comment.path}:{comment.start_line}-{comment.line}"
@@ -609,7 +608,7 @@ def plan_lines(target: Target, current_body: str | None) -> list[str]:
         if isinstance(action, ReviewAction):
             lines.append(f"REVIEW ({action.event}): {_first_line(action.body)}")
             for comment in action.comments:
-                lines.append(f"  {comment_anchor(comment)}: {_first_line(comment.body)}")
+                lines.append(f"  {_comment_anchor(comment)}: {_first_line(comment.body)}")
         elif isinstance(action, ReplyAction):
             lines.append(
                 f"REPLY to review comment #{action.comment_id}: {_first_line(action.body)}"
@@ -635,6 +634,56 @@ def plan_lines(target: Target, current_body: str | None) -> list[str]:
             # Action is a closed union (Task 2); this both narrows the type
             # for mypy and guards against a future member added to it
             # without updating this renderer.
+            assert_never(action)
+    return lines
+
+
+def show_lines(manifest: Manifest) -> list[str]:
+    """Every action of `manifest`, bodies in full. Pure — no printing.
+
+    The untruncated counterpart of `plan_lines`, and the same contract: plain
+    text lines, no Rich markup, the caller decides how they are rendered. It
+    lives here for the same reason `plan_lines` does — `Action` is a closed
+    union defined in this module, and the one command whose whole purpose is
+    showing *everything* must not be the place a new variant silently goes
+    missing.
+
+    A body is split into its own lines rather than emitted as one embedded
+    block, so a caller printing line by line reproduces it exactly. An empty
+    body contributes nothing, which is what it is.
+    """
+    lines: list[str] = [
+        f"{manifest.name}  {manifest.repo}  "
+        + (f"PR #{manifest.pr}" if manifest.pr is not None else "no PR yet")
+    ]
+    for index, action in enumerate(manifest.actions):
+        lines.append("")
+        if isinstance(action, ReviewAction):
+            lines.append(f"action {index} · REVIEW ({action.event})")
+            lines.extend(action.body.splitlines())
+            for comment in action.comments:
+                lines.append("")
+                lines.append(f"  {_comment_anchor(comment)}")
+                lines.extend(comment.body.splitlines())
+        elif isinstance(action, ReplyAction):
+            lines.append(f"action {index} · REPLY to review comment #{action.comment_id}")
+            lines.extend(action.body.splitlines())
+        elif isinstance(action, CommentAction):
+            reply = (
+                f", replying to general comment #{action.reply_to}"
+                if action.reply_to is not None
+                else ""
+            )
+            lines.append(f"action {index} · COMMENT (general){reply}")
+            lines.extend(action.body.splitlines())
+        elif isinstance(action, DescriptionAction):
+            lines.append(f"action {index} · DESCRIPTION")
+            if action.title is not None:
+                lines.append(f"  title: {action.title}")
+            if action.branch is not None:
+                lines.append(f"  branch: {action.branch}")
+            lines.extend(action.body.splitlines())
+        else:
             assert_never(action)
     return lines
 
@@ -980,6 +1029,35 @@ def _orphaned_body_files(outbox: Outbox, exclude_name: str) -> list[str]:
     )
 
 
+def _delete_from_outbox(
+    incus: Incus,
+    container: str,
+    outbox: Outbox,
+    name: str,
+    *,
+    uid: int | None,
+    with_sidecar: bool,
+) -> list[str]:
+    """Remove manifest `name` and everything only it still needs, in one `rm`.
+
+    The single deletion path in this module: `finalize` uses it for a manifest
+    that is fully applied, `drop_manifest` for one the user discarded, and the
+    outbox layout, the ``-f`` and the orphan rule (`_orphaned_body_files`)
+    therefore live in exactly one place. `with_sidecar` is True whenever a
+    progress sidecar exists to remove — always, for `finalize`, which has just
+    written one.
+
+    Returns the outbox-relative names removed, and lets `IncusError` out: the
+    two callers have different things to say about a failed deletion.
+    """
+    names = [name]
+    if with_sidecar:
+        names.append(f"{name}.progress.json")
+    names.extend(_orphaned_body_files(outbox, name))
+    incus.exec(container, ["rm", "-f", *(f"{outbox_dir()}/{n}" for n in names)], uid=uid)
+    return names
+
+
 class FinalizeError(Exception):
     """`finalize`/`record_consumed`/`drop_manifest` could not write to the container.
 
@@ -1071,12 +1149,8 @@ def finalize(
             ) from e
 
     if merged_applied == set(range(len(manifest.actions))):
-        to_delete = [manifest_path, sidecar_path]
-        to_delete.extend(
-            f"{outbox_dir()}/{name}" for name in _orphaned_body_files(outbox, manifest.name)
-        )
         try:
-            incus.exec(container, ["rm", "-f", *to_delete], uid=uid)
+            _delete_from_outbox(incus, container, outbox, manifest.name, uid=uid, with_sidecar=True)
         except IncusError as e:
             raise FinalizeError(
                 f"manifest {manifest.name} is fully applied but could not be "
@@ -1089,12 +1163,13 @@ def drop_manifest(
 ) -> list[str]:
     """Delete manifest `name` from the container's outbox without applying it.
 
-    The discard counterpart of `finalize`'s cleanup, and deliberately the
-    same deletion: one `rm -f` over the manifest, its progress sidecar (when
-    one exists) and any `body_file` no *other* manifest in `outbox` still
-    references — see `_orphaned_body_files`. Nothing is posted to GitHub and
-    no `applied.log` line is written: dropping is the user saying this
-    proposal will never be published, so there is nothing to record.
+    The discard counterpart of `finalize`'s cleanup, and literally the same
+    deletion — both go through `_delete_from_outbox`, so the manifest, its
+    progress sidecar (when one exists) and any `body_file` no *other*
+    manifest in `outbox` still references go in one `rm -f`. Nothing is
+    posted to GitHub and no `applied.log` line is written: dropping is the
+    user saying this proposal will never be published, so there is nothing
+    to record.
 
     Returns the outbox-relative names that were deleted, so a caller
     dropping several manifests in a row can shrink its own `outbox`
@@ -1105,20 +1180,19 @@ def drop_manifest(
     Raises `FinalizeError` if the deletion fails; the manifest is then still
     pending, exactly as it was.
     """
-    sidecar_name = f"{name}.progress.json"
-
-    names = [name]
-    if sidecar_name in outbox.files:
-        names.append(sidecar_name)
-    names.extend(_orphaned_body_files(outbox, name))
-
     try:
-        incus.exec(container, ["rm", "-f", *(f"{outbox_dir()}/{n}" for n in names)], uid=uid)
+        return _delete_from_outbox(
+            incus,
+            container,
+            outbox,
+            name,
+            uid=uid,
+            with_sidecar=f"{name}.progress.json" in outbox.files,
+        )
     except IncusError as e:
         raise FinalizeError(
             f"manifest {name} could not be deleted ({e}); it is still pending"
         ) from e
-    return names
 
 
 def _read_optional(incus: Incus, container: str, path: str, *, uid: int | None) -> str | None:
