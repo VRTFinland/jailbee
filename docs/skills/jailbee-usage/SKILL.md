@@ -296,7 +296,13 @@ resurrect the ambiguity.
   host sub-repo can still be created, for a submodule born in the source
   container). The merge runs inside the target on whatever it has checked
   out, so conflicts are resolved there, in `jailbee shell <target>`.
-  - `--into <target>` — **required**; nothing is inferred.
+  - `--into <target>` — never inferred. Omit it on a TTY and jailbee asks
+    which container to merge into.
+  - Omit the sources too (`jailbee git merge`) and jailbee asks for those
+    first, then the target. The source prompt is a checkbox and merges in the
+    order the rows were **listed**, not the order they were ticked — the
+    prompt says so. With `-b` the source prompt is single-select, since one
+    branch cannot describe several sources. Off a TTY both ends must be given.
   - `-b <branch>` — read this branch from the source container (only valid with
     one source).
   - `--plain` — transport the refs only; run no merge. The summary then says
@@ -306,8 +312,10 @@ resurrect the ambiguity.
     what stopped it, what was not attempted, and the command to resume.
 
   ```bash
+  jailbee git merge                        # pick the sources, then the target
   jailbee git merge c1 --into c4
   jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+  jailbee git merge c1                     # pick the target only
   jailbee git merge c1 --into c4 --plain   # transport only
   jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
   ```

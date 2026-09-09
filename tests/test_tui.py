@@ -41,6 +41,18 @@ def test_pick_container_builds_choice_per_container(mocker):
     assert "Stopped" in choices[1].title
 
 
+def test_pick_container_asks_the_callers_own_question(mocker):
+    """A caller that picks for a purpose says so: `jailbee git merge` runs this
+    picker twice in one command (source, then target), and "Select a
+    container:" cannot tell the two prompts apart."""
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = "myrepo-feat-a"
+
+    pick_container([_info("myrepo-feat-a")], message="Select the container to merge INTO:")
+
+    assert select.call_args.args[0] == "Select the container to merge INTO:"
+
+
 def test_pick_container_returns_none_when_cancelled(mocker):
     select = mocker.patch("questionary.select")
     select.return_value.ask.return_value = None

@@ -329,7 +329,8 @@ stopping at the first conflict; resolve inside `jailbee shell feat-c`, then
 `jailbee git merge <source…> --into <target>` — objects travel source → host
 → target without a host checkout, and no host branch, index or superproject
 working tree is touched (a host sub-repo can still be created, for a
-submodule born in the source container). `--into` is required; several
+submodule born in the source container). Run it bare (`jailbee git merge`)
+and it asks for the sources, then the target; several
 sources run one at a time in the order given, and the run stops at the
 first conflict with a summary naming what landed, what didn't, and the
 resume command. `--plain` transports the refs without merging. There

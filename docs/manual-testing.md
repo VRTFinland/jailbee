@@ -715,9 +715,29 @@ jailbee git merge feat-merge-d --into feat-merge-target --plain
 jailbee shell feat-merge-target
 cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline -1 && exit
 
-# 4. --into is required.
+# 4. Neither end is inferred off a TTY.
+jailbee git merge feat-merge-a < /dev/null
+# expect: exit 1, names "--into <target>" and says to run in a TTY
+jailbee git merge < /dev/null
+# expect: exit 1, names BOTH "<source>..." and "--into <target>"
+
+# 4a. Interactive selection (needs a real terminal — pickers only render on a
+#     TTY, so this step cannot be piped or run under `script -c`'s stdin).
+jailbee git merge
+# expect: a checkbox titled "Select containers to merge FROM (merged in
+# listed order):" listing only RUNNING clone-mode containers, then — after
+# space-toggling one or more and pressing Enter — a single-select "Select the
+# container to merge INTO:" over the same list, the source rows included.
+# Ctrl+C at either prompt: "Aborted", nothing merged.
+# Enter with nothing ticked at the first prompt: "Nothing selected.", exit 0,
+# and the second prompt never appears.
 jailbee git merge feat-merge-a
-# expect: exit 2, "Missing option '--into'."
+# expect: only the INTO prompt (the source was given)
+jailbee git merge --into feat-merge-target
+# expect: only the FROM checkbox
+jailbee git merge --into feat-merge-target -b feat/merge-a
+# expect: the FROM prompt is a SINGLE-select ("Select the container to merge
+# FROM:"), not a checkbox — `-b` cannot describe several sources
 
 # 5. A submodule born inside the source container — the least-travelled
 #    line in this branch (submodules.py's create-then-`checkout --detach`

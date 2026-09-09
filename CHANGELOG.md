@@ -538,8 +538,12 @@
   branch into another through the host, submodules included, **without a
   host checkout** — objects travel source → host → target and no host
   branch, index or superproject working tree is touched (a host sub-repo can
-  still be created, for a submodule born in the source container). `--into`
-  is required; nothing is inferred.
+  still be created, for a submodule born in the source container). Neither
+  end is ever inferred, but either may be omitted on a TTY and is then asked
+  for — the sources first (a checkbox over the running clone-mode containers,
+  which merges in the order the rows were *listed*, not ticked; single-select
+  under `-b`, since one branch cannot describe several sources), the target
+  second. Off a TTY both must be given and the error names the missing ones.
   Several sources are merged one at a time, in the order given; the run
   stops at the first conflict or failure and always reports what landed,
   what stopped it, what was not attempted, and the command to resume.
