@@ -1,5 +1,11 @@
 # Changelog
 
+Each section is the difference between two released versions (the `v*` tags),
+as a user upgrading between them sees it — not a log of the work. Changes that
+were made and then corrected before ever being released appear only in their
+final form. Maintainers: see [docs/releasing.md](docs/releasing.md#what-belongs-in-the-unreleased-section)
+before editing `## Unreleased`.
+
 ## Unreleased
 
 ## 1.3.0 - 2026-09-09

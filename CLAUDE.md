@@ -155,6 +155,18 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
   a logical step is done — no need to ask. `git push` (and anything
   that mutates upstream: force-push, branch delete on the remote, PR
   creation, etc.) requires explicit user approval each time.
+- **The CHANGELOG records released-to-released differences, not work
+  done.** Entries are drafted from the commit log at release time
+  (`scripts/changelog.py draft`), and the range starts at the last `v*`
+  tag — so everything in `## Unreleased` is work no user has ever run. A
+  commit that fixes something introduced *after* that tag therefore gets
+  no entry of its own: its outcome is folded into the entry for the
+  feature it belongs to, and `### Fixed` stays reserved for regressions
+  against a released version. Same for reverted work (omitted) and
+  internal churn (omitted). Full rules in
+  [`docs/releasing.md`](docs/releasing.md#what-belongs-in-the-unreleased-section);
+  already-released sections are historical records and are never edited
+  to match.
 - Don't run `git commit` with `-c user.name=...` — repo-local config is set.
 - Run git commands one at a time (not chained with `&&`) for cleaner
   permission prompts.
