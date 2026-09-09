@@ -1063,3 +1063,137 @@ def test_create_pr_default_label_no_github_remote(mocker, tmp_path):
         )
     # Verify exact string with default label "jailbee pr" forwarded to _validate_github_origin
     assert "jailbee pr requires a GitHub 'origin' remote in" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# PR review outbox publishing: submit_review, reply_to_review_comment,
+# add_issue_comment, pr_body, gh_login
+# ---------------------------------------------------------------------------
+
+
+def test_submit_review_posts_one_review_with_every_comment(mocker):
+    from jailbee.pr import submit_review
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(
+            stdout=json.dumps(
+                {"html_url": "https://github.com/acme/widgets/pull/7#pullrequestreview-1"}
+            )
+        ),
+    )
+
+    url = submit_review(
+        Path("/repo"),
+        7,
+        commit_id="abc1234",
+        body="Two findings.",
+        comments=[{"path": "src/a.py", "line": 88, "side": "RIGHT", "body": "wrong"}],
+    )
+
+    assert url == "https://github.com/acme/widgets/pull/7#pullrequestreview-1"
+    cmd = run.call_args.args[0]
+    assert cmd[:3] == ["gh", "api", "--method"]
+    assert "repos/{owner}/{repo}/pulls/7/reviews" in cmd
+    assert "--input" in cmd and cmd[cmd.index("--input") + 1] == "-"
+    payload = json.loads(run.call_args.kwargs["input"])
+    assert payload == {
+        "commit_id": "abc1234",
+        "body": "Two findings.",
+        "event": "COMMENT",
+        "comments": [{"path": "src/a.py", "line": 88, "side": "RIGHT", "body": "wrong"}],
+    }
+    assert run.call_args.kwargs["cwd"] == Path("/repo")
+
+
+def test_reply_to_review_comment_targets_the_replies_endpoint(mocker):
+    from jailbee.pr import reply_to_review_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(stdout=json.dumps({"html_url": "https://x/1#discussion_r9"})),
+    )
+
+    url = reply_to_review_comment(Path("/repo"), 7, 99887, "Agreed — fixed in 3f2a1c.")
+
+    assert url == "https://x/1#discussion_r9"
+    cmd = run.call_args.args[0]
+    assert "repos/{owner}/{repo}/pulls/7/comments/99887/replies" in cmd
+    assert json.loads(run.call_args.kwargs["input"]) == {"body": "Agreed — fixed in 3f2a1c."}
+
+
+def test_add_issue_comment_uses_the_issues_endpoint(mocker):
+    from jailbee.pr import add_issue_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(stdout=json.dumps({"html_url": "https://x/1#issuecomment-5"})),
+    )
+
+    assert (
+        add_issue_comment(Path("/repo"), 7, "Two blocking findings.")
+        == "https://x/1#issuecomment-5"
+    )
+    assert "repos/{owner}/{repo}/issues/7/comments" in run.call_args.args[0]
+
+
+def test_pr_body_reads_the_current_description(mocker):
+    from jailbee.pr import pr_body
+
+    mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps({"body": "old text"})))
+
+    assert pr_body(Path("/repo"), 7) == "old text"
+
+
+def test_gh_api_maps_missing_binary_and_auth_failures(mocker):
+    from jailbee.pr import PrReviewError, add_issue_comment
+
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    with pytest.raises(PrReviewError, match="requires the 'gh' CLI"):
+        add_issue_comment(Path("/repo"), 7, "x")
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=_completed(returncode=1, stderr="gh auth login required"),
+    )
+    with pytest.raises(PrReviewError, match="not authenticated"):
+        add_issue_comment(Path("/repo"), 7, "x")
+
+
+def test_gh_api_reports_a_422_verbatim(mocker):
+    from jailbee.pr import PrReviewError, submit_review
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=_completed(
+            returncode=1,
+            stderr="HTTP 422: line must be part of the diff (src/a.py:88)",
+        ),
+    )
+    with pytest.raises(PrReviewError, match="must be part of the diff"):
+        submit_review(Path("/repo"), 7, commit_id="abc", body="b", comments=[])
+
+
+def test_gh_login_reports_the_authenticated_user(mocker):
+    from jailbee.pr import gh_login
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout="octocat\n"))
+
+    assert gh_login(Path("/repo")) == "octocat"
+    assert run.call_args.args[0] == ["gh", "api", "user", "--jq", ".login"]
+
+
+def test_gh_login_is_none_when_gh_is_unavailable(mocker):
+    from jailbee.pr import gh_login
+
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    assert gh_login(Path("/repo")) is None
+
+    mocker.patch("subprocess.run", return_value=_completed(returncode=1, stderr="no auth"))
+    assert gh_login(Path("/repo")) is None
+
+
+def test_pr_review_error_is_a_pr_error():
+    from jailbee.pr import PrError, PrReviewError
+
+    assert issubclass(PrReviewError, PrError)
