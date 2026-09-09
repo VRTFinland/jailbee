@@ -207,8 +207,10 @@ host directly).
 ## Merging one container into another — `jailbee git merge`
 
 ```bash
+jailbee git merge                        # pick the sources, then the target
 jailbee git merge c1 --into c4
 jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+jailbee git merge c1                     # pick the target only
 jailbee git merge c1 --into c4 --plain   # transport only
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```
@@ -216,9 +218,19 @@ jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 Objects travel source → host → target; **no host branch, index or
 superproject working tree is touched** (a host sub-repo can still be
 created, for a submodule born in the source container that the host has
-never seen). `--into <target>` is required, nothing is inferred. The merge
-runs inside the target on whatever it has checked out, so conflicts are
-resolved there, in `jailbee shell <target>`.
+never seen). The merge runs inside the target on whatever it has checked
+out, so conflicts are resolved there, in `jailbee shell <target>`.
+
+Neither end is ever inferred, but either may be left out on a TTY and is
+then asked for — the **sources first, the target second**. Only running,
+clone-mode containers are offered: mount mode and a stopped container are
+refused at both ends anyway. The source prompt is a checkbox, and it merges
+in the order the rows were **listed**, not the order they were ticked (the
+prompt says so) — with `-b` it becomes single-select, because one branch
+cannot describe several sources. The target prompt still offers a container
+you picked as a source: merging a container into itself means merging branch
+X into its own checked-out branch Y, which is coherent. Off a TTY both ends
+must be given, and the error names the ones that are missing.
 
 Several sources are merged **one at a time, in the order given**. The run
 stops at the first conflict or failure and always prints what landed, what

@@ -647,7 +647,7 @@ last update is strictly fast-forward, never fails the push, and:
 The summary prints one line for created/fast-forwarded, a warning for
 diverged/failed, and nothing when the branch was already current or is HEAD's.
 
-### `jailbee git merge SOURCES... --into TARGET`
+### `jailbee git merge [SOURCES...] [--into TARGET]`
 
 Merge one container's branch into another, **without a host checkout** —
 objects travel source → host → target and no host branch, index or
@@ -658,7 +658,7 @@ target on whatever it has checked out, so conflicts are resolved there, in
 
 | Flag | Effect |
 |---|---|
-| `--into <name>` | **Required.** Container to merge INTO — nothing is inferred. |
+| `--into <name>` | Container to merge INTO. Never inferred, but asked for when omitted on a TTY. |
 | `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. |
 | `--plain` | Transport the refs only; run no merge. The report says "transported", not "merged" — `--plain` is not a kind of merge. |
 
@@ -667,9 +667,20 @@ stops at the first conflict or failure and always prints what landed, what
 stopped it, what was not attempted, and the command to resume where it left
 off — that report is why multi-source is allowed at all.
 
+Either end may be omitted on a TTY and is then asked for — **sources first,
+target second** — over the running, clone-mode containers only (mount mode and
+a stopped container are refused at both ends anyway). The source prompt is a
+checkbox that merges in the order the rows were **listed**, not the order they
+were ticked, and says so; with `-b` it is single-select, because one branch
+cannot describe several sources. A container picked as a source is still
+offered as the target: merging a container into itself means merging branch X
+into its own checked-out branch Y. Off a TTY both ends must be given.
+
 ```bash
+jailbee git merge                        # pick the sources, then the target
 jailbee git merge c1 --into c4
 jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+jailbee git merge c1                     # pick the target only
 jailbee git merge c1 --into c4 --plain   # transport only
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```

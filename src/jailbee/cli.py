@@ -5279,23 +5279,132 @@ def _print_merge_summary(
     console.print(recipe, markup=False, highlight=False)
 
 
+def _eligible_merge_containers(cfg: "Config", incus: "IncusType") -> list["ContainerInfo"]:
+    """The containers a cross-container merge can name at either end.
+
+    Mount mode and a stopped container are refused at *both* ends — by
+    `sync.assert_container_publishable` for the source and by
+    `merge_container_into_container`'s own preflight for the target — so
+    offering such a row means offering a choice that can only error. The two
+    ends therefore share one candidate list.
+
+    `with_git_status=True` because the picker rows render the git columns; it
+    costs one `incus exec` per running container, as it does for
+    `jailbee destroy` and `jailbee git pull`.
+    """
+    from jailbee.lifecycle import list_containers
+
+    return [
+        c
+        for c in list_containers(cfg, incus, with_git_status=True)
+        if c.mode != "mount" and c.state == "Running"
+    ]
+
+
+def _prompt_merge_endpoints(
+    cfg: "Config",
+    sources: list[str] | None,
+    into: str | None,
+    *,
+    branch: str | None,
+) -> tuple[list[str], str]:
+    """Fill in whichever end of a merge was not given, interactively.
+
+    Returns `(sources, into)` as **short** names, so the caller's own
+    resolution path runs unchanged for a picked container and a typed one
+    alike — one code path, one behaviour to test.
+
+    Sources are asked for first and the target second, and the source prompt
+    says it merges in *listed* order: `tui.pick_containers_multi` returns rows
+    in the order they were displayed, not the order they were ticked, and merge
+    order decides which source hits a conflict first and stops the run.
+
+    With `-b` the source prompt is single-select instead: one branch cannot
+    describe several sources, so a checkbox would offer an answer the command
+    must then reject. The constraint is made unreachable rather than checked
+    after the user has done the work.
+
+    The target list is deliberately *not* filtered against the chosen sources.
+    Merging a container into itself means merging branch X into that
+    container's own checked-out branch Y, which is coherent and unguarded
+    elsewhere; hiding those rows here would be the only place that disagrees.
+
+    Raises `typer.Exit(1)` off a TTY (naming both ends when both are missing)
+    and when no container is eligible, `typer.Abort` when the user cancels a
+    prompt, and `typer.Exit(0)` when the source checkbox comes back empty —
+    ticking nothing is a decision not to merge, not an error.
+    """
+    from jailbee import tui
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+
+    if not _stdin_is_interactive():
+        missing = []
+        if sources is None:
+            missing.append("<source>...")
+        if into is None:
+            missing.append("--into <target>")
+        error(
+            f"missing {' and '.join(missing)}. Pass explicitly, or run in a TTY to select "
+            f"interactively."
+        )
+        raise typer.Exit(1)
+
+    incus = Incus()
+    candidates = _eligible_merge_containers(cfg, incus)
+    if not candidates:
+        error(
+            "no running clone-mode containers to merge between. "
+            "A merge needs both ends running and not in mount mode."
+        )
+        raise typer.Exit(1)
+
+    if sources is None:
+        if branch is not None:
+            picked_one = tui.pick_container(
+                candidates, message="Select the container to merge FROM:"
+            )
+            if picked_one is None:
+                raise typer.Abort()
+            sources = [short_name(cfg, picked_one)]
+        else:
+            picked = tui.pick_containers_multi(
+                candidates,
+                message="Select containers to merge FROM (merged in listed order):",
+            )
+            if picked is None:
+                raise typer.Abort()
+            if not picked:
+                info("Nothing selected.")
+                raise typer.Exit(0)
+            sources = [short_name(cfg, full) for full in picked]
+
+    if into is None:
+        target = tui.pick_container(candidates, message="Select the container to merge INTO:")
+        if target is None:
+            raise typer.Abort()
+        into = short_name(cfg, target)
+
+    return sources, into
+
+
 @git_app.command("merge")
 def git_merge(
     sources: Annotated[
-        list[str],
+        list[str] | None,
         typer.Argument(
-            help="Container(s) whose branch to merge, in order.",
+            help="Container(s) whose branch to merge, in order. Prompted for when omitted.",
             autocompletion=completion.complete_container,
         ),
-    ],
+    ] = None,
     into: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--into",
-            help="Container to merge INTO. Required — nothing is inferred.",
+            help="Container to merge INTO. Prompted for when omitted; never inferred.",
             autocompletion=completion.complete_container,
         ),
-    ],
+    ] = None,
     branch: Annotated[
         str | None,
         typer.Option("--branch", "-b", help="Read this branch from the source container"),
@@ -5319,10 +5428,15 @@ def git_merge(
     stopped it, and what was not attempted, followed by the command that
     resumes where it left off.
 
+    Either end may be left out on a TTY and is then asked for — the sources
+    first, the target second. Off a TTY both must be given.
+
     Examples:
 
+      jailbee git merge                        # pick the sources, then the target
       jailbee git merge c1 --into c4
       jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+      jailbee git merge c1                     # pick the target only
       jailbee git merge c1 --into c4 --plain   # transport only
       jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
     """
@@ -5330,11 +5444,18 @@ def git_merge(
     from jailbee import sync
     from jailbee.lifecycle import short_name
 
-    if branch is not None and len(sources) > 1:
+    # Checked on the *typed* sources, before the config is loaded: an explicit
+    # `-b` with several sources is a usage error and must fail before anything
+    # else runs. The interactive path cannot reproduce it — `-b` makes that
+    # prompt single-select — so there is nothing to re-check afterwards.
+    if branch is not None and sources is not None and len(sources) > 1:
         error("-b/--branch applies to a single source; pass one source or drop the flag.")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
+    if sources is None or into is None:
+        sources, into = _prompt_merge_endpoints(cfg, sources, into, branch=branch)
+
     incus, target_full = _resolve_existing(cfg, into)
     target_short = short_name(cfg, target_full)
 

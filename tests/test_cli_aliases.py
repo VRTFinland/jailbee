@@ -28,16 +28,15 @@ def test_jailbee_git_merge_needs_an_explicit_target():
     Historically it failed with "no such command": the old container->host
     `jailbee git merge` was renamed to `jailbee git pull`, and this test kept
     the name dead so the ambiguous form could not come back. The name now
-    belongs to the container->container merge, whose `--into` is *required* —
-    so the bare one-argument form the old command accepted is still an error,
-    now a missing-option usage error instead of an unknown command.
+    belongs to the container->container merge, whose target is asked for on a
+    TTY and never inferred — so off a TTY (which is what `CliRunner` is) the
+    bare one-argument form the old command accepted is still an error.
     """
     result = CliRunner().invoke(app, ["git", "merge", "feat-foo"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     combined = (result.output or "") + (result.stderr or "")
-    assert "merge" in combined.lower()
-    assert "missing option" in combined.lower()
-    assert "--into" in combined
+    assert "--into <target>" in combined
+    assert "TTY" in combined
 
 
 def test_jailbee_merge_has_no_top_level_alias():

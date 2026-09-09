@@ -640,12 +640,19 @@ def checkbox(
     return list(result)
 
 
-def pick_container(containers: list[ContainerInfo]) -> str | None:
+def pick_container(
+    containers: list[ContainerInfo], *, message: str = "Select a container:"
+) -> str | None:
     """Interactive arrow-key picker for managed containers.
 
     Returns the chosen container's name, or None if the user cancels
     (Ctrl+C / ESC). Caller is responsible for the TTY check — this
     function unconditionally renders the picker.
+
+    `message` lets a caller name what it is picking *for*. The default keeps
+    every general-purpose call site unchanged; `jailbee git merge` runs this
+    picker twice in one command (source, then target), where a generic
+    question cannot tell the two prompts apart.
     """
     import questionary
 
@@ -654,7 +661,7 @@ def pick_container(containers: list[ContainerInfo]) -> str | None:
         questionary.Choice(title=_format_choice_title(c, widths), value=c.name) for c in containers
     ]
     result = questionary.select(
-        "Select a container:",
+        message,
         choices=choices,
         use_shortcuts=True,
     ).ask()
