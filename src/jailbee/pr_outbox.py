@@ -649,6 +649,10 @@ _NO_URL = "(no url)"
 # `parse_manifest` resolves `body_file` into an inline `body` string and
 # throws the filename away, so once a `Manifest` exists there is nowhere
 # left to ask "which file did this come from" except the raw source.
+# Naive on purpose: it cannot tell a real `body_file` field from the same
+# text appearing inside some other string value, so it can only ever
+# over-count references. That failure mode is safe — an extra file kept
+# around costs nothing, where deleting one still in use would not.
 _BODY_FILE_RE = re.compile(r'"body_file"\s*:\s*"([^"]*)"')
 
 
@@ -772,7 +776,14 @@ def _apply_order(actions: tuple[Action, ...]) -> list[int]:
     review = [i for i, a in enumerate(actions) if isinstance(a, ReviewAction)]
     description = [i for i, a in enumerate(actions) if isinstance(a, DescriptionAction)]
     rest = [i for i, a in enumerate(actions) if isinstance(a, (ReplyAction, CommentAction))]
-    return review + rest + description
+    order = review + rest + description
+    # Guards against a future fifth `Action` variant silently falling through
+    # every isinstance check above: it would never be posted *and* never be
+    # marked applied, rather than failing loudly here.
+    assert len(order) == len(actions), (
+        "_apply_order does not account for every action — a new Action variant needs a branch here"
+    )
+    return order
 
 
 def _comment_payload(comment: LineComment) -> dict[str, Any]:
@@ -849,12 +860,22 @@ def apply_manifest(
     must still leave the container's own record accurate.
 
     Stops at the first `PrError`; remaining actions are never attempted.
+
+    A `PrError` is not the only way an action can fail to be *safely*
+    applied: the action can succeed on GitHub and then the sidecar write
+    that was supposed to record it can itself fail (`IncusError` — the
+    container stopped, its disk is full, a permission changed). That index
+    is *not* dropped: it is already in `applied`/`urls` (the post landed),
+    but `failure` is set to say plainly that it landed and could not be
+    recorded, so a re-run may repost it — and, exactly as with a `PrError`,
+    no further action is attempted once the run can no longer record what
+    it just did.
     """
     if target.pr is None:
         raise ValueError(
-            f"apply_manifest requires a resolved PR target (manifest "
-            f"{target.manifest.name!r} has none — a null-pr manifest is "
-            "jb pr's job, via record_consumed, not apply_manifest's)"
+            f"apply_manifest requires a resolved PR (manifest {target.manifest.name!r} "
+            "has pr: null); a pr: null manifest carries only a description and must "
+            "be routed to `jb pr` (record_consumed), never to apply_manifest"
         )
 
     manifest = target.manifest
@@ -878,13 +899,20 @@ def apply_manifest(
         urls.append(url)
         running_applied.add(index)
         running_urls[str(index)] = url
-        _write_sidecar(
-            incus,
-            container,
-            sidecar_path,
-            {"applied": sorted(running_applied), "urls": running_urls},
-            uid=uid,
-        )
+        try:
+            _write_sidecar(
+                incus,
+                container,
+                sidecar_path,
+                {"applied": sorted(running_applied), "urls": running_urls},
+                uid=uid,
+            )
+        except IncusError as e:
+            failure = (
+                f"action {index} was published to GitHub but could not be recorded "
+                f"in the container ({e}); a re-run may repost it"
+            )
+            break
 
     return ApplyOutcome(applied=tuple(applied), urls=tuple(urls), failure=failure)
 
@@ -909,6 +937,22 @@ def _orphaned_body_files(outbox: Outbox, exclude_name: str) -> list[str]:
     )
 
 
+class FinalizeError(Exception):
+    """`finalize`/`record_consumed` could not persist a step to the container.
+
+    Raised when the *container* write itself fails (`IncusError`) after the
+    GitHub side of the work is already settled — e.g. the sidecar can't be
+    written, or a fully-applied manifest can't be deleted. Unlike
+    `apply_manifest`, neither function returns an `ApplyOutcome` to carry a
+    `failure` string in, so this is the equivalent for them: a named,
+    documented exception whose message says which step failed and what
+    that implies, rather than a bare `IncusError` from deep inside a
+    `bash -c printf` call. Each function stops at the first such failure —
+    it does not go on to a later step (appending the log, or deleting the
+    manifest) once an earlier one could not be recorded.
+    """
+
+
 def finalize(
     incus: Incus,
     container: str,
@@ -928,13 +972,20 @@ def finalize(
     overwriting the sidecar with less than what has actually landed.
 
     Always writes the sidecar when anything has ever been applied (whether
-    or not that completes the manifest) and appends one `applied.log` line;
-    only when every action index is now applied does it delete the
-    manifest, its sidecar, and any `body_file` no other manifest in the
-    outbox still references — a shared `.md` is kept. Writing the sidecar
-    before deleting (rather than skipping the write when about to delete
-    anyway) means a crash between the two `incus.exec` calls still leaves
-    an accurate, resumable record.
+    or not that completes the manifest), even on a re-invocation that
+    applies nothing new this time — the write is idempotent, so this is
+    harmless. The `applied.log` line, however, is only appended when *this*
+    call actually applied something (`outcome.applied`); gating it on the
+    merged total instead would append a stale `actions=0` line on every
+    no-op re-finalize. Only when every action index is now applied does it
+    delete the manifest, its sidecar, and any `body_file` no other manifest
+    in the outbox still references — a shared `.md` is kept. Writing the
+    sidecar before deleting (rather than skipping the write when about to
+    delete anyway) means a crash between the two `incus.exec` calls still
+    leaves an accurate, resumable record.
+
+    Raises `FinalizeError` — stopping before any later step — if a
+    container write here fails; see that class for why.
     """
     manifest = target.manifest
     manifest_path = f"{outbox_dir()}/{manifest.name}"
@@ -946,28 +997,48 @@ def finalize(
     merged_urls.update(dict(zip((str(i) for i in outcome.applied), outcome.urls, strict=True)))
 
     if merged_applied:
-        _write_sidecar(
-            incus,
-            container,
-            sidecar_path,
-            {"applied": sorted(merged_applied), "urls": merged_urls},
-            uid=uid,
-        )
+        try:
+            _write_sidecar(
+                incus,
+                container,
+                sidecar_path,
+                {"applied": sorted(merged_applied), "urls": merged_urls},
+                uid=uid,
+            )
+        except IncusError as e:
+            raise FinalizeError(
+                f"manifest {manifest.name}: applied {sorted(outcome.applied)} to "
+                f"GitHub, but the progress sidecar could not be written ({e}); a "
+                "re-run may repost them"
+            ) from e
 
+    if outcome.applied:
         pr_field = manifest.pr if manifest.pr is not None else "none"
         display_urls = ",".join(_display_url(u) for u in outcome.urls) or _NO_URL
         line = (
             f"{_now_iso()} {manifest.name} pr={pr_field} "
             f"actions={len(outcome.applied)} urls={display_urls}"
         )
-        _append_log_line(incus, container, line, uid=uid)
+        try:
+            _append_log_line(incus, container, line, uid=uid)
+        except IncusError as e:
+            raise FinalizeError(
+                f"manifest {manifest.name}: progress was recorded, but the "
+                f"applied.log entry could not be written ({e})"
+            ) from e
 
     if merged_applied == set(range(len(manifest.actions))):
         to_delete = [manifest_path, sidecar_path]
         to_delete.extend(
             f"{outbox_dir()}/{name}" for name in _orphaned_body_files(outbox, manifest.name)
         )
-        incus.exec(container, ["rm", "-f", *to_delete], uid=uid)
+        try:
+            incus.exec(container, ["rm", "-f", *to_delete], uid=uid)
+        except IncusError as e:
+            raise FinalizeError(
+                f"manifest {manifest.name} is fully applied but could not be "
+                f"deleted ({e}); it will be cleaned up on a later run"
+            ) from e
 
 
 def _read_optional(incus: Incus, container: str, path: str, *, uid: int | None) -> str | None:
@@ -1026,6 +1097,9 @@ def record_consumed(
     merges `index` into what's applied, writes the sidecar and one
     `applied.log` line, and deletes the manifest (with its sidecar) once
     that leaves nothing pending.
+
+    Raises `FinalizeError` — stopping before any later step — if a
+    container write here fails; see that class for why.
     """
     manifest_path = f"{outbox_dir()}/{manifest_name}"
     sidecar_path = f"{manifest_path}.progress.json"
@@ -1040,15 +1114,33 @@ def record_consumed(
     urls = dict(progress.urls)
     urls[str(index)] = url
 
-    _write_sidecar(
-        incus, container, sidecar_path, {"applied": sorted(applied), "urls": urls}, uid=uid
-    )
+    try:
+        _write_sidecar(
+            incus, container, sidecar_path, {"applied": sorted(applied), "urls": urls}, uid=uid
+        )
+    except IncusError as e:
+        raise FinalizeError(
+            f"manifest {manifest_name}: action {index} was published but the "
+            f"progress sidecar could not be written ({e}); a re-run may repost it"
+        ) from e
 
     manifest_text = _read_optional(incus, container, manifest_path, uid=uid)
     pr_field, total_actions = _manifest_pr_and_action_count(manifest_text)
 
     line = f"{_now_iso()} {manifest_name} pr={pr_field} actions=1 urls={_display_url(url)}"
-    _append_log_line(incus, container, line, uid=uid)
+    try:
+        _append_log_line(incus, container, line, uid=uid)
+    except IncusError as e:
+        raise FinalizeError(
+            f"manifest {manifest_name}: action {index}'s progress was recorded, "
+            f"but the applied.log entry could not be written ({e})"
+        ) from e
 
     if total_actions is not None and applied == set(range(total_actions)):
-        incus.exec(container, ["rm", "-f", manifest_path, sidecar_path], uid=uid)
+        try:
+            incus.exec(container, ["rm", "-f", manifest_path, sidecar_path], uid=uid)
+        except IncusError as e:
+            raise FinalizeError(
+                f"manifest {manifest_name} is fully applied but could not be "
+                f"deleted ({e}); it will be cleaned up on a later run"
+            ) from e

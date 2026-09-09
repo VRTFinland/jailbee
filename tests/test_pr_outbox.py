@@ -723,6 +723,186 @@ def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, 
     assert '"applied": [0, 1]' in joined or '"applied":[0,1]' in joined
 
 
+def test_apply_reports_a_recording_failure_after_a_successful_post_and_stops(
+    mocker, make_cfg, tmp_path
+):
+    """Fix-round-1 regression: a container-write failure after a successful
+    GitHub post must not silently repost on the next run.
+
+    Action 0 lands on GitHub, but the sidecar write that was supposed to
+    record it raises `IncusError` (container stopped, disk full, ...). That
+    must not escape as a bare exception: index 0 stays in `applied`/`urls`
+    (it really did land), `failure` says plainly that it landed and could
+    not be recorded, and action 1 is never attempted — exactly like a
+    `PrError` mid-run.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "one"}, {"type": "comment", "body": "two"}]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("container is not running")
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.applied == (0,), "the post landed even though it couldn't be recorded"
+    assert outcome.urls == ("https://x/c",)
+    assert outcome.failure is not None
+    assert "action 0" in outcome.failure
+    assert "published" in outcome.failure
+    assert "re-run may repost" in outcome.failure
+    assert calls["comment"].call_count == 1, "action 1 must never be attempted"
+
+
+def test_finalize_does_not_append_a_stale_log_line_when_nothing_new_applied(mocker):
+    """Minor fix-round-1: the log line is gated on *this call's* new indices,
+    not the merged total — a re-finalize that applied nothing new must not
+    write an `actions=0` line."""
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "a"}, {"type": "comment", "body": "b"}]
+        ),
+        {},
+    )
+    outbox = Outbox(
+        files={
+            "001-x.json": "…",
+            "001-x.json.progress.json": '{"applied": [0], "urls": {"0": "https://x/a"}}',
+        }
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        outbox,
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(), urls=(), failure="HTTP 500"),
+        uid=1000,
+    )
+
+    log_writes = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][0] == "bash" and any(str(a).endswith("applied.log") for a in c.args[1])
+    ]
+    assert not log_writes, "a re-finalize that applied nothing new must not log a stale line"
+    # The (idempotent) sidecar write is still fine to repeat.
+    sidecar_writes = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][0] == "bash" and any("progress.json" in str(a) for a in c.args[1])
+    ]
+    assert sidecar_writes
+
+
+def test_finalize_raises_when_the_sidecar_write_fails(mocker):
+    """Fix-round-1: a container-write failure inside finalize must not be a
+    bare, context-free IncusError, and must stop before the log/rm steps."""
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import (
+        ApplyOutcome,
+        FinalizeError,
+        Outbox,
+        Target,
+        finalize,
+        parse_manifest,
+    )
+
+    manifest = parse_manifest(
+        "001-x.json", _manifest_text(actions=[{"type": "comment", "body": "a"}]), {}
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("disk full")
+
+    with pytest.raises(FinalizeError, match=r"001-x\.json"):
+        finalize(
+            incus,
+            "c",
+            Outbox(files={"001-x.json": "…"}),
+            Target(manifest=manifest, pr=_pr_info(), stale=False),
+            ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+            uid=1000,
+        )
+
+    # Only the sidecar-write attempt happened; log/rm were never tried.
+    assert incus.exec.call_count == 1
+
+
+def test_finalize_raises_when_deleting_a_fully_applied_manifest_fails(mocker):
+    """Fix-round-1: `rm` failing on a fully-applied manifest must raise
+    FinalizeError (with the sidecar and log already durably written), not
+    vanish as a bare IncusError."""
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import (
+        ApplyOutcome,
+        FinalizeError,
+        Outbox,
+        Target,
+        finalize,
+        parse_manifest,
+    )
+
+    manifest = parse_manifest(
+        "001-x.json", _manifest_text(actions=[{"type": "comment", "body": "a"}]), {}
+    )
+    incus = mocker.MagicMock()
+
+    def fake_exec(container, cmd, **kwargs):
+        if cmd[0] == "rm":
+            raise IncusError("permission denied")
+        return ""
+
+    incus.exec.side_effect = fake_exec
+
+    with pytest.raises(FinalizeError, match="could not be deleted"):
+        finalize(
+            incus,
+            "c",
+            Outbox(files={"001-x.json": "…"}),
+            Target(manifest=manifest, pr=_pr_info(), stale=False),
+            ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+            uid=1000,
+        )
+
+
+def test_record_consumed_raises_when_the_sidecar_write_fails(mocker):
+    """Fix-round-1: the same container-write protection applies to the
+    single-index `record_consumed` path `jb pr` will use."""
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import FinalizeError, record_consumed
+
+    def fake_exec(container, cmd, **kwargs):
+        if cmd[0] == "cat":
+            raise IncusError("no such file")
+        if cmd[0] == "bash":
+            raise IncusError("disk full")
+        return ""
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = fake_exec
+
+    with pytest.raises(FinalizeError, match=r"002-d\.json"):
+        record_consumed(incus, "c", "002-d.json", 0, "https://x/pr", uid=1000)
+
+
 def test_finalize_deletes_a_fully_applied_manifest_and_its_own_bodies(mocker):
     from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
 
