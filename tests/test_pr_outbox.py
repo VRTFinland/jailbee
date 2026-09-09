@@ -329,10 +329,17 @@ def test_read_outbox_drops_hostile_members(mocker):
     link.type = tarfile.SYMTYPE
     link.linkname = "/etc/shadow"
     nested = tarfile.TarInfo(name="./deep/deeper/x.json")
+    # A hard link pointing at the legitimate member: extractfile() follows
+    # hard links unconditionally and would hand back real content, so this
+    # is the case `member.isfile()` actually exists to stop (a symlink is
+    # already caught earlier by extractfile() returning None).
+    hardlink = tarfile.TarInfo(name="./hardlink.json")
+    hardlink.type = tarfile.LNKTYPE
+    hardlink.linkname = "./001-x.json"
 
     incus = mocker.MagicMock()
     incus.exec.return_value = _archive(
-        {"001-x.json": b"{}"}, extra=[absolute, escape, link, nested]
+        {"001-x.json": b"{}"}, extra=[absolute, escape, link, nested, hardlink]
     )
 
     assert read_outbox(incus, "c", uid=1000).files == {"001-x.json": "{}"}

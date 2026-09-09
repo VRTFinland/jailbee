@@ -18,7 +18,6 @@ before it is shown, let alone published.
 from __future__ import annotations
 
 import base64
-import binascii
 import io
 import json
 import tarfile
@@ -399,9 +398,8 @@ def _members(blob: bytes, container: str) -> dict[str, str]:
                 if (
                     not member.isfile()
                     or not name
-                    or name.startswith("/")
-                    or "/" in name
-                    or ".." in name.split("/")
+                    or "/" in name  # single path segment only, no nesting
+                    or _escapes_containment(name)
                     or member.size > MAX_MANIFEST_BYTES
                 ):
                     skipped += 1
@@ -431,7 +429,7 @@ def read_outbox(incus: Incus, container: str, *, uid: int | None) -> Outbox:
             container,
             ["bash", "-c", _READ_SCRIPT, "bash", outbox_dir()],
             uid=uid,
-            timeout=15,
+            timeout=15,  # tar+base64 of a <=256KB*20 outbox is near-instant
         )
     except IncusError as e:
         raise OutboxReadError(f"could not read the outbox in {container}: {e}") from e
@@ -439,6 +437,6 @@ def read_outbox(incus: Incus, container: str, *, uid: int | None) -> Outbox:
         return Outbox(files={})
     try:
         blob = base64.b64decode(raw.strip(), validate=True)
-    except (binascii.Error, ValueError) as e:
+    except ValueError as e:  # binascii.Error (invalid base64) is a ValueError subclass
         raise OutboxReadError(f"{container} returned an unreadable outbox archive") from e
     return Outbox(files=_members(blob, container))
