@@ -157,6 +157,7 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "BASE_BRANCH": "feature/x",
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
+        "OUTBOX_DIR": "/home/dev/.jailbee/pr-outbox",
         "GIT_OPTIONAL_LOCKS": "0",
     }
     assert kwargs.get("timeout") == 5
@@ -750,3 +751,51 @@ def test_probe_snippet_checks_rebase_before_merge():
 )
 def test_merge_label(status, expected):
     assert merge_label(status) == expected
+
+
+def _payload(*fields: str) -> str:
+    """NUL-terminated probe output, exactly as the snippet prints it."""
+    return "".join(f + "\0" for f in fields)
+
+
+_TWELVE = ("", "", "0", "ok", "", "", "abc1234", "1", "?", "?", "", "0")
+
+
+def test_probe_parses_the_pending_action_count(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_pr_actions == 3
+
+
+def test_probe_passes_the_outbox_dir_in_the_environment(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "0")
+
+    probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    env = incus.exec.call_args.kwargs["env"]
+    # $HOME is not dependable under `incus exec --user`, so the path is passed in.
+    assert env["OUTBOX_DIR"].endswith("/.jailbee/pr-outbox")
+
+
+def test_twelve_field_payload_still_parses_with_an_unknown_count(mocker):
+    """Regression pin: the tiered parser must keep older output working."""
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE)
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_pr_actions is None
+    assert status.head_sha == "abc1234"  # everything else unchanged
+
+
+def test_non_numeric_pending_count_is_unknown(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "?")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_pr_actions is None
