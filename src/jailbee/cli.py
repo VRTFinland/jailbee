@@ -5178,6 +5178,16 @@ def _print_container_merge_result(
         _print_local_branch_update(
             target, result.push.local_branch, container_ref=result.push.container_ref
         )
+    # Per source, not once per run: each source is its own merge commit in the
+    # target, so a single block would attribute every moved gitlink to the last
+    # one. Empty for a plain run, which merges nothing.
+    from jailbee import sync
+
+    report = sync.render_submodule_report(moves=result.submodule_moves)
+    if report:
+        from jailbee.tui import console
+
+        console.print(report)
 
 
 def _ff_only_divergence_hint(

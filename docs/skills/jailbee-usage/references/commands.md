@@ -665,7 +665,10 @@ target on whatever it has checked out, so conflicts are resolved there, in
 Several sources are merged **one at a time, in the order given**. The run
 stops at the first conflict or failure and always prints what landed, what
 stopped it, what was not attempted, and the command to resume where it left
-off — that report is why multi-source is allowed at all.
+off — that report is why multi-source is allowed at all. Each source that
+lands also prints a `── Submodules` block naming the gitlinks its merge moved
+(read inside the target container, since the merge commit exists nowhere
+else); `--plain` merges nothing and prints none.
 
 Either end may be omitted on a TTY and is then asked for — **sources first,
 target second** — over the running, clone-mode containers only (mount mode and

@@ -270,7 +270,10 @@ switching any working tree.
 **What you see.** `jailbee pull` prints a delimited `── Submodules` block
 after git's own output — per submodule `new → <sha>`, `<sha> → removed`, or
 a commit count with insertions and deletions — so a gitlink that moved is
-never buried in the superproject's diff.
+never buried in the superproject's diff. `jailbee git merge` prints the same
+block, once per source (each source is its own merge commit in the target),
+read from inside the target container: the merge commit exists nowhere else,
+so the host cannot resolve either end of that diff.
 
 **Conflicting gitlinks.** When both sides moved the same submodule, git stops
 at `CONFLICT (submodule)` and leaves the pointer to you. JailBee merges it

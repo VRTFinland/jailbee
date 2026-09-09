@@ -711,7 +711,8 @@ git merge --abort && exit
 
 # 3. --plain transports without merging.
 jailbee git merge feat-merge-d --into feat-merge-target --plain
-# expect: report says "transported", never "merged"
+# expect: report says "transported", never "merged", and prints NO
+# "── Submodules" block — nothing was merged, so no gitlink moved
 jailbee shell feat-merge-target
 cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline -1 && exit
 
@@ -752,6 +753,19 @@ jailbee new feat/merge-sub-tgt
 jailbee git merge feat-merge-sub-src --into feat-merge-sub-tgt
 # expect: reported as landed, no error about a missing or unresolvable
 # submodule ref
+
+# 5-i. The submodule block. Step 5's merge moved a gitlink (added one, in
+#      fact), so it must print a "── Submodules" block naming `libs/hello`.
+#      The two superproject commits exist ONLY inside the target, so this is
+#      also the check that the diff is read there and not on the host — a
+#      host-side read fails silently, printing nothing at all.
+# expect (from step 5's output): "── Submodules" and a `libs/hello  new → <sha>`
+#      line. Then a second merge that moves the same pointer:
+jailbee shell feat-merge-sub-src
+cd ~/SampleApp/libs/hello && git commit --allow-empty -m "move the pointer" \
+  && cd ~/SampleApp && git commit -am "bump libs/hello" && exit
+jailbee git merge feat-merge-sub-src --into feat-merge-sub-tgt
+# expect: "libs/hello  <old>..<new>  (1 commits, +0 -0)"
 
 # 5a. Target sub-repo exists and is at the source's commit — proves the
 #     create + checkout --detach path ran and actually resolved.

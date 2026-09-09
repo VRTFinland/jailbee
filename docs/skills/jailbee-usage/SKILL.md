@@ -310,6 +310,9 @@ resurrect the ambiguity.
   - Several sources are merged **one at a time, in the order given**; the run
     stops at the first conflict or failure and always reports what landed,
     what stopped it, what was not attempted, and the command to resume.
+  - Each source that lands prints its own `── Submodules` block naming the
+    gitlinks that merge moved, read **inside the target container** (the
+    merge commit exists nowhere else, so the host cannot diff it).
 
   ```bash
   jailbee git merge                        # pick the sources, then the target
