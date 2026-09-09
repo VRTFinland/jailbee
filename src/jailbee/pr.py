@@ -514,24 +514,8 @@ def add_issue_comment(repo_root: Path, number: int, body: str) -> str:
 
 def pr_body(repo_root: Path, number: int) -> str:
     """Return PR #`number`'s current description (`gh pr view --json body`)."""
-    try:
-        proc = subprocess.run(
-            ["gh", "pr", "view", str(number), "--json", "body"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError as e:
-        raise PrReviewError(
-            "gh pr view requires the 'gh' CLI. Install: https://cli.github.com/"
-        ) from e
-    if proc.returncode != 0:
-        stderr = proc.stderr.lower()
-        if "not logged" in stderr or "authentication" in stderr or "gh auth login" in stderr:
-            raise PrReviewError("'gh' is not authenticated. Run: gh auth login")
-        raise PrReviewError(f"'gh pr view' failed: {proc.stderr.strip()}")
-    data = json.loads(proc.stdout or "{}")
+    cmd = ["gh", "pr", "view", str(number), "--json", "body"]
+    data = _run_gh_api(repo_root, cmd, None, "gh pr view")
     return str(data.get("body") or "")
 
 

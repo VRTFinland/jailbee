@@ -1145,6 +1145,21 @@ def test_pr_body_reads_the_current_description(mocker):
     assert pr_body(Path("/repo"), 7) == "old text"
 
 
+def test_pr_body_maps_missing_binary_and_auth_failures(mocker):
+    from jailbee.pr import PrReviewError, pr_body
+
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    with pytest.raises(PrReviewError, match="requires the 'gh' CLI"):
+        pr_body(Path("/repo"), 7)
+
+    mocker.patch(
+        "subprocess.run",
+        return_value=_completed(returncode=1, stderr="gh auth login required"),
+    )
+    with pytest.raises(PrReviewError, match="not authenticated"):
+        pr_body(Path("/repo"), 7)
+
+
 def test_gh_api_maps_missing_binary_and_auth_failures(mocker):
     from jailbee.pr import PrReviewError, add_issue_comment
 
