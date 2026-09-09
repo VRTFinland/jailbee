@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.pr import PrCreated
     from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import OutboxPrText
 
 
 @dataclass(frozen=True)
@@ -140,12 +141,44 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
         warn(f"'{chosen}' is not a valid branch name.")
 
 
+def _pick_outbox_manifest(names: list[str]) -> str | None:
+    """Ask which of several pending descriptions `jailbee pr` should use.
+
+    Returns the chosen manifest name, or None to use none of them. Only ever
+    called on a TTY (`pending_pr_text`'s `pick` is None otherwise).
+    """
+    import questionary
+
+    # Explicit sentinel, exactly as in `_pick_review_action`: `questionary.Choice`
+    # treats `value=None` as *unset* and falls back to the title, so a cancel
+    # entry with `value=None` would answer the string "cancel" — and a manifest
+    # by that name is not what the user asked for.
+    cancel = "__cancel__"
+    choices = [questionary.Choice(title=name, value=name) for name in names]
+    choices.append(questionary.Choice(title="none — write the description as usual", value=cancel))
+    result = questionary.select(
+        "More than one PR description is pending. Which one?", choices=choices
+    ).ask()
+    # `None` is Ctrl-C; `cancel` is the menu entry. Both mean "use none".
+    if result is None or result == cancel:
+        return None
+    return str(result)
+
+
 @dataclass(frozen=True)
 class HeadPlan:
-    """The publish name and the AI text a create/update run decided on."""
+    """The publish name and the AI text a create/update run decided on.
+
+    `outbox_source` names where `ai_text` came from when it was *not* generated:
+    a description the container wrote into its PR outbox. It is what the caller
+    needs to record the consumption once the text has actually landed in a PR,
+    and it defaults to None so a plan that ran Claude compares equal to one
+    built before the outbox existed.
+    """
 
     publish_name: str | None
     ai_text: PrText | None
+    outbox_source: OutboxPrText | None = None
 
 
 def resolve_pr_text_and_head(
@@ -163,6 +196,7 @@ def resolve_pr_text_and_head(
     as_name: str | None,
     no_ai: bool,
     status_label: str,
+    use_outbox: bool = False,
 ) -> HeadPlan:
     """Decide the PR head name and (on create) generate the title/body.
 
@@ -174,6 +208,15 @@ def resolve_pr_text_and_head(
     On the update path the stored external name is reused and the branch is
     never regenerated — `publish_name=None` lets the publish step default to
     the source branch.
+
+    `use_outbox` swaps the *source* of that text rather than adding a path: a
+    description the container already wrote (`pr_outbox.pending_pr_text`) is
+    used as `ai_text`, `generate_pr_text` is then never called, and the
+    manifest's proposed branch feeds the same `confirm_pr_branch_name` decision
+    a Claude-proposed one feeds. It defaults to False so `jailbee submodule pr`
+    — the other caller — never looks at an outbox keyed to *this* repo's origin.
+    Neither `--no-ai` nor the `claude.*` toggles gate it: a manifest is not an
+    AI run, it is text that already exists.
     """
     from jailbee import git as git_mod
     from jailbee import pr_ai
@@ -194,10 +237,29 @@ def resolve_pr_text_and_head(
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
     branch_ai_on = cfg.claude.enabled and cfg.claude.ai_pr_branch and not no_ai
-    need_desc_ai = ai_on and not (title and body)
+    need_text = not (title and body)  # explicit --title/--body win outright
+    need_desc_ai = ai_on and need_text
     need_branch_ai = branch_ai_on and as_name is None
+
+    # Looked up only when the text could actually be used: consuming a manifest
+    # whose body then loses to an explicit --title/--body would delete a
+    # description that was never published.
+    outbox_source: OutboxPrText | None = None
+    if use_outbox and need_text:
+        from jailbee import pr_outbox
+
+        outbox_source = pr_outbox.pending_pr_text(
+            cfg,
+            incus,
+            full,
+            uid=cfg.container_user.uid,
+            pick=_pick_outbox_manifest if sys.stdin.isatty() else None,
+        )
+
     ai_text: PrText | None = None
-    if (need_desc_ai or need_branch_ai) and source_branch:
+    if outbox_source is not None:
+        ai_text = outbox_source.text
+    elif (need_desc_ai or need_branch_ai) and source_branch:
         from jailbee.tui import console
 
         with console.status(status_label):
@@ -218,13 +280,54 @@ def resolve_pr_text_and_head(
             )
 
     if as_name is not None:
-        return HeadPlan(publish_name=as_name, ai_text=ai_text)
-    if need_branch_ai and ai_text is not None and source_branch:
+        return HeadPlan(publish_name=as_name, ai_text=ai_text, outbox_source=outbox_source)
+    # One confirmation, whoever proposed the name. `ai_text.branch` is checked
+    # for emptiness because a manifest may propose no branch at all in a
+    # container with no recorded branch either; the AI path always fills it.
+    propose_branch = need_branch_ai or outbox_source is not None
+    if propose_branch and ai_text is not None and ai_text.branch and source_branch:
         return HeadPlan(
             publish_name=confirm_pr_branch_name(ai_text.branch, source_branch),
             ai_text=ai_text,
+            outbox_source=outbox_source,
         )
-    return HeadPlan(publish_name=source_branch, ai_text=ai_text)
+    return HeadPlan(publish_name=source_branch, ai_text=ai_text, outbox_source=outbox_source)
+
+
+def record_outbox_consumption(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    source: OutboxPrText | None,
+    url: str,
+) -> None:
+    """Record that `source`'s description landed in the PR at `url`, and say so.
+
+    A no-op when `source` is None — Claude wrote the text, or nothing was
+    pending — which is exactly why the line it prints matters: a user who does
+    not see it knows the description did not come from the container.
+
+    The PR already exists on GitHub by the time this runs, so a container-side
+    write failure (`FinalizeError`) is reported and swallowed. Failing here
+    would take the URL of a PR that was successfully created away from the user
+    over a bookkeeping problem; the manifest simply stays pending instead.
+    """
+    if source is None:
+        return
+
+    from jailbee import pr_outbox
+
+    info(f"description from {source.manifest} (written in the container)")
+    try:
+        pr_outbox.record_consumed(
+            incus, full, source.manifest, source.index, url, uid=cfg.container_user.uid
+        )
+    except pr_outbox.FinalizeError as exc:
+        warn(
+            f"The description was published, but recording that in the container "
+            f"failed: {exc}. {source.manifest} stays pending — drop it with "
+            f"`jailbee review drop`."
+        )
 
 
 def resolve_pr_description_update(

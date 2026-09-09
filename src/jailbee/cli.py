@@ -5443,8 +5443,17 @@ def pr_cmd(
         typer.Option(
             "--no-ai",
             help=(
-                "Skip AI generation of the PR title/body (even when claude.ai_pr_description is on)"
+                "Skip AI generation of the PR title/body (even when claude.ai_pr_description "
+                "is on). Does NOT ignore a description already written in the container's "
+                "outbox — that is --no-outbox."
             ),
+        ),
+    ] = False,
+    no_outbox: Annotated[
+        bool,
+        typer.Option(
+            "--no-outbox",
+            help="Ignore a PR description written in the container's outbox.",
         ),
     ] = False,
     branch: Annotated[
@@ -5757,8 +5766,13 @@ def pr_cmd(
         as_name=as_name,
         no_ai=no_ai,
         status_label=f"Generating PR title/description with Claude in '{short}'…",
+        use_outbox=not no_outbox,
     )
     publish_name, ai_text = plan.publish_name, plan.ai_text
+    # A container-written description is text that already exists, so `--no-ai`
+    # (which clears `ai_on`) must not discard it. `ai_on` itself stays as it is:
+    # it still governs the update path's Claude offer below.
+    text_on = ai_on or plan.outbox_source is not None
 
     # A stacked PR under the reviewed head's own name would not be a stacked PR
     # at all: the push would update the reviewed PR and this run would then try
@@ -5841,7 +5855,7 @@ def pr_cmd(
     if not is_update_path:
         resolved_title, resolved_body = pr_flow.resolve_create_text(
             scope,
-            ai_on=ai_on,
+            ai_on=text_on,
             ai_text=ai_text,
             title=title,
             body=body,
@@ -5894,6 +5908,12 @@ def pr_cmd(
         ready=ready,
         update=update,
     )
+    if not is_update:
+        # Only the create path published this text. When `gh pr create` found a
+        # PR that already existed, `apply_pr_updates` decided the description
+        # instead and the manifest's body never landed — so it stays pending
+        # for the update path to consume.
+        pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
     if is_stacked_create and review_target is not None:
         info(
             f"PR #{created.number} is stacked on PR #{review_target.parent_number} "

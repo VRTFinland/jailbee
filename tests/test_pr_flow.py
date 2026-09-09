@@ -520,6 +520,158 @@ def test_no_source_branch_skips_generation(tmp_path, mocker):
     gen.assert_not_called()
 
 
+def _outbox_source(manifest="002-d.json", index=0, branch="feat/x"):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import OutboxPrText
+
+    return OutboxPrText(
+        text=PrText(title="feat: x", body="Body.", branch=branch),
+        manifest=manifest,
+        index=index,
+    )
+
+
+def test_create_path_uses_the_outbox_and_never_runs_claude(tmp_path, mocker):
+    from jailbee.pr_ai import PrText
+
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+
+    plan = _plan(tmp_path, mocker, use_outbox=True)
+
+    generate.assert_not_called()
+    assert plan.ai_text == PrText(title="feat: x", body="Body.", branch="feat/x")
+    assert plan.outbox_source is not None and plan.outbox_source.manifest == "002-d.json"
+
+
+def test_create_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
+    """`jailbee submodule pr` shares this function and must be unaffected."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+    mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=None)
+
+    _plan(tmp_path, mocker)
+
+    pending.assert_not_called()
+
+
+def test_update_path_never_looks_at_the_outbox(tmp_path, mocker):
+    """The update path is Task 11's; this one must not reach the outbox at all."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+
+    plan = _plan(tmp_path, mocker, use_outbox=True, is_update=True, stored_head="user/x")
+
+    pending.assert_not_called()
+    assert plan == pr_flow.HeadPlan(publish_name="user/x", ai_text=None)
+
+
+def test_outbox_branch_goes_through_the_one_confirmation(tmp_path, mocker):
+    """A manifest-proposed head is confirmed exactly like a Claude-proposed one."""
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    confirm = mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", return_value="feat/chosen")
+
+    plan = _plan(tmp_path, mocker, use_outbox=True)
+
+    confirm.assert_called_once_with("feat/x", "feat/foo")
+    assert plan.publish_name == "feat/chosen"
+
+
+def test_as_name_wins_over_the_outbox(tmp_path, mocker):
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    confirm = mocker.patch("jailbee.pr_flow.confirm_pr_branch_name")
+
+    plan = _plan(tmp_path, mocker, use_outbox=True, as_name="user/mine")
+
+    assert plan.publish_name == "user/mine"
+    assert plan.outbox_source is not None
+    confirm.assert_not_called()
+
+
+def test_explicit_title_and_body_skip_the_outbox_lookup(tmp_path, mocker):
+    """Nothing may be consumed when the manifest's text cannot be used."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+
+    plan = _plan(tmp_path, mocker, use_outbox=True, title="T", body="B")
+
+    pending.assert_not_called()
+    assert plan.outbox_source is None
+
+
+def test_the_outbox_survives_no_ai(tmp_path, mocker):
+    """`--no-ai` skips the Claude run; a manifest is not a Claude run."""
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+
+    plan = _plan(tmp_path, mocker, cfg=cfg, use_outbox=True, no_ai=True)
+
+    generate.assert_not_called()
+    assert plan.ai_text is not None and plan.ai_text.title == "feat: x"
+
+
+def test_an_empty_outbox_falls_back_to_the_ai(tmp_path, mocker):
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=_text())
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+
+    plan = _plan(tmp_path, mocker, cfg=cfg, use_outbox=True)
+
+    generate.assert_called_once()
+    assert plan.publish_name == "user/ai"
+    assert plan.outbox_source is None
+
+
+def test_record_outbox_consumption_names_the_manifest(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+    info = mocker.patch("jailbee.pr_flow.info")
+
+    pr_flow.record_outbox_consumption(
+        make_cfg(tmp_path), mocker.MagicMock(), "c1", _outbox_source(), "https://x/pull/1"
+    )
+
+    record.assert_called_once()
+    assert record.call_args.args[2:5] == ("002-d.json", 0, "https://x/pull/1")
+    assert "002-d.json" in info.call_args.args[0]
+
+
+def test_record_outbox_consumption_is_a_no_op_without_a_source(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+    info = mocker.patch("jailbee.pr_flow.info")
+
+    pr_flow.record_outbox_consumption(
+        make_cfg(tmp_path), mocker.MagicMock(), "c1", None, "https://x/pull/1"
+    )
+
+    record.assert_not_called()
+    info.assert_not_called()
+
+
+def test_record_outbox_consumption_warns_but_does_not_raise(tmp_path, mocker):
+    """The PR already exists by then; a failed record must not lose the URL."""
+    from jailbee.pr_outbox import FinalizeError
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=FinalizeError("disk full"))
+    warn = mocker.patch("jailbee.pr_flow.warn")
+
+    pr_flow.record_outbox_consumption(
+        make_cfg(tmp_path), mocker.MagicMock(), "c1", _outbox_source(), "https://x/pull/1"
+    )
+
+    assert "disk full" in warn.call_args.args[0]
+
+
 def _created(number=123, already=False):
     from jailbee.pr import PrCreated
 

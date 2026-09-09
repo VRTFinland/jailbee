@@ -64,6 +64,11 @@ def _setup(mocker, tmp_path, labels=None):
     # The create path asks GitHub whether the container's branch already has a
     # PR. Stubbed to "no" for every test; the tests that care re-patch it.
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
+    # Likewise for the container's PR outbox: "nothing pending" for every test,
+    # so `jailbee pr` takes its normal Claude/placeholder path. The outbox tests
+    # below re-patch it. Without this the real `read_outbox` would run against
+    # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     cfg_mock.claude.enabled = False
     cfg_mock.claude.ai_pr_description = True
     cfg_mock.upstream_remote = "origin"
@@ -433,6 +438,122 @@ def test_create_pr_no_ai_flag_skips_generation(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
+
+
+def _outbox_source(manifest="002-description.json", branch="feat/x"):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import OutboxPrText
+
+    return OutboxPrText(
+        text=PrText(title="feat: x", body="Body.", branch=branch), manifest=manifest, index=0
+    )
+
+
+def test_no_outbox_restores_the_claude_run(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    assert CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"]).exit_code == 0
+
+    pending.assert_not_called()
+
+
+def test_no_ai_does_not_disable_the_outbox(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source("d.json"))
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"], input="\n")
+
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["title"] == "feat: x"
+
+
+def test_no_ai_help_says_the_outbox_is_unaffected(mocker, tmp_path):
+    from tests.conftest import flat_output
+
+    result = CliRunner().invoke(app, ["pr", "--help"])
+
+    assert "--no-outbox" in flat_output(result.output)
+    assert "--no-outbox" in flat_output(result.output).split("--no-ai", 1)[1]
+
+
+def test_outbox_description_is_used_recorded_and_named(mocker, tmp_path):
+    from tests.conftest import flat_output
+
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    gen.assert_not_called()
+    assert create.call_args.kwargs["title"] == "feat: x"
+    assert create.call_args.kwargs["body"] == "Body."
+    # The PR's own URL is the receipt recorded for the consumed action.
+    assert record.call_args.args[2:5] == (
+        "002-description.json",
+        0,
+        "https://github.com/acme/widgets/pull/123",
+    )
+    flat = flat_output(result.output)
+    assert "description from 002-description.json (written in the container)" in flat
+
+
+def test_outbox_is_not_consumed_when_the_pr_already_existed(mocker, tmp_path):
+    """`gh pr create` found an existing PR, so the manifest's body never landed."""
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created(already=True))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    record.assert_not_called()
+
+
+def test_outbox_is_not_consumed_when_the_pr_creation_fails(mocker, tmp_path):
+    """Nothing recorded on failure, so a retry reuses the manifest."""
+    from jailbee.pr import PrCreateError
+
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", side_effect=PrCreateError("gh exploded"))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 1
+    record.assert_not_called()
+
+
+def test_a_failed_consumption_record_keeps_the_pr_url(mocker, tmp_path):
+    """The PR exists by then; a container-side write failure must not hide it."""
+    from jailbee.pr_outbox import FinalizeError
+
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=FinalizeError("disk full"))
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "https://github.com/acme/widgets/pull/123" in result.output
+    assert "disk full" in result.output
 
 
 def test_create_pr_ai_disabled_by_config(mocker, tmp_path):

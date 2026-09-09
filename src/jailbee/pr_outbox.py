@@ -30,10 +30,11 @@ from typing import TYPE_CHECKING, Any, assert_never
 from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.incus import Incus, IncusError
+from jailbee.pr_ai import PrText
 from jailbee.tui import warn
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from jailbee.config import Config
@@ -46,6 +47,12 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_LINE_COMMENTS = 100
 MAX_ACTIONS = 50
 MAX_MANIFESTS = 20
+
+# A description action's title is optional, so it can be derived from the body's
+# first line — which has no length discipline of its own. Capped at the same 120
+# characters `pr_ai` refuses a generated title above, so a manifest and Claude
+# cannot disagree about what counts as a usable PR title.
+MAX_TITLE_CHARS = 120
 
 _SIDES = ("RIGHT", "LEFT")
 
@@ -1298,3 +1305,137 @@ def record_consumed(
                 f"manifest {manifest_name} is fully applied but could not be "
                 f"deleted ({e}); it will be cleaned up on a later run"
             ) from e
+
+
+# --------------------------------------------------------------------------
+# The `jailbee pr` half of the outbox
+#
+# A `description` action is the one action `jb review apply` never publishes on
+# its own: it is the text of a PR that may not exist yet, so `jailbee pr` picks
+# it up instead of running Claude, and records it with `record_consumed` above.
+# Everything below is best-effort by contract — `jailbee pr` must fall back to
+# its normal path rather than fail because of what a container wrote.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutboxPrText:
+    """A container-written PR description `jailbee pr` can use as-is.
+
+    `manifest` and `index` are what `record_consumed` needs once the text has
+    actually landed in a PR; without them the description would be published
+    and then offered again on the next run.
+    """
+
+    text: PrText
+    manifest: str
+    index: int
+
+
+def _description_title(action: DescriptionAction, fallback: str) -> str:
+    """The title for `action`: its own, else the body's first non-blank line.
+
+    `title` is optional in the manifest schema but `PrText.title` is not, and
+    an empty PR title is rejected by GitHub rather than by us. A leading
+    Markdown heading marker is dropped, since a body that opens with
+    `## Summary` means the heading text, not the hashes.
+    """
+    if action.title and action.title.strip():
+        candidate = action.title.strip()
+    else:
+        candidate = next(
+            (
+                stripped
+                for stripped in (
+                    line.strip().lstrip("#").strip() for line in action.body.splitlines()
+                )
+                if stripped
+            ),
+            "",
+        )
+    if not candidate:
+        return fallback
+    if len(candidate) > MAX_TITLE_CHARS:
+        return candidate[: MAX_TITLE_CHARS - 1].rstrip() + "…"
+    return candidate
+
+
+def pending_pr_text(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    uid: int | None,
+    pick: Callable[[list[str]], str | None] | None = None,
+) -> OutboxPrText | None:
+    """The pending `description` action, as a `PrText`, or None.
+
+    Best-effort: an unreadable outbox, a malformed manifest, or an ambiguity
+    with no `pick` never fails `jailbee pr` — it warns and returns None, and the
+    caller falls back to its normal path. `pick` is supplied only on a TTY; it
+    is handed every candidate manifest name and returns the one to use, or None
+    to use none of them. Off a TTY an ambiguity is refused with a warning
+    naming each candidate: `jailbee pr` must neither guess between two
+    descriptions nor die mid-flow after it has already pushed.
+
+    `cfg` is unused today. It stays in the signature because every other entry
+    point into this module takes it (and because the repo gate `resolve_target`
+    applies to a manifest with a PR would go here), so a caller never has to
+    ask which outbox function is the odd one out.
+    """
+    try:
+        outbox = read_outbox(incus, container, uid=uid)
+    except OutboxReadError as e:
+        warn(f"{e}; falling back to the usual PR text.")
+        return None
+
+    candidates: list[tuple[str, int, DescriptionAction]] = []
+    for name in outbox.manifest_names:
+        try:
+            manifest = parse_manifest(name, outbox.files[name], outbox.files)
+        except ManifestError as e:
+            warn(f"Ignoring outbox manifest {name}: {e}")
+            continue
+        applied = read_progress(outbox, name).applied
+        candidates.extend(
+            (name, index, action)
+            for index, action in enumerate(manifest.actions)
+            if isinstance(action, DescriptionAction) and index not in applied
+        )
+
+    if not candidates:
+        return None
+
+    if len(candidates) > 1:
+        names = [name for name, _, _ in candidates]
+        if pick is None:
+            warn(
+                f"{container} has more than one pending PR description "
+                f"({', '.join(names)}); using none of them. Read them with "
+                f"`jailbee review show`, drop the stale one with `jailbee review "
+                f"drop`, or re-run on a terminal to choose."
+            )
+            return None
+        chosen = pick(names)
+        if chosen is None:
+            return None
+        candidates = [c for c in candidates if c[0] == chosen]
+        if not candidates:  # a picker that answered something it was not offered
+            warn(f"{chosen!r} is not one of {container}'s pending manifests; using none of them.")
+            return None
+
+    name, index, action = candidates[0]
+    # A description need not propose a branch name. The container's own branch
+    # is then the honest answer — it is what `jailbee pr` would publish under
+    # anyway, and `confirm_pr_branch_name` skips its prompt when the proposal
+    # and the source branch agree.
+    container_branch = incus.config_get(container, "user.jailbee.branch") or ""
+    return OutboxPrText(
+        text=PrText(
+            title=_description_title(action, container_branch or container),
+            body=action.body,
+            branch=action.branch or container_branch,
+        ),
+        manifest=name,
+        index=index,
+    )

@@ -1314,3 +1314,157 @@ def test_show_lines_name_a_manifest_with_no_pr_yet():
     )
 
     assert show_lines(manifest)[0].endswith("no PR yet")
+
+
+# --------------------------------------------------------------------------
+# `pending_pr_text` — the description `jailbee pr` uses instead of Claude
+# --------------------------------------------------------------------------
+
+
+def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    text = _manifest_text(
+        pr=None,
+        head_sha=None,
+        actions=[{"type": "description", "body": "Body.", "title": "feat: x", "branch": "feat/x"}],
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"002-d.json": text}))
+
+    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000)
+
+    assert found is not None
+    assert found.text == PrText(title="feat: x", body="Body.", branch="feat/x")
+    assert found.manifest == "002-d.json"
+    assert found.index == 0
+
+
+def test_pending_pr_text_is_none_without_a_description(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-x.json": _manifest_text()}),
+    )
+
+    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+
+
+def test_pending_pr_text_skips_an_already_consumed_description(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    text = _manifest_text(actions=[{"type": "description", "body": "B"}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={"001-x.json": text, "001-x.json.progress.json": '{"applied": [0], "urls": {}}'}
+        ),
+    )
+
+    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+
+
+def test_pending_pr_text_asks_which_manifest_when_two_compete(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    a = _manifest_text(actions=[{"type": "description", "body": "A"}])
+    b = _manifest_text(actions=[{"type": "description", "body": "B"}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
+    )
+
+    found = pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, pick=lambda names: "002-b.json"
+    )
+
+    assert found is not None and found.manifest == "002-b.json"
+    assert found.text.body == "B"
+
+
+def test_pending_pr_text_declines_to_guess_without_a_picker(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    a = _manifest_text(actions=[{"type": "description", "body": "A"}])
+    b = _manifest_text(actions=[{"type": "description", "body": "B"}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    # `pick=None` is the off-TTY case: warn, name both, and fall back.
+    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert "001-a.json" in warn.call_args.args[0]
+    assert "002-b.json" in warn.call_args.args[0]
+
+
+def test_pending_pr_text_returns_none_when_the_picker_cancels(mocker, make_cfg, tmp_path):
+    """A cancelled picker means "run Claude after all", not "guess"."""
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    a = _manifest_text(actions=[{"type": "description", "body": "A"}])
+    b = _manifest_text(actions=[{"type": "description", "body": "B"}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
+    )
+
+    found = pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, pick=lambda names: None
+    )
+
+    assert found is None
+
+
+def test_pending_pr_text_survives_an_unreadable_outbox(mocker, make_cfg, tmp_path):
+    """`jailbee pr` must never die because the outbox could not be read."""
+    from jailbee.pr_outbox import OutboxReadError, pending_pr_text
+
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox", side_effect=OutboxReadError("instance is not running")
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert "not running" in warn.call_args.args[0]
+
+
+def test_pending_pr_text_skips_a_malformed_manifest_and_uses_the_good_one(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    good = _manifest_text(actions=[{"type": "description", "body": "Good."}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-bad.json": "{not json", "002-good.json": good}),
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000)
+
+    assert found is not None and found.manifest == "002-good.json"
+    assert "001-bad.json" in warn.call_args.args[0]
+
+
+def test_pending_pr_text_falls_back_to_the_container_branch_and_first_body_line(
+    mocker, make_cfg, tmp_path
+):
+    """`title: null` / `branch: null` are filled in; `PrText` needs all three."""
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    text = _manifest_text(
+        pr=None, head_sha=None, actions=[{"type": "description", "body": "# Add a thing\n\nMore."}]
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = "feat/foo"
+
+    found = pending_pr_text(make_cfg(tmp_path), incus, "c", uid=1000)
+
+    assert found is not None
+    assert found.text.title == "Add a thing"
+    assert found.text.branch == "feat/foo"
+    assert found.text.body == "# Add a thing\n\nMore."
