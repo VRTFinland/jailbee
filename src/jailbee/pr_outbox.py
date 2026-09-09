@@ -18,18 +18,24 @@ before it is shown, let alone published.
 from __future__ import annotations
 
 import base64
+import difflib
 import io
 import json
+import re
 import tarfile
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
+from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.incus import Incus, IncusError
 from jailbee.tui import warn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from jailbee.config import Config
+    from jailbee.pr import PrInfo
 
 OUTBOX_SUBPATH = ".jailbee/pr-outbox"
 
@@ -440,3 +446,186 @@ def read_outbox(incus: Incus, container: str, *, uid: int | None) -> Outbox:
     except ValueError as e:  # binascii.Error (invalid base64) is a ValueError subclass
         raise OutboxReadError(f"{container} returned an unreadable outbox archive") from e
     return Outbox(files=_members(blob, container))
+
+
+# --------------------------------------------------------------------------
+# Validation gates and the plan
+#
+# The container is untrusted input and the host's `gh` can write to any
+# repository, so a manifest is resolved against the host's own view of the
+# repo and the PR *before* anything is shown to a human, let alone applied.
+# Gate order matters: repo lock first (a wrong repo is the costliest
+# mistake), then PR ownership, then staleness — see the design's §C for why
+# each gate exists.
+# --------------------------------------------------------------------------
+
+_GITHUB_SLUG_RE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
+
+
+def github_slug(url: str) -> str | None:
+    """Extract an ``owner/name`` slug from a GitHub remote URL, or None.
+
+    Matches the ssh form (``git@github.com:owner/name.git``), the https form
+    (``https://github.com/owner/name[.git]``) and an explicit ``ssh://``
+    form. Any non-GitHub host, or an empty/unparseable URL, returns None.
+    Pure — no subprocess, no network.
+    """
+    if not url:
+        return None
+    match = _GITHUB_SLUG_RE.search(url)
+    if match is None:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+class GateError(Exception):
+    """A manifest failed a host-side validation gate.
+
+    Raised before anything from the manifest is shown to a human, let alone
+    published to GitHub. Every message names the manifest file and is meant
+    to be read by the user, not decoded.
+    """
+
+
+@dataclass(frozen=True)
+class Target:
+    """What one manifest resolves to, once the gates have run."""
+
+    manifest: Manifest
+    pr: PrInfo | None
+    stale: bool
+
+
+def resolve_target(
+    cfg: Config, incus: Incus, container: str, manifest: Manifest, *, force: bool
+) -> Target:
+    """Run the validation gates for `manifest` and resolve what it targets.
+
+    1. Repo lock: the host's configured remote must be a GitHub URL whose
+       slug matches ``manifest.repo``. This is the gate that matters most —
+       without it a container could aim the host's `gh` at an unrelated
+       repository.
+    2. PR lock (skipped when ``manifest.pr is None``): ``manifest.pr`` must
+       be among the numbers the container itself owns — its
+       ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX`` labels, or,
+       when neither is set, the PR (if any) for the container's own branch.
+    3. Staleness: computed for every manifest with a PR, but it only raises
+       when the manifest carries a `ReviewAction` and `force` was not
+       given — a moved head invalidates line anchors, but `reply`, `comment`
+       and `description` actions don't depend on `head_sha`.
+    """
+    remote_url = git.get_remote_url(cfg.repo_root, cfg.upstream_remote)
+    slug = github_slug(remote_url or "")
+    if slug is None:
+        raise GateError(
+            f"manifest {manifest.name}: no GitHub remote configured for this repo "
+            f"(remote {cfg.upstream_remote!r} is not a GitHub URL)"
+        )
+    if slug != manifest.repo:
+        raise GateError(
+            f"manifest {manifest.name} targets {manifest.repo}, but this repo is {slug}"
+        )
+
+    if manifest.pr is None:
+        return Target(manifest=manifest, pr=None, stale=False)
+
+    # Imported lazily: pr_flow will import this module once the CLI (Task 9)
+    # and `jb pr` (Tasks 10-12) are wired up, and a module-level import here
+    # would close that into an import cycle.
+    from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
+
+    owned_numbers: set[int] = set()
+    for prefix in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
+        value = incus.config_get(container, prefix)
+        if value is not None:
+            try:
+                owned_numbers.add(int(value))
+            except ValueError:
+                pass  # a non-numeric label value is not a PR this container owns
+
+    if not owned_numbers:
+        branch = incus.config_get(container, "user.jailbee.branch")
+        if branch is not None:
+            found = pr.find_pr_for_branch(cfg.repo_root, branch)
+            if found is not None:
+                owned_numbers.add(found.number)
+
+    if manifest.pr not in owned_numbers:
+        raise GateError(
+            f"manifest {manifest.name} references PR #{manifest.pr}, which "
+            f"container {container} does not own"
+        )
+
+    info = pr.resolve_pr(cfg.repo_root, manifest.pr, remote=cfg.upstream_remote)
+    stale = manifest.head_sha not in (None, info.head_sha)
+    if stale and not force and any(isinstance(a, ReviewAction) for a in manifest.actions):
+        raise GateError(
+            f"manifest {manifest.name}: PR #{info.number}'s head moved "
+            f"{manifest.head_sha} → {info.head_sha}; re-anchor the comments "
+            "(ask the agent to re-read the diff) or pass --force"
+        )
+
+    return Target(manifest=manifest, pr=info, stale=stale)
+
+
+def _first_line(body: str, width: int = 68) -> str:
+    """The first line of `body`, cut to `width` columns with an ellipsis.
+
+    Used for every action body in the plan except the description's diff,
+    which is shown in full — "rewrites the body" is not reviewable
+    otherwise.
+    """
+    line = body.splitlines()[0] if body else ""
+    if len(line) > width:
+        return line[: width - 1].rstrip() + "…"
+    return line
+
+
+def _comment_anchor(comment: LineComment) -> str:
+    if comment.start_line is not None:
+        return f"{comment.path}:{comment.start_line}-{comment.line}"
+    return f"{comment.path}:{comment.line}"
+
+
+def plan_lines(target: Target, current_body: str | None) -> list[str]:
+    """Render the plan for `target` as plain text lines. Pure — no printing.
+
+    One line per action (plus a sub-line per line comment, and per general
+    comment reply), bodies truncated to their first line via `_first_line`.
+    The exception is a `DescriptionAction`, whose body is rendered in full
+    as a unified diff against `current_body`. Rich markup is the caller's
+    job (Task 9), not this function's.
+    """
+    lines: list[str] = []
+    for action in target.manifest.actions:
+        if isinstance(action, ReviewAction):
+            lines.append(f"REVIEW ({action.event}): {_first_line(action.body)}")
+            for comment in action.comments:
+                lines.append(f"  {_comment_anchor(comment)}: {_first_line(comment.body)}")
+        elif isinstance(action, ReplyAction):
+            lines.append(
+                f"REPLY to review comment #{action.comment_id}: {_first_line(action.body)}"
+            )
+        elif isinstance(action, CommentAction):
+            lines.append(f"COMMENT (general): {_first_line(action.body)}")
+            if action.reply_to is not None:
+                lines.append(f"  reply to general comment #{action.reply_to}")
+        elif isinstance(action, DescriptionAction):
+            lines.append("DESCRIPTION")
+            if action.title is not None:
+                lines.append(f"  title: {action.title}")
+            lines.extend(
+                difflib.unified_diff(
+                    (current_body or "").splitlines(),
+                    action.body.splitlines(),
+                    fromfile="current description",
+                    tofile="proposed",
+                    lineterm="",
+                )
+            )
+        else:
+            # Action is a closed union (Task 2); this both narrows the type
+            # for mypy and guards against a future member added to it
+            # without updating this renderer.
+            assert_never(action)
+    return lines

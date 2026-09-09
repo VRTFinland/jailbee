@@ -384,3 +384,164 @@ def test_read_outbox_wraps_incus_failure(mocker):
 
     with pytest.raises(OutboxReadError, match="not running"):
         read_outbox(incus, "c", uid=1000)
+
+
+@pytest.mark.parametrize(
+    ("url", "slug"),
+    [
+        ("git@github.com:acme/widgets.git", "acme/widgets"),
+        ("https://github.com/acme/widgets.git", "acme/widgets"),
+        ("https://github.com/acme/widgets", "acme/widgets"),
+        ("ssh://git@github.com/acme/widgets.git", "acme/widgets"),
+        ("https://gitlab.com/acme/widgets.git", None),
+        ("", None),
+    ],
+)
+def test_github_slug(url, slug):
+    from jailbee.pr_outbox import github_slug
+
+    assert github_slug(url) == slug
+
+
+def _pr_info(number=1234, head_sha="abc1234", head_ref="feat/foo"):
+    from jailbee.pr import PrInfo
+
+    return PrInfo(
+        number=number, head_ref=head_ref, head_sha=head_sha, state="OPEN", base_ref="main"
+    )
+
+
+def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
+    """Host-side mocks shared by the gate tests."""
+    mocker.patch("jailbee.git.get_remote_url", return_value="git@github.com:acme/widgets.git")
+    mocker.patch("jailbee.pr.resolve_pr", return_value=pr or _pr_info())
+    incus = mocker.MagicMock()
+    label_map = labels if labels is not None else {"user.jailbee.pr": "1234"}
+    incus.config_get.side_effect = lambda name, key: label_map.get(key)
+    return incus
+
+
+def test_resolve_target_accepts_the_containers_own_pr(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    cfg = make_cfg(tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(), {})
+
+    target = resolve_target(cfg, incus, "acme-feat-foo", manifest, force=False)
+
+    assert target.pr is not None and target.pr.number == 1234
+    assert target.stale is False
+
+
+def test_resolve_target_refuses_a_foreign_repo(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(repo="evil/other"), {})
+
+    with pytest.raises(GateError, match="evil/other"):
+        resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False)
+
+
+def test_resolve_target_refuses_a_pr_the_container_does_not_own(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "1234"})
+    manifest = parse_manifest("001-x.json", _manifest_text(pr=999), {})
+
+    with pytest.raises(GateError, match="#999"):
+        resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False)
+
+
+def test_resolve_target_falls_back_to_the_branchs_pr_without_a_label(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.branch": "feat/foo"})
+    mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
+    manifest = parse_manifest("001-x.json", _manifest_text(), {})
+
+    assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr.number == 1234
+
+
+def test_stale_head_blocks_a_review_but_not_a_reply(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path, pr=_pr_info(head_sha="def5678"))
+    cfg = make_cfg(tmp_path)
+
+    review = parse_manifest(
+        "001-r.json",
+        _manifest_text(actions=[{"type": "review", "body": "s", "comments": []}]),
+        {},
+    )
+    with pytest.raises(GateError, match="head moved abc1234 → def5678"):
+        resolve_target(cfg, incus, "c", review, force=False)
+
+    # --force lets it through, still marked stale so the plan can say so.
+    forced = resolve_target(cfg, incus, "c", review, force=True)
+    assert forced.stale is True
+
+    reply = parse_manifest(
+        "001-p.json", _manifest_text(actions=[{"type": "reply", "comment_id": 9, "body": "ok"}]), {}
+    )
+    assert resolve_target(cfg, incus, "c", reply, force=False).stale is True  # informational only
+
+
+def test_null_pr_manifest_resolves_without_a_pr(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest(
+        "002-d.json",
+        _manifest_text(pr=None, head_sha=None, actions=[{"type": "description", "body": "B"}]),
+        {},
+    )
+
+    assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
+
+
+def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():
+    from jailbee.pr_outbox import Target, parse_manifest, plan_lines
+
+    long_comment_body = (
+        "This rounds half-down where the spec says half-up, which shifts every total."
+    )
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {
+                    "type": "review",
+                    "body": "Two findings.",
+                    "comments": [
+                        {
+                            "path": "src/a.py",
+                            "line": 88,
+                            "body": long_comment_body,
+                        },
+                        {
+                            "path": "src/a.py",
+                            "start_line": 120,
+                            "line": 134,
+                            "body": "Extract a helper.",
+                        },
+                    ],
+                },
+                {"type": "comment", "body": "Two blocking findings.", "reply_to": 4455},
+                {"type": "description", "body": "New body.\n", "title": "feat: round half-up"},
+            ]
+        ),
+        {},
+    )
+    lines = plan_lines(
+        Target(manifest=manifest, pr=_pr_info(), stale=False), current_body="Old body.\n"
+    )
+    joined = "\n".join(lines)
+
+    assert "src/a.py:88" in joined
+    assert "src/a.py:120-134" in joined
+    assert "This rounds half-down" in joined
+    assert "shifts every total" not in joined  # truncated to one line
+    assert "reply to general comment #4455" in joined
+    assert "-Old body." in joined and "+New body." in joined  # unified diff
