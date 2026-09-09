@@ -20,8 +20,13 @@ Pure stdlib so it runs without the project virtualenv. Subcommands:
 
     draft [--from <ref>]
         Draft entries for the Unreleased section from ``git log`` since the
-        last tag (or <ref>) using the ``claude`` CLI, replacing the current
-        Unreleased body. The human reviews/edits the result afterwards.
+        last release tag (or <ref>) using the ``claude`` CLI, replacing the
+        current Unreleased body. The human reviews/edits the result
+        afterwards. The range starts at the last release because that is the
+        last state a user could have installed: everything inside it is
+        unreleased, so a commit fixing something else in the same range
+        belongs *in* that entry rather than beside it as a "Fixed" of its own.
+        See "What belongs in the Unreleased section" in docs/releasing.md.
 """
 
 from __future__ import annotations
@@ -190,15 +195,34 @@ def cmd_draft(from_ref: str | None) -> None:
     if not log:
         sys.exit(f"changelog: no commits in range {rng!r} to draft from")
 
+    since = base or "the start of history"
     prompt = (
         "You are drafting a CHANGELOG entry. Read the existing CHANGELOG.md in "
         "the working directory to match its exact heading style and tone, then "
         "summarise the commits below into entries for the Unreleased section. "
         "Group them under '### Added:', '### Changed:', '### Fixed:', "
         "'### Removed:' headings as appropriate, each with a short title after "
-        "the colon and concise prose. Output ONLY the markdown entries, no "
-        "preamble, no code fences.\n\nCommits since "
-        f"{base or 'the start of history'}:\n\n{log}"
+        "the colon and concise prose.\n\n"
+        "Describe the NET DIFFERENCE a user upgrading from "
+        f"{since} sees — not the path the work took to get there. Everything "
+        "in the range below is unreleased, so nobody has ever run any "
+        "intermediate state of it. Concretely:\n"
+        "- Several commits on one feature are ONE entry, written as if the "
+        "feature had arrived finished.\n"
+        "- A commit that fixes or revises something else in this same range "
+        "gets NO entry of its own: fold its outcome into that feature's entry "
+        "(usually silently — a bug nobody could hit is not news), and never "
+        "list it under '### Fixed:'. '### Fixed:' is only for behaviour that "
+        f"was broken in {since} or earlier, i.e. in a version users can have "
+        "installed.\n"
+        "- Work that was added and then reverted in this range is omitted "
+        "entirely.\n"
+        "- Internal-only commits (tests, refactors, lint, CI, docs) get no "
+        "entry unless they change what a user sees or does.\n"
+        "Prefer a shorter section: the test is whether an entry tells a user "
+        "something they can act on.\n\n"
+        "Output ONLY the markdown entries, no preamble, no code fences."
+        f"\n\nCommits since {since}:\n\n{log}"
     )
     try:
         drafted = subprocess.run(
