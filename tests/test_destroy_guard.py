@@ -188,6 +188,27 @@ def test_submodule_with_only_a_commit_count_reports_the_count(tmp_path, mocker):
     assert summary.reasons == ("submodule sub/bar (2 commits)",)
 
 
+def test_assess_warns_about_unapplied_pr_actions(tmp_path, mocker):
+    from jailbee.destroy_guard import assess
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+    ci = _ci(pending_pr_actions=2)
+
+    summary = assess(make_cfg(tmp_path), ci)
+
+    assert summary is not None
+    assert "2 unapplied PR actions" in summary.line
+
+
+def test_assess_stays_silent_at_zero_or_unknown_pending_actions(tmp_path, mocker):
+    from jailbee.destroy_guard import assess
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+
+    assert assess(make_cfg(tmp_path), _ci(pending_pr_actions=0)) is None
+    assert assess(make_cfg(tmp_path), _ci(pending_pr_actions=None)) is None
+
+
 def test_stranded_commits_are_a_risk(tmp_path, mocker):
     """Ahead of base, absent from the host, not on any remote."""
     from jailbee.destroy_guard import assess

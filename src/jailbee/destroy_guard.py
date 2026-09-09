@@ -161,6 +161,15 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
 
     reasons.extend(_submodule_reason(sub) for sub in status.submodules)
 
+    # The outbox lives in the container's own filesystem, so a destroy takes
+    # any written-but-unpublished review with it. Deliberately generic: the
+    # count is manifests, which may hold comments, a description for
+    # `jailbee pr`, or both — the guard's job is to say something would be
+    # lost, not to itemise it.
+    pending = status.pending_pr_actions
+    if pending:
+        reasons.append(f"{pending} unapplied PR action{'s' if pending != 1 else ''}")
+
     # Commits are only at risk when they exist nowhere else: not on the
     # host (any earlier `jailbee git pull` put them there) and not behind a
     # remote-tracking ref (`jailbee git push`, or a plain push from inside).
