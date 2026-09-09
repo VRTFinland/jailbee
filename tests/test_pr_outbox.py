@@ -545,3 +545,449 @@ def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():
     assert "shifts every total" not in joined  # truncated to one line
     assert "reply to general comment #4455" in joined
     assert "-Old body." in joined and "+New body." in joined  # unified diff
+
+
+# --------------------------------------------------------------------------
+# apply_manifest / finalize / record_consumed / read_progress (Task 6)
+# --------------------------------------------------------------------------
+
+
+def _apply_mocks(mocker):
+    return {
+        "review": mocker.patch("jailbee.pr.submit_review", return_value="https://x/r"),
+        "reply": mocker.patch("jailbee.pr.reply_to_review_comment", return_value="https://x/p"),
+        "comment": mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/c"),
+        "edit": mocker.patch("jailbee.pr.edit_pr"),
+    }
+
+
+def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "description", "body": "New body.", "title": "t"},
+                {"type": "reply", "comment_id": 9, "body": "ok"},
+                {
+                    "type": "review",
+                    "body": "s",
+                    "comments": [{"path": "a.py", "line": 1, "body": "b"}],
+                },
+            ]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.failure is None
+    assert outcome.applied == (2, 1, 0)  # review, reply, description
+    calls["review"].assert_called_once()
+    assert calls["review"].call_args.kwargs["commit_id"] == "abc1234"
+    calls["edit"].assert_called_once()
+
+
+def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body": "Agreed.", "reply_to": 4455}]),
+        {},
+    )
+
+    apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    body = calls["comment"].call_args.args[2]
+    assert "#issuecomment-4455" in body
+    assert body.rstrip().endswith("Agreed.")
+
+
+def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "comment", "body": "one"},
+                {"type": "comment", "body": "two"},
+            ]
+        ),
+        {},
+    )
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset({0}), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.applied == (1,)
+    assert calls["comment"].call_count == 1
+    assert calls["comment"].call_args.args[2] == "two"
+
+
+def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg, tmp_path):
+    from jailbee.pr import PrReviewError
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    calls["comment"].side_effect = ["https://x/c", PrReviewError("HTTP 500")]
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "comment", "body": "one"},
+                {"type": "comment", "body": "two"},
+                {"type": "comment", "body": "three"},
+            ]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.applied == (0,)
+    assert outcome.failure is not None and "HTTP 500" in outcome.failure
+    assert calls["comment"].call_count == 2  # the third was never attempted
+
+
+def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, tmp_path):
+    """A crash between actions must not lose what already landed.
+
+    apply_manifest is handed `incus`/`container`/`uid` for exactly this: it
+    must persist the running total to the container after every successful
+    action, not only once at the very end via `finalize`.
+    """
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "one"}, {"type": "comment", "body": "two"}]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    sidecar_writes = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][0] == "bash" and any("001-x.json.progress.json" in str(a) for a in c.args[1])
+    ]
+    assert len(sidecar_writes) == 2, "one write after each of the two successful actions"
+    # The second (final) write reflects both indices, not just the latest one.
+    joined = " ".join(sidecar_writes[-1].args[1])
+    assert '"applied": [0, 1]' in joined or '"applied":[0,1]' in joined
+
+
+def test_finalize_deletes_a_fully_applied_manifest_and_its_own_bodies(mocker):
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body_file": "001-x.md"}]),
+        {"001-x.md": "text"},
+    )
+    outbox = Outbox(files={"001-x.json": "…", "001-x.md": "text", "002-y.json": "…"})
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        outbox,
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+        uid=1000,
+    )
+
+    removed = [c for c in incus.exec.call_args_list if "rm" in c.args[1]]
+    assert removed, "a fully applied manifest must be deleted"
+    argv = " ".join(removed[0].args[1])
+    assert "001-x.json" in argv and "001-x.md" in argv
+    assert "002-y.json" not in argv
+
+
+def test_finalize_keeps_a_shared_body_file_referenced_by_another_manifest(mocker):
+    """A `body_file` still named by a pending manifest must survive cleanup."""
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}]),
+        {"shared.md": "text"},
+    )
+    other_manifest_text = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
+    outbox = Outbox(
+        files={"001-x.json": "…", "shared.md": "text", "002-y.json": other_manifest_text}
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        outbox,
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+        uid=1000,
+    )
+
+    removed = [c for c in incus.exec.call_args_list if "rm" in c.args[1]]
+    assert removed, "a fully applied manifest must still be deleted"
+    argv = " ".join(removed[0].args[1])
+    assert "001-x.json" in argv
+    assert "shared.md" not in argv, "shared.md is still referenced by 002-y.json"
+
+
+def test_finalize_keeps_a_partly_applied_manifest_and_writes_progress(mocker):
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "a"}, {"type": "comment", "body": "b"}]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        Outbox(files={"001-x.json": "…"}),
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(0,), urls=("https://x/c",), failure="HTTP 500"),
+        uid=1000,
+    )
+
+    written = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list)
+    assert "001-x.json.progress.json" in written
+    assert '"applied": [0]' in written or '"applied":[0]' in written
+    assert "rm" not in written
+
+
+def test_finalize_merges_new_progress_with_what_a_previous_run_already_landed(mocker):
+    """A second run's outcome must not clobber a first run's recorded progress.
+
+    If this ran twice against the same outbox, index 0 must still be
+    remembered as applied even though *this* call's outcome only carries the
+    newly-applied index 1 — otherwise a retry would repost index 0.
+    """
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "a"}, {"type": "comment", "body": "b"}]
+        ),
+        {},
+    )
+    outbox = Outbox(
+        files={
+            "001-x.json": "…",
+            "001-x.json.progress.json": '{"applied": [0], "urls": {"0": "https://x/a"}}',
+        }
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        outbox,
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(1,), urls=("https://x/b",), failure=None),
+        uid=1000,
+    )
+
+    removed = [c for c in incus.exec.call_args_list if "rm" in c.args[1]]
+    assert removed, "both indices are now applied, so the manifest must be deleted"
+
+
+def test_finalize_appends_one_applied_log_line(mocker):
+    """The one extra test the brief describes in prose, not in code.
+
+    `finalize` appends one line to `applied.log` containing the manifest
+    name, `pr=1234`, the action count and every URL.
+    """
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[{"type": "comment", "body": "a"}, {"type": "comment", "body": "b"}]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        Outbox(files={"001-x.json": "…"}),
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(0, 1), urls=("https://x/a", "https://x/b"), failure=None),
+        uid=1000,
+    )
+
+    log_writes = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][0] == "bash" and any(str(a).endswith("applied.log") for a in c.args[1])
+    ]
+    assert len(log_writes) == 1
+    line = log_writes[0].args[1][4]  # ["bash", "-c", script, "bash", line, path]
+    assert "001-x.json" in line
+    assert "pr=1234" in line
+    assert "actions=2" in line
+    assert "https://x/a" in line and "https://x/b" in line
+
+
+def test_finalize_presents_an_empty_receipt_url_as_a_placeholder_not_a_blank_link(mocker):
+    """A 2xx response that lacks `html_url` makes pr.py return "".
+
+    That empty string must never be written into applied.log as if it were a
+    real link — a blank field there reads as "the link is missing", not "no
+    link exists", and would look like a jailbee bug rather than a GitHub
+    response quirk.
+    """
+    from jailbee.pr_outbox import ApplyOutcome, Outbox, Target, finalize, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json", _manifest_text(actions=[{"type": "comment", "body": "a"}]), {}
+    )
+    incus = mocker.MagicMock()
+
+    finalize(
+        incus,
+        "c",
+        Outbox(files={"001-x.json": "…"}),
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        ApplyOutcome(applied=(0,), urls=("",), failure=None),
+        uid=1000,
+    )
+
+    log_writes = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][0] == "bash" and any(str(a).endswith("applied.log") for a in c.args[1])
+    ]
+    line = log_writes[0].args[1][4]
+    assert "urls=" in line
+    assert not line.rstrip().endswith("urls=")  # not a bare, blank field
+    assert "(no url)" in line
+
+
+def test_read_progress_tolerates_a_missing_or_broken_sidecar():
+    from jailbee.pr_outbox import Outbox, read_progress
+
+    assert read_progress(Outbox(files={}), "001-x.json").applied == frozenset()
+    broken = Outbox(files={"001-x.json.progress.json": "{ not json"})
+    assert read_progress(broken, "001-x.json").applied == frozenset()
+    good = Outbox(files={"001-x.json.progress.json": '{"applied": [0, 2], "urls": {}}'})
+    assert read_progress(good, "001-x.json").applied == frozenset({0, 2})
+
+
+def test_record_consumed_writes_progress_and_deletes_when_nothing_pending(mocker):
+    """The single-index form `jb pr` (Task 11) uses.
+
+    No `Outbox`/`Target` is in hand at that call site — only the manifest
+    name and the one index `jb pr` itself just consumed — so this reads the
+    manifest and its sidecar directly off the container.
+    """
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import record_consumed
+
+    manifest_json = _manifest_text(
+        pr=None, head_sha=None, actions=[{"type": "description", "body": "B"}]
+    )
+
+    def fake_exec(container, cmd, **kwargs):
+        assert container == "c"
+        if cmd[0] == "cat":
+            path = cmd[1]
+            if path.endswith(".progress.json"):
+                raise IncusError("no such file")
+            return manifest_json
+        return ""
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = fake_exec
+
+    record_consumed(incus, "c", "002-d.json", 0, "https://x/pr", uid=1000)
+
+    calls = incus.exec.call_args_list
+    write_calls = [c for c in calls if c.args[1][0] == "bash"]
+    assert any(any("002-d.json.progress.json" in str(a) for a in c.args[1]) for c in write_calls)
+    log_call = next(c for c in write_calls if any("applied.log" in str(a) for a in c.args[1]))
+    line = log_call.args[1][4]
+    assert "002-d.json" in line and "actions=1" in line and "https://x/pr" in line
+
+    rm_calls = [c for c in calls if c.args[1][0] == "rm"]
+    assert rm_calls, "the manifest's only action is now applied; it must be deleted"
+    assert any("002-d.json" in a for a in rm_calls[0].args[1])
+
+
+def test_record_consumed_keeps_a_manifest_still_missing_other_actions(mocker):
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import record_consumed
+
+    manifest_json = _manifest_text(
+        actions=[{"type": "description", "body": "B"}, {"type": "comment", "body": "c"}]
+    )
+
+    def fake_exec(container, cmd, **kwargs):
+        if cmd[0] == "cat":
+            if cmd[1].endswith(".progress.json"):
+                raise IncusError("no such file")
+            return manifest_json
+        return ""
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = fake_exec
+
+    record_consumed(incus, "c", "001-x.json", 0, "https://x/pr", uid=1000)
+
+    rm_calls = [c for c in incus.exec.call_args_list if c.args[1][0] == "rm"]
+    assert not rm_calls, "one of two actions is applied; the manifest must stay"

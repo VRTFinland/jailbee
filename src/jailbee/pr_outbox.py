@@ -24,6 +24,7 @@ import json
 import re
 import tarfile
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, assert_never
 
 from jailbee import git, pr
@@ -33,6 +34,7 @@ from jailbee.tui import warn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from jailbee.config import Config
     from jailbee.pr import PrInfo
@@ -629,3 +631,424 @@ def plan_lines(target: Target, current_body: str | None) -> list[str]:
             # without updating this renderer.
             assert_never(action)
     return lines
+
+
+# --------------------------------------------------------------------------
+# Applying a manifest
+#
+# GitHub calls are not transactional, so every write below goes through
+# ``incus.exec`` (never a shell string — argv only) and progress is recorded
+# *in the container*, not just returned to the caller: a review comment
+# posted twice is public noise nothing can take back. See design §C.
+# --------------------------------------------------------------------------
+
+_NO_URL = "(no url)"
+
+# Matches a `"body_file": "name"` field in a manifest's *raw* JSON text.
+# Deliberately a text scan rather than a second `parse_manifest` call:
+# `parse_manifest` resolves `body_file` into an inline `body` string and
+# throws the filename away, so once a `Manifest` exists there is nowhere
+# left to ask "which file did this come from" except the raw source.
+_BODY_FILE_RE = re.compile(r'"body_file"\s*:\s*"([^"]*)"')
+
+
+def _now_iso() -> str:
+    """Current UTC time as `2026-09-09T12:34:56Z`, for `applied.log` lines."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _display_url(url: str) -> str:
+    """`url`, or a placeholder when `pr.py` returned "".
+
+    `submit_review`/`reply_to_review_comment`/`add_issue_comment` return ""
+    when a 2xx GitHub response ever lacks `html_url` (Task 4). Writing that
+    empty string into a human-facing log line would read as "the link is
+    missing" (a jailbee bug) rather than "GitHub didn't send one" — so the
+    log always gets an explicit placeholder instead. The progress sidecar's
+    `urls` map keeps the raw value (including ""): it's machine-read state
+    for a future run, not something shown to a person.
+    """
+    return url if url else _NO_URL
+
+
+def _write_sidecar(
+    incus: Incus, container: str, path: str, payload: dict[str, Any], *, uid: int | None
+) -> None:
+    """Overwrite `path` in the container with `payload` as one JSON document.
+
+    Argv only, never a shell string: the payload is passed as `$1` to a
+    `bash -c` script that never interpolates it. `>` (not `>>`) because the
+    sidecar always holds the *complete* current state, not an appended log.
+    """
+    incus.exec(
+        container,
+        ["bash", "-c", 'printf %s "$1" > "$2"', "bash", json.dumps(payload), path],
+        uid=uid,
+    )
+
+
+def _append_log_line(incus: Incus, container: str, line: str, *, uid: int | None) -> None:
+    """Append one line to `applied.log`. Argv only; `>>` to accumulate history."""
+    incus.exec(
+        container,
+        ["bash", "-c", 'printf "%s\\n" "$1" >> "$2"', "bash", line, f"{outbox_dir()}/applied.log"],
+        uid=uid,
+    )
+
+
+@dataclass(frozen=True)
+class Progress:
+    """What a manifest's `<name>.progress.json` sidecar records.
+
+    `urls` maps a stringified action index to the URL that landed for it
+    (or "" — see `_display_url`).
+    """
+
+    applied: frozenset[int]
+    urls: dict[str, str]
+
+
+def _parse_progress_json(text: str) -> Progress:
+    """Parse one sidecar's text; any shape problem is "nothing applied yet".
+
+    A sidecar is jailbee's own output, but a half-written file (a crash
+    mid-`printf`) or a container-side accident is still possible, and the
+    safe response to unreadable progress is to treat it as no progress —
+    the caller then re-attempts, and re-attempting an already-landed action
+    is exactly what this sidecar exists to prevent when it *can* be read.
+    """
+    empty = Progress(applied=frozenset(), urls={})
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    applied_val = data.get("applied")
+    if not isinstance(applied_val, list):
+        return empty
+    if not all(isinstance(i, int) and not isinstance(i, bool) for i in applied_val):
+        return empty
+    urls_val = data.get("urls")
+    urls = {str(k): str(v) for k, v in urls_val.items()} if isinstance(urls_val, dict) else {}
+    return Progress(applied=frozenset(applied_val), urls=urls)
+
+
+def read_progress(outbox: Outbox, manifest_name: str) -> Progress:
+    """Read `<manifest_name>.progress.json` from `outbox`; tolerant of absence.
+
+    A missing sidecar (first run) and a broken one (see `_parse_progress_json`)
+    both resolve to "nothing applied yet" rather than raising.
+    """
+    text = outbox.files.get(f"{manifest_name}.progress.json")
+    if text is None:
+        return Progress(applied=frozenset(), urls={})
+    return _parse_progress_json(text)
+
+
+@dataclass(frozen=True)
+class ApplyOutcome:
+    """What one `apply_manifest` call did.
+
+    `applied`/`urls` are positionally paired and cover only indices newly
+    applied *by this call* — indices `apply_manifest` skipped because they
+    were already in `progress.applied` are not repeated here. `finalize`
+    merges this against the manifest's own recorded progress before
+    deciding what the container now looks like, so nothing already landed
+    is ever lost.
+    """
+
+    applied: tuple[int, ...]
+    urls: tuple[str, ...]
+    failure: str | None
+
+
+def _apply_order(actions: tuple[Action, ...]) -> list[int]:
+    """Indices of `actions` in application order: review, then the rest, then description.
+
+    `parse_manifest` already enforces at most one `ReviewAction` and at most
+    one `DescriptionAction`, so both lists below have length 0 or 1.
+    """
+    review = [i for i, a in enumerate(actions) if isinstance(a, ReviewAction)]
+    description = [i for i, a in enumerate(actions) if isinstance(a, DescriptionAction)]
+    rest = [i for i, a in enumerate(actions) if isinstance(a, (ReplyAction, CommentAction))]
+    return review + rest + description
+
+
+def _comment_payload(comment: LineComment) -> dict[str, Any]:
+    """One `LineComment` as the `comments[]` entry `gh api .../reviews` expects."""
+    payload: dict[str, Any] = {
+        "path": comment.path,
+        "line": comment.line,
+        "body": comment.body,
+        "side": comment.side,
+    }
+    if comment.start_line is not None:
+        payload["start_line"] = comment.start_line
+        payload["start_side"] = comment.start_side or comment.side
+    return payload
+
+
+def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
+    """Prefix for a general `CommentAction` that replies to another comment.
+
+    GitHub's issue-comments endpoint has no threading, unlike review
+    comments (`reply_to_review_comment`), so a reply is simulated with a
+    permalink to the comment it answers.
+    """
+    return f"> [Replying to this comment](https://github.com/{slug}/pull/{number}#issuecomment-{comment_id})\n\n"
+
+
+def _apply_one(repo_root: Path, target: Target, action: Action) -> str:
+    """Post one action to GitHub via `pr.py`; return its receipt URL (or "")."""
+    assert target.pr is not None  # apply_manifest's own precondition
+    number = target.pr.number
+    if isinstance(action, ReviewAction):
+        commit_id = target.manifest.head_sha or target.pr.head_sha
+        comments = [_comment_payload(c) for c in action.comments]
+        return pr.submit_review(
+            repo_root, number, commit_id=commit_id, body=action.body, comments=comments
+        )
+    elif isinstance(action, ReplyAction):
+        return pr.reply_to_review_comment(repo_root, number, action.comment_id, action.body)
+    elif isinstance(action, CommentAction):
+        body = action.body
+        if action.reply_to is not None:
+            body = _reply_permalink(target.manifest.repo, number, action.reply_to) + body
+        return pr.add_issue_comment(repo_root, number, body)
+    elif isinstance(action, DescriptionAction):
+        pr.edit_pr(repo_root, number, title=action.title, body=action.body)
+        return ""  # edit_pr updates an existing object; there is no new receipt
+    else:
+        assert_never(action)
+
+
+def apply_manifest(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    target: Target,
+    progress: Progress,
+    *,
+    uid: int | None,
+) -> ApplyOutcome:
+    """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
+
+    Order: the review (if any) first — one atomic call carrying every line
+    comment — then replies and general comments in manifest order, then the
+    description last, so a failed comment never leaves a rewritten
+    description as the only visible change (design §C). Indices already in
+    `progress.applied` are skipped outright: a retry after a failure must
+    never repost what already landed.
+
+    After each action that succeeds, the running total (`progress.applied`
+    plus everything applied so far in *this* call) is written to the
+    container's `<manifest>.progress.json` sidecar. This is why `incus`,
+    `container` and `uid` are parameters here and not only on `finalize`: a
+    crash between two actions — or between the last action and `finalize` —
+    must still leave the container's own record accurate.
+
+    Stops at the first `PrError`; remaining actions are never attempted.
+    """
+    if target.pr is None:
+        raise ValueError(
+            f"apply_manifest requires a resolved PR target (manifest "
+            f"{target.manifest.name!r} has none — a null-pr manifest is "
+            "jb pr's job, via record_consumed, not apply_manifest's)"
+        )
+
+    manifest = target.manifest
+    sidecar_path = f"{outbox_dir()}/{manifest.name}.progress.json"
+
+    applied: list[int] = []
+    urls: list[str] = []
+    failure: str | None = None
+    running_applied = set(progress.applied)
+    running_urls = dict(progress.urls)
+
+    for index in _apply_order(manifest.actions):
+        if index in progress.applied:
+            continue
+        try:
+            url = _apply_one(cfg.repo_root, target, manifest.actions[index])
+        except pr.PrError as e:
+            failure = str(e)
+            break
+        applied.append(index)
+        urls.append(url)
+        running_applied.add(index)
+        running_urls[str(index)] = url
+        _write_sidecar(
+            incus,
+            container,
+            sidecar_path,
+            {"applied": sorted(running_applied), "urls": running_urls},
+            uid=uid,
+        )
+
+    return ApplyOutcome(applied=tuple(applied), urls=tuple(urls), failure=failure)
+
+
+def _orphaned_body_files(outbox: Outbox, exclude_name: str) -> list[str]:
+    """Non-manifest files in `outbox` that no manifest other than `exclude_name` references.
+
+    Scans every *other* manifest's raw JSON text for `body_file` mentions
+    (see `_BODY_FILE_RE`) rather than parsing them, since parsing loses the
+    filename. A file referenced by nothing still standing — including one
+    orphaned by some earlier, unrelated cleanup — is safe to delete.
+    """
+    referenced_elsewhere: set[str] = set()
+    for name in outbox.manifest_names:
+        if name == exclude_name:
+            continue
+        referenced_elsewhere.update(_BODY_FILE_RE.findall(outbox.files.get(name, "")))
+    return sorted(
+        name
+        for name in outbox.files
+        if not name.endswith(".json") and name not in referenced_elsewhere
+    )
+
+
+def finalize(
+    incus: Incus,
+    container: str,
+    outbox: Outbox,
+    target: Target,
+    outcome: ApplyOutcome,
+    *,
+    uid: int | None,
+) -> None:
+    """Record `outcome`, then delete `target.manifest` if it is now fully applied.
+
+    `outbox` is the snapshot read *before* `apply_manifest` ran, so
+    `read_progress(outbox, ...)` reproduces the progress that was already
+    passed into `apply_manifest` as `progress`. Merging that against
+    `outcome.applied` (this call's newly-applied indices) reconstructs the
+    full picture without a separate `progress` parameter — and without ever
+    overwriting the sidecar with less than what has actually landed.
+
+    Always writes the sidecar when anything has ever been applied (whether
+    or not that completes the manifest) and appends one `applied.log` line;
+    only when every action index is now applied does it delete the
+    manifest, its sidecar, and any `body_file` no other manifest in the
+    outbox still references — a shared `.md` is kept. Writing the sidecar
+    before deleting (rather than skipping the write when about to delete
+    anyway) means a crash between the two `incus.exec` calls still leaves
+    an accurate, resumable record.
+    """
+    manifest = target.manifest
+    manifest_path = f"{outbox_dir()}/{manifest.name}"
+    sidecar_path = f"{manifest_path}.progress.json"
+
+    baseline = read_progress(outbox, manifest.name)
+    merged_applied = baseline.applied | set(outcome.applied)
+    merged_urls = dict(baseline.urls)
+    merged_urls.update(dict(zip((str(i) for i in outcome.applied), outcome.urls, strict=True)))
+
+    if merged_applied:
+        _write_sidecar(
+            incus,
+            container,
+            sidecar_path,
+            {"applied": sorted(merged_applied), "urls": merged_urls},
+            uid=uid,
+        )
+
+        pr_field = manifest.pr if manifest.pr is not None else "none"
+        display_urls = ",".join(_display_url(u) for u in outcome.urls) or _NO_URL
+        line = (
+            f"{_now_iso()} {manifest.name} pr={pr_field} "
+            f"actions={len(outcome.applied)} urls={display_urls}"
+        )
+        _append_log_line(incus, container, line, uid=uid)
+
+    if merged_applied == set(range(len(manifest.actions))):
+        to_delete = [manifest_path, sidecar_path]
+        to_delete.extend(
+            f"{outbox_dir()}/{name}" for name in _orphaned_body_files(outbox, manifest.name)
+        )
+        incus.exec(container, ["rm", "-f", *to_delete], uid=uid)
+
+
+def _read_optional(incus: Incus, container: str, path: str, *, uid: int | None) -> str | None:
+    """Read one file's content from the container; None if it can't be read.
+
+    The single-file counterpart of `_READ_SCRIPT`'s whole-outbox tar+base64,
+    for `record_consumed`, which has no `Outbox` in hand. Like that reader,
+    any failure (missing file, permission, the instance not running) is
+    treated as absence rather than surfaced — a caller here always has a
+    safe default for "the file isn't there".
+    """
+    try:
+        return incus.exec(container, ["cat", path], uid=uid)
+    except IncusError:
+        return None
+
+
+def _manifest_pr_and_action_count(text: str | None) -> tuple[str, int | None]:
+    """Best-effort `(pr= field, action count)` from a manifest's raw JSON text.
+
+    Used only for `record_consumed`'s log line and its own deletion check;
+    any parse failure yields `("none", None)`, which logs politely and
+    never deletes a manifest whose action count couldn't be confirmed.
+    """
+    if text is None:
+        return "none", None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return "none", None
+    if not isinstance(data, dict):
+        return "none", None
+    pr_val = data.get("pr")
+    pr_field = str(pr_val) if isinstance(pr_val, int) and not isinstance(pr_val, bool) else "none"
+    actions_val = data.get("actions")
+    total = len(actions_val) if isinstance(actions_val, list) else None
+    return pr_field, total
+
+
+def record_consumed(
+    incus: Incus,
+    container: str,
+    manifest_name: str,
+    index: int,
+    url: str,
+    *,
+    uid: int | None,
+) -> None:
+    """Record that action `index` of `manifest_name` was applied outside `apply_manifest`.
+
+    The single-index form `jb pr` (Task 11) uses when it turns a pending
+    null-PR `description` action into the PR it just created or updated:
+    there is no `Outbox`/`Target` in hand at that call site, only the one
+    manifest name and the one index just consumed. Reads the manifest's
+    current sidecar and its own action count directly off the container,
+    merges `index` into what's applied, writes the sidecar and one
+    `applied.log` line, and deletes the manifest (with its sidecar) once
+    that leaves nothing pending.
+    """
+    manifest_path = f"{outbox_dir()}/{manifest_name}"
+    sidecar_path = f"{manifest_path}.progress.json"
+
+    sidecar_text = _read_optional(incus, container, sidecar_path, uid=uid)
+    progress = (
+        _parse_progress_json(sidecar_text)
+        if sidecar_text is not None
+        else Progress(applied=frozenset(), urls={})
+    )
+    applied = progress.applied | {index}
+    urls = dict(progress.urls)
+    urls[str(index)] = url
+
+    _write_sidecar(
+        incus, container, sidecar_path, {"applied": sorted(applied), "urls": urls}, uid=uid
+    )
+
+    manifest_text = _read_optional(incus, container, manifest_path, uid=uid)
+    pr_field, total_actions = _manifest_pr_and_action_count(manifest_text)
+
+    line = f"{_now_iso()} {manifest_name} pr={pr_field} actions=1 urls={_display_url(url)}"
+    _append_log_line(incus, container, line, uid=uid)
+
+    if total_actions is not None and applied == set(range(total_actions)):
+        incus.exec(container, ["rm", "-f", manifest_path, sidecar_path], uid=uid)
