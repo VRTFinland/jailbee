@@ -162,8 +162,15 @@ def cmd_unreleased_empty() -> None:
 
 
 def _last_tag() -> str | None:
+    """The nearest release tag reachable from HEAD, or None before the first.
+
+    Matches ``v<digit>…`` only: release tags are what mark the boundary between
+    shipped and unshipped work, and the repo also carries plain bookmark tags
+    (``claude-pool-removed-parent``) that would otherwise silently truncate the
+    range and hide everything released before them from the draft.
+    """
     result = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"],
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
         capture_output=True,
         text=True,
         check=False,
