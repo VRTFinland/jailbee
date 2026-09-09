@@ -548,7 +548,10 @@
   stops at the first conflict or failure and always reports what landed,
   what stopped it, what was not attempted, and the command to resume.
   Conflicts are resolved inside the target with `jailbee shell <target>`.
-  `--plain` transports the refs only and reports "transported", not
+  Each source that lands prints its own `── Submodules` block naming the
+  gitlinks its merge moved, read inside the target container — the merge
+  commit exists nowhere else, so the host can resolve neither end of that
+  diff. `--plain` transports the refs only and reports "transported", not
   "merged". There is no top-level `jailbee merge` alias — that bare verb
   used to name today's `jailbee git pull`, and reusing it here would
   resurrect the ambiguity.

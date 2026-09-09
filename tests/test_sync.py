@@ -7200,6 +7200,114 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     assert result.head_oid == "mergedsha"
 
 
+def _merge_relay_wiring(mocker, make_cfg, tmp_path, *, target_branch="feat/b"):
+    """The common `merge_container_into_container` mocks: names, transport, push.
+
+    Everything up to and including the push is stubbed; what the caller is left
+    free to drive is the merge itself and the container-side git the report
+    reads. Returns `(cfg, incus)`.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value=target_branch)
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=2
+        ),
+    )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["deps/libfoo"])
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    return cfg, incus
+
+
+def test_merge_container_into_container_reports_submodule_moves(mocker, make_cfg, tmp_path):
+    """The gitlinks that moved are read from inside the TARGET container.
+
+    Neither superproject commit exists on the host: the merge commit is created
+    inside the target, and the target's pre-merge HEAD was never fetched. A
+    host-side diff would silently report nothing at all, which is why this
+    cannot reuse `compute_submodule_moves`' host entry point.
+
+    `submodules._container_runner` is left real so the sub-repo really is
+    queried at a *container* path — `/repo/deps/libfoo`, never a host one.
+    """
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._container_head_oid", return_value="1111111preheadoid")
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="2222222mergedoid")
+    raw = (
+        ":160000 160000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb M\tdeps/libfoo\n"
+        ":100644 100644 cccc dddd M\tapp.py\n"  # not a gitlink — ignored
+    )
+    asked: list[tuple[str, list[str]]] = []
+
+    def exec_side_effect(name, cmd, **kwargs):
+        assert cmd[:2] == ["git", "-C"], cmd
+        asked.append((cmd[2], cmd[3:]))
+        joined = " ".join(cmd)
+        if "diff --raw" in joined:
+            return raw
+        if "rev-list" in joined:
+            return "3\n"
+        if "--shortstat" in joined:
+            return " 2 files changed, 12 insertions(+), 5 deletions(-)\n"
+        return ""
+
+    incus.exec.side_effect = exec_side_effect
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert list(result.submodule_moves) == [
+        sync.SubmoduleMove(
+            path="deps/libfoo",
+            old_sha="a" * 40,
+            new_sha="b" * 40,
+            status="modified",
+            commits=3,
+            ins=12,
+            dels=5,
+        )
+    ]
+    # The superproject diff spans the target's own HEADs, not the source's.
+    superproject = [args for cwd, args in asked if cwd == "/repo" and args[:2] == ["diff", "--raw"]]
+    assert superproject and "1111111preheadoid..2222222mergedoid" in superproject[0]
+    # The sub-repo is read inside the container, at the container's path.
+    assert any(cwd == "/repo/deps/libfoo" for cwd, _args in asked)
+    assert not any(str(tmp_path) in cwd for cwd, _args in asked)
+
+
+def test_merge_container_into_container_plain_reports_no_submodule_moves(
+    mocker, make_cfg, tmp_path
+):
+    """`--plain` runs no merge, so no gitlink moved and none may be reported."""
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._container_head_oid", return_value="1111111preheadoid")
+    incus.exec.side_effect = AssertionError("a plain run must not diff the superproject")
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True)
+
+    assert tuple(result.submodule_moves) == ()
+
+
 def test_merge_container_into_container_same_branch_uses_ff_only(mocker, make_cfg, tmp_path):
     """target_branch == fetch_result.branch pins the merge to fast-forward-only.
 

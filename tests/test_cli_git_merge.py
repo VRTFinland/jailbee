@@ -23,6 +23,7 @@ from jailbee.sync import (
     MergeConflictError,
     MergeInContainerResult,
     PushResult,
+    SubmoduleMove,
     SyncError,
 )
 from tests.conftest import flat_output
@@ -56,6 +57,7 @@ def _result(
     fast_forward_only: bool = False,
     head_oid: str = "deadbee1234567",
     local_branch: LocalBranchUpdate | None = None,
+    submodule_moves: tuple[SubmoduleMove, ...] = (),
 ) -> MergeInContainerResult:
     """A `merge_container_into_container` result, shaped as `sync` shapes it.
 
@@ -75,6 +77,19 @@ def _result(
         container_branch=container_branch,
         fast_forward_only=fast_forward_only,
         head_oid=head_oid,
+        submodule_moves=submodule_moves,
+    )
+
+
+def _move(path: str = "deps/libfoo") -> SubmoduleMove:
+    return SubmoduleMove(
+        path=path,
+        old_sha="a" * 40,
+        new_sha="b" * 40,
+        status="modified",
+        commits=3,
+        ins=12,
+        dels=5,
     )
 
 
@@ -130,6 +145,39 @@ def test_git_merge_passes_the_branch_override_through(merge_repo, mocker):
 
     assert result.exit_code == 0, result.output
     assert called.call_args.kwargs["branch"] == "feat/x"
+
+
+def test_git_merge_prints_the_submodule_moves_of_each_source(merge_repo, mocker):
+    """A gitlink that moved must not be buried in the superproject's diff.
+
+    `jailbee git pull` prints this block; without it the cross-container merge
+    is the one path that moves submodule pointers silently. Each source gets
+    its own block, since each is a separate merge commit in the target.
+    """
+
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+        return _result(source=source, submodule_moves=(_move(f"deps/{source}-sub"),))
+
+    mocker.patch("jailbee.sync.merge_container_into_container", side_effect=side_effect)
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    flat = flat_output(result.output)
+    assert flat.count("── Submodules") == 2
+    assert "deps/c1-sub" in flat
+    assert "deps/c2-sub" in flat
+    assert "(3 commits, +12 -5)" in flat
+
+
+def test_git_merge_prints_no_submodule_block_when_nothing_moved(merge_repo, mocker):
+    """An empty report is not printed as an empty block."""
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert "── Submodules" not in flat_output(result.output)
 
 
 # --- --plain must not claim a merge --------------------------------------------
