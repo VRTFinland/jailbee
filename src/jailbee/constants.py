@@ -56,3 +56,24 @@ SHARED_SUBDIRS = (
     "docker-registry",
     "ssh",
 )
+
+
+# The release that drops every pre-1.3.0 spelling still accepted today. One
+# constant rather than a version literal per notice, so the promises cannot
+# drift apart — before this existed, `chrome:` named 1.4.0, `.gie/config.yaml`
+# named 2.0.0, and `jailbee chrome-pool` and `jailbee submodule checkout`
+# named no version at all.
+#
+# Grep this name to enumerate what goes away in that release:
+#   - `chrome:` config block   -> `browsers.chrome`   (config/loader.py)
+#   - `ChromeConfig` alias     -> `BrowserConfig`     (config/models_tools.py)
+#   - `.gie/config.yaml`       -> `.jailbee/config.yaml` (paths.py)
+#   - `jailbee chrome-pool`    -> `jailbee pool`      (cli.py)
+#   - `jailbee submodule checkout` -> `jailbee branch` (cli.py)
+#
+# Deliberately not covered: `golden.python`, `dashboard:` and
+# `global.dashboard`. Those keys are already *ignored* rather than honoured,
+# so they cannot break when they stop being read — their notices are cleanup
+# advice with no deadline, and giving them a version would imply a behaviour
+# change that will never come.
+LEGACY_REMOVAL_VERSION = "2.0.0"

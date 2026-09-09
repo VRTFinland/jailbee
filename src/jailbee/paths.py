@@ -4,12 +4,15 @@ import functools
 import os
 from pathlib import Path
 
+from jailbee.constants import LEGACY_REMOVAL_VERSION
+
 REPO_CONFIG_DIRS: tuple[str, ...] = (".jailbee", ".gie")
 """Repo config directories, most preferred first.
 
 ``.gie`` is the pre-1.0 location. It is accepted with a deprecation warning
 because the file is committed to shared application repos, so renaming it
-there cannot be synchronised with each user's tool upgrade. Removed in 2.0.0.
+there cannot be synchronised with each user's tool upgrade. Removed in
+``LEGACY_REMOVAL_VERSION``.
 """
 
 
@@ -52,8 +55,9 @@ def _warn_legacy_config_dir(path: Path) -> None:
     from jailbee.tui import warn
 
     warn(
-        f"{path.parent.name}/config.yaml is deprecated and stops working in 2.0.0 — "
-        f"run `git mv {path.parent.name} .jailbee` in this repo."
+        f"{path.parent.name}/config.yaml is deprecated and stops working in "
+        f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
+        f"in this repo."
     )
 
 

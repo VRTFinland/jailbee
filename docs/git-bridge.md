@@ -53,6 +53,14 @@ jailbee pr feat-foo                        # create a draft PR, or push new comm
 left for `jailbee shell`); `--plain` is transport only. With no name on a TTY it opens
 a multi-select picker (failures don't stop the batch; ✓/✗ summary at the end).
 
+`--merge` picks its own mode: a fast-forward when the container is already on
+the branch being pushed — which a `--pr` push always is — and a merge commit
+otherwise. When the container has commits the pushed ref does not, that
+fast-forward is impossible, and JailBee prints both commit counts and asks
+whether to make a merge commit instead. `--no-ff` answers that up front,
+`--ff` refuses it and fails on divergence. Off a TTY the divergence is an
+error naming `--no-ff` rather than a silent choice either way.
+
 ### Confirming an auto-picked container
 
 With two or more containers, `jailbee git push` / `pull` / `checkout` show a picker.

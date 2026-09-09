@@ -63,7 +63,10 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 # Not baked into `command`: `apps.launch` appends this only
                 # when no explicit URL is given at launch time, so a caller
                 # who does pass one replaces it instead of joining it.
-                default_url=browser.url,
+                # `effective_url`, not `browser.url`: the shared
+                # `browsers.url` applies to whichever browsers do not name
+                # one of their own.
+                default_url=cfg.browsers.effective_url(name),
             )
         )
     return specs

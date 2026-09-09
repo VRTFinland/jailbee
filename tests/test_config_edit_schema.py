@@ -232,7 +232,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """86 leaves under Config, 15 under GlobalConfig, as measured.
+    """87 leaves under Config, 15 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -247,13 +247,16 @@ def test_build_specs_covers_every_config_leaf():
     `browsers: BrowsersConfig` (`default` + `chrome` + `firefox`, each of
     the latter two a 6-leaf `BrowserConfig`, so 1 + 6 + 6 = 13 leaves) and
     added `apps: dict[str, AppEntry]`, a MODEL_MAP that stays a single
-    leaf rather than being recursed into: 78 - 6 + 13 + 1 = 86.
+    leaf rather than being recursed into: 78 - 6 + 13 + 1 = 86. The shared
+    `browsers.url` then added one more: 86 + 1 = 87 — and that increment is
+    the proof the field is editable at all, since nothing was added to the
+    curated list or to `schema.py` for it.
     `GlobalConfig`'s 15 includes the `config_edit.write_policy` added in
     Task 1.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 86
+    assert len(build_specs(Config)) == 87
     assert len(build_specs(GlobalConfig)) == 15
 
 

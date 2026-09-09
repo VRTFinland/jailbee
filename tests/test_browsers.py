@@ -66,5 +66,45 @@ def test_configured_url_becomes_default_url_not_a_baked_in_command_arg(tmp_path)
     assert spec.accepts_url is True
 
 
+def test_a_shared_url_reaches_every_enabled_browser(tmp_path):
+    """`browsers.url` is the common case: one repo, one app URL, and no
+    reason to write it once per browser."""
+    cfg = make_cfg(
+        tmp_path,
+        browsers={
+            "url": "https://app.test",
+            "chrome": {"enabled": True},
+            "firefox": {"enabled": True},
+        },
+    )
+    assert _spec(cfg, "chrome").default_url == "https://app.test"
+    assert _spec(cfg, "firefox").default_url == "https://app.test"
+
+
+def test_a_per_browser_url_overrides_the_shared_one(tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        browsers={
+            "url": "https://app.test",
+            "chrome": {"enabled": True},
+            "firefox": {"enabled": True, "url": "https://app.test/admin"},
+        },
+    )
+    assert _spec(cfg, "chrome").default_url == "https://app.test"
+    assert _spec(cfg, "firefox").default_url == "https://app.test/admin"
+
+
+def test_no_shared_url_leaves_a_per_browser_url_alone(tmp_path):
+    """The pre-`browsers.url` behaviour, pinned: adding the shared field
+    must not disturb a config that only sets the per-browser one."""
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "url": "https://only.test"}})
+    assert _spec(cfg, "chrome").default_url == "https://only.test"
+
+
+def test_no_url_anywhere_stays_none(tmp_path):
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True}})
+    assert _spec(cfg, "chrome").default_url is None
+
+
 def test_a_disabled_browser_produces_no_spec(tmp_path):
     assert builtin_specs(make_cfg(tmp_path)) == []
