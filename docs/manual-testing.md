@@ -1302,11 +1302,12 @@ uv run jailbee checkout --help | grep "jailbee git checkout"   # "Alias for `jai
 uv run jailbee fetch --help    | grep "jailbee git fetch"
 uv run jailbee retarget --help | grep "jailbee git retarget"
 uv run jailbee diff --help     | grep "jailbee git diff"
+uv run jailbee merge --help    | grep "jailbee git merge"
 # (The full docstring with Examples lives on the canonical form:)
 uv run jailbee git pull --help | grep "Examples:"
 
-# `merge` is the one canonical subcommand with no top-level alias.
-uv run jailbee merge 2>&1 | grep -i "no such command"
+# The `merge` alias never merges into a guess: off a TTY it names --into.
+uv run jailbee merge feat-foo 2>&1 | grep -- "--into <target>"
 
 # The old commands are gone.
 uv run jailbee git create-pr 2>&1 | grep -i "no such command"

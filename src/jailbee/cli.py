@@ -5536,10 +5536,17 @@ def git_merge(
         raise typer.Exit(1)
 
 
-# No top-level `jailbee merge` alias, deliberately: every other `jailbee git
-# <sub>` has one, but a bare `merge` verb is the ambiguity this command's
-# earlier removal was about (it used to be today's `jailbee git pull`), and a
-# required `--into` reads worse without the `git` qualifier.
+# Top-level alias — hidden from `jailbee --help`; full docstring inherited from
+# `git_merge`. The bare `merge` verb once named today's `jailbee git pull`, which
+# is why this alias was withheld at first; what makes it safe is that the target
+# is never inferred. The old command's `jailbee merge <name>` shape either asks
+# for a target (on a TTY) or errors naming `--into` (off one), so muscle memory
+# cannot silently merge into the wrong end.
+app.command(
+    "merge",
+    hidden=True,
+    help="Alias for `jailbee git merge`. See `jailbee git merge --help`.",
+)(git_merge)
 
 
 def pr_cmd(

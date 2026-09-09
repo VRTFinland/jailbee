@@ -339,9 +339,8 @@ submodule born in the source container). Run it bare (`jailbee git merge`)
 and it asks for the sources, then the target; several
 sources run one at a time in the order given, and the run stops at the
 first conflict with a summary naming what landed, what didn't, and the
-resume command. `--plain` transports the refs without merging. There
-is no top-level `jailbee merge` alias — that bare verb used to name today's
-`jailbee git pull`.
+resume command. `--plain` transports the refs without merging. `jailbee merge` is a
+top-level alias for it.
 
 → [Merging one container into another](git-bridge.md#merging-one-container-into-another--jailbee-git-merge)
 

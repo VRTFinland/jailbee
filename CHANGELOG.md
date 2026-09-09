@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`jailbee merge` now exists as a top-level alias for `jailbee git merge`**,
+  like `jailbee pull` / `push` / `fetch` / `checkout` / `diff` / `retarget`
+  before it. It was withheld when the command landed because that bare verb
+  used to name today's `jailbee git pull`, and a second command answering to it
+  looked like a way to resurrect the ambiguity. It is not: the merge target is
+  never inferred, so the old command's `jailbee merge <name>` shape asks which
+  container to merge *into* on a TTY, and off one exits 1 naming `--into
+  <target>` — it can never quietly merge into the host the way the old verb
+  did.
 - **`browsers.url` — one URL for every browser.** Most repos have a single
   app URL, and writing it once per browser was the only way to say so. A
   browser's own `browsers.<name>.url` still wins where it is set, which is
