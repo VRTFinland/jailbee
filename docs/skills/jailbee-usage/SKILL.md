@@ -304,7 +304,12 @@ resurrect the ambiguity.
     prompt says so. With `-b` the source prompt is single-select, since one
     branch cannot describe several sources. Off a TTY both ends must be given.
   - `-b <branch>` — read this branch from the source container (only valid with
-    one source).
+    one source). **Not submodule-safe:** the submodule transport enumerates the
+    source's *checked-out* state, so a submodule that exists only on `<branch>`
+    (or a gitlink no local sub-repo branch reaches) never travels, and the
+    target's `submodule update` fails *after* the merge commit is written. For
+    a repo without submodules it is unaffected; otherwise check the branch out
+    in the container first and merge without `-b`.
   - `--plain` — transport the refs only; run no merge. The summary then says
     "transported", not "merged" — `--plain` is not a kind of merge.
   - Several sources are merged **one at a time, in the order given**; the run

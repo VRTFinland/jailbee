@@ -15,6 +15,19 @@
 
 ### Changed
 
+- **`-b`/`--branch` is documented as not submodule-safe** on `jailbee git
+  merge`, `fetch`, `pull` and `checkout`. Behaviour is unchanged; the
+  limitation is pre-existing and was undocumented. Both submodule transports
+  enumerate the sender's *checked-out* state (`git submodule status
+  --recursive`) and move only what each sub-repo's `HEAD` and local branches
+  reach, so naming a branch the container does not have checked out can leave
+  a gitlink's objects behind. The superproject merge still succeeds — a
+  gitlink is a tree entry git does not verify — and the failure surfaces one
+  step later in `submodule update --init --recursive`, after the merge commit
+  has been written. `jailbee git push` can reach the same mismatch with no
+  flag, since `--source` defaults to the host's default branch rather than its
+  checkout. The remedy in every case: check the branch out in the container
+  (or on the host) and run the command without the override.
 - **Every legacy spelling now names one removal release: 2.0.0.** The four
   pre-1.3.0 spellings still accepted disagreed about how long they had.
   `chrome:` promised removal in 1.4.0 — one minor release of grace for a

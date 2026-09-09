@@ -3297,7 +3297,12 @@ def fetch(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Override branch detection"),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Override branch detection. Not submodule-safe (the transport "
+            "reads the container's checked-out state).",
+        ),
     ] = None,
     as_name: Annotated[
         str | None,
@@ -3376,7 +3381,9 @@ def checkout(
         typer.Option(
             "--branch",
             "-b",
-            help="Which branch to read from the container (default: the one it has checked out)",
+            help="Which branch to read from the container (default: the one it has "
+            "checked out). Not submodule-safe when it is not the checked-out one "
+            "(the transport reads the container's checked-out state).",
         ),
     ] = None,
     as_name: Annotated[
@@ -3542,7 +3549,12 @@ def pull(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Override branch detection"),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Override branch detection. Not submodule-safe (the transport "
+            "reads the container's checked-out state).",
+        ),
     ] = None,
     ff: Annotated[
         bool,
@@ -5417,7 +5429,12 @@ def git_merge(
     ] = None,
     branch: Annotated[
         str | None,
-        typer.Option("--branch", "-b", help="Read this branch from the source container"),
+        typer.Option(
+            "--branch",
+            "-b",
+            help="Read this branch from the source container. Not submodule-safe "
+            "(the transport reads the source's checked-out state).",
+        ),
     ] = None,
     plain: Annotated[
         bool,

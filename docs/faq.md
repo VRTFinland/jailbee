@@ -263,6 +263,12 @@ back to `master` and out again in one command. `jailbee submodule checkout`
 is a hidden alias kept for compatibility; it prints a pointer to
 `jailbee branch`.
 
+One limitation: the transport enumerates the *sender's checked-out state*, so
+`-b <branch>` on `jailbee git merge` / `fetch` / `pull` — which reads a branch
+the container does **not** have checked out — does not carry that branch's
+submodules. Check the branch out in the container first and run the command
+without `-b`.
+
 → [Submodules](git-bridge.md#submodules)
 
 ### How do I review someone's pull request?
