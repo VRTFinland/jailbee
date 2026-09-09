@@ -103,6 +103,19 @@ def _require_int(name: str, index: int, value: Any, field_name: str) -> int:
     return value
 
 
+def _escapes_containment(path_str: str) -> bool:
+    """True if ``path_str`` is absolute or has a ``..`` path component.
+
+    Shared by the ``body_file`` containment check (which additionally
+    forbids any path separator at all — a body_file is a plain name at the
+    outbox root) and the ``comments[].path`` containment check (which
+    allows ``/`` separators, since a path is repo-relative).
+    """
+    if path_str.startswith("/"):
+        return True
+    return ".." in path_str.split("/")
+
+
 def _resolve_body(name: str, index: int, item: dict[str, Any], bodies: Mapping[str, str]) -> str:
     """Resolve the exactly-one-of ``body``/``body_file`` pair on one action or comment.
 
@@ -125,12 +138,7 @@ def _resolve_body(name: str, index: int, item: dict[str, Any], bodies: Mapping[s
     if has_body_file:
         if not isinstance(body_file_val, str):
             raise ManifestError(f"{name} action {index}: body_file must be a string")
-        if (
-            body_file_val.startswith("/")
-            or "/" in body_file_val
-            or "\\" in body_file_val
-            or ".." in body_file_val
-        ):
+        if "/" in body_file_val or "\\" in body_file_val or _escapes_containment(body_file_val):
             raise ManifestError(
                 f"{name} action {index}: body_file {body_file_val!r} points outside the outbox"
             )
@@ -157,6 +165,8 @@ def _parse_line_comment(
     path = item.get("path")
     if not isinstance(path, str) or not path:
         raise ManifestError(f"{name} action {index}: comment path must be a non-empty string")
+    if _escapes_containment(path):
+        raise ManifestError(f"{name} action {index}: path {path!r} points outside the repo")
 
     line = _require_int(name, index, item.get("line"), "line")
 

@@ -150,6 +150,38 @@ def test_parse_rejects_invalid_side():
         parse_manifest("001-x.json", text, {})
 
 
+def test_parse_rejects_absolute_comment_path():
+    from jailbee.pr_outbox import ManifestError, parse_manifest
+
+    text = _manifest_text(
+        actions=[
+            {
+                "type": "review",
+                "body": "x",
+                "comments": [{"path": "/etc/passwd", "line": 1, "body": "b"}],
+            }
+        ]
+    )
+    with pytest.raises(ManifestError, match="outside the repo"):
+        parse_manifest("001-x.json", text, {})
+
+
+def test_parse_rejects_comment_path_with_dotdot_component():
+    from jailbee.pr_outbox import ManifestError, parse_manifest
+
+    text = _manifest_text(
+        actions=[
+            {
+                "type": "review",
+                "body": "x",
+                "comments": [{"path": "../../etc/passwd", "line": 1, "body": "b"}],
+            }
+        ]
+    )
+    with pytest.raises(ManifestError, match="outside the repo"):
+        parse_manifest("001-x.json", text, {})
+
+
 def test_parse_rejects_second_review_action():
     from jailbee.pr_outbox import ManifestError, parse_manifest
 
