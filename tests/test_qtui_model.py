@@ -150,6 +150,20 @@ def test_git_segments_flags_conflict():
     assert ("merge conflict", "conflict") in git_segments(cc)
 
 
+def test_git_segment_does_not_say_merge_merging():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="merging")
+    assert ("merging", "conflict") in git_segments(cc)
+
+
+def test_git_segment_still_prefixes_a_predicted_conflict():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="conflict")
+    assert ("merge conflict", "conflict") in git_segments(cc)
+
+
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 

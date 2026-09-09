@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, submodules
 from jailbee.incus import IncusError
@@ -176,6 +176,48 @@ class LocalBranchUpdate:
     new_oid: str
 
 
+HostPlacementStatus = git.PlaceStatus | Literal["checked-out-ff", "refused"]
+"""What `sync_refs_from_container` did to a host branch.
+
+Named `Host...` on purpose: `submodules.PlacementStatus` is a different
+vocabulary for a different question, and the two must not be confused.
+
+`git.PlaceStatus`'s seven ref-only outcomes plus the two that exist only
+because the host has a working tree: `"checked-out-ff"` (the branch was HEAD's
+own and had to be advanced by a fast-forward merge) and `"refused"` (it was
+HEAD's own and could not be advanced that way).
+
+`"checked-out"` is inherited from the shared ladder and is all but unreachable
+here — `_place_host_branch` intercepts HEAD's own branch and does the merge
+instead, so the ladder's refusal is a backstop, and reaching it means the repo
+changed under us between two reads. Kept in the vocabulary because that is
+still a possible answer, and because subtracting one literal from a composed
+alias would mean restating the other seven.
+
+Distinct from `FfStatus`, which describes a *container's* ref.
+"""
+
+
+@dataclass(frozen=True)
+class BranchPlacement:
+    """Where one host ref was asked to go, and what happened."""
+
+    name: str  # full ref, e.g. "refs/heads/feat/foo"
+    status: HostPlacementStatus
+    old_oid: str | None
+    new_oid: str
+
+
+@dataclass(frozen=True)
+class SyncRefsResult:
+    """Outcome of `sync_refs_from_container` — refs moved, working tree not."""
+
+    fetch: FetchResult
+    target: str
+    superproject: BranchPlacement
+    submodules: tuple[submodules.SubBranchPlacement, ...]
+
+
 @dataclass(frozen=True)
 class PushResult:
     """Outcome of `push_to_container` — transport only.
@@ -184,7 +226,8 @@ class PushResult:
     host ref pushed from — `refs/remotes/origin/<source>` or
     `refs/heads/<source>`, in the order set by the effective
     `SourcePref` (see `_resolve_host_source_ref`). `container_ref` is the
-    destination inside the container (`refs/jailbee/host/<source>`).
+    destination inside the container — `refs/jailbee/<namespace>/<source>`,
+    `refs/jailbee/host/<source>` for the default host-origin `namespace`.
     `old_oid` reflects the destination ref's value inside the container
     before the push, or None if it didn't exist.
 
@@ -230,7 +273,19 @@ class PublishResult:
 
 @dataclass(frozen=True)
 class MergeInContainerResult:
-    """Outcome of `push_and_merge` — push followed by git merge in container."""
+    """Outcome of a push into a container, with or without a merge after it.
+
+    Produced by `push_and_merge` (host source) and by
+    `merge_container_into_container` (another container's branch, relayed
+    through the host). `container_branch` is the target's own checked-out
+    branch — the one a merge would land on — in both cases.
+
+    `merge_container_into_container(plain=True)` returns this type for a
+    transport with **no merge at all**: `head_oid` is then the target's
+    unchanged HEAD and `fast_forward_only` is a `False` sentinel meaning "no
+    merge was attempted", not a fact about one. Renderers must not print
+    fast-forward semantics from a plain run.
+    """
 
     push: PushResult
     container_branch: str
@@ -1256,6 +1311,139 @@ def _container_pr_branch(incus: Incus, full_name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def sync_refs_from_container(
+    cfg: Config,
+    incus: Incus,
+    short: str,
+    *,
+    branch: str | None = None,
+    as_name: str | None = None,
+    force: bool = False,
+) -> SyncRefsResult:
+    """Bring container `short`'s state onto the host as refs, without a checkout.
+
+    Everything `checkout_from_container` does except moving the working tree:
+    the fetch, the submodule object transport, the host branch, and a
+    `refs/heads/<target>` in every submodule pointing at the gitlink the
+    fetched commit records. Switching to it afterwards is then a purely local
+    operation.
+
+    This is a layer *above* `fetch_from_container`, not a change to it:
+    `merge_from_container` and the pull path both call that function for pure
+    transport into `refs/jailbee/<short>/<branch>` and must keep getting
+    exactly that — a fetch that started placing host branches would move refs
+    under callers that never asked for it. What was missing is the step
+    between: after a bare fetch there is nothing to switch *to*, because the
+    host branch is absent or stale and the submodule objects are still in the
+    container.
+
+    The host branch is chosen by the same rule `checkout_from_container` uses —
+    `as_name`, else the container's PR head label, else the container's branch —
+    so fetch-then-switch lands exactly where a checkout would have; a second
+    rule here would silently split one container's history across two host
+    branch names depending on which command the user reached for.
+
+    Non-fast-forward leaves the branch alone and reports `"diverged"`; `force`
+    overwrites it, **except** when it is the checked-out branch, where the
+    result is `"refused"`: an `update-ref` there would leave the index and
+    working tree describing a commit the branch no longer points at.
+    """
+    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+
+    full_name = resolve_container_name(cfg, incus, short)
+    repo_dir = container_repo_dir(cfg, incus, full_name)
+    # Objects first: the submodule refs placed below name commits that have to
+    # already exist in the host sub-repos.
+    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+
+    target = as_name or _container_pr_branch(incus, full_name) or fetch_result.branch
+    fetched_ref = f"refs/jailbee/{short}/{fetch_result.branch}"
+    placement = _place_host_branch(
+        cfg, target=target, new_oid=fetch_result.new_oid, fetched_ref=fetched_ref, force=force
+    )
+    sub_placements = submodules.place_branches_from_commit(
+        cfg.repo_root, fetch_result.new_oid, target, force=force
+    )
+    return SyncRefsResult(
+        fetch=fetch_result,
+        target=target,
+        superproject=placement,
+        submodules=tuple(sub_placements),
+    )
+
+
+def _place_host_branch(
+    cfg: Config, *, target: str, new_oid: str, fetched_ref: str, force: bool
+) -> BranchPlacement:
+    """Move `refs/heads/<target>` to `new_oid`, checked-out branch included.
+
+    `git.place_branch` holds the ladder and is shared with the submodule
+    placement; what this adds is the *recovery* for one case the ladder can
+    only refuse. When `target` is HEAD's own branch and already has a
+    *different* OID, an `update-ref` is illegal: it would leave the index and
+    working tree describing a commit the branch no longer points at, i.e. a
+    repo that reports every file as changed. `place_branch` therefore declines
+    it (`"checked-out"`), and only a caller allowed to touch the working tree
+    can do better — here, the fast-forward merge a checkout would run, and if
+    that is not possible, nothing at all. `submodules.place_branches_from_commit`
+    is *not* such a caller and takes the refusal as its answer.
+
+    Whether a dirty tree blocks that merge is **not** pre-judged here — the
+    merge is always attempted, and git's own `--ff-only` is the arbiter of
+    "clean enough": it succeeds whenever no local change would be
+    overwritten, which is strictly weaker (and correct) than refusing on
+    any `git status --porcelain` output at all. A blanket pre-emptive dirty
+    check would also refuse on untracked files in unrelated directories
+    that could never conflict with the fast-forward. When the merge itself
+    declines, the failure is classified by re-checking the tree: dirty means
+    git refused because local edits are in the way (not because the
+    branches diverged), and a clean tree means a genuine divergence —
+    `force` still can't be honored on a checked-out branch either way
+    (forcing a ref out from under a live index is the one destructive thing
+    this command will not do), so it only distinguishes the message, not
+    whether the write happens.
+
+    The ordering matters: an absent ref and an already-current one must behave
+    the same whether or not `target` is the current branch — creating
+    `refs/heads/<target>` while HEAD points at an unborn `target` is both
+    correct and the common case for a fresh container — so those two reach
+    `place_branch` and never the special case.
+    """
+    ref = f"refs/heads/{target}"
+    # Read twice: once here to decide the case, and again inside
+    # `place_branch`. Deliberate. The theoretical hazard is a ref created
+    # between the two reads while HEAD is on `target` — the special case below
+    # would not fire and the ladder would be asked for a moving write on the
+    # checked-out branch. Nothing here is concurrent (one process, one thread,
+    # no callbacks between the reads), and since `place_branch` grew its own
+    # checked-out refusal the ladder declines that write anyway. Passing
+    # `old_oid` down instead would put a parameter on the shared helper that
+    # only this caller could ever use.
+    old_oid = git.rev_parse(cfg.repo_root, ref)
+    moving_an_existing_ref = old_oid is not None and old_oid != new_oid
+    if moving_an_existing_ref and git.get_current_branch(cfg.repo_root) == target:
+        try:
+            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+        except git.GitError:
+            if git.host_tree_dirty(cfg.repo_root):
+                # Git declined because local modifications are in the way,
+                # not because the branches diverged.
+                status: HostPlacementStatus = "refused"
+            elif force:
+                # `force` on a checked-out branch is still refused, never
+                # performed — see the docstring.
+                status = "refused"
+            else:
+                status = "diverged"
+            return BranchPlacement(ref, status, old_oid, new_oid)
+        return BranchPlacement(ref, "checked-out-ff", old_oid, new_oid)
+
+    status, placed_old = git.place_branch(cfg.repo_root, target, new_oid, force=force)
+    return BranchPlacement(ref, status, placed_old, new_oid)
+
+
 def publish_branch_from_container(
     cfg: Config,
     incus: Incus,
@@ -1339,73 +1527,94 @@ def checkout_from_container(
     branch: str | None = None,
     as_name: str | None = None,
 ) -> CheckoutResult:
-    """Fetch + check out the container's branch on the host.
+    """Fetch + check out the container's branch on the host (ff-only).
+
+    Everything except the working-tree switch is `sync_refs_from_container`:
+    the fetch, the submodule object transport, and placing the host branch
+    (and its submodule branches) at the fetched commit. This adds the
+    checkout and the submodule *working-tree* update on top — the two used
+    to be near-identical code paths.
 
     `branch` selects what is read *from* the container; `as_name` names the
-    branch written *on the host* (default: the container's `user.jailbee.pr_branch`
-    label when set, else the container branch's own name). The two are
-    independent — `--as` never changes which ref gets fetched.
-
-    - If the branch doesn't exist on the host, create it from
-      `refs/jailbee/<short>/<branch>` and set tracking to `origin/<branch>`
-      when that remote-tracking ref exists.
-    - If the branch exists and is the current HEAD, fast-forward it.
-    - If the branch exists but isn't current, check it out then
-      fast-forward.
-    - On non-ff (divergence), raise `SyncError` pointing at `jailbee git pull`.
+    branch written *on the host* (default: the container's
+    `user.jailbee.pr_branch` label when set, else the container branch's own
+    name). The two are independent — `--as` never changes which ref gets
+    fetched. On divergence this raises `SyncError` pointing at
+    `jailbee git pull`.
 
     Returns a `CheckoutResult` so the CLI can print a post-op summary.
     """
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    # force is deliberately left at its default: a checkout must never
+    # overwrite host history the way `jailbee git pull --force` can.
+    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name)
+    target = refs.target
+    status = refs.superproject.status
 
-    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+    match status:
+        case "diverged":
+            # The host branch and the container's have genuinely diverged —
+            # a fast-forward is impossible either way, hence the pull hint.
+            raise SyncError(
+                f"Branch '{target}' on host has diverged from container. "
+                f"Use 'jailbee git pull {short}' to merge, or rebase manually."
+            )
+        case "refused":
+            # _place_host_branch's guard for HEAD's own branch: either git's
+            # own ff-only merge found local modifications it would have to
+            # overwrite, or (rarer) `force` was requested on a checked-out
+            # branch — forcing a ref out from under a live index is refused
+            # unconditionally. Neither is a divergence, and `jailbee git
+            # pull` would refuse for the very same reason, so it is not
+            # suggested here.
+            raise SyncError(
+                f"Branch '{target}' is checked out on the host and has "
+                f"uncommitted local changes that a fast-forward would have "
+                f"to overwrite. Commit or stash your changes and try again."
+            )
+        case "failed":
+            # The ref write itself was refused by git (e.g. a lost update_ref
+            # race) — not a divergence, so neither the message nor the fix
+            # is "pull to merge".
+            raise SyncError(f"Could not update '{target}' on the host to match the container.")
+        case "checked-out":
+            # place_branch's own backstop for a moving write on HEAD's own
+            # branch — unreachable in practice because _place_host_branch
+            # intercepts that case first (see above), but reachable in the
+            # type, and proceeding on it would switch onto a branch that
+            # never moved.
+            raise SyncError(
+                f"Branch '{target}' on the host did not move to the container's commit."
+            )
+        case "created" | "up-to-date" | "fast-forwarded" | "forced" | "checked-out-ff":
+            # All five leave refs/heads/<target> at new_oid: "created" and
+            # "forced" placed it directly, "up-to-date" found it already
+            # there, "fast-forwarded" moved it there, and "checked-out-ff" is
+            # _place_host_branch's own fast-forward merge when target was
+            # already HEAD's branch (so the working tree is at new_oid too).
+            pass
+        case _ as unreachable:
+            # Forces a decision here if HostPlacementStatus ever grows a new
+            # member: mypy fails this line until it is added to one of the
+            # two cases above.
+            assert_never(unreachable)
 
-    full_name = resolve_container_name(cfg, incus, short)
-    repo_dir = container_repo_dir(cfg, incus, full_name)
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    # git.place_branch's create path is a bare `update_ref`, so tracking is
+    # not part of it the way `git.create_branch(..., track=...)` used to be —
+    # restore it here, once, only for the branch this call actually created.
+    created_new = status == "created"
+    if created_new and git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, target):
+        git.set_upstream(cfg.repo_root, target, f"{cfg.upstream_remote}/{target}")
 
-    container_branch = fetch_result.branch
-    fetched_ref = f"refs/jailbee/{short}/{container_branch}"
-    target = as_name or _container_pr_branch(incus, full_name) or container_branch
-
-    if not git.local_branch_exists(cfg.repo_root, target):
-        track = (
-            f"{cfg.upstream_remote}/{target}"
-            if git.remote_ref_exists(cfg.repo_root, cfg.upstream_remote, target)
-            else None
-        )
-        git.create_branch(cfg.repo_root, target, start_point=fetched_ref, track=track)
-        head_oid = git.rev_parse(cfg.repo_root, "HEAD")
-        if head_oid is None:
-            raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
-        submodules.update_submodules_on_host(cfg.repo_root, branch=target)
-        return CheckoutResult(
-            fetch=fetch_result, branch=target, head_oid=head_oid, created_new=True
-        )
-
-    current = git.get_current_branch(cfg.repo_root)
-    if current != target:
+    if git.get_current_branch(cfg.repo_root) != target:
         git.checkout_branch(cfg.repo_root, target)
-
-    try:
-        git.merge_ref(
-            cfg.repo_root,
-            fetched_ref,
-            message=None,
-            no_ff=False,
-            ff_only=True,
-        )
-    except git.GitError as exc:
-        raise SyncError(
-            f"Branch '{target}' on host has diverged from container. "
-            f"Use 'jailbee git pull {short}' to merge, or rebase manually."
-        ) from exc
 
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
         raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
     submodules.update_submodules_on_host(cfg.repo_root, branch=target)
-    return CheckoutResult(fetch=fetch_result, branch=target, head_oid=head_oid, created_new=False)
+    return CheckoutResult(
+        fetch=refs.fetch, branch=target, head_oid=head_oid, created_new=created_new
+    )
 
 
 def checkout_submodules_on_host(
@@ -1878,8 +2087,9 @@ def push_to_container(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    namespace: str = "host",
 ) -> PushResult:
-    """Push host's `source` branch into container `short` as refs/jailbee/host/<source>.
+    """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
     Transport only — does not run merge or rebase inside the container.
     Raises `SyncError` for user-visible problems (stopped container, mount
@@ -1894,11 +2104,23 @@ def push_to_container(
     failure is reported through `PushResult.fetch_error` rather than raised.
 
     `source_ref` overrides that resolution with an exact host ref, and
-    `source` degrades to a label for the container-side `refs/jailbee/host/<source>`
-    destination. A PR head lives in jailbee's own `refs/jailbee/pr/<N>/head` (see
-    `pr.pr_head_ref`) and deliberately in no branch at all, so nothing on the
-    host is looked up or fetched — a same-named local branch, stale or ahead,
-    must not decide what a `--pr` push sends.
+    `source` degrades to a label for the container-side
+    `refs/jailbee/<namespace>/<source>` destination. A PR head lives in
+    jailbee's own `refs/jailbee/pr/<N>/head` (see `pr.pr_head_ref`) and
+    deliberately in no branch at all, so nothing on the host is looked up or
+    fetched — a same-named local branch, stale or ahead, must not decide what
+    a `--pr` push sends.
+
+    `namespace` defaults to `"host"` for a push originating on the host.
+    Task 12 passes a source container's short name (as `"from/<short>"`) when
+    relaying that container's branch instead, so the ref lands at
+    `refs/jailbee/from/<short>/<source>` rather than colliding with the
+    `refs/jailbee/host/*` namespace a real host push uses. The base-advance
+    described below — re-anchoring `refs/jailbee/base/<base>` — is skipped
+    whenever `namespace != "host"`: a same-named branch relayed from another
+    container is a different branch that happens to share a name with this
+    container's base, and must not silently change what `jailbee ls`'s AHEAD
+    column measures against.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -1948,7 +2170,7 @@ def push_to_container(
     if new_oid is None:
         raise SyncError(f"Source ref '{host_ref}' did not resolve on host.")
 
-    container_ref = f"refs/jailbee/host/{resolved_source}"
+    container_ref = f"refs/jailbee/{namespace}/{resolved_source}"
     repo_dir = container_repo_dir(cfg, incus, full_name)
     old_oid = _container_ref_oid(
         incus, full_name, repo_dir, container_ref, uid=cfg.container_user.uid
@@ -1959,9 +2181,12 @@ def push_to_container(
 
     base_label = incus.config_get(full_name, "user.jailbee.base_branch")
     base_branch = base_label if isinstance(base_label, str) and base_label else None
-    if base_branch is not None and resolved_source == base_branch:
+    if namespace == "host" and base_branch is not None and resolved_source == base_branch:
         # Pushing the container's base branch — also advance the jailbee-managed
-        # base ref so `jailbee ls` reflects the fresh base.
+        # base ref so `jailbee ls` reflects the fresh base. Restricted to a real
+        # host push: a same-named branch relayed from another container
+        # (namespace != "host") is a different branch that happens to share a
+        # name, and must not re-anchor the base.
         git.push_url_multi(
             cfg.repo_root,
             url,
@@ -1995,6 +2220,98 @@ def push_to_container(
 def _sub_merge_message(branch: str) -> str:
     """Commit message used for an auto-created submodule merge commit."""
     return f"Merge for superproject merge of '{branch}'"
+
+
+def _merge_ref_in_container(
+    incus: Incus,
+    full_name: str,
+    repo_dir: str,
+    *,
+    ref: str,
+    label: str,
+    message: str,
+    short: str,
+    uid: int,
+    ff_only: bool,
+) -> str:
+    """Merge `ref` into whatever `full_name` has checked out; return the new HEAD.
+
+    `label` is the user-facing name of what is being merged (a branch name),
+    used in the errors and in the gitlink resolver's commit. `message` is the
+    merge commit message, passed in rather than built here: a host push and a
+    cross-container merge word it differently, and threading a sentence through
+    `label` to fake that would be a lie in every error string. Ignored when
+    `ff_only`.
+
+    Shared by `push_and_merge` and `merge_container_into_container` so the
+    gitlink conflict resolver, the index-lock discrimination and the
+    `MergeConflictError` report exist once.
+
+    Raises `SyncError` on an index-lock timeout or another failed merge, and
+    `MergeConflictError` when conflicts remain after the gitlink resolver has
+    run. Only the `MergeConflictError` path guarantees the container is left
+    in merge state for manual resolution; a `SyncError` leaves it as git left
+    it, which for a plain merge failure is no merge in progress at all.
+    """
+    from jailbee.config import CONTAINER_USERNAME
+
+    merge_cmd = ["git", "-C", repo_dir, "merge"]
+    if ff_only:
+        merge_cmd.append("--ff-only")
+    else:
+        merge_cmd.extend(["-m", message])
+    merge_cmd.append(ref)
+
+    # `incus exec --user UID` doesn't derive HOME/USER/LOGNAME from
+    # /etc/passwd. Git needs HOME to find the bind-mounted ~/.gitconfig
+    # for user.name / user.email — without it, the merge commit fails
+    # with "Committer identity unknown". See _attach_shell in cli.py.
+    git_env = {
+        "HOME": f"/home/{CONTAINER_USERNAME}",
+        "USER": CONTAINER_USERNAME,
+        "LOGNAME": CONTAINER_USERNAME,
+    }
+
+    try:
+        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
+    except IncusError as exc:
+        # Checked before the merge-state probe: a lock failure is never a
+        # conflict, but `git merge` can have written MERGE_HEAD before it hit
+        # the lock, which would send an unfinished merge down the gitlink
+        # conflict resolver.
+        if _index_lock_held(exc):
+            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
+        if not _container_has_merge_in_progress(incus, full_name, repo_dir):
+            raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
+        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
+        report = submodules.resolve_gitlink_conflicts(
+            run, repo_dir, message=_sub_merge_message(label)
+        )
+        if submodules._has_unmerged(run, repo_dir):
+            raise MergeConflictError(
+                f"Merge of '{label}' in container '{short}' hit "
+                f"conflicts — see the submodule report below.",
+                report=ConflictReport(
+                    resolution=report,
+                    nongitlink=submodules._nongitlink_unmerged_paths(run, repo_dir),
+                    branch=label,
+                    location=f"jailbee shell {short}\ncd {repo_dir}",
+                ),
+            ) from exc
+        # All conflicts were gitlink pointers the resolver staged — finalize.
+        incus.exec(
+            full_name,
+            ["git", "-C", repo_dir, "commit", "--no-edit"],
+            uid=uid,
+            env=git_env,
+        )
+        # Fall through to the post-merge tail (update_submodules_in_container + head).
+
+    submodules.update_submodules_in_container(
+        incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
+    )
+
+    return _container_head_oid(incus, full_name, repo_dir, uid=uid)
 
 
 def compute_submodule_moves(
@@ -2210,7 +2527,6 @@ def push_and_merge(
 
     `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
     """
-    from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
     from jailbee.tui import warn_plain
 
@@ -2251,9 +2567,6 @@ def push_and_merge(
             # `divergence is None` is "unknown", and falls through to
             # `--ff-only` on purpose — see `_container_divergence`.
             if divergence is not None and divergence[0] > 0:
-                # Not `report`: the conflict handler below binds that name to
-                # a `GitlinkResolution`, and reusing it here made mypy read
-                # the two as one variable of two types.
                 divergence_report = _divergence_report(
                     push_result.source, container_branch, divergence[0], divergence[1]
                 )
@@ -2273,66 +2586,145 @@ def push_and_merge(
                     )
                 fast_forward_only = False
 
-    merge_cmd = ["git", "-C", repo_dir, "merge"]
-    if fast_forward_only:
-        merge_cmd.append("--ff-only")
-    else:
-        merge_cmd.extend(["-m", f"Merge '{push_result.source}' from host"])
-    merge_cmd.append(push_result.container_ref)
-
-    # `incus exec --user UID` doesn't derive HOME/USER/LOGNAME from
-    # /etc/passwd. Git needs HOME to find the bind-mounted ~/.gitconfig
-    # for user.name / user.email — without it, the merge commit fails
-    # with "Committer identity unknown". See _attach_shell in cli.py.
-    git_env = {
-        "HOME": f"/home/{CONTAINER_USERNAME}",
-        "USER": CONTAINER_USERNAME,
-        "LOGNAME": CONTAINER_USERNAME,
-    }
-
-    try:
-        _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
-    except IncusError as exc:
-        # Checked before the merge-state probe: a lock failure is never a
-        # conflict, but `git merge` can have written MERGE_HEAD before it hit
-        # the lock, which would send an unfinished merge down the gitlink
-        # conflict resolver.
-        if _index_lock_held(exc):
-            raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
-        if not _container_has_merge_in_progress(incus, full_name, repo_dir):
-            raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
-        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
-        report = submodules.resolve_gitlink_conflicts(
-            run, repo_dir, message=_sub_merge_message(push_result.source)
-        )
-        if submodules._has_unmerged(run, repo_dir):
-            raise MergeConflictError(
-                f"Merge of '{push_result.source}' in container '{short}' hit "
-                f"conflicts — see the submodule report below.",
-                report=ConflictReport(
-                    resolution=report,
-                    nongitlink=submodules._nongitlink_unmerged_paths(run, repo_dir),
-                    branch=push_result.source,
-                    location=f"jailbee shell {short}\ncd {repo_dir}",
-                ),
-            ) from exc
-        # All conflicts were gitlink pointers the resolver staged — finalize.
-        incus.exec(
-            full_name,
-            ["git", "-C", repo_dir, "commit", "--no-edit"],
-            uid=uid,
-            env=git_env,
-        )
-        # Fall through to the post-merge tail (update_submodules_in_container + head).
-
-    submodules.update_submodules_in_container(
-        incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
+    head_oid = _merge_ref_in_container(
+        incus,
+        full_name,
+        repo_dir,
+        ref=push_result.container_ref,
+        label=push_result.source,
+        message=f"Merge '{push_result.source}' from host",
+        short=short,
+        uid=uid,
+        ff_only=fast_forward_only,
     )
-
-    head_oid = _container_head_oid(incus, full_name, repo_dir, uid=uid)
     return MergeInContainerResult(
         push=push_result,
         container_branch=container_branch,
+        fast_forward_only=fast_forward_only,
+        head_oid=head_oid,
+    )
+
+
+def merge_container_into_container(
+    cfg: Config,
+    incus: Incus,
+    source_short: str,
+    target_short: str,
+    *,
+    branch: str | None = None,
+    plain: bool = False,
+) -> MergeInContainerResult:
+    """Merge container `source_short`'s branch into container `target_short`.
+
+    The host is a relay, not a party: objects travel source -> host -> target and
+    no host branch, index or superproject working tree is touched. (A host
+    *sub*-repo can still be created — `transport_submodules_to_host` clones one
+    for a submodule that was born inside the source container and the host has
+    never seen.) The merge itself runs inside the target, on whatever it has
+    checked out, so a conflict is resolved where the work is —
+    `jailbee shell <target>` — rather than on the host.
+
+    The target is preflighted (running, not mount mode, clean tree, no merge or
+    rebase already in progress) **before** any transport, so a refusal never
+    leaves half-populated `refs/jailbee/*` behind. The source needs no preflight
+    of its own: `fetch_from_container` already refuses a stopped container, a
+    missing clone and an unresolvable branch. That guarantee ends once the
+    preflight passes: a failure partway through transport (in
+    `transport_submodules_to_container` or `push_to_container`) can leave
+    objects — and possibly a newly `git init`'d, still-detached sub-repo — in
+    the target, alongside the refs already written on the host, with nothing
+    rolled back.
+
+    Two ref namespaces are in play and they are deliberately not the same
+    shape. The superproject lands in the target at
+    `refs/jailbee/from/<source>/<branch>` — the `from/` segment keeps a
+    container literally named `host` out of `refs/jailbee/host/*` (which would
+    re-arm the base-advance `push_to_container` guards against) and one named
+    `base` out of `refs/jailbee/base/*`. The submodules keep the bare
+    `refs/jailbee-sub/<source>/<path>/...` layout that
+    `submodules.transport_submodules_to_host` wrote on the host, so the relay
+    is a namespace-to-namespace copy. The host-side superproject ref read here
+    is bare as well: it is `fetch_from_container`'s own output.
+
+    `plain` stops after the transport, leaving `refs/jailbee/from/<source>/<branch>`
+    in the target for inspection. Its `MergeInContainerResult` describes a
+    transport, not a merge: `head_oid` is the target's HEAD *before* any merge
+    (unchanged by this call) and `fast_forward_only` is `False` as a sentinel
+    for "no merge was attempted" — it is not meaningful, and a caller must not
+    render fast-forward semantics from it.
+
+    Raises `SyncError` for user-visible problems and `MergeConflictError` when
+    the merge leaves conflicts.
+    """
+    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+
+    target_full = resolve_container_name(cfg, incus, target_short)
+
+    mode = incus.config_get(target_full, "user.jailbee.mode")
+    if mode == "mount":
+        raise SyncError(
+            f"container '{target_short}' is in mount mode — host and container "
+            f"share the working tree, so a merge into it is not applicable."
+        )
+    if not _container_is_running(incus, target_full):
+        raise SyncError(
+            f"Container '{target_short}' is not running. "
+            f"Start it with: jailbee start {target_short}"
+        )
+
+    target_repo_dir = container_repo_dir(cfg, incus, target_full)
+    uid = cfg.container_user.uid
+    target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
+
+    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch)
+    source_full = resolve_container_name(cfg, incus, source_short)
+    source_repo_dir = container_repo_dir(cfg, incus, source_full)
+    submodules.transport_submodules_to_host(
+        cfg, incus, source_full, source_short, repo_dir=source_repo_dir
+    )
+    sub_paths = submodules._container_submodule_paths(incus, source_full, source_repo_dir, uid=uid)
+    if sub_paths:
+        submodules.transport_submodules_to_container(
+            cfg,
+            incus,
+            target_full,
+            repo_dir=target_repo_dir,
+            source_ns=source_short,
+            paths=sub_paths,
+        )
+
+    push_result = push_to_container(
+        cfg,
+        incus,
+        target_short,
+        source=fetch_result.branch,
+        source_ref=f"refs/jailbee/{source_short}/{fetch_result.branch}",
+        namespace=f"from/{source_short}",
+    )
+
+    if plain:
+        return MergeInContainerResult(
+            push=push_result,
+            container_branch=target_branch,
+            fast_forward_only=False,
+            head_oid=_container_head_oid(incus, target_full, target_repo_dir, uid=uid),
+        )
+
+    fast_forward_only = target_branch == fetch_result.branch
+    head_oid = _merge_ref_in_container(
+        incus,
+        target_full,
+        target_repo_dir,
+        ref=push_result.container_ref,
+        label=fetch_result.branch,
+        message=f"Merge branch '{fetch_result.branch}' from container {source_short}",
+        short=target_short,
+        uid=uid,
+        ff_only=fast_forward_only,
+    )
+    return MergeInContainerResult(
+        push=push_result,
+        container_branch=target_branch,
         fast_forward_only=fast_forward_only,
         head_oid=head_oid,
     )

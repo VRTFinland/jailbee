@@ -30,7 +30,7 @@ from jailbee.git import (
 # `parse_shortstat` is imported (not reimplemented) so the host-side
 # fallback below produces byte-identical `clean` / `+N -M` / `?` strings to
 # the container-side probe — duplicating the parser is how the two would drift.
-from jailbee.git_status import GitStatus, parse_shortstat, probe_many_parallel
+from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
 from jailbee.incus import Incus, IncusError
 from jailbee.profiles import (
     _device_name_from_path,
@@ -2013,6 +2013,19 @@ def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
     return rows
 
 
+# Rich style per `git_status.merge_label` kind. Module-level because it is a
+# constant with no dependency on `ls_field_specs`' arguments — rebuilding it per
+# call bought nothing, and at function scope the `_UPPER` name (this module's
+# convention for constants, cf. `_SUBSEC_RE`) is a ruff N806 violation.
+_MERGE_KIND_STYLE: dict[str, str] = {
+    "none": "dim",
+    "ok": "dim",
+    "predicted": "red",
+    "active": "red",
+    "unknown": "yellow",
+}
+
+
 def ls_field_specs(
     *, now: datetime, all_repos: bool = False, show_submodules: bool = False
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
@@ -2059,14 +2072,9 @@ def ls_field_specs(
         return get
 
     def _conflict_cell(c: ContainerInfo) -> str:
-        if c.git_status is None:
-            return "[dim]—[/dim]"
-        v = c.git_status.conflict
-        if v == "ok":
-            return "[dim]ok[/dim]"
-        if v == "conflict":
-            return "[red]conflict[/red]"
-        return "[yellow]?[/yellow]"
+        text, kind = merge_label(c.git_status)
+        style = _MERGE_KIND_STYLE[kind]
+        return f"[{style}]{text}[/{style}]"
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -2080,6 +2088,8 @@ def ls_field_specs(
             "remote_contained": c.git_status.remote_contained,
             "local_diff": c.git_status.local_diff,
             "local_count": c.git_status.local_count,
+            "in_progress": c.git_status.in_progress,
+            "unmerged": c.git_status.unmerged,
         }
         if show_submodules:
             payload["submodules"] = [

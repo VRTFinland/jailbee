@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import git
 from jailbee.incus import IncusError
@@ -152,6 +152,34 @@ def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
     return result
 
 
+def _gitmodules_paths_at(run: GitRun, repo_dir: str, commit: str) -> list[tuple[str, str]]:
+    """`.gitmodules` entries as recorded in `commit` -> [(name, path)].
+
+    The working-tree twin of this is `_gitmodules_paths`. This one reads the
+    blob out of the object store instead, because the no-checkout placement
+    path runs while the working tree is on a different branch — which may not
+    have the same submodules, or any.
+    """
+    ok, out = run(
+        repo_dir,
+        [
+            "config",
+            "--blob",
+            f"{commit}:.gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
+    )
+    if not ok:
+        return []
+    result: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        key, _, path = line.strip().partition(" ")
+        if key.startswith("submodule.") and key.endswith(".path") and path:
+            result.append((key[len("submodule.") : -len(".path")], path))
+    return result
+
+
 def _gitmodules_branch(run: GitRun, top_dir: str, name: str) -> str | None:
     """Return `submodule.<name>.branch` from `top_dir/.gitmodules`, or None."""
     ok, out = run(top_dir, ["config", "-f", f"{top_dir}/.gitmodules", f"submodule.{name}.branch"])
@@ -265,6 +293,95 @@ def _gitlink_at(run: GitRun, repo_dir: str, commit: str, path: str) -> str | Non
     if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
         return parts[2]
     return None
+
+
+PlacementStatus = git.PlaceStatus | Literal["unreachable"]
+"""What happened to one submodule's `refs/heads/<branch>`.
+
+`git.PlaceStatus`'s seven outcomes plus the one only a submodule can have:
+`"unreachable"`, a sub-repo that is not on disk at all. Composed rather than
+restated, so the vocabularies cannot drift apart.
+
+`"checked-out"` is reachable here and matters: host submodules are *not*
+always detached — `update_submodules_on_host` deliberately puts them on
+`<branch>` — so a sub-repo already sitting on the target branch is a normal
+state, and one this module reports rather than writes.
+"""
+
+
+@dataclass(frozen=True)
+class SubBranchPlacement:
+    """What happened to one submodule's `refs/heads/<branch>`."""
+
+    path: str  # top-relative, e.g. "mid/inner"
+    status: PlacementStatus
+    old_oid: str | None
+    new_oid: str
+
+
+def place_branches_from_commit(
+    repo_root: Path, commit: str, branch: str, *, force: bool = False
+) -> list[SubBranchPlacement]:
+    """Point every submodule's `refs/heads/<branch>` at the gitlink `commit` records.
+
+    Ref writes only: no submodule HEAD, index or working tree is touched. The
+    guarantee is about **both** repos, and each half is load-bearing:
+
+    * *The superproject* need not be checked out on `branch`, or on anything —
+      the gitlinks come from `commit`'s trees (`_gitlink_at`) and `.gitmodules`
+      from `commit`'s blob (`_gitmodules_paths_at`), never from the working
+      tree. That is the whole reason this exists:
+      `update_submodules_on_host` needs the superproject checked out and reads
+      each submodule's *current HEAD* as the gitlink, and both assumptions are
+      exactly what the no-checkout caller (a host branch placed from a
+      container fetch, without moving the working tree) lacks.
+    * *A sub-repo* keeps its own HEAD, index and working tree. Host submodules
+      are frequently sitting on a branch rather than detached —
+      `update_submodules_on_host` puts them there — so a sub-repo already
+      checked out on `branch` is a normal state, and `git.place_branch`
+      refuses to move the ref under it: the outcome is reported as
+      `"checked-out"`, not written and not merged. Advancing it would need a
+      checkout's worth of index and tree work, which this function is defined
+      not to do.
+
+    Fast-forward otherwise; `force` overwrites a diverged branch (but never a
+    checked-out one). A sub-repo that is not there on disk is reported as
+    `"unreachable"` rather than skipped — a silent skip is what made an
+    earlier nested-submodule report misdescribe a missing checkout as
+    "detached".
+    """
+    out: list[SubBranchPlacement] = []
+
+    def walk(repo_dir: Path, at_commit: str, prefix: str) -> None:
+        for _name, path in _gitmodules_paths_at(git.run_capture, str(repo_dir), at_commit):
+            display = f"{prefix}{path}"
+            sub_dir = repo_dir / path
+            sha = _gitlink_at(git.run_capture, str(repo_dir), at_commit, path)
+            if sha is None:
+                out.append(SubBranchPlacement(display, "failed", None, ""))
+                continue
+            if not (sub_dir / ".git").exists():
+                out.append(SubBranchPlacement(display, "unreachable", None, sha))
+                continue
+            out.append(_place_ref(sub_dir, display, branch, sha, force=force))
+            walk(sub_dir, sha, f"{display}/")
+
+    walk(Path(repo_root), commit, "")
+    return out
+
+
+def _place_ref(
+    repo_dir: Path, display: str, branch: str, new_oid: str, *, force: bool
+) -> SubBranchPlacement:
+    """One fast-forward-or-report ref write, labelled with the submodule's path.
+
+    The ladder itself lives in `git.place_branch` — it is identical for the
+    superproject (`sync._place_host_branch`) and every submodule, and one
+    drifted copy of "may I move this ref?" loses commits. All this adds is the
+    display path the report is keyed by.
+    """
+    status, old_oid = git.place_branch(repo_dir, branch, new_oid, force=force)
+    return SubBranchPlacement(display, status, old_oid, new_oid)
 
 
 def _detect_submodule_default(run: GitRun, parent_dir: str, sub: str, name: str) -> str:
@@ -993,16 +1110,41 @@ def _create_container_subrepo(
 
 
 def transport_submodules_to_container(
-    cfg: Config, incus: Incus, container: str, *, repo_dir: str
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    repo_dir: str,
+    source_ns: str = "host",
+    paths: list[str] | None = None,
 ) -> None:
-    """Push each host submodule's objects into the matching container sub-repo.
+    """Push submodule objects into `container`'s matching sub-repos.
 
-    Enumerates submodule paths on the host (sender). For a submodule added on
-    the host the container has no repo for, creates one first (mirror of
-    `transport_submodules_to_host`'s clone-from-container fallback) and leaves
-    it on the pushed tip: `git receive-pack` needs the repo to exist, and the
-    later `submodule update --init` needs a current revision in it — an unborn
-    HEAD fails with "Unable to find current revision in submodule path".
+    `source_ns` names whose objects these are, and becomes the
+    `refs/jailbee-sub/<source_ns>/<path>/...` namespace inside the target sub-repo.
+    The default `"host"` keeps the original behaviour: the host working tree's
+    own submodules, enumerated from `git.submodule_status_paths` when `paths`
+    is not given, pushed from their `HEAD` and `refs/heads/*`.
+
+    A non-host `source_ns` relays another container's work instead. Those
+    objects were fetched into the host sub-repos under
+    `refs/jailbee-sub/<source_ns>/<path>/*` by `transport_submodules_to_host`
+    and live in *neither* default refspec, so the refspecs become
+    namespace-to-namespace copies of that ref tree. `paths` must then be the
+    source container's submodule paths — the host working tree may not have
+    the same ones, or any, so host enumeration is skipped whenever `paths` is
+    given explicitly.
+
+    For a submodule the target container has no repo for yet, creates one
+    first (mirror of `transport_submodules_to_host`'s clone-from-container
+    fallback) and checks out the pushed tip: `git receive-pack` needs the repo
+    to exist, and the later `submodule update --init` needs a current
+    revision in it — an unborn HEAD fails with "Unable to find current
+    revision in submodule path". The checkout target is always the ref that
+    was just pushed under this call's own `source_ns`, never a hardcoded
+    `host` — a relay's target sub-repo only ever receives
+    `refs/jailbee-sub/<source_ns>/...`, so checking out `.../host/...` there
+    would reference a ref that was never pushed.
 
     An *existing* container sub-repo is only pushed into: it may hold the
     user's own in-container work, so its HEAD and working tree stay untouched.
@@ -1010,7 +1152,8 @@ def transport_submodules_to_container(
     """
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
-    for path in git.submodule_status_paths(repo_root):
+    sub_paths = paths if paths is not None else git.submodule_status_paths(repo_root)
+    for path in sub_paths:
         url = _sub_receive_pack_url(cfg, container, repo_dir, path)
         sub_dir = f"{repo_dir}/{path}"
         created = not _container_subrepo_exists(incus, container, repo_dir, path, uid=uid)
@@ -1023,14 +1166,16 @@ def transport_submodules_to_container(
                 uid=uid,
                 gid=cfg.container_user.gid,
             )
-        git.push_url_multi(
-            repo_root / path,
-            url,
-            [
-                f"+HEAD:refs/jailbee-sub/host/{path}/HEAD",
-                f"+refs/heads/*:refs/jailbee-sub/host/{path}/heads/*",
-            ],
-        )
+        ns = f"refs/jailbee-sub/{source_ns}/{path}"
+        head_ref = f"{ns}/HEAD"
+        if source_ns == "host":
+            refspecs = [
+                f"+HEAD:{head_ref}",
+                f"+refs/heads/*:{ns}/heads/*",
+            ]
+        else:
+            refspecs = [f"+{ns}/HEAD:{head_ref}", f"+{ns}/heads/*:{ns}/heads/*"]
+        git.push_url_multi(repo_root / path, url, refspecs)
         if created:
             incus.exec(
                 container,
@@ -1040,7 +1185,7 @@ def transport_submodules_to_container(
                     sub_dir,
                     "checkout",
                     "--detach",
-                    f"refs/jailbee-sub/host/{path}/HEAD",
+                    head_ref,
                 ],
                 uid=uid,
                 gid=cfg.container_user.gid,

@@ -1171,6 +1171,8 @@ def test_ls_fields_filters_columns_and_supports_git_status_nested(mocker, tmp_pa
                 "remote_contained": None,
                 "local_diff": "?",
                 "local_count": "?",
+                "in_progress": "?",
+                "unmerged": None,
             },
         }
     ]
@@ -3164,8 +3166,13 @@ def test_cli_config_show_agents_claude_keeps_subclass_fields_no_top_level_claude
     assert "install_jailbee_skills: true" in stripped_lines
 
 
-def test_cli_fetch_invokes_sync(mocker, tmp_path):
-    from jailbee.sync import FetchResult
+def test_cli_fetch_invokes_sync_refs_from_container(mocker, tmp_path):
+    """`fetch()` delegates to `sync.sync_refs_from_container` (Task 8), not the
+    older `sync.fetch_from_container` this test mocked before — repointed per
+    review finding 2 (2026-09-06-git-operations-plan task-8 fix round 1) so it
+    no longer falls through to real, unmocked `subprocess` calls.
+    """
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
 
     runner = CliRunner()
 
@@ -3178,21 +3185,28 @@ def test_cli_fetch_invokes_sync(mocker, tmp_path):
         return_value=(mocker.MagicMock(), "sampleapp-feat-foo"),
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
-    mock_fetch = mocker.patch(
-        "jailbee.sync.fetch_from_container",
-        return_value=FetchResult(
-            branch="feat/foo",
-            old_oid="abc1234aa",
-            new_oid="def5678bb",
-            base_oid="abc1234aa",
-            commits_added=2,
+    mock_sync_refs = mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=SyncRefsResult(
+            fetch=FetchResult(
+                branch="feat/foo",
+                old_oid="abc1234aa",
+                new_oid="def5678bb",
+                base_oid="abc1234aa",
+                commits_added=2,
+            ),
+            target="feat/foo",
+            superproject=BranchPlacement(
+                "refs/heads/feat/foo", "up-to-date", "abc1234aa", "abc1234aa"
+            ),
+            submodules=(),
         ),
     )
     mocker.patch("jailbee.git.log_oneline", return_value=["def5678 fix"])
 
     result = runner.invoke(app, ["git", "fetch", "feat-foo"])
     assert result.exit_code == 0, result.output
-    mock_fetch.assert_called_once()
+    mock_sync_refs.assert_called_once()
     assert "feat/foo" in result.output
     assert "2 new commits" in result.output
 
@@ -3344,6 +3358,195 @@ def test_cli_fetch_git_error_exits_1(mocker, tmp_path):
 
     assert result.exit_code == 1
     assert "exit 128" in result.output
+
+
+def _fetch_setup(mocker, tmp_path):
+    """cfg/incus/short-name mocks, mirroring `_setup` in tests/test_cli_pr.py.
+
+    Also mocks `git.log_oneline`: `_print_fetch_summary` calls it for real
+    on `commits_added > 0`, and `_sync_refs_result`'s default FetchResult
+    (`commits_added=1`) takes that branch — left unmocked, it would shell
+    out to a real (harmless but real) `git log` against `tmp_path`, which
+    isn't a repo.
+    """
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "sampleapp"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    incus_mock = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        return_value=(incus_mock, "sampleapp-feat-foo"),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    mocker.patch("jailbee.git.log_oneline", return_value=["newsha1 fix"])
+    return cfg_mock, incus_mock
+
+
+def _sync_refs_result(status: str = "created", submodules: tuple = ()):
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
+
+    return SyncRefsResult(
+        fetch=FetchResult(
+            branch="feat/foo",
+            old_oid=None,
+            new_oid="newsha1234567",
+            base_oid=None,
+            commits_added=1,
+        ),
+        target="feat/foo",
+        superproject=BranchPlacement("refs/heads/feat/foo", status, None, "newsha1234567"),
+        submodules=submodules,
+    )
+
+
+def test_git_fetch_calls_sync_refs_and_prints_the_branch(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    called = mocker.patch("jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result())
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["force"] is False
+    assert called.call_args.kwargs["as_name"] is None
+    assert "refs/heads/feat/foo" in result.output
+
+
+def test_git_fetch_forwards_as_and_force(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    called = mocker.patch("jailbee.sync.sync_refs_from_container", return_value=_sync_refs_result())
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo", "--as", "alt", "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["as_name"] == "alt"
+    assert called.call_args.kwargs["force"] is True
+
+
+def test_git_fetch_warns_on_a_diverged_branch_but_exits_zero(mocker, tmp_path):
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(status="diverged"),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    # A fetch that imported every ref must not fail just because one branch
+    # could not be advanced.
+    assert result.exit_code == 0, result.output
+    assert "diverged" in result.output
+    # The hint must name the *container*, not just the word "diverged" —
+    # `jailbee git pull` needs a target to be useful.
+    assert "feat-foo" in result.output
+
+
+def test_git_fetch_warns_on_refused_without_suggesting_force(mocker, tmp_path):
+    """A checked-out branch with local changes: --force cannot help here
+    (forcing a ref out from under a live index is refused unconditionally),
+    so the remedy must not mention it.
+    """
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(status="refused"),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "uncommitted local changes" in result.output
+    assert "--force" not in result.output
+
+
+def test_git_fetch_reports_submodule_placements(mocker, tmp_path):
+    """Exercises the submodule half of the printer: a normal advance (info)
+    and a loud failure status (warn_plain), both in the same report.
+    """
+    from jailbee.submodules import SubBranchPlacement
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(
+            submodules=(
+                SubBranchPlacement("sub", "fast-forwarded", "oldsub12", "newsub123"),
+                SubBranchPlacement("other", "unreachable", None, "newsub456"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "sub" in result.output
+    assert "fast-forwarded" in result.output
+    assert "other" in result.output
+    assert "unreachable" in result.output
+
+
+def test_git_fetch_quiet_success_survives_bracketed_submodule_path(mocker, tmp_path):
+    """`SubBranchPlacement.path` is a bare filesystem path with no git
+    ref-format restriction, so a submodule directory can legitimately be
+    named e.g. `vendor[legacy]`. On a quiet-success status (not loud), the
+    placement report must render that bracketed text verbatim rather than
+    having it silently deleted by Rich markup parsing — the same hazard
+    `warn_plain` already guards against on the loud branches, now guarded on
+    the info branches by `info_plain` (review finding 1, fix round 1).
+    """
+    from jailbee.submodules import SubBranchPlacement
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=_sync_refs_result(
+            submodules=(
+                SubBranchPlacement("vendor[legacy]", "fast-forwarded", "oldsub12", "newsub123"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "vendor[legacy]" in result.output
+
+
+def test_git_fetch_summary_survives_bracketed_branch_name(mocker, tmp_path):
+    """`_print_fetch_summary`'s `ref` embeds the fetched branch name verbatim,
+    with no git ref-format restriction against square brackets — a branch
+    named `feat/[wip]` is legal. Before this fix the summary line went
+    through `info` (Rich markup on), so `[wip]` was read as a style tag and
+    silently deleted; it must now survive via `info_plain` the same way
+    `_print_placement_report` already protects `SubBranchPlacement.path`.
+    """
+    from jailbee.sync import BranchPlacement, FetchResult, SyncRefsResult
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=SyncRefsResult(
+            fetch=FetchResult(
+                branch="feat/[wip]",
+                old_oid=None,
+                new_oid="newsha1234567",
+                base_oid=None,
+                commits_added=1,
+            ),
+            target="feat/[wip]",
+            superproject=BranchPlacement("refs/heads/feat/[wip]", "created", None, "newsha1234567"),
+            submodules=(),
+        ),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    # The full fetch-summary line, not just the substring "feat/[wip]" — that
+    # substring also appears (unbracketed hazard notwithstanding) in the
+    # placement report's superproject line below it, which already goes
+    # through `info_plain` and would mask a regression in the summary alone.
+    assert "refs/jailbee/feat-foo/feat/[wip]: fetched 1 commit(s)." in result.output
 
 
 def test_cli_pull_invokes_sync(mocker, tmp_path):
@@ -4428,6 +4631,8 @@ def test_ls_merge_conflict_in_git_status_json(tmp_path, mocker):
                 "remote_contained": None,
                 "local_diff": "?",
                 "local_count": "?",
+                "in_progress": "?",
+                "unmerged": None,
             },
         }
     ]

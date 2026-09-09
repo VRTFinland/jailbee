@@ -9,6 +9,7 @@ from jailbee.git_status import (
     SubmoduleChange,
     _parse_submodules,
     _shortstat_ints,
+    merge_label,
     parse_shortstat,
     probe_container_git,
 )
@@ -479,7 +480,7 @@ def test_probe_four_field_output_yields_no_submodules(mocker):
 
 
 def _payload(*fields: str) -> str:
-    """Ten NUL-terminated probe fields, in wire order."""
+    """NUL-terminated probe fields, in wire order."""
     return "".join(f"{f}\x00" for f in fields)
 
 
@@ -634,3 +635,118 @@ def test_probe_does_not_take_the_git_index_lock(mocker):
     )
     env = incus.exec.call_args.kwargs.get("env") or {}
     assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+def test_probe_reports_in_progress_merge_and_unmerged_count(mocker):
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    # 12 fields: wt, ahead, count, conflict, sub_committed, sub_wt,
+    # head_sha, remote_contained, local_diff, local_count, in_progress, unmerged
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "3"
+    )
+    status = probe_container_git(incus, "c", "/repo", "main", "main")
+    assert status.in_progress == "merge"
+    assert status.unmerged == 3
+    # The prediction field is untouched by the new ones.
+    assert status.conflict == "ok"
+
+
+def test_probe_in_progress_is_unknown_on_a_ten_field_payload(mocker):
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload("", "", "0", "ok", "", "", "abc123", "0", "?", "?")
+    status = probe_container_git(incus, "c", "/repo", "main", "main")
+    assert status.in_progress == "?"
+    assert status.unmerged is None
+
+
+def test_probe_in_progress_unrecognised_value_degrades_to_unknown(mocker):
+    """A 12-field payload can still carry a value outside the known set
+
+    (e.g. a future git op, or the shell computing something unexpected);
+    the parser must reject it rather than pass it through unvalidated.
+    """
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "bisect", "0"
+    )
+    status = probe_container_git(incus, "c", "/repo", "main", "main")
+    assert status.in_progress == "?"
+
+
+def test_probe_unmerged_non_numeric_or_sentinel_is_none(mocker):
+    from jailbee.git_status import probe_container_git
+
+    incus = mocker.Mock()
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "abc"
+    )
+    assert probe_container_git(incus, "c", "/repo", "main", "main").unmerged is None
+
+    incus.exec.return_value = _payload(
+        "", "", "0", "ok", "", "", "abc123", "0", "?", "?", "merge", "?"
+    )
+    assert probe_container_git(incus, "c", "/repo", "main", "main").unmerged is None
+
+
+def test_probe_snippet_resolves_git_dir_instead_of_testing_dot_git():
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    # `.git` is a file in a linked worktree or a submodule, so the
+    # in-progress detection must go through `git rev-parse --git-dir`.
+    assert "rev-parse --git-dir" in _PROBE_SNIPPET
+    assert "$GIT_DIR/rebase-merge" in _PROBE_SNIPPET
+    assert "git ls-files --unmerged" in _PROBE_SNIPPET
+
+
+def test_probe_snippet_checks_rebase_before_merge():
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    # A conflicted `git rebase --merge` writes MERGE_HEAD too, so testing
+    # MERGE_HEAD first would report "merging" for a rebase.
+    assert _PROBE_SNIPPET.index("rebase-merge") < _PROBE_SNIPPET.index("MERGE_HEAD")
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (None, ("—", "none")),
+        (GitStatus("clean", "clean", "0", "ok"), ("ok", "ok")),
+        (GitStatus("clean", "clean", "0", "conflict"), ("conflict", "predicted")),
+        (GitStatus("clean", "clean", "0", "?"), ("?", "unknown")),
+        # An unresolved merge in the tree outranks the prediction, even when
+        # the prediction against base is clean — this is the reported bug.
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="merge", unmerged=2),
+            ("conflict!", "active"),
+        ),
+        # Merge started, conflicts already resolved, commit still pending.
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="merge", unmerged=0),
+            ("merging", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="rebase", unmerged=0),
+            ("rebasing", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="cherry-pick", unmerged=0),
+            ("cherry-picking", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "ok", in_progress="revert", unmerged=0),
+            ("reverting", "active"),
+        ),
+        (
+            GitStatus("clean", "clean", "0", "conflict", in_progress="", unmerged=0),
+            ("conflict", "predicted"),
+        ),
+    ],
+)
+def test_merge_label(status, expected):
+    assert merge_label(status) == expected

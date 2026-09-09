@@ -517,6 +517,91 @@ def test_transport_to_container_never_touches_an_existing_subrepo(mocker, tmp_pa
     push.assert_called_once()
 
 
+def test_transport_to_container_defaults_to_the_host_namespace(mocker, tmp_path):
+    """Default `source_ns="host"` must keep the original refspecs — the fix
+    for the relay case must not silently invert the common case.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["sub"])
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(cfg, incus, "c", repo_dir="/repo")
+
+    refspecs = push.call_args[0][2]
+    assert "+HEAD:refs/jailbee-sub/host/sub/HEAD" in refspecs
+    assert "+refs/heads/*:refs/jailbee-sub/host/sub/heads/*" in refspecs
+
+
+def test_transport_to_container_relays_another_containers_refs(mocker, tmp_path):
+    """A relay (non-host `source_ns`) must push the namespace the objects were
+    actually fetched into by `transport_submodules_to_host` — not the host
+    sub-repo's own HEAD/branches, which may not even be on the same commit.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    refspecs = push.call_args[0][2]
+    # The objects fetched from c1 live under refs/jailbee-sub/c1/*, so THOSE
+    # are what must travel — not the host sub-repo's own branches.
+    assert refspecs == [
+        "+refs/jailbee-sub/c1/sub/HEAD:refs/jailbee-sub/c1/sub/HEAD",
+        "+refs/jailbee-sub/c1/sub/heads/*:refs/jailbee-sub/c1/sub/heads/*",
+    ]
+
+
+def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocker, tmp_path):
+    """`paths` is the source container's own submodule set (Task 12's caller) —
+    the host working tree may not have the same submodules, or any, so passing
+    `paths` must bypass `git.submodule_status_paths` entirely.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    enumerate_host = mocker.patch("jailbee.submodules.git.submodule_status_paths")
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    enumerate_host.assert_not_called()
+
+
+def test_transport_to_container_relay_created_subrepo_checks_out_source_namespace(mocker, tmp_path):
+    """R18: when the target has no sub-repo yet, the checkout after the push
+    must detach at the ref namespace that was just pushed — `refs/jailbee-sub/
+    <source_ns>/<path>/HEAD` — never a hardcoded `host`. On a relay, only
+    `refs/jailbee-sub/<source_ns>/...` was ever pushed into the fresh
+    container sub-repo; a `host`-hardcoded checkout there references a ref
+    that was never written and `_create_container_subrepo` exists precisely to
+    serve this missing-sub-repo case.
+    """
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=False)
+    # Avoid the real _submodule_upstream_url -> git.detect_upstream_remote /
+    # git.get_remote_url path, which would shell out for real against a
+    # tmp_path sub-directory that doesn't exist as a git repo (R5).
+    mocker.patch("jailbee.submodules._submodule_upstream_url", return_value=None)
+    mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+    )
+
+    checkout_call = next(c for c in incus.exec.call_args_list if "checkout" in c.args[1])
+    assert checkout_call.args[1][-1] == "refs/jailbee-sub/c1/sub/HEAD"
+    assert "host" not in checkout_call.args[1][-1]
+
+
 def test_prune_host_submodule_refs_deletes_each(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
@@ -1660,3 +1745,201 @@ def test_repoint_removal_failure_is_cosmetic(mocker, tmp_path):
     submodules._repoint_cloned_subrepo(incus, "c", "/repo", "libs/new", tmp_path, uid=1000)
 
     warn.assert_called_once()
+
+
+def _one_level_gitmodules(top_dir, entries):
+    """side_effect for `_gitmodules_paths_at`: `entries` only at `top_dir`
+    itself, `[]` everywhere below it. Without this, an unconditional
+    `return_value` makes the placement routine recurse into the fake
+    sub-repo it just placed and "discover" the same submodule again —
+    the mocked directory has a `.git` (so the recursion isn't stopped by
+    the on-disk check), so it needs the mock itself to stop the walk at
+    the depth the test expects.
+    """
+
+    def side_effect(run, repo_dir, commit):
+        return entries if str(repo_dir) == str(top_dir) else []
+
+    return side_effect
+
+
+def test_place_branches_from_commit_creates_a_missing_branch(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value=None)  # branch absent
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert [(p.path, p.status) for p in result] == [("sub", "created")]
+    update.assert_called_once_with(tmp_path / "sub", "refs/heads/x", "subsha", old_oid=None)
+
+
+def test_place_branches_from_commit_reports_divergence_without_writing(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    # Detached sub-repo, so the placement is not refused for being checked out.
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
+    # old is NOT an ancestor of new
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert result[0].status == "diverged"
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_forces_over_divergence(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="othersha")
+    mocker.patch("jailbee.git.get_current_branch", return_value=None)
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x", force=True)
+
+    assert result[0].status == "forced"
+    update.assert_called_once_with(tmp_path / "sub", "refs/heads/x", "subsha", old_oid=None)
+
+
+def test_place_branches_from_commit_refuses_a_subrepo_on_the_target_branch(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="oldsha")
+    # Host submodules are routinely ON the branch, not detached:
+    # `update_submodules_on_host` puts them there, which is what
+    # `jailbee branch <x>` does before a fetch refreshes the same branch.
+    mocker.patch("jailbee.git.get_current_branch", return_value="x")
+    # A clean fast-forward, and still refused.
+    run_capture = mocker.patch("jailbee.git.run_capture", return_value=(True, ""))
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    # Reported, not written: moving the ref would leave the sub-repo's index
+    # and working tree describing `oldsha`, and this function is defined never
+    # to touch a submodule's HEAD, index or working tree — so it cannot fix
+    # that up the way a checkout would.
+    assert [(p.path, p.status, p.old_oid) for p in result] == [("sub", "checked-out", "oldsha")]
+    update.assert_not_called()
+    run_capture.assert_not_called()
+
+
+def test_place_branches_from_commit_refuses_a_checked_out_subrepo_under_force(mocker, tmp_path):
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths_at",
+        side_effect=_one_level_gitmodules(tmp_path, [("sub", "sub")]),
+    )
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    mocker.patch("jailbee.git.rev_parse", return_value="oldsha")
+    mocker.patch("jailbee.git.get_current_branch", return_value="x")
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    update = mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x", force=True)
+
+    # `--force` buys past divergence, not past a live index.
+    assert result[0].status == "checked-out"
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_reports_a_missing_subrepo_loudly(mocker, tmp_path):
+    # No tmp_path/"sub" directory at all.
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", return_value=[("sub", "sub")])
+    # _gitlink_at is called BEFORE the .git existence check (it reads the
+    # superproject's object store, not the sub-repo's) so it must be mocked
+    # here even though the sub-repo itself never exists — otherwise it would
+    # shell out to real git in tmp_path and return None, producing "failed"
+    # instead of the "unreachable" this test asserts.
+    mocker.patch("jailbee.submodules._gitlink_at", return_value="subsha")
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    # NOT skipped silently: the 2026-09-05 design's §D lesson.
+    assert result[0].status == "unreachable"
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_reports_a_missing_gitlink_as_failed(mocker, tmp_path):
+    """`_gitlink_at` returning None (the fetched commit does not record a
+    gitlink for this submodule) must be reported as "failed", same as a
+    refused `update-ref` — see `_placement_remedy`, which describes both
+    with one sentence ("the ref write was refused"), even though this path
+    never reaches `update_ref` at all.
+    """
+    (tmp_path / "sub" / ".git").mkdir(parents=True)
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", return_value=[("sub", "sub")])
+    mocker.patch("jailbee.submodules._gitlink_at", return_value=None)
+    update = mocker.patch("jailbee.git.update_ref")
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert result[0].status == "failed"
+    assert result[0].new_oid == ""
+    update.assert_not_called()
+
+
+def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_path):
+    (tmp_path / "mid" / ".git").mkdir(parents=True)
+    (tmp_path / "mid" / "inner" / ".git").mkdir(parents=True)
+
+    calls: list[tuple[str, str]] = []
+
+    def paths_at(run, repo_dir, commit):
+        # Real call shape is (run, repo_dir, commit). Keyed on (repo_dir,
+        # commit) together, not repo_dir alone: the nested call MUST read
+        # "mid"'s `.gitmodules` at "midsha" — the gitlink sha `_gitlink_at`
+        # recorded for "mid" — not at the top-level commit "topsha". A walk
+        # that recurses with the wrong commit (e.g. re-passing `at_commit`
+        # instead of the gitlink `sha`) would ask for ("mid", "topsha"),
+        # which is absent here and returns [], silently truncating the
+        # recursion instead of erroring.
+        calls.append((str(repo_dir), commit))
+        if str(repo_dir) == str(tmp_path) and commit == "topsha":
+            return [("mid", "mid")]
+        if str(repo_dir) == str(tmp_path / "mid") and commit == "midsha":
+            return [("inner", "inner")]
+        return []
+
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=paths_at)
+    mocker.patch(
+        "jailbee.submodules._gitlink_at",
+        side_effect=lambda run, repo_dir, commit, path: f"{path}sha",
+    )
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.git.update_ref", return_value=True)
+
+    result = submodules.place_branches_from_commit(tmp_path, "topsha", "x")
+
+    assert [p.path for p in result] == ["mid", "mid/inner"]
+    # The nested lookup must have used the gitlink sha ("midsha"), not the
+    # commit it was walked from.
+    assert (str(tmp_path / "mid"), "midsha") in calls
+
+
+def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
+    run = mocker.MagicMock(return_value=(True, "submodule.sub.path sub\n"))
+    assert submodules._gitmodules_paths_at(run, "/repo", "deadbeef") == [("sub", "sub")]
+    args = run.call_args[0][1]
+    assert args[:3] == ["config", "--blob", "deadbeef:.gitmodules"]

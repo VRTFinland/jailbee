@@ -26,6 +26,7 @@ from jailbee.tui import (
     error,
     error_plain,
     info,
+    info_plain,
     success,
     success_plain,
     warn,
@@ -2322,9 +2323,11 @@ if TYPE_CHECKING:
         BridgePlan,
         FetchResult,
         LocalBranchUpdate,
+        MergeInContainerResult,
         PublishResult,
         PushResult,
         SourcePref,
+        SyncRefsResult,
     )
     from jailbee.tui import ConfirmFn
 
@@ -2483,33 +2486,106 @@ def _resolve_attachable(
 
 
 def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> None:
-    """Print the same summary `jailbee git fetch` prints, reused by checkout/pull."""
+    """Print the same summary `jailbee git fetch` prints, reused by checkout/pull.
+
+    Every line here embeds a ref (which embeds the branch name) or a commit
+    subject — both arbitrary, uncontrolled text — so all of it goes through
+    `info_plain`, not `info`: Rich's markup parser silently deletes bracketed
+    content, so a branch named `feat/[wip]` (or a commit subject containing
+    `[...]`) would otherwise render with the bracketed part gone.
+    """
     from jailbee import git as git_helpers
 
     ref = f"refs/jailbee/{short}/{result.branch}"
     if result.commits_added == 0:
-        info(f"{ref}: already up to date ({result.new_oid[:7]}).")
+        info_plain(f"{ref}: already up to date ({result.new_oid[:7]}).")
         return
 
     if result.old_oid is None:
         if result.base_oid is not None:
-            info(
+            info_plain(
                 f"{ref}: new ref at {result.new_oid[:7]} "
                 f"({result.commits_added} commit(s) ahead of HEAD)."
             )
             range_spec = f"{result.base_oid}..{result.new_oid}"
         else:
-            info(f"{ref}: fetched {result.commits_added} commit(s).")
+            info_plain(f"{ref}: fetched {result.commits_added} commit(s).")
             range_spec = result.new_oid
     else:
-        info(
+        info_plain(
             f"{ref}: {result.old_oid[:7]}..{result.new_oid[:7]} "
             f"({result.commits_added} new commits)"
         )
         range_spec = f"{result.old_oid}..{result.new_oid}"
 
     for line in git_helpers.log_oneline(cfg.repo_root, range_spec):
-        info(f"  {line}")
+        info_plain(f"  {line}")
+
+
+def _placement_remedy(status: str, *, name: str, short: str) -> str:
+    """The one remedy line for a placement failure — see `sync.HostPlacementStatus`
+    and `submodules.PlacementStatus`.
+
+    Each status gets its own sentence on purpose (Task 7 split
+    `checkout_from_container`'s errors the same way): "diverged" and "refused"
+    are both non-fast-forwards but need opposite advice (merge vs. commit/stash),
+    and neither "checked-out" nor "refused" may suggest `--force` — it is
+    refused on the checked-out branch by design, and does not apply to a
+    submodule sitting on the target branch at all.
+    """
+    if status == "diverged":
+        return (
+            f"{name}: diverged from the container — left alone. "
+            f"Use 'jailbee git pull {short}' to merge."
+        )
+    if status == "refused":
+        return (
+            f"{name}: uncommitted local changes are in the way — "
+            f"commit or stash them and try again."
+        )
+    if status == "checked-out":
+        return f"{name}: not moved — that branch is checked out there."
+    if status == "unreachable":
+        return f"{name}: unreachable — the sub-repo is not on disk."
+    # "failed": the ref write itself was refused (e.g. a lost update-ref race,
+    # or the gitlink commit could not be read from the fetched tree).
+    return (
+        f"{name}: failed — the ref write was refused (or the fetched commit has no gitlink for it)."
+    )
+
+
+def _print_placement_report(result: "SyncRefsResult", short: str) -> None:
+    """Report what `jailbee git fetch` did to the host branch and every submodule.
+
+    `"up-to-date"` needs no line — nothing moved, nothing to explain. Every
+    other quiet status ("created", "fast-forwarded", "forced",
+    "checked-out-ff") gets one plain info line. Three failure statuses
+    ("diverged", "checked-out", "failed") are common to both vocabularies;
+    "refused" is host-only and "unreachable" is submodule-only. All five are
+    loud: each gets its own remedy from `_placement_remedy`, given via
+    `warn_plain` rather than `warn` — a branch or submodule path can
+    legitimately contain square brackets (`feat/[wip]`), which `warn`'s Rich
+    markup parsing would silently delete. The quiet-success lines use
+    `info_plain` for the same reason: `SubBranchPlacement.path` is a
+    filesystem path with no git ref-format restriction, so a submodule
+    directory named `vendor[legacy]` would otherwise be silently truncated
+    by `info`'s markup parsing.
+    """
+    quiet = {"up-to-date"}
+    loud = {"diverged", "refused", "checked-out", "failed", "unreachable"}
+
+    sup = result.superproject
+    if sup.status in loud:
+        warn_plain(_placement_remedy(sup.status, name=sup.name, short=short))
+    elif sup.status not in quiet:
+        info_plain(f"{sup.name}: {sup.status} → {sup.new_oid[:7]}")
+
+    for sub in result.submodules:
+        label = f"submodule '{sub.path}'"
+        if sub.status in loud:
+            warn_plain(_placement_remedy(sub.status, name=label, short=short))
+        elif sub.status not in quiet:
+            info_plain(f"{label}: {sub.status} → {sub.new_oid[:7]}")
 
 
 def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult") -> None:
@@ -3223,17 +3299,42 @@ def fetch(
         str | None,
         typer.Option("--branch", "-b", help="Override branch detection"),
     ] = None,
+    as_name: Annotated[
+        str | None,
+        typer.Option(
+            "--as",
+            help=(
+                "Host branch to write (default: the container's branch, or its "
+                "PR head branch when the container has one)."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Overwrite a host branch that has diverged from the container. "
+            "Refused for the branch that is currently checked out.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Fetch commits from a container's clone into refs/jailbee/<short>/<branch>.
+    """Bring a container's state onto the host as refs, without switching branches.
 
-    Looks up the container's branch from user.jailbee.branch (set at create
-    time) or falls back to the clone's HEAD. The container must be running.
+    Fetches into refs/jailbee/<short>/<branch>, transports the submodule
+    objects, then points the host branch and every submodule's branch of the
+    same name at what the container has. The working tree is not moved — switch
+    to it afterwards with `jailbee branch <branch>`.
+
+    A host branch that has diverged is left alone with a warning; --force
+    overwrites it, except when it is the branch you have checked out.
 
     Examples:
 
       jailbee git fetch feat-foo              # fetch container's branch
       jailbee git fetch feat-foo -b feat/x    # read feat/x from the container
+      jailbee git fetch feat-foo --as alt     # write the host branch 'alt'
+      jailbee git fetch feat-foo --force      # overwrite a diverged host branch
       jailbee git fetch                       # interactive container picker
     """
     from jailbee import git as git_helpers
@@ -3245,12 +3346,15 @@ def fetch(
     short = short_name(cfg, full)
 
     try:
-        result = sync.fetch_from_container(cfg, incus, short, branch=branch)
+        result = sync.sync_refs_from_container(
+            cfg, incus, short, branch=branch, as_name=as_name, force=force
+        )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
 
-    _print_fetch_summary(cfg, short, result)
+    _print_fetch_summary(cfg, short, result.fetch)
+    _print_placement_report(result, short)
 
 
 # Top-level alias — hidden from `jailbee --help`; full docstring inherited from `fetch`.
@@ -3785,12 +3889,19 @@ app.command(
 )(retarget)
 
 
-def _print_local_branch_update(short: str, upd: "LocalBranchUpdate") -> None:
+def _print_local_branch_update(short: str, upd: "LocalBranchUpdate", *, container_ref: str) -> None:
     """Report what the push did to the container's own `refs/heads/<source>`.
 
     Silent for the two benign no-ops, which are also the common ones: a branch
     already at the pushed tip, and HEAD's own branch — which `--merge` /
     `--rebase` advance themselves and `ff_container_branch` never touches.
+
+    `container_ref` is the ref the objects actually landed on
+    (`PushResult.container_ref`) and is named in the two remedies, so it must
+    be passed rather than rebuilt: a host push writes
+    `refs/jailbee/host/<branch>`, but `jailbee git merge`'s relay writes
+    `refs/jailbee/from/<source>/<branch>` and a hardcoded `host/` there would
+    point the user at a ref that does not exist.
     """
     if upd.status in ("up-to-date", "checked-out"):
         return
@@ -3804,13 +3915,13 @@ def _print_local_branch_update(short: str, upd: "LocalBranchUpdate") -> None:
             f"⚠ container's local '{upd.branch}' ({old}) has diverged from the "
             f"pushed ref and was left alone — no container commit is discarded "
             f"here. Reconcile it in 'jailbee shell {short}', or compare against "
-            f"refs/jailbee/host/{upd.branch}."
+            f"{container_ref}."
         )
     else:  # "failed"
         warn(
             f"⚠ could not advance the container's local '{upd.branch}'; it is "
             f"stale, so an in-container 'git rebase {upd.branch}' would use the "
-            f"wrong base. Use refs/jailbee/host/{upd.branch} instead, or retry "
+            f"wrong base. Use {container_ref} instead, or retry "
             f"the push."
         )
 
@@ -3848,7 +3959,7 @@ def _print_push_summary(short: str, result: "PushResult") -> None:
             f"Use --from-local to send the local branch instead."
         )
     if result.local_branch is not None:
-        _print_local_branch_update(short, result.local_branch)
+        _print_local_branch_update(short, result.local_branch, container_ref=result.container_ref)
 
 
 def _print_bridge_direction(src: str, src_side: str, dst: str, dst_side: str) -> None:
@@ -5012,6 +5123,275 @@ app.command(
     hidden=True,
     help="Alias for `jailbee git push`. See `jailbee git push --help`.",
 )(push)
+
+
+@dataclass(frozen=True)
+class _MergeFailure:
+    """The source that stopped a `jailbee git merge` run, and why.
+
+    `conflict` is not derivable from `reason`: a conflict and a plain merge
+    failure need different continuations (finish the merge inside the target vs
+    fix the problem and re-run), and the summary picks between them.
+    """
+
+    source: str
+    reason: str
+    conflict: bool
+
+
+def _print_container_merge_result(
+    source: str,
+    target: str,
+    result: "MergeInContainerResult",
+    *,
+    plain: bool,
+) -> None:
+    """One line per source: what landed in `target`, and what it did there.
+
+    `plain` is passed rather than read off `result`, because it cannot be read
+    off it: a plain run returns `fast_forward_only=False` as a "no merge was
+    attempted" sentinel and a `head_oid` that predates the call (see
+    `MergeInContainerResult`), so rendering fast-forward semantics or a "HEAD
+    now at" from a plain result would be a lie.
+
+    `info_plain`/`_print_local_branch_update` rather than `info`: branch names
+    and refs are user data and may contain square brackets, which Rich's markup
+    parser silently deletes.
+    """
+    if plain:
+        info_plain(
+            f"{source}: transported '{result.push.source}' into '{target}' as "
+            f"{result.push.container_ref} — no merge run."
+        )
+    else:
+        mode = " (fast-forward)" if result.fast_forward_only else ""
+        info_plain(
+            f"{source}: merged '{result.push.source}' into '{result.container_branch}' "
+            f"in '{target}'{mode} — HEAD now at {result.head_oid[:7]}."
+        )
+    # The relay also fast-forwards the target's *own* `refs/heads/<branch>` of
+    # the same name (`push_to_container` -> `ff_container_branch`). It is
+    # strictly fast-forward and skips HEAD's own branch, so nothing is
+    # discarded — but a "diverged" or "failed" outcome means the target still
+    # has a stale branch of that name, and only this reports it.
+    if result.push.local_branch is not None:
+        _print_local_branch_update(
+            target, result.push.local_branch, container_ref=result.push.container_ref
+        )
+
+
+def _ff_only_divergence_hint(
+    reason: str, *, source: str, target: str, branch: str | None
+) -> str | None:
+    """Name the one merge failure whose git text does not explain itself.
+
+    `merge_container_into_container` merges with `--ff-only` exactly when the
+    branch read from the source is the one the target has checked out (the rule
+    is inherited from `push_and_merge`, which must not write a merge commit for
+    a same-name merge). git then refuses with "Not possible to fast-forward"
+    whenever the target has commits that branch does not contain — and the
+    `SyncError` carries only git's own line, which says nothing about there
+    being two containers involved.
+
+    Returns None for every other failure. The exception's own text is reported
+    either way; this is an addition to it, never a replacement.
+
+    Takes no `plain` flag on purpose: the closing advice names `--plain`
+    unconditionally because this cannot fire during a plain run.
+    `merge_container_into_container(plain=True)` returns before
+    `_merge_ref_in_container` is reached, so no merge — and no `--ff-only`
+    refusal — can happen there, and `ff_container_branch`, which does run under
+    `plain`, is best-effort and never raises. Should a plain run ever grow a
+    merge, this needs the flag.
+    """
+    if "Not possible to fast-forward" not in reason:
+        return None
+    ref = f"refs/jailbee/from/{source}/{branch if branch is not None else '<branch>'}"
+    return (
+        f"the branch read from '{source}' is the one '{target}' has checked "
+        f"out, so the merge ran with --ff-only and git refused it: '{target}' "
+        f"has commits that branch does not. The objects did land in '{target}' "
+        f"as {ref} — merge them by hand there ('jailbee shell {target}', then "
+        f"'git merge {ref}'), or re-run with --plain to transport only."
+    )
+
+
+def _print_merge_summary(
+    target: str,
+    merged: list[str],
+    failure: _MergeFailure | None,
+    remaining: list[str],
+    *,
+    plain: bool,
+    branch: str | None,
+) -> None:
+    """Say what landed in `target` and what did not — on every exit path.
+
+    A multi-source run that stops halfway is only usable if the user can see
+    the boundary, so this prints even when the command is about to exit 1.
+
+    `plain` changes the wording rather than decorating it: a plain run
+    transports refs and runs no merge at all, so calling its outcome "merged"
+    would report work that did not happen.
+
+    The resume recipe carries the flags that were in effect. Without them,
+    a `--plain` run's recipe would tell the user to run a real merge and a
+    `-b` run's would read the wrong branch.
+
+    `warn_plain`/`info_plain`: `reason` is an exception's text, which is
+    exactly the case those exist for — pydantic and git detail can carry
+    square brackets, and `warn`/`info` would hand them to Rich's markup parser,
+    which deletes them silently.
+    """
+    from jailbee.tui import console
+
+    landed = ", ".join(merged) if merged else "nothing"
+    if plain:
+        info_plain(f"transported into {target} (no merge run): {landed}")
+    else:
+        info_plain(f"merged into {target}: {landed}")
+    if failure is None:
+        return
+    warn_plain(f"stopped at {failure.source}: {failure.reason}")
+    if remaining:
+        warn_plain(f"not attempted: {', '.join(remaining)}")
+
+    flags = ""
+    if branch is not None:
+        flags += f" -b {branch}"
+    if plain:
+        flags += " --plain"
+    # The conflicted source is re-run too: the merge is finished by hand inside
+    # the target, which makes the re-run a no-op fast-forward — and dropping it
+    # would be wrong if the user aborts the merge instead of committing it.
+    retry = f"jailbee git merge {' '.join([failure.source, *remaining])} --into {target}{flags}"
+    if failure.conflict:
+        recipe = (
+            f"\nResolve inside the target, then continue:\n"
+            f"  jailbee shell {target}\n"
+            f"  # resolve the conflict, git add, git commit\n"
+            f"  {retry}"
+        )
+    else:
+        recipe = f"\nAfter fixing the problem, continue with:\n  {retry}"
+    # markup=False/highlight=False for the same reason as the *_plain helpers:
+    # a branch name in the recipe is user data.
+    console.print(recipe, markup=False, highlight=False)
+
+
+@git_app.command("merge")
+def git_merge(
+    sources: Annotated[
+        list[str],
+        typer.Argument(
+            help="Container(s) whose branch to merge, in order.",
+            autocompletion=completion.complete_container,
+        ),
+    ],
+    into: Annotated[
+        str,
+        typer.Option(
+            "--into",
+            help="Container to merge INTO. Required — nothing is inferred.",
+            autocompletion=completion.complete_container,
+        ),
+    ],
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", "-b", help="Read this branch from the source container"),
+    ] = None,
+    plain: Annotated[
+        bool,
+        typer.Option("--plain", help="Transport the refs only; run no merge."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Merge one container's branch into another, without a host checkout.
+
+    Objects travel source -> host -> target; no host branch, index or
+    superproject working tree is touched (a host sub-repo can still be
+    created, for a submodule born in the source container). The merge runs
+    inside the target on whatever it has checked out, so conflicts are
+    resolved there — `jailbee shell <target>`.
+
+    Several sources are merged one at a time, in the order given. The run stops
+    at the first conflict or failure and always prints what landed, what
+    stopped it, and what was not attempted, followed by the command that
+    resumes where it left off.
+
+    Examples:
+
+      jailbee git merge c1 --into c4
+      jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+      jailbee git merge c1 --into c4 --plain   # transport only
+      jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
+    """
+    from jailbee import git as git_helpers
+    from jailbee import sync
+    from jailbee.lifecycle import short_name
+
+    if branch is not None and len(sources) > 1:
+        error("-b/--branch applies to a single source; pass one source or drop the flag.")
+        raise typer.Exit(2)
+
+    cfg = _load_or_exit(config)
+    incus, target_full = _resolve_existing(cfg, into)
+    target_short = short_name(cfg, target_full)
+
+    # Every source name is resolved up front, before anything is merged.
+    # `_resolve_existing` exits the process itself on a name it cannot resolve,
+    # and doing that from inside the loop would kill the run *after* an earlier
+    # source had already landed in the target — and past
+    # `_print_merge_summary`, so the user would never learn what landed, what
+    # stopped the run, or how to resume, with a half-applied multi-source merge
+    # on disk. Resolution is therefore all-or-nothing: the same
+    # fail-before-acting shape as the `-b` guard above.
+    resolved: list[str] = []
+    for name in sources:
+        _, source_full = _resolve_existing(cfg, name)
+        resolved.append(short_name(cfg, source_full))
+
+    merged: list[str] = []
+    failure: _MergeFailure | None = None
+    remaining: list[str] = []
+    for index, source_short in enumerate(resolved):
+        try:
+            result = sync.merge_container_into_container(
+                cfg, incus, source_short, target_short, branch=branch, plain=plain
+            )
+        except sync.MergeConflictError as exc:
+            error_plain(str(exc))
+            _emit_conflict_report(exc)
+            # A short reason, not `str(exc)`: the exception's own text was just
+            # printed in full, and the summary is a summary.
+            failure = _MergeFailure(source_short, "merge conflicts", conflict=True)
+            remaining = list(resolved[index + 1 :])
+            break
+        except (sync.SyncError, git_helpers.GitError) as exc:
+            error_plain(str(exc))
+            extra = _ff_only_divergence_hint(
+                str(exc), source=source_short, target=target_short, branch=branch
+            )
+            if extra is not None:
+                warn_plain(extra)
+            # First non-blank line only: git's output can run to many lines and
+            # the whole of it is already above, unabridged.
+            lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+            failure = _MergeFailure(source_short, lines[0] if lines else str(exc), conflict=False)
+            remaining = list(resolved[index + 1 :])
+            break
+        _print_container_merge_result(source_short, target_short, result, plain=plain)
+        merged.append(source_short)
+
+    _print_merge_summary(target_short, merged, failure, remaining, plain=plain, branch=branch)
+    if failure is not None:
+        raise typer.Exit(1)
+
+
+# No top-level `jailbee merge` alias, deliberately: every other `jailbee git
+# <sub>` has one, but a bare `merge` verb is the ambiguity this command's
+# earlier removal was about (it used to be today's `jailbee git pull`), and a
+# required `--into` reads worse without the `git` qualifier.
 
 
 def pr_cmd(

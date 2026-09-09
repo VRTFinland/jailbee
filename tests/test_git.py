@@ -645,71 +645,6 @@ def test_is_merged_into_handles_oserror(mocker, tmp_path):
     assert is_merged_into(tmp_path, "feat/foo", "HEAD") is False
 
 
-def test_create_branch_without_tracking(mocker, tmp_path):
-    from jailbee.git import create_branch
-
-    mock_call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
-
-    create_branch(tmp_path, "feat/foo", start_point="refs/jailbee/feat-foo/feat/foo", track=None)
-
-    mock_call.assert_called_once()
-    call = mock_call.call_args
-    assert call.args[0] == [
-        "git",
-        "checkout",
-        "-b",
-        "feat/foo",
-        "refs/jailbee/feat-foo/feat/foo",
-    ]
-    assert call.kwargs["cwd"] == tmp_path
-
-
-def test_create_branch_with_tracking_sets_upstream_after(mocker, tmp_path):
-    from jailbee.git import create_branch
-
-    mock_call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
-
-    create_branch(
-        tmp_path,
-        "feat/foo",
-        start_point="refs/jailbee/feat-foo/feat/foo",
-        track="origin/feat/foo",
-    )
-
-    assert mock_call.call_count == 2
-    assert mock_call.call_args_list[0].args[0] == [
-        "git",
-        "checkout",
-        "-b",
-        "feat/foo",
-        "refs/jailbee/feat-foo/feat/foo",
-    ]
-    assert mock_call.call_args_list[1].args[0] == [
-        "git",
-        "branch",
-        "--set-upstream-to=origin/feat/foo",
-        "feat/foo",
-    ]
-
-
-def test_create_branch_raises_on_checkout_failure(mocker, tmp_path):
-    from jailbee.git import GitError, create_branch
-
-    mocker.patch("jailbee.git.subprocess.call", return_value=1)
-
-    with pytest.raises(GitError, match=r"git checkout -b failed \(exit 1\)"):
-        create_branch(tmp_path, "feat/foo", start_point="x", track=None)
-
-
-def test_create_branch_raises_on_set_upstream_failure(mocker, tmp_path):
-    from jailbee.git import GitError, create_branch
-
-    mocker.patch("jailbee.git.subprocess.call", side_effect=[0, 1])
-
-    with pytest.raises(GitError, match=r"git branch --set-upstream-to failed \(exit 1\)"):
-        create_branch(tmp_path, "feat/foo", start_point="x", track="origin/feat/foo")
-
-
 def test_checkout_branch_invokes_git_checkout(mocker, tmp_path):
     from jailbee.git import checkout_branch
 
@@ -841,6 +776,171 @@ def test_fast_forward_branch_returns_false_on_non_ff(mocker):
     run = mocker.patch("jailbee.git.subprocess.run")
     run.return_value = mocker.MagicMock(returncode=1)
     assert git.fast_forward_branch(Path("/repo"), "dev", "refs/x") is False
+
+
+def test_update_ref_uses_the_compare_and_swap_form(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is True
+    args = run.call_args[0][0]
+    assert args == ["git", "update-ref", "refs/heads/x", "new", "old"]
+
+
+def test_update_ref_without_old_oid_omits_the_guard(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="", stderr="")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new") is True
+    assert run.call_args[0][0] == ["git", "update-ref", "refs/heads/x", "new"]
+
+
+def test_update_ref_returns_false_when_the_swap_loses(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=1, stdout="", stderr="ref changed")
+
+    assert git.update_ref(tmp_path, "refs/heads/x", "new", old_oid="old") is False
+
+
+def _place_branch_mocks(mocker, *, old_oid, ancestor=True, wrote=True, current="other"):
+    """Mock every helper `place_branch` reaches, so no real git is invoked.
+
+    `current` is the repo's checked-out branch; the default is deliberately
+    not the branch the tests place, so only the tests that opt in reach the
+    checked-out refusal.
+
+    Returns the `update_ref` and `run_capture` mocks — the two the assertions
+    care about.
+    """
+    mocker.patch("jailbee.git.rev_parse", return_value=old_oid)
+    mocker.patch("jailbee.git.get_current_branch", return_value=current)
+    run_capture = mocker.patch("jailbee.git.run_capture", return_value=(ancestor, ""))
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=wrote)
+    return update_ref, run_capture
+
+
+def test_place_branch_creates_an_absent_ref(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid=None)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("created", None)
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_reports_up_to_date_without_writing(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="new")
+
+    assert git.place_branch(tmp_path, "x", "new") == ("up-to-date", "new")
+    update_ref.assert_not_called()
+    # No point asking git whether a commit is its own ancestor.
+    run_capture.assert_not_called()
+
+
+def test_place_branch_fast_forwards_with_the_real_old_oid(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="old", ancestor=True)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("fast-forwarded", "old")
+    # The compare-and-swap guard must carry the OID actually read, not None:
+    # an `old_oid=None` here would silently turn the fast-forward — the common
+    # production path — into an unconditional overwrite.
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid="old")
+    assert run_capture.call_args.args == (
+        str(tmp_path),
+        ["merge-base", "--is-ancestor", "old", "new"],
+    )
+
+
+def test_place_branch_leaves_a_diverged_ref_alone(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("diverged", "old")
+    update_ref.assert_not_called()
+
+
+def test_place_branch_forces_over_divergence_unconditionally(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False)
+
+    assert git.place_branch(tmp_path, "x", "new", force=True) == ("forced", "old")
+    # A forced write cannot use the swap guard: the whole point is to move a
+    # ref whose current value the caller has decided not to respect.
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_refuses_to_move_the_checked_out_branch(mocker, tmp_path):
+    from jailbee import git
+
+    # A clean fast-forward — refused anyway, because "x" is checked out here.
+    update_ref, run_capture = _place_branch_mocks(mocker, old_oid="old", ancestor=True, current="x")
+
+    assert git.place_branch(tmp_path, "x", "new") == ("checked-out", "old")
+    # Moving the ref would leave this repo's index and working tree describing
+    # `old`, so `git status` would report `new`'s changes as uncommitted
+    # reversions and a commit would revert them for real.
+    update_ref.assert_not_called()
+    # Whether it *would* have been a fast-forward is moot when no move is allowed.
+    run_capture.assert_not_called()
+
+
+def test_place_branch_refuses_the_checked_out_branch_even_under_force(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="old", ancestor=False, current="x")
+
+    assert git.place_branch(tmp_path, "x", "new", force=True) == ("checked-out", "old")
+    # `force` overrides divergence, never a live index.
+    update_ref.assert_not_called()
+
+
+def test_place_branch_creates_an_absent_ref_head_already_points_at(mocker, tmp_path):
+    from jailbee import git
+
+    # HEAD on an unborn "x": creating the ref is correct and must not be
+    # mistaken for moving one out from under a checkout.
+    update_ref, _ = _place_branch_mocks(mocker, old_oid=None, current="x")
+
+    assert git.place_branch(tmp_path, "x", "new") == ("created", None)
+    update_ref.assert_called_once_with(tmp_path, "refs/heads/x", "new", old_oid=None)
+
+
+def test_place_branch_up_to_date_is_not_a_refusal_on_the_checked_out_branch(mocker, tmp_path):
+    from jailbee import git
+
+    update_ref, _ = _place_branch_mocks(mocker, old_oid="new", current="x")
+
+    # A no-op is a no-op wherever HEAD is; only a *moving* write is refused.
+    assert git.place_branch(tmp_path, "x", "new") == ("up-to-date", "new")
+    update_ref.assert_not_called()
+
+
+def test_place_branch_reports_failed_when_the_write_is_refused(mocker, tmp_path):
+    from jailbee import git
+
+    _place_branch_mocks(mocker, old_oid="old", ancestor=True, wrote=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("failed", "old")
+
+
+def test_place_branch_reports_failed_when_the_create_is_refused(mocker, tmp_path):
+    from jailbee import git
+
+    _place_branch_mocks(mocker, old_oid=None, wrote=False)
+
+    assert git.place_branch(tmp_path, "x", "new") == ("failed", None)
 
 
 def test_host_tree_dirty_true_when_status_nonempty(mocker):

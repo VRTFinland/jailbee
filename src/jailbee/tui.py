@@ -100,6 +100,22 @@ def info(msg: str) -> None:
     console.print(msg)
 
 
+def info_plain(msg: str) -> None:
+    """Like `info`, but the body is never reinterpreted as Rich markup.
+
+    The `warn` / `warn_plain` hazard, on the info path: a `jailbee git fetch`
+    placement line embeds a submodule's filesystem path
+    (`SubBranchPlacement.path`), which has no git ref-format restriction — a
+    submodule directory named ``vendor[legacy]`` has its ``[legacy]`` read as
+    a style tag and *silently deleted* by `info`'s Rich markup parsing.
+    Highlighting is off too, so Rich doesn't recolour paths or numbers inside
+    the body.
+
+    `info` has no styled marker, so the body here is the whole message.
+    """
+    console.print(Text(msg), highlight=False)
+
+
 def success(msg: str) -> None:
     console.print(f"[green]✓[/green] {msg}")
 
@@ -329,6 +345,7 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
     # also imports `tui`, so a module-level `lifecycle`/`background` import
     # here would risk a circular import too.
     from jailbee import background
+    from jailbee.git_status import merge_label
 
     return {
         "name": max(len(c.display_name) for c in containers),
@@ -339,7 +356,7 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
         "wt": max(len(c.git_status.wt if c.git_status else "—") for c in containers),
         "ahead": max(len(c.git_status.ahead_diff if c.git_status else "—") for c in containers),
         "count": max(len(c.git_status.ahead_count if c.git_status else "—") for c in containers),
-        "conflict": max(len(c.git_status.conflict if c.git_status else "—") for c in containers),
+        "conflict": max(len(merge_label(c.git_status)[0]) for c in containers),
         "job": max(
             len(background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind))
             for c in containers
@@ -349,18 +366,18 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
 
 def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
     from jailbee import background
+    from jailbee.git_status import merge_label
 
     base = c.base_branch or "—"
     if c.git_status is None:
         wt = "—"
         ahead = "—"
         count = "—"
-        conflict = "—"
     else:
         wt = c.git_status.wt
         ahead = c.git_status.ahead_diff
         count = c.git_status.ahead_count
-        conflict = c.git_status.conflict
+    conflict = merge_label(c.git_status)[0]
     line = (
         f"{c.display_name:<{widths['name']}}  "
         f"{c.state:<{widths['state']}}  "

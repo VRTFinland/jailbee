@@ -24,7 +24,7 @@ Common conventions:
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
-- [Git bridge (`git fetch|checkout|pull|push|diff|retarget`)](#git-bridge)
+- [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
@@ -297,8 +297,8 @@ that path.
 | `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, repo, mode, base, state, created, job, network, ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, ahead_count, conflict, local_diff, local_count, git_status, pr`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
-**AHEAD ±** / **↑** (commits ahead of base, 3-dot/"PR view"), **MERGE**
-(`ok`/`conflict`/`?`/`—`). The **JOB** column shows in-flight and failed
+**AHEAD ±** / **↑** (commits ahead of base, 3-dot/"PR view"), **MERGE** (see
+below). The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`); see `jailbee job`
 below to inspect or clear one. **TTL** appears only while a container is in
 loose mode. Stopped/mount-mode containers show `—` in the four git columns.
@@ -312,6 +312,24 @@ enable it in the dashboard settings (see below) if you want it there
 instead. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
 mount-mode container exists, since on a clone-only host every row would
 read `clone`.
+
+**MERGE values**, in priority order — a live state always outranks a
+prediction, because it describes what the container is doing *right now*,
+not what would happen if you ran something:
+
+| Value | Meaning |
+|---|---|
+| `conflict!` | Unresolved conflict in the container right now (unmerged paths). |
+| `merging` / `rebasing` / `cherry-picking` / `reverting` | That operation is in progress in the container — conflicts already resolved, the commit (or `--continue`) is pending. |
+| `conflict` | Prediction only: merging this branch into its base *would* conflict. Nothing is running. |
+| `ok` | Prediction only: would merge cleanly. |
+| `?` | The live state couldn't be probed. |
+| `—` | No data — container stopped or in mount mode. |
+
+`conflict!` and the four in-progress states win even when the *prediction*
+against base is clean — a container left mid-merge by `jailbee git push
+--current` shows `conflict!`, not `ok`, until you finish or abort it in
+`jailbee shell <name>`.
 
 Two more git-status columns exist, **off by default**: **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
@@ -526,19 +544,22 @@ actively tearing the container down.
 
 ## Git bridge
 
-All refuse on mount-mode containers. `jailbee pull`/`push`/`diff` are top-level
-aliases for the `jailbee git` forms. There is **no `jailbee git merge`** — superseded by
-`jailbee git pull`. With exactly one eligible container and no NAME given, `push` /
-`pull` / `checkout` print a plan block (both branches, both tips, the action)
-and ask `[Y/n]` before doing anything, so JailBee choosing the container silently
-never means the direction is a surprise (`confirm.auto_target`).
+All refuse on mount-mode containers. `jailbee pull`/`push`/`diff`/`fetch`/`checkout`/`retarget`
+are top-level aliases for the `jailbee git` forms. `jailbee git merge` has **no**
+top-level alias (`jailbee merge` does not exist) — the bare `merge` verb used to
+name today's `jailbee git pull` and a second, differently-scoped command reusing
+it would resurrect that ambiguity. With exactly one eligible container and no
+NAME given, `push` / `pull` / `checkout` print a plan block (both branches,
+both tips, the action) and ask `[Y/n]` before doing anything, so JailBee
+choosing the container silently never means the direction is a surprise
+(`confirm.auto_target`).
 
 ### Container → host
 
 | Command | Behaviour |
 |---|---|
-| `jailbee git fetch [NAME] [-b BRANCH]` | Fetch the container's branch into `refs/jailbee/<short>/<branch>`. Container must be running. Pure transport. Picker if no NAME. |
-| `jailbee git checkout [NAME] [-b BRANCH] [--as NAME] [--confirm\|--no-confirm]` | Fetch + fast-forward (or create) the matching host branch. Refuses on divergence → use `jailbee git pull`. `-b` = which branch to read **from the container**; `--as` = the branch written **on the host** (default: the container branch, or `user.jailbee.pr_branch` when set, which `--as` outranks). With one eligible container and no NAME, shows the plan-and-confirm block first (`confirm.auto_target`, default true); `--no-confirm` skips it. Off a TTY the block prints and nothing is asked. |
+| `jailbee git fetch [NAME] [-b BRANCH] [--as NAME] [--force]` | Fetch into `refs/jailbee/<short>/<branch>`, transport the submodule objects, then point the host branch **and every submodule's branch of the same name** at what the container has — **without switching the working tree**. Container must be running. `-b` = which branch to read from the container; `--as` = the host branch to write (default: the container's branch, or its PR head branch when set). A diverged host branch is left alone with a warning; `--force` overwrites it, except when it's the branch currently checked out (always refused there). Picker if no NAME. Switch the tree onto what was just fetched with `jailbee branch <branch>`. |
+| `jailbee git checkout [NAME] [-b BRANCH] [--as NAME] [--confirm\|--no-confirm]` | Fetch + fast-forward (or create) the matching host branch, **and switch onto it**. Refuses on divergence → use `jailbee git pull`. `-b` = which branch to read **from the container**; `--as` = the branch written **on the host** (default: the container branch, or `user.jailbee.pr_branch` when set, which `--as` outranks). With one eligible container and no NAME, shows the plan-and-confirm block first (`confirm.auto_target`, default true); `--no-confirm` skips it. Off a TTY the block prints and nothing is asked. |
 
 On every container → host command `-b BRANCH` names a branch **inside the
 container**. A branch the container doesn't have is rejected before the fetch,
@@ -625,6 +646,33 @@ last update is strictly fast-forward, never fails the push, and:
 
 The summary prints one line for created/fast-forwarded, a warning for
 diverged/failed, and nothing when the branch was already current or is HEAD's.
+
+### `jailbee git merge SOURCES... --into TARGET`
+
+Merge one container's branch into another, **without a host checkout** —
+objects travel source → host → target and no host branch, index or
+superproject working tree is touched (a host sub-repo can still be created,
+for a submodule born in the source container). The merge runs inside the
+target on whatever it has checked out, so conflicts are resolved there, in
+`jailbee shell <target>`.
+
+| Flag | Effect |
+|---|---|
+| `--into <name>` | **Required.** Container to merge INTO — nothing is inferred. |
+| `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. |
+| `--plain` | Transport the refs only; run no merge. The report says "transported", not "merged" — `--plain` is not a kind of merge. |
+
+Several sources are merged **one at a time, in the order given**. The run
+stops at the first conflict or failure and always prints what landed, what
+stopped it, what was not attempted, and the command to resume where it left
+off — that report is why multi-source is allowed at all.
+
+```bash
+jailbee git merge c1 --into c4
+jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
+jailbee git merge c1 --into c4 --plain   # transport only
+jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
+```
 
 ### `jailbee git diff [NAME]`
 

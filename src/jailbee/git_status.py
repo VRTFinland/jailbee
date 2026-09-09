@@ -1,7 +1,7 @@
 """Probe git state inside jailbee containers via `incus exec`.
 
 The probe makes one ``incus exec`` round-trip per container, runs a
-small shell snippet that emits ten NUL-separated fields, and the
+small shell snippet that emits twelve NUL-separated fields, and the
 host parses them into a ``GitStatus``. Designed to be safe for
 parallel use from a thread pool.
 """
@@ -16,6 +16,10 @@ from typing import TypedDict
 from jailbee.incus import Incus, IncusError
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
+
+# Values the probe may report for an in-progress operation. "" means
+# "checked, and nothing is in progress" — distinct from "?" (not checked).
+_IN_PROGRESS_VALUES = frozenset({"", "merge", "rebase", "cherry-pick", "revert"})
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,54 @@ class GitStatus:
     # tip — see the module docstring.
     local_diff: str = "?"  # "+12 -3" | "clean" | "?"
     local_count: str = "?"  # "3" | "0" | "?"
+    # The container's ACTUAL state, as opposed to `conflict`, which is a
+    # prediction about a merge nobody ran. "?" means the probe could not say.
+    in_progress: str = "?"  # "" | merge | rebase | cherry-pick | revert | "?"
+    unmerged: int | None = None  # paths with unresolved conflicts; None = unknown
+
+
+# Probe value -> the word shown to the user for an operation in progress.
+_IN_PROGRESS_LABELS = {
+    "merge": "merging",
+    "rebase": "rebasing",
+    "cherry-pick": "cherry-picking",
+    "revert": "reverting",
+}
+
+# Cell texts that already read as a state (a live in-progress operation), as
+# opposed to the "merge <word>" prediction texts. Consumers that turn a
+# conflict cell into a sentence (e.g. `qtui.model.git_segments`) must not
+# prefix these with "merge " — "merging" is already the whole sentence.
+# Derived from `_IN_PROGRESS_LABELS` so the two can never drift apart.
+IN_PROGRESS_CELL_LABELS: frozenset[str] = frozenset(_IN_PROGRESS_LABELS.values())
+
+
+def merge_label(status: GitStatus | None) -> tuple[str, str]:
+    """Return ``(text, kind)`` for the MERGE cell — the one definition.
+
+    ``kind`` is ``"none"`` | ``"ok"`` | ``"predicted"`` | ``"active"`` |
+    ``"unknown"``; each UI maps it to its own colour vocabulary.
+
+    Priority matters. ``conflict`` is a *prediction* (would merging this branch
+    into its base conflict?), while ``unmerged``/``in_progress`` describe what
+    the container is doing **right now**. A container left mid-merge by
+    ``jailbee git push --current`` has an open conflict while the prediction
+    against base is still clean, so the live state must win — that is the whole
+    point of this function. The exclamation mark is what separates "go finish
+    this merge" from "this merge would conflict if you ran it".
+    """
+    if status is None:
+        return "—", "none"
+    if status.unmerged:
+        return "conflict!", "active"
+    label = _IN_PROGRESS_LABELS.get(status.in_progress)
+    if label is not None:
+        return label, "active"
+    if status.conflict == "conflict":
+        return "conflict", "predicted"
+    if status.conflict == "ok":
+        return "ok", "ok"
+    return "?", "unknown"
 
 
 def _shortstat_ints(raw: str) -> tuple[int, int]:
@@ -338,9 +390,35 @@ if [ -n "$HOST_HEAD" ] \
   LOCAL_COUNT=$(git rev-list --count "${HOST_HEAD}..HEAD" 2>/dev/null) || LOCAL_COUNT="?"
 fi
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- fields 11-12: the container's ACTUAL in-progress state ---
+# `.git` may be a FILE (linked worktree, submodule), so resolve the real dir.
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null) || GIT_DIR=""
+IN_PROGRESS=""
+if [ -n "$GIT_DIR" ]; then
+  # Rebase is tested first: a conflicted `git rebase --merge` also writes
+  # the ref checked next, and "rebasing" is the more specific, more useful
+  # answer.
+  if [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
+    IN_PROGRESS="rebase"
+  elif git rev-parse --verify --quiet MERGE_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="merge"
+  elif git rev-parse --verify --quiet CHERRY_PICK_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="cherry-pick"
+  elif git rev-parse --verify --quiet REVERT_HEAD >/dev/null 2>&1; then
+    IN_PROGRESS="revert"
+  fi
+fi
+# `git ls-files --unmerged` prints one line per stage: "<mode> <object>
+# <stage>\t<path>". `cut -f2` splits on that tab, so a path containing a
+# space is not truncated (unlike splitting on all whitespace).
+UNMERGED=$(git ls-files --unmerged 2>/dev/null \
+  | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
+case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
-  "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT"
+  "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
+  "$IN_PROGRESS" "$UNMERGED"
 """
 
 
@@ -448,6 +526,15 @@ def probe_container_git(
         local_diff = "?"
         local_count = "?"
 
+    if len(parts) >= 12:
+        raw_progress = parts[10].strip()
+        in_progress = raw_progress if raw_progress in _IN_PROGRESS_VALUES else "?"
+        raw_unmerged = parts[11].strip()
+        unmerged = int(raw_unmerged) if raw_unmerged.isdigit() else None
+    else:
+        in_progress = "?"
+        unmerged = None
+
     return GitStatus(
         wt=wt,
         ahead_diff=ahead_diff,
@@ -458,6 +545,8 @@ def probe_container_git(
         remote_contained=remote_contained,
         local_diff=local_diff,
         local_count=local_count,
+        in_progress=in_progress,
+        unmerged=unmerged,
     )
 
 

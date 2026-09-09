@@ -6329,6 +6329,39 @@ def test_git_status_json_carries_the_new_keys():
     assert payload["local_count"] == "3"
 
 
+def test_conflict_cell_marks_a_live_conflict_differently_from_a_predicted_one():
+    """The MERGE cell must prefer the container's live merge state over the
+    conflict prediction — that is the whole point of `merge_label` (Task 2)."""
+    from jailbee.lifecycle import ls_field_specs
+
+    spec = next(f for f in ls_field_specs(now=_NOW) if f.name == "conflict")
+
+    live = _ci_with_status(conflict="ok", in_progress="merge", unmerged=1)
+    predicted = _ci_with_status(conflict="conflict")
+
+    assert "conflict!" in spec.cell(live)
+    assert "conflict!" not in spec.cell(predicted)
+    assert "conflict" in spec.cell(predicted)
+
+
+def test_git_status_json_carries_the_new_state_fields():
+    """`in_progress`/`unmerged` reach JSON consumers via the `git_status`
+    payload, while the `conflict` field keeps its own prediction-only meaning
+    (see the `conflict` FieldSpec's `json=` lambda) — the two are allowed to
+    disagree in the mid-merge case by design."""
+    from jailbee.lifecycle import ls_field_specs
+
+    ci = _ci_with_status(conflict="ok", in_progress="merge", unmerged=2)
+    spec = next(f for f in ls_field_specs(now=_NOW) if f.name == "git_status")
+
+    payload = spec.json(ci)
+
+    assert payload["in_progress"] == "merge"
+    assert payload["unmerged"] == 2
+    # The prediction keeps its own name and its own meaning.
+    assert payload["conflict"] == "ok"
+
+
 def _pr_field():
     from datetime import UTC, datetime
 

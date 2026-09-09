@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 _FALLBACK_BRANCH = "main"
 
@@ -839,6 +840,104 @@ def fast_forward_branch(repo_root: Path, branch: str, source_ref: str) -> bool:
     return result.returncode == 0
 
 
+def update_ref(repo_root: Path, ref: str, new_oid: str, *, old_oid: str | None = None) -> bool:
+    """Point `ref` at `new_oid`. Return True on success, False on refusal.
+
+    With `old_oid`, uses `update-ref`'s three-argument compare-and-swap form:
+    a commit written between the caller's read and this write loses the race
+    rather than being silently overwritten. Without it the write is
+    unconditional — callers use that only for a deliberate `--force`.
+
+    Never raises: a missing git binary or a lost swap is a False, matching the
+    `check=False` style of the other helpers here.
+    """
+    args = ["git", "update-ref", ref, new_oid]
+    if old_oid is not None:
+        args.append(old_oid)
+    try:
+        result = subprocess.run(args, cwd=repo_root, capture_output=True, text=True, check=False)
+    except (FileNotFoundError, OSError):
+        return False
+    return result.returncode == 0
+
+
+PlaceStatus = Literal[
+    "created",
+    "up-to-date",
+    "fast-forwarded",
+    "diverged",
+    "forced",
+    "checked-out",
+    "failed",
+]
+"""What `place_branch` did to one `refs/heads/<branch>`.
+
+The single vocabulary for a ref-only branch placement, wherever the repo is:
+`submodules.PlacementStatus` and `sync.HostPlacementStatus` extend it with the
+one extra outcome each of them has, rather than restating these seven.
+"""
+
+
+def place_branch(
+    repo_root: Path, branch: str, new_oid: str, *, force: bool = False
+) -> tuple[PlaceStatus, str | None]:
+    """Point `refs/heads/<branch>` at `new_oid`; fast-forward only unless forced.
+
+    Returns `(status, old_oid)`, where `old_oid` is the ref's value before the
+    call and None when the ref did not exist. Ref writes only: HEAD, the index
+    and the working tree are never touched, so this is safe to run while the
+    repo sits on another branch.
+
+    It is equally safe when the repo sits *on* `branch`, because a write that
+    would move the ref is then refused outright and reported as
+    `"checked-out"`. Moving `refs/heads/<branch>` under its own checkout —
+    even by a fast-forward — leaves the index and working tree describing the
+    old commit, so `git status` reports the new commit's changes as
+    uncommitted reversions and committing would revert them for real. No
+    commits are lost, which is why this is a refusal and not a failure: a
+    caller that wants the branch advanced in place has to do what a checkout
+    does (see `sync._place_host_branch`, which fast-forward-merges instead),
+    and a caller that must not touch the working tree
+    (`submodules.place_branches_from_commit`) wants exactly this refusal.
+
+    Only a *moving* write is refused: creating an absent `refs/heads/<branch>`
+    while HEAD already points at an unborn `branch`, and finding the ref
+    already at `new_oid`, behave identically on and off HEAD's branch. Both
+    are correct there and both are common.
+
+    A fast-forward uses `update_ref`'s compare-and-swap form, so a commit
+    written between the read below and the write loses the race instead of
+    being clobbered. `force` drops the guard, which is the whole point of it.
+    A non-fast-forward without `force` writes nothing and reports
+    `"diverged"`. `force` does **not** override the checked-out refusal:
+    forcing a ref out from under a live index is the one destructive thing
+    this does not do.
+
+    The one ladder for this, shared by the superproject and every submodule:
+    two copies drift, and a drifted copy of "may I move this ref?" loses
+    commits.
+    """
+    ref = f"refs/heads/{branch}"
+    old_oid = rev_parse(repo_root, ref)
+    if old_oid is None:
+        ok = update_ref(repo_root, ref, new_oid, old_oid=None)
+        return ("created" if ok else "failed", None)
+    if old_oid == new_oid:
+        return ("up-to-date", old_oid)
+    if get_current_branch(repo_root) == branch:
+        # Asked before the ancestor probe: whether the move would be a
+        # fast-forward is moot when no move is permitted at all.
+        return ("checked-out", old_oid)
+    ancestor, _ = run_capture(str(repo_root), ["merge-base", "--is-ancestor", old_oid, new_oid])
+    if not ancestor:
+        if not force:
+            return ("diverged", old_oid)
+        ok = update_ref(repo_root, ref, new_oid, old_oid=None)
+        return ("forced" if ok else "failed", old_oid)
+    ok = update_ref(repo_root, ref, new_oid, old_oid=old_oid)
+    return ("fast-forwarded" if ok else "failed", old_oid)
+
+
 def host_tree_dirty(repo_root: Path) -> bool:
     """Return True if ``git status --porcelain`` in ``repo_root`` has output."""
     result = subprocess.run(
@@ -849,36 +948,6 @@ def host_tree_dirty(repo_root: Path) -> bool:
         check=False,
     )
     return bool(result.stdout.strip())
-
-
-def create_branch(
-    repo_root: Path,
-    branch: str,
-    *,
-    start_point: str,
-    track: str | None,
-) -> None:
-    """Create branch `branch` at `start_point` and check it out.
-
-    Output goes to the terminal. If `track` is given, sets the new branch's
-    upstream via `git branch --set-upstream-to`. We don't use
-    `git checkout -b --track` because the start point is `refs/jailbee/...`
-    and the tracking target is `origin/...` — two different refs.
-    """
-    returncode = subprocess.call(
-        ["git", "checkout", "-b", branch, start_point],
-        cwd=repo_root,
-    )
-    if returncode != 0:
-        raise GitError(f"git checkout -b failed (exit {returncode})")
-
-    if track is not None:
-        returncode = subprocess.call(
-            ["git", "branch", f"--set-upstream-to={track}", branch],
-            cwd=repo_root,
-        )
-        if returncode != 0:
-            raise GitError(f"git branch --set-upstream-to failed (exit {returncode})")
 
 
 def checkout_branch(repo_root: Path, branch: str) -> None:

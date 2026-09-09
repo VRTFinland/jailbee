@@ -191,6 +191,13 @@
   write to uid_map failed: Operation not permitted`. The advice is now
   computed from `/proc/self/uid_map` and capped at the documented billion, so
   an ordinary host sees no change.
+- **`jailbee ls` and both dashboards now show a container sitting in an
+  unresolved merge or rebase** (`conflict!`, `merging`, `rebasing`,
+  `cherry-picking`, `reverting`), instead of only ever predicting whether
+  merging into the base branch *would* conflict. Previously a container left
+  mid-merge by `jailbee git push --current` still read `ok` — the live state
+  now outranks the prediction, and `conflict` keeps meaning "would conflict
+  if merged", never "is conflicted right now".
 
 ### Changed
 
@@ -527,6 +534,29 @@
   is asked and no exit code changes; the several-ahead listing gains
   `[dirty]`/`[gitlink stale]`/`[detached]` flags from the same rendering the
   new picker uses, so a script grepping that listing sees more than before.
+- **`jailbee git merge <source…> --into <target>`** merges one container's
+  branch into another through the host, submodules included, **without a
+  host checkout** — objects travel source → host → target and no host
+  branch, index or superproject working tree is touched (a host sub-repo can
+  still be created, for a submodule born in the source container). `--into`
+  is required; nothing is inferred.
+  Several sources are merged one at a time, in the order given; the run
+  stops at the first conflict or failure and always reports what landed,
+  what stopped it, what was not attempted, and the command to resume.
+  Conflicts are resolved inside the target with `jailbee shell <target>`.
+  `--plain` transports the refs only and reports "transported", not
+  "merged". There is no top-level `jailbee merge` alias — that bare verb
+  used to name today's `jailbee git pull`, and reusing it here would
+  resurrect the ambiguity.
+- **`jailbee git fetch` now places the host branch and every submodule
+  branch of the same name at the container's state, without switching the
+  working tree.** Previously it only landed the fetch under
+  `refs/jailbee/<short>/<branch>`, leaving nothing to switch onto until
+  `jailbee git checkout` ran; now `jailbee branch <branch>` moves the whole
+  tree onto what was just fetched. New `--as <name>` writes a
+  differently-named host branch; new `--force` overwrites one that has
+  diverged, except the branch currently checked out (always refused there,
+  since moving it would desync the index and working tree).
 
 ## 1.2.2 - 2026-08-28
 

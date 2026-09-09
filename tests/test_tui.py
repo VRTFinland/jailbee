@@ -192,6 +192,32 @@ def test_choice_title_includes_conflict() -> None:
     assert "conflict" in title
 
 
+def test_picker_row_shows_the_live_conflict_marker() -> None:
+    from jailbee.git_status import GitStatus
+    from jailbee.tui import _choice_widths, _format_choice_title
+
+    c = ContainerInfo(
+        name="myrepo-feat-a",
+        state="Running",
+        network="strict",
+        ip="10.0.0.42",
+        memory_limit="4GB",
+        repo="myrepo",
+        base_branch="dev",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            in_progress="merge",
+            unmerged=1,
+        ),
+    )
+    widths = _choice_widths([c])
+    assert widths["conflict"] >= len("conflict!")
+    assert "conflict!" in _format_choice_title(c, widths)
+
+
 def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
     """The picker mirrors `claude ls`'s split: the account column carries
     `display_name` (no `#<org8>` inside it) and the org follows, padded so the
@@ -480,6 +506,25 @@ def test_confirm_fn_alias_is_str_to_bool():
     from jailbee.tui import ConfirmFn
 
     assert ConfirmFn == Callable[[str], bool]
+
+
+def test_info_plain_keeps_bracketed_text_verbatim(capsys):
+    """The hazard `info_plain` exists for: a submodule path with no git
+    ref-format restriction (`vendor[legacy]`) has its bracketed suffix read
+    as a Rich style tag and silently deleted by plain `info`.
+
+    Real module-level Console, no mocking — the contrast assertion below on
+    `info` is what makes the difference load-bearing rather than incidental.
+    """
+    from jailbee import tui
+
+    tui.info_plain("submodule 'vendor[legacy]': fast-forwarded → newsub123")
+    plain = capsys.readouterr().out
+    assert "vendor[legacy]" in plain
+
+    tui.info("submodule 'vendor[legacy]': fast-forwarded → newsub123")
+    marked_up = capsys.readouterr().out
+    assert "[legacy]" not in marked_up  # silently deleted as a style tag
 
 
 def test_warn_plain_keeps_bracketed_text_verbatim(capsys):
