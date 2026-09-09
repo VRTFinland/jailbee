@@ -1171,3 +1171,92 @@ def test_record_consumed_keeps_a_manifest_still_missing_other_actions(mocker):
 
     rm_calls = [c for c in incus.exec.call_args_list if c.args[1][0] == "rm"]
     assert not rm_calls, "one of two actions is applied; the manifest must stay"
+
+
+def test_drop_manifest_deletes_it_with_its_sidecar_and_own_bodies(mocker):
+    from jailbee.pr_outbox import Outbox, drop_manifest
+
+    outbox = Outbox(
+        files={
+            "001-x.json": _manifest_text(actions=[{"type": "comment", "body_file": "001-x.md"}]),
+            "001-x.json.progress.json": '{"applied": [], "urls": {}}',
+            "001-x.md": "text",
+            "002-y.json": _manifest_text(),
+        }
+    )
+    incus = mocker.MagicMock()
+
+    deleted = drop_manifest(incus, "c", outbox, "001-x.json", uid=1000)
+
+    assert deleted == ["001-x.json", "001-x.json.progress.json", "001-x.md"]
+    rm_calls = [c for c in incus.exec.call_args_list if c.args[1][0] == "rm"]
+    assert len(rm_calls) == 1
+    argv = " ".join(rm_calls[0].args[1])
+    assert "001-x.json" in argv and "001-x.md" in argv
+    assert "002-y.json" not in argv
+
+
+def test_drop_manifest_keeps_a_body_file_another_manifest_still_uses(mocker):
+    from jailbee.pr_outbox import Outbox, drop_manifest
+
+    shared = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
+    outbox = Outbox(files={"001-x.json": shared, "002-y.json": shared, "shared.md": "text"})
+    incus = mocker.MagicMock()
+
+    deleted = drop_manifest(incus, "c", outbox, "001-x.json", uid=1000)
+
+    assert deleted == ["001-x.json"]
+    argv = " ".join(incus.exec.call_args_list[0].args[1])
+    assert "shared.md" not in argv
+
+
+def test_drop_manifest_raises_when_the_deletion_fails(mocker):
+    import pytest
+
+    from jailbee.incus import IncusError
+    from jailbee.pr_outbox import FinalizeError, Outbox, drop_manifest
+
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("instance is not running")
+
+    with pytest.raises(FinalizeError, match=r"001-x\.json"):
+        drop_manifest(incus, "c", Outbox(files={"001-x.json": "…"}), "001-x.json", uid=1000)
+
+
+def test_action_summary_counts_actions_by_type():
+    from jailbee.pr_outbox import action_summary, parse_manifest
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "review", "body": "summary", "comments": []},
+                {"type": "reply", "comment_id": 7, "body": "a"},
+                {"type": "reply", "comment_id": 8, "body": "b"},
+                {"type": "description", "body": "new body"},
+            ]
+        ),
+        {},
+    )
+
+    assert action_summary(manifest) == "review:1 reply:2 description:1"
+
+
+def test_pending_indices_skips_what_already_landed():
+    from jailbee.pr_outbox import Progress, parse_manifest, pending_indices
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "comment", "body": "a"},
+                {"type": "comment", "body": "b"},
+                {"type": "comment", "body": "c"},
+            ]
+        ),
+        {},
+    )
+
+    assert pending_indices(manifest, Progress(applied=frozenset(), urls={})) == [0, 1, 2]
+    assert pending_indices(manifest, Progress(applied=frozenset({1}), urls={})) == [0, 2]
+    assert pending_indices(manifest, Progress(applied=frozenset({0, 1, 2}), urls={})) == []

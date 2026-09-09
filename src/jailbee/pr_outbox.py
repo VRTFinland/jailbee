@@ -583,7 +583,13 @@ def _first_line(body: str, width: int = 68) -> str:
     return line
 
 
-def _comment_anchor(comment: LineComment) -> str:
+def comment_anchor(comment: LineComment) -> str:
+    """One line comment's anchor: ``src/x.py:88`` or ``src/x.py:120-134``.
+
+    Public because `jb review show` prints the same anchor above the body it
+    shows in full, and two spellings of "where this comment lands" would be
+    two things to keep in step.
+    """
     if comment.start_line is not None:
         return f"{comment.path}:{comment.start_line}-{comment.line}"
     return f"{comment.path}:{comment.line}"
@@ -603,7 +609,7 @@ def plan_lines(target: Target, current_body: str | None) -> list[str]:
         if isinstance(action, ReviewAction):
             lines.append(f"REVIEW ({action.event}): {_first_line(action.body)}")
             for comment in action.comments:
-                lines.append(f"  {_comment_anchor(comment)}: {_first_line(comment.body)}")
+                lines.append(f"  {comment_anchor(comment)}: {_first_line(comment.body)}")
         elif isinstance(action, ReplyAction):
             lines.append(
                 f"REPLY to review comment #{action.comment_id}: {_first_line(action.body)}"
@@ -631,6 +637,31 @@ def plan_lines(target: Target, current_body: str | None) -> list[str]:
             # without updating this renderer.
             assert_never(action)
     return lines
+
+
+_ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
+    ("review", ReviewAction),
+    ("reply", ReplyAction),
+    ("comment", CommentAction),
+    ("description", DescriptionAction),
+)
+
+
+def action_summary(manifest: Manifest) -> str:
+    """One manifest's action counts by type: ``review:1 reply:2``. Pure.
+
+    The one-cell counterpart of `plan_lines`, for `jb review ls`. It lives
+    here rather than in `cli.py` because `Action` is a closed union defined
+    in this module: a fifth variant needs a label here, and adding one to
+    `_ACTION_LABELS` is a visible edit next to the union itself, where the
+    same summary spelled out in the CLI would silently under-count.
+    """
+    parts = [
+        f"{label}:{count}"
+        for label, cls in _ACTION_LABELS
+        if (count := sum(isinstance(a, cls) for a in manifest.actions))
+    ]
+    return " ".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -748,6 +779,18 @@ def read_progress(outbox: Outbox, manifest_name: str) -> Progress:
     if text is None:
         return Progress(applied=frozenset(), urls={})
     return _parse_progress_json(text)
+
+
+def pending_indices(manifest: Manifest, progress: Progress) -> list[int]:
+    """Action indices of `manifest` that `apply_manifest` would still post.
+
+    The same rule `apply_manifest` applies when it skips an index already in
+    `progress.applied`, stated once so a caller can *count* the pending
+    actions — the plan's "N actions will be published" line — without
+    restating it. Ascending manifest order, not application order: this
+    answers "how many, and which", never "in what sequence".
+    """
+    return [i for i in range(len(manifest.actions)) if i not in progress.applied]
 
 
 @dataclass(frozen=True)
@@ -938,13 +981,13 @@ def _orphaned_body_files(outbox: Outbox, exclude_name: str) -> list[str]:
 
 
 class FinalizeError(Exception):
-    """`finalize`/`record_consumed` could not persist a step to the container.
+    """`finalize`/`record_consumed`/`drop_manifest` could not write to the container.
 
     Raised when the *container* write itself fails (`IncusError`) after the
     GitHub side of the work is already settled — e.g. the sidecar can't be
-    written, or a fully-applied manifest can't be deleted. Unlike
-    `apply_manifest`, neither function returns an `ApplyOutcome` to carry a
-    `failure` string in, so this is the equivalent for them: a named,
+    written, or a fully-applied (or deliberately dropped) manifest can't be
+    deleted. Unlike `apply_manifest`, none of them returns an `ApplyOutcome`
+    to carry a `failure` string in, so this is the equivalent for them: a named,
     documented exception whose message says which step failed and what
     that implies, rather than a bare `IncusError` from deep inside a
     `bash -c printf` call. Each function stops at the first such failure —
@@ -1039,6 +1082,43 @@ def finalize(
                 f"manifest {manifest.name} is fully applied but could not be "
                 f"deleted ({e}); it will be cleaned up on a later run"
             ) from e
+
+
+def drop_manifest(
+    incus: Incus, container: str, outbox: Outbox, name: str, *, uid: int | None
+) -> list[str]:
+    """Delete manifest `name` from the container's outbox without applying it.
+
+    The discard counterpart of `finalize`'s cleanup, and deliberately the
+    same deletion: one `rm -f` over the manifest, its progress sidecar (when
+    one exists) and any `body_file` no *other* manifest in `outbox` still
+    references — see `_orphaned_body_files`. Nothing is posted to GitHub and
+    no `applied.log` line is written: dropping is the user saying this
+    proposal will never be published, so there is nothing to record.
+
+    Returns the outbox-relative names that were deleted, so a caller
+    dropping several manifests in a row can shrink its own `outbox`
+    snapshot between calls — without that, a body file shared by two
+    manifests looks referenced while each of them is dropped and would
+    survive them both.
+
+    Raises `FinalizeError` if the deletion fails; the manifest is then still
+    pending, exactly as it was.
+    """
+    sidecar_name = f"{name}.progress.json"
+
+    names = [name]
+    if sidecar_name in outbox.files:
+        names.append(sidecar_name)
+    names.extend(_orphaned_body_files(outbox, name))
+
+    try:
+        incus.exec(container, ["rm", "-f", *(f"{outbox_dir()}/{n}" for n in names)], uid=uid)
+    except IncusError as e:
+        raise FinalizeError(
+            f"manifest {name} could not be deleted ({e}); it is still pending"
+        ) from e
+    return names
 
 
 def _read_optional(incus: Incus, container: str, path: str, *, uid: int | None) -> str | None:

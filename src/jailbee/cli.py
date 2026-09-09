@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple, assert_never
 
 import typer
 import yaml
@@ -2318,6 +2318,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
+    from jailbee.pr_outbox import ApplyOutcome, Manifest, Outbox, Progress, Target
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
@@ -8545,6 +8546,655 @@ def port_ls_cmd(
         title=title if fmt == "table" else None,
         empty_message="No port forwards.",
     )
+
+
+# ---- PR review outbox commands ----
+#
+# `jailbee pr` is a command with an optional positional container name, so
+# `jailbee pr apply` would parse `apply` as a container name — hence a group
+# of its own. Everything below is argument parsing, container resolution,
+# printing and prompting: reading, validating, planning, applying and
+# cleaning up the manifests is `pr_outbox`'s job.
+
+review_app = typer.Typer(
+    name="review",
+    help="Apply PR review actions a container wrote into its outbox.",
+    no_args_is_help=True,
+)
+app.add_typer(review_app)
+
+
+class _ReviewRow(NamedTuple):
+    """One pending manifest, as `jailbee review ls` lists it."""
+
+    container: str
+    pr: int | None
+    manifest: str
+    actions: str
+    state: str
+    error: str | None = None
+
+
+def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
+    """The container to review; ``None`` when nothing anywhere is pending.
+
+    With an explicit ``name`` this is the usual :func:`_resolve_existing`.
+    Without one the candidate set is narrower than that helper's — only
+    containers whose status probe counted waiting manifests — so the common
+    case (one container wrote a review, six others did not) never asks.
+    """
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers
+    from jailbee.tui import pick_container
+
+    if name is not None:
+        return _resolve_existing(cfg, name)
+
+    incus = Incus()
+    pending = [
+        c
+        for c in list_containers(cfg, incus, with_git_status=True)
+        if c.git_status is not None and c.git_status.pending_pr_actions
+    ]
+    if not pending:
+        return incus, None
+    if len(pending) == 1:
+        return incus, pending[0].name
+    picked = pick_container(pending)
+    if picked is None:
+        raise typer.Exit(1)
+    return incus, picked
+
+
+def _read_review_outbox_or_exit(
+    cfg: "Config", incus: "IncusType", container: str, short: str
+) -> "Outbox":
+    """Read ``container``'s outbox, or exit 2 saying what to do about it."""
+    from jailbee import pr_outbox
+
+    try:
+        return pr_outbox.read_outbox(incus, container, uid=cfg.container_user.uid)
+    except pr_outbox.OutboxReadError as e:
+        error_plain(str(e))
+        # The outbox lives in the container's own filesystem, so a stopped
+        # container has none to read — by far the likeliest way to land here,
+        # and the only one with an obvious remedy. The wording comes from
+        # Incus ("Instance is not running"); when it doesn't match, the
+        # message above is left to speak for itself rather than having a
+        # guess appended to it.
+        if "not running" in str(e).lower():
+            error_plain(f"Start it first: jailbee start {short}")
+        raise typer.Exit(2) from e
+
+
+def _select_manifests_or_exit(outbox: "Outbox", manifest: str | None, short: str) -> list[str]:
+    """Every pending manifest, or just the named one; exits 2 on a bad name."""
+    names = outbox.manifest_names
+    if manifest is None:
+        return names
+    if manifest not in names:
+        error_plain(f"{short} has no pending manifest named {manifest}")
+        if names:
+            error_plain(f"Pending there: {', '.join(names)}")
+        raise typer.Exit(2)
+    return [manifest]
+
+
+def _resolve_review_targets(
+    cfg: "Config",
+    incus: "IncusType",
+    container: str,
+    outbox: "Outbox",
+    short: str,
+    *,
+    force: bool,
+) -> tuple[list["Target"], list[str], list[str]]:
+    """Gate every pending manifest: (publishable targets, refusals, deferrals).
+
+    Nothing is printed here. All three lists go back to the caller so it can
+    report every problem *before* the first line of the plan — a plan
+    interrupted halfway by a refusal is worse than a refusal on its own.
+
+    A ``pr: null`` manifest is a deferral, not a refusal: it carries the
+    description of a PR that does not exist yet, which `jailbee pr` will
+    consume. It must never reach `apply_manifest`, whose own precondition
+    rejects it as a caller-routing bug rather than as anything the user did.
+    """
+    from jailbee import pr_outbox
+
+    targets: list[Target] = []
+    refusals: list[str] = []
+    deferred: list[str] = []
+    for manifest_name in outbox.manifest_names:
+        try:
+            manifest = pr_outbox.parse_manifest(
+                manifest_name, outbox.files[manifest_name], outbox.files
+            )
+            target = pr_outbox.resolve_target(cfg, incus, container, manifest, force=force)
+        except (pr_outbox.ManifestError, pr_outbox.GateError) as e:
+            refusals.append(str(e))
+            continue
+        if target.pr is None:
+            # Two lines on purpose: the command must not be split across a
+            # wrap, which is exactly what a single long line does at 80
+            # columns.
+            deferred.append(
+                f"manifest {manifest_name} describes a PR that does not exist yet.\n"
+                f"  Run `jailbee pr {short}` to create it."
+            )
+            continue
+        targets.append(target)
+    return targets, refusals, deferred
+
+
+def _current_pr_body(cfg: "Config", target: "Target") -> str | None:
+    """The PR's current description, when the manifest proposes rewriting it.
+
+    Fetched only for a manifest carrying a ``description`` action — that diff
+    is the one part of the plan `plan_lines` renders in full — and a failure
+    to read it degrades the diff instead of blocking the plan.
+    """
+    from jailbee import pr, pr_outbox
+
+    if target.pr is None:
+        return None
+    if not any(isinstance(a, pr_outbox.DescriptionAction) for a in target.manifest.actions):
+        return None
+    try:
+        return pr.pr_body(cfg.repo_root, target.pr.number)
+    except pr.PrError as e:
+        warn_plain(
+            f"could not read PR #{target.pr.number}'s current description ({e}); "
+            "the proposed body is shown as an addition"
+        )
+        return None
+
+
+def _print_review_plan(cfg: "Config", short: str, target: "Target", progress: "Progress") -> None:
+    """Print one manifest's header and its plan.
+
+    Every plan line is printed with markup off and wrapping soft: the bodies
+    were written inside the container, and Rich would read a ``[note]`` in
+    one of them as a style tag and *silently delete it* — in exactly the text
+    the user is being asked to vouch for.
+    """
+    from rich.markup import escape
+
+    from jailbee import pr_outbox
+    from jailbee.tui import console
+
+    # `_resolve_review_targets` deferred every `pr: null` manifest, so a
+    # target reaching the plan always has a resolved PR to head it.
+    assert target.pr is not None
+    manifest = target.manifest
+    console.print()
+    console.print(
+        f"[bold]PR #{target.pr.number}[/bold]  {escape(manifest.repo)}  "
+        f"head {escape(target.pr.head_sha)}"
+    )
+    console.print(f"container {escape(short)} · manifest {escape(manifest.name)}")
+    if target.stale:
+        console.print("[yellow]the PR head has moved since this was written[/yellow]")
+    already = [i for i in sorted(progress.applied) if i < len(manifest.actions)]
+    if already:
+        console.print(
+            f"{len(already)} of {len(manifest.actions)} actions already published — skipped"
+        )
+    for line in pr_outbox.plan_lines(target, _current_pr_body(cfg, target)):
+        console.print(f"  {line}", markup=False, highlight=False, soft_wrap=True)
+
+
+def _print_review_identity(cfg: "Config", total: int) -> None:
+    """The plan's closing line: how much is about to be published, and as whom.
+
+    Not decoration. Every comment below will carry the *host* user's GitHub
+    identity, and this is the moment that becomes obvious. `pr.gh_login`
+    swallows every failure, so an unknown login drops the clause rather than
+    standing between the user and a publish.
+    """
+    from rich.markup import escape
+
+    from jailbee import pr
+    from jailbee.tui import console
+
+    login = pr.gh_login(cfg.repo_root)
+    plural = "" if total == 1 else "s"
+    tail = f" as [bold]{escape(login)}[/bold]" if login else ""
+    console.print()
+    console.print(f"{total} action{plural} will be published to GitHub{tail}.")
+
+
+def _print_review_receipts(target: "Target", outcome: "ApplyOutcome") -> None:
+    """Print what actually landed — one line per published action, with its URL."""
+    from jailbee.tui import console
+
+    for index, url in zip(outcome.applied, outcome.urls, strict=True):
+        console.print(
+            f"  ✓ {target.manifest.name} action {index}: {url or '(no url)'}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
+@review_app.command("apply")
+def review_apply_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Post line comments even though the PR head moved."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Show what a container wants to publish to GitHub, then publish it."""
+    from jailbee import pr_outbox
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_review_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has PR actions waiting.")
+        return
+    short = short_name(cfg, container)
+    uid = cfg.container_user.uid
+    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
+    if not outbox.manifest_names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    targets, refusals, deferred = _resolve_review_targets(
+        cfg, incus, container, outbox, short, force=force
+    )
+    for message in refusals:
+        error_plain(message)
+    for message in deferred:
+        warn_plain(message)
+    if not targets:
+        # Refusals are failures; a deferral only means the work belongs to
+        # `jailbee pr`, which is not a reason to fail.
+        raise typer.Exit(1 if refusals else 0)
+
+    plans = [(t, pr_outbox.read_progress(outbox, t.manifest.name)) for t in targets]
+    total = 0
+    for target, progress in plans:
+        total += len(pr_outbox.pending_indices(target.manifest, progress))
+        _print_review_plan(cfg, short, target, progress)
+    _print_review_identity(cfg, total)
+
+    if dry_run:
+        info("Dry run: nothing was published.")
+        return
+    if total == 0:
+        # Everything here landed on an earlier run that then failed to record
+        # it. There is nothing to publish and so nothing to confirm — only the
+        # bookkeeping below, which deletes the spent manifests.
+        info("Every action here has already been published; finishing the bookkeeping.")
+    elif not yes:
+        if not _stdin_is_interactive():
+            error_plain(
+                "Refusing to publish to GitHub without a confirmation. "
+                "Re-run with -y, or from a terminal."
+            )
+            raise typer.Exit(2)
+        if not typer.confirm("Proceed?"):
+            info("Nothing published.")
+            raise typer.Exit(1 if refusals else 0)
+
+    failed = bool(refusals)
+    for position, (target, progress) in enumerate(plans):
+        outcome = pr_outbox.apply_manifest(cfg, incus, container, target, progress, uid=uid)
+        _print_review_receipts(target, outcome)
+        stop = False
+        try:
+            pr_outbox.finalize(incus, container, outbox, target, outcome, uid=uid)
+        except pr_outbox.FinalizeError as e:
+            # The GitHub side is settled but the container could not be told.
+            # Publishing the next manifest would post more that nothing can
+            # record — the very thing the sidecar exists to prevent.
+            error_plain(str(e))
+            stop = True
+        if outcome.failure is not None:
+            error_plain(f"{target.manifest.name}: {outcome.failure}")
+            warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
+            stop = True
+        if stop:
+            failed = True
+            left = [t.manifest.name for t, _ in plans[position + 1 :]]
+            if left:
+                warn_plain(f"Stopped here; still pending: {', '.join(left)}")
+            break
+    if failed:
+        raise typer.Exit(1)
+
+
+@review_app.command("ls")
+def review_ls_cmd(
+    all_repos: Annotated[
+        bool,
+        typer.Option("--all-repos", help="List containers from every repo, not just this one."),
+    ] = False,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help="Comma-separated fields: container, pr, manifest, actions, state, error.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List the PR actions waiting in each running container's outbox.
+
+    One row per manifest. A stopped container is not probed and its outbox
+    cannot be read, so it is named in a note under the table rather than
+    listed as having nothing — JSON output describes manifests only.
+    """
+    from rich.markup import escape
+
+    from jailbee import pr_outbox
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    rows: list[_ReviewRow] = []
+    skipped: list[str] = []
+
+    for ci in list_containers(cfg, incus, all_repos=all_repos, with_git_status=True):
+        short = short_name(cfg, ci.name)
+        if ci.state != "Running":
+            skipped.append(short)
+            continue
+        pending = ci.git_status.pending_pr_actions if ci.git_status is not None else None
+        if pending == 0:
+            continue  # the probe already answered "nothing here" — don't ask twice
+        try:
+            outbox = pr_outbox.read_outbox(incus, ci.name, uid=cfg.container_user.uid)
+        except pr_outbox.OutboxReadError as e:
+            rows.append(
+                _ReviewRow(
+                    container=short, pr=None, manifest="—", actions="?", state="error", error=str(e)
+                )
+            )
+            continue
+        for manifest_name in outbox.manifest_names:
+            try:
+                manifest = pr_outbox.parse_manifest(
+                    manifest_name, outbox.files[manifest_name], outbox.files
+                )
+                # force=True so a moved head is a *column value* here rather
+                # than a refusal: `ls` reports, and `apply` is where staleness
+                # blocks. Nothing is published either way.
+                target = pr_outbox.resolve_target(cfg, incus, ci.name, manifest, force=True)
+            except (pr_outbox.ManifestError, pr_outbox.GateError) as e:
+                rows.append(
+                    _ReviewRow(
+                        container=short,
+                        pr=None,
+                        manifest=manifest_name,
+                        actions="?",
+                        state="error",
+                        error=str(e),
+                    )
+                )
+                continue
+            if target.pr is None:
+                state = "for jb pr"
+            elif target.stale:
+                state = "stale"
+            else:
+                state = "ok"
+            rows.append(
+                _ReviewRow(
+                    container=short,
+                    pr=target.pr.number if target.pr is not None else None,
+                    manifest=manifest_name,
+                    actions=pr_outbox.action_summary(manifest),
+                    state=state,
+                )
+            )
+
+    if fmt == "table":
+        # The table's own cell is too narrow for a gate refusal, so the
+        # message is printed in full above it. JSON keeps it in the `error`
+        # field instead.
+        for row in rows:
+            if row.error is not None:
+                warn_plain(row.error)
+
+    all_fields: list[table_format.FieldSpec[_ReviewRow]] = [
+        table_format.FieldSpec(
+            name="container",
+            header="CONTAINER",
+            cell=lambda r: escape(r.container),
+            json=lambda r: r.container,
+        ),
+        table_format.FieldSpec(
+            name="pr",
+            header="PR",
+            cell=lambda r: f"#{r.pr}" if r.pr is not None else "—",
+            json=lambda r: r.pr,
+        ),
+        table_format.FieldSpec(
+            name="manifest",
+            header="MANIFEST",
+            # Container-written file name: never passed through Rich's markup
+            # parser (see table_format's own convention in `port ls`).
+            cell=lambda r: escape(r.manifest),
+            json=lambda r: r.manifest,
+        ),
+        table_format.FieldSpec(
+            name="actions",
+            header="ACTIONS",
+            cell=lambda r: escape(r.actions),
+            json=lambda r: r.actions,
+        ),
+        table_format.FieldSpec(
+            name="state",
+            header="STATE",
+            cell=lambda r: r.state,
+            json=lambda r: r.state,
+        ),
+        table_format.FieldSpec(
+            name="error",
+            header="ERROR",
+            cell=lambda r: escape(r.error or ""),
+            json=lambda r: r.error,
+            default_table=False,
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title="Pending PR actions" if fmt == "table" else None,
+        empty_message="No pending PR actions.",
+    )
+    if fmt == "table" and skipped:
+        info(
+            f"Not checked, because a stopped container's outbox cannot be read: "
+            f"{', '.join(sorted(skipped))}"
+        )
+
+
+def _print_body(text: str) -> None:
+    """Print one body exactly as the container wrote it.
+
+    ``markup=False`` keeps a ``[note]`` from being read as a style tag and
+    silently dropped; ``soft_wrap=True`` keeps a long body from being
+    re-wrapped or cropped to the terminal width. `jailbee review show` exists
+    precisely so the text can be read as written before it is published.
+    """
+    from jailbee.tui import console
+
+    console.print(text, markup=False, highlight=False, soft_wrap=True)
+
+
+def _print_manifest_bodies(manifest: "Manifest") -> None:
+    """Print one manifest's actions, every body in full."""
+    from rich.markup import escape
+
+    from jailbee import pr_outbox
+    from jailbee.tui import console
+
+    pr_label = f"PR #{manifest.pr}" if manifest.pr is not None else "no PR yet"
+    console.print()
+    console.print(f"[bold]{escape(manifest.name)}[/bold]  {escape(manifest.repo)}  {pr_label}")
+    for index, action in enumerate(manifest.actions):
+        console.print()
+        if isinstance(action, pr_outbox.ReviewAction):
+            console.print(f"action {index} · REVIEW ({action.event})")
+            _print_body(action.body)
+            for comment in action.comments:
+                console.print()
+                console.print(
+                    f"  {pr_outbox.comment_anchor(comment)}",
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,
+                )
+                _print_body(comment.body)
+        elif isinstance(action, pr_outbox.ReplyAction):
+            console.print(f"action {index} · REPLY to review comment #{action.comment_id}")
+            _print_body(action.body)
+        elif isinstance(action, pr_outbox.CommentAction):
+            reply = (
+                f", replying to general comment #{action.reply_to}"
+                if action.reply_to is not None
+                else ""
+            )
+            console.print(f"action {index} · COMMENT (general){reply}")
+            _print_body(action.body)
+        elif isinstance(action, pr_outbox.DescriptionAction):
+            console.print(f"action {index} · DESCRIPTION")
+            if action.title is not None:
+                console.print(f"  title: {escape(action.title)}")
+            if action.branch is not None:
+                console.print(f"  branch: {escape(action.branch)}")
+            _print_body(action.body)
+        else:
+            # `Action` is a closed union; a fifth variant must be printed
+            # here rather than silently omitted from the one command whose
+            # whole purpose is showing everything.
+            assert_never(action)
+
+
+@review_app.command("show")
+def review_show_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    manifest: Annotated[
+        str | None,
+        typer.Argument(help="One manifest file name. Default: every pending manifest."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Print every pending body in full, exactly as the container wrote it."""
+    from jailbee import pr_outbox
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_review_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has PR actions waiting.")
+        return
+    short = short_name(cfg, container)
+    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
+    names = _select_manifests_or_exit(outbox, manifest, short)
+    if not names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    failed = False
+    for manifest_name in names:
+        try:
+            parsed = pr_outbox.parse_manifest(
+                manifest_name, outbox.files[manifest_name], outbox.files
+            )
+        except pr_outbox.ManifestError as e:
+            error_plain(str(e))
+            failed = True
+            continue
+        _print_manifest_bodies(parsed)
+    if failed:
+        raise typer.Exit(1)
+
+
+@review_app.command("drop")
+def review_drop_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(autocompletion=completion.complete_container),
+    ] = None,
+    manifest: Annotated[
+        str | None,
+        typer.Argument(help="One manifest file name. Default: every pending manifest."),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete pending PR actions, unapplied — nothing is published."""
+    from jailbee import pr_outbox
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_review_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has PR actions waiting.")
+        return
+    short = short_name(cfg, container)
+    uid = cfg.container_user.uid
+    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
+    names = _select_manifests_or_exit(outbox, manifest, short)
+    if not names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error_plain(
+                "Refusing to delete pending PR actions without a confirmation. "
+                "Re-run with -y, or from a terminal."
+            )
+            raise typer.Exit(2)
+        info(f"About to discard, unpublished, from {short}: {', '.join(names)}")
+        if not typer.confirm("Delete them?"):
+            info("Nothing deleted.")
+            return
+
+    remaining = outbox
+    for manifest_name in names:
+        try:
+            deleted = pr_outbox.drop_manifest(incus, container, remaining, manifest_name, uid=uid)
+        except pr_outbox.FinalizeError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+        # Shrink the snapshot as we go, so a body file shared by two of the
+        # manifests being dropped doesn't look referenced by each of them in
+        # turn and outlive them both.
+        remaining = pr_outbox.Outbox(
+            files={k: v for k, v in remaining.files.items() if k not in deleted}
+        )
+        success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
 
 
 apps_app = typer.Typer(
