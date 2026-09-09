@@ -196,11 +196,12 @@ Both `jailbee git push` and `jailbee git pull` print a one-line
 direction of the sync is always unambiguous at a glance.
 
 `jailbee pull` / `jailbee push` / `jailbee diff` / `jailbee fetch` / `jailbee checkout` /
-`jailbee retarget` are top-level aliases. `jailbee pr` is a first-class top-level
-command in its own right (`jailbee git pr` is its hidden alias). `jailbee git
-merge` (below) has **no** top-level alias — there is deliberately no bare
-`jailbee merge`: that verb used to name today's `jailbee git pull`, and a second
-command answering to it would resurrect the ambiguity. All bridge commands
+`jailbee retarget` / `jailbee merge` are top-level aliases. `jailbee pr` is a
+first-class top-level command in its own right (`jailbee git pr` is its hidden
+alias). `jailbee merge` came last and was withheld at first — that bare verb
+used to name today's `jailbee git pull` — but the merge target is never
+inferred, so the old `jailbee merge <name>` shape asks which container to merge
+into rather than quietly merging into the host. All bridge commands
 refuse on mount-mode containers (they share the host tree — use git on the
 host directly).
 

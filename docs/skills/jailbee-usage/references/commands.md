@@ -544,11 +544,12 @@ actively tearing the container down.
 
 ## Git bridge
 
-All refuse on mount-mode containers. `jailbee pull`/`push`/`diff`/`fetch`/`checkout`/`retarget`
-are top-level aliases for the `jailbee git` forms. `jailbee git merge` has **no**
-top-level alias (`jailbee merge` does not exist) — the bare `merge` verb used to
-name today's `jailbee git pull` and a second, differently-scoped command reusing
-it would resurrect that ambiguity. With exactly one eligible container and no
+All refuse on mount-mode containers. `jailbee pull`/`push`/`diff`/`fetch`/`checkout`/`retarget`/`merge`
+are top-level aliases for the `jailbee git` forms. `jailbee merge` came last: the
+bare `merge` verb used to name today's `jailbee git pull`, so it was withheld
+until it was clear the ambiguity cannot bite — the merge target is never
+inferred, so `jailbee merge <name>` asks which container to merge into (or, off
+a TTY, errors naming `--into`) rather than merging into the host. With exactly one eligible container and no
 NAME given, `push` / `pull` / `checkout` print a plan block (both branches,
 both tips, the action) and ask `[Y/n]` before doing anything, so JailBee
 choosing the container silently never means the direction is a surprise
