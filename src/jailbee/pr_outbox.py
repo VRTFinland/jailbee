@@ -17,11 +17,17 @@ before it is shown, let alone published.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
+import tarfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from jailbee.config import CONTAINER_USERNAME
+from jailbee.incus import Incus, IncusError
+from jailbee.tui import warn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -352,3 +358,87 @@ def parse_manifest(name: str, text: str, bodies: Mapping[str, str]) -> Manifest:
     actions = _parse_actions(name, raw, bodies, pr)
 
     return Manifest(name=name, repo=repo_val, pr=pr, head_sha=head_sha_val, actions=actions)
+
+
+_READ_SCRIPT = 'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0'
+
+
+class OutboxReadError(Exception):
+    """The container's outbox could not be read."""
+
+
+@dataclass(frozen=True)
+class Outbox:
+    files: dict[str, str]
+
+    @property
+    def manifest_names(self) -> list[str]:
+        """Manifest file names, sorted. Progress sidecars are not manifests."""
+        return sorted(
+            n for n in self.files if n.endswith(".json") and not n.endswith(".progress.json")
+        )
+
+
+def _members(blob: bytes, container: str) -> dict[str, str]:
+    """Extract text files from a hostile tar archive, entirely in memory.
+
+    A member survives only if it is a regular file, its name (after
+    stripping a leading ``./``) is a single path segment with no ``..`` and
+    no leading ``/``, its size is within :data:`MAX_MANIFEST_BYTES`, and its
+    bytes decode as UTF-8. Everything else is skipped silently; the count of
+    skipped members is reported once via :func:`warn`, never per member.
+    """
+    files: dict[str, str] = {}
+    skipped = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
+            for member in tar.getmembers():
+                name = member.name
+                if name.startswith("./"):
+                    name = name[2:]
+                if (
+                    not member.isfile()
+                    or not name
+                    or name.startswith("/")
+                    or "/" in name
+                    or ".." in name.split("/")
+                    or member.size > MAX_MANIFEST_BYTES
+                ):
+                    skipped += 1
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    skipped += 1
+                    continue
+                data = extracted.read()
+                try:
+                    text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    skipped += 1
+                    continue
+                files[name] = text
+    except tarfile.TarError as e:
+        raise OutboxReadError(f"{container} returned a corrupt outbox archive: {e}") from e
+    if skipped:
+        warn(f"{container}: skipped {skipped} hostile outbox member(s)")
+    return files
+
+
+def read_outbox(incus: Incus, container: str, *, uid: int | None) -> Outbox:
+    """Read the whole outbox in one round-trip; never extracts to disk."""
+    try:
+        raw = incus.exec(
+            container,
+            ["bash", "-c", _READ_SCRIPT, "bash", outbox_dir()],
+            uid=uid,
+            timeout=15,
+        )
+    except IncusError as e:
+        raise OutboxReadError(f"could not read the outbox in {container}: {e}") from e
+    if not raw.strip():
+        return Outbox(files={})
+    try:
+        blob = base64.b64decode(raw.strip(), validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise OutboxReadError(f"{container} returned an unreadable outbox archive") from e
+    return Outbox(files=_members(blob, container))
