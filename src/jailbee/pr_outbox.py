@@ -49,9 +49,12 @@ MAX_ACTIONS = 50
 MAX_MANIFESTS = 20
 
 # A description action's title is optional, so it can be derived from the body's
-# first line — which has no length discipline of its own. Capped at the same 120
-# characters `pr_ai` refuses a generated title above, so a manifest and Claude
-# cannot disagree about what counts as a usable PR title.
+# first line — which has no length discipline of its own. The limit is borrowed
+# from `pr_ai._MAX_TITLE_LEN`, but the response to exceeding it is deliberately
+# not: `pr_ai` *rejects* an over-long generated title and falls back, because
+# another run can generate a better one. A manifest is the only copy of text a
+# human asked for, so an over-long title is truncated here rather than thrown
+# away with the body it came with.
 MAX_TITLE_CHARS = 120
 
 _SIDES = ("RIGHT", "LEFT")
@@ -1360,12 +1363,53 @@ def _description_title(action: DescriptionAction, fallback: str) -> str:
     return candidate
 
 
+def _eligible_for(manifest: Manifest, for_pr: int | None) -> bool:
+    """True if `manifest`'s description belongs to the PR this run is about.
+
+    `pr: null` means "the PR `jailbee pr` is about to open from this
+    container", so the create path (`for_pr=None`) accepts only those. A
+    numbered manifest describes a PR that already exists: publishing its
+    proposed body as a brand-new PR's would put the text somewhere it was never
+    meant to go *and* burn the action index, so `jb review apply` could never
+    post it where it belongs. The update path passes its own number and accepts
+    both — `pr: null` because the container may have written the description
+    before the PR existed, `for_pr` because that is the PR being updated.
+    """
+    if for_pr is None:
+        return manifest.pr is None
+    return manifest.pr in (None, for_pr)
+
+
+def _outbox_branch(action: DescriptionAction, container_branch: str, name: str) -> str:
+    """The head branch name to propose: `action.branch` if it is a valid ref.
+
+    The container is untrusted input and this value reaches `git push`, the
+    local-branch rename and `gh pr create --head`. The other two sources of a
+    head name are already checked (`--as` exits 2, `pr_ai` falls back), so this
+    one is too — a rejected name falls back to the container's own branch
+    rather than failing the run after the push, which the design forbids.
+    """
+    if not action.branch:
+        return container_branch
+    if git.check_ref_format(action.branch):
+        return action.branch
+    instead = (
+        f"publishing under {container_branch!r} instead" if container_branch else "ignoring it"
+    )
+    warn(
+        f"{name}: the proposed branch name {action.branch!r} is not a valid git "
+        f"branch name; {instead}."
+    )
+    return container_branch
+
+
 def pending_pr_text(
     cfg: Config,
     incus: Incus,
     container: str,
     *,
     uid: int | None,
+    for_pr: int | None = None,
     pick: Callable[[list[str]], str | None] | None = None,
 ) -> OutboxPrText | None:
     """The pending `description` action, as a `PrText`, or None.
@@ -1378,15 +1422,34 @@ def pending_pr_text(
     naming each candidate: `jailbee pr` must neither guess between two
     descriptions nor die mid-flow after it has already pushed.
 
-    `cfg` is unused today. It stays in the signature because every other entry
-    point into this module takes it (and because the repo gate `resolve_target`
-    applies to a manifest with a PR would go here), so a caller never has to
-    ask which outbox function is the odd one out.
+    Two gates decide which manifests may contribute, and they are the two
+    `resolve_target` runs first, in the same order:
+
+    1. Repo lock — `manifest.repo` must be the GitHub slug of the host's own
+       upstream remote. This is the gate the design calls the costliest to
+       skip: without it a container could hand `jailbee pr` text written for
+       an unrelated repository. Failing it warns and skips.
+    2. PR ownership — `for_pr`; see `_eligible_for`. A manifest for some other
+       PR is skipped *silently*: a review container legitimately carries such
+       manifests for `jailbee review apply`, and warning about them on every
+       `jailbee pr` run would be noise, not news.
     """
     try:
         outbox = read_outbox(incus, container, uid=uid)
     except OutboxReadError as e:
         warn(f"{e}; falling back to the usual PR text.")
+        return None
+    if not outbox.manifest_names:
+        # Before the git round-trip below: the empty outbox is the common case.
+        return None
+
+    slug = github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
+    if slug is None:
+        warn(
+            f"{container} has outbox manifests, but this repo has no GitHub remote "
+            f"(remote {cfg.upstream_remote!r} is not a GitHub URL) to check them "
+            "against; falling back to the usual PR text."
+        )
         return None
 
     candidates: list[tuple[str, int, DescriptionAction]] = []
@@ -1396,11 +1459,15 @@ def pending_pr_text(
         except ManifestError as e:
             warn(f"Ignoring outbox manifest {name}: {e}")
             continue
-        applied = read_progress(outbox, name).applied
+        if manifest.repo != slug:
+            warn(f"Ignoring outbox manifest {name}: it targets {manifest.repo}, not {slug}.")
+            continue
+        if not _eligible_for(manifest, for_pr):
+            continue
         candidates.extend(
             (name, index, action)
-            for index, action in enumerate(manifest.actions)
-            if isinstance(action, DescriptionAction) and index not in applied
+            for index in pending_indices(manifest, read_progress(outbox, name))
+            if isinstance(action := manifest.actions[index], DescriptionAction)
         )
 
     if not candidates:
@@ -1434,7 +1501,7 @@ def pending_pr_text(
         text=PrText(
             title=_description_title(action, container_branch or container),
             body=action.body,
-            branch=action.branch or container_branch,
+            branch=_outbox_branch(action, container_branch, name),
         ),
         manifest=name,
         index=index,

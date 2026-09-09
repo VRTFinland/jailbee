@@ -1068,6 +1068,33 @@ def test_pick_review_action_maps_the_cancel_entry_to_none(mocker):
     assert pr_flow._pick_review_action(7, "feat/x") is None
 
 
+def test_pick_outbox_manifest_returns_the_selected_name(mocker):
+    _fake_select(mocker, 1)
+    assert pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"]) == "002-b.json"
+
+
+def test_pick_outbox_manifest_maps_the_cancel_entry_to_none(mocker):
+    """The same `value=None` trap as `_pick_review_action`: without an explicit
+    sentinel the cancel entry answers its own title and is used as a manifest
+    name — which is exactly the "never guess between two descriptions" rule."""
+    _fake_select(mocker, -1)
+    assert pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"]) is None
+
+
+def test_the_picker_is_offered_only_on_a_tty(tmp_path, mocker):
+    """Off a TTY there is nobody to ask, and `pending_pr_text` must then refuse
+    an ambiguity rather than block on a prompt after the branch was pushed."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    mocker.patch("sys.stdin.isatty", return_value=False)
+    _plan(tmp_path, mocker, use_outbox=True)
+    assert pending.call_args.kwargs["pick"] is None
+
+    mocker.patch("sys.stdin.isatty", return_value=True)
+    _plan(tmp_path, mocker, use_outbox=True)
+    assert pending.call_args.kwargs["pick"] is pr_flow._pick_outbox_manifest
+
+
 def test_review_target_is_none_without_a_pr_label(tmp_path, mocker):
     record = _record(number=None)
     assert _resolve(tmp_path, record, mocker.MagicMock(), yes=False, stacked=False) is None

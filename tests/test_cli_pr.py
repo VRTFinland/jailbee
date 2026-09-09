@@ -474,13 +474,19 @@ def test_no_ai_does_not_disable_the_outbox(mocker, tmp_path):
     assert create.call_args.kwargs["title"] == "feat: x"
 
 
-def test_no_ai_help_says_the_outbox_is_unaffected(mocker, tmp_path):
-    from tests.conftest import flat_output
+def test_no_ai_help_says_the_outbox_is_unaffected():
+    """The opposite reading is available and would surprise, so `--no-ai` has to
+    say in its own help that it does not disable the outbox."""
+    # Rich wraps an option's help inside a bordered table, so the vertical rules
+    # have to go before the whitespace is collapsed or every wrap leaves a "│".
+    output = CliRunner().invoke(app, ["pr", "--help"]).output
+    flat = " ".join(output.replace("│", " ").split())
 
-    result = CliRunner().invoke(app, ["pr", "--help"])
-
-    assert "--no-outbox" in flat_output(result.output)
-    assert "--no-outbox" in flat_output(result.output).split("--no-ai", 1)[1]
+    assert (
+        "Does NOT ignore a description already written in the container's outbox "
+        "— that is --no-outbox." in flat
+    )
+    assert "Ignore a PR description written in the container's outbox." in flat
 
 
 def test_outbox_description_is_used_recorded_and_named(mocker, tmp_path):

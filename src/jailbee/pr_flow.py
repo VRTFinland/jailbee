@@ -323,11 +323,11 @@ def record_outbox_consumption(
             incus, full, source.manifest, source.index, url, uid=cfg.container_user.uid
         )
     except pr_outbox.FinalizeError as exc:
-        warn(
-            f"The description was published, but recording that in the container "
-            f"failed: {exc}. {source.manifest} stays pending — drop it with "
-            f"`jailbee review drop`."
-        )
+        # No claim about what the manifest now looks like: `record_consumed`
+        # fails at three different steps and only the first leaves the action
+        # unrecorded. `FinalizeError`'s message names the step that failed;
+        # `jailbee review ls` is what actually answers "so what is left?".
+        warn(f"{exc}. Check what is left with `jailbee review ls`.")
 
 
 def resolve_pr_description_update(
