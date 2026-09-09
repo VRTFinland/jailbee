@@ -72,6 +72,19 @@ def test_sync_removes_stale_files_in_managed_skill(tmp_path: Path, monkeypatch) 
     assert (skills / "jailbee-usage" / "SKILL.md").is_file()
 
 
+def test_bundled_skills_include_pr_review() -> None:
+    assert "jailbee-pr-review" in claude_skills.bundled_skill_names()
+
+
+def test_pr_review_skill_forbids_writing_from_the_container() -> None:
+    text = (Path(claude_skills._skills_root()) / "jailbee-pr-review" / "SKILL.md").read_text()
+    # The whole point of the outbox: the container never mutates GitHub.
+    assert "gh pr comment" in text
+    assert "gh pr review" in text
+    assert "jb review apply" in text
+    assert "~/.jailbee/pr-outbox" in text
+
+
 def test_sync_leaves_unrelated_skills_untouched(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(claude_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
     shared = tmp_path / "shared"
