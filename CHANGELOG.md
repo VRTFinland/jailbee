@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-09-09
+
 ### Added
 
 - **`jailbee merge` now exists as a top-level alias for `jailbee git merge`**,
@@ -74,14 +76,6 @@
   than guessing "no divergence" — a failed probe must not write a merge
   commit into the container's history.
 
-- **The legacy `chrome:` deprecation notice printed three times on
-  `jailbee new`.** The command loads the config three times — the CLI's
-  own load, plus the privilege baseline and the branch's own autostart
-  config, the latter two each building a whole `Config` and re-reading
-  `global.yaml` — and the notice went out on every one. It is now capped
-  at one line per process, matching the `.gie/config.yaml` notice, which
-  already worked this way.
-
 - **`jailbee net egress add <host> <container>` actually opens the hole
   now.** The default (container) scope reported success, stored the label,
   wrote a correct `<container>-extra` ACL and produced correct nftables
@@ -134,6 +128,7 @@
   naming the file to edit; `--for` and `--no-revert` decide the TTL
   themselves and keep working regardless. `jailbee config validate` also
   flags the value now, so it can be found before a switch fails.
+
 - **`jailbee new` no longer fails on compositors that don't use
   `wayland-0`.** jailbee decided a host was Wayland from
   `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
@@ -146,6 +141,7 @@
   absolute path the Wayland spec also allows — is skipped with a warning
   instead of aborting the create. Existing containers pick the profile
   half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
+
 - **A renumbered compositor socket no longer needs a `jailbee apply`.** The
   profile's `WAYLAND_DISPLAY` is only ever an apply-time snapshot of the
   session that ran it, while the socket mount is recomputed on every boot —
@@ -154,11 +150,13 @@
   container start now pins `WAYLAND_DISPLAY` on the instance alongside the
   mount that decides it, and clears it when no socket was mounted. A
   `WAYLAND_DISPLAY` set in `container.env` still wins.
+
 - **The grok agent preset now includes SuperGrok's auth and chat-proxy
   hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
   also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
   inference, and hosted web search. Existing grok containers pick this
   up on `jailbee apply`.
+
 - **A repo whose containers used two credential groups could park a login
   under the wrong account's name.** `jailbee claude park`/`use` named a
   parked slot from whichever container's config home had run Claude most
@@ -166,6 +164,7 @@
   group than the one being parked from — silently mislabeling the stored
   login. Parking and switching now only trust a container's config home
   when it is an *authoritative* member of the group in question.
+
 - **A submodule created inside a container now lands on the host in git's
   normal layout, as of the next `jailbee git pull`/`checkout`.** Cloning a
   sub-repo out of a container over `ext::` used to leave a legacy `.git`
@@ -176,12 +175,14 @@
   their next `jailbee git pull`/`checkout`. `jailbee submodule pr` does not
   run this step, so a submodule it first materialises on the host keeps the
   legacy layout until the following `jailbee git pull`/`checkout`.
+
 - **Such a submodule's `origin` is no longer left pointing at the dead
   `ext::incus exec …` transport URL**, which would have pushed the host's
   commits into a container that no longer exists. The upstream now comes
   from the container's `.gitmodules`, else the container sub-repo's own
   `remote.origin.url`; when neither names one, `origin` is removed and the
   fix is printed instead of silently leaving a broken remote behind.
+
 - **A `jailbee new` that fails after the container is created no longer
   leaves it behind.** The instance was created before `incus profile assign`,
   so an assign that failed — a `host_mounts` entry whose source path has gone
@@ -192,20 +193,24 @@
   instance it just created (best-effort, never replacing the original error),
   and "already exists" distinguishes a leftover from a real container and
   points it at `jailbee destroy <name> --force`.
+
 - **`jailbee new` on a repo that never ran `jailbee init` now says so**, and
   refuses before creating anything, instead of reaching `profile_assign` and
   surfacing Incus's "Profile not found". Scratch directories are unaffected —
   their profiles are bootstrapped through `run_apply` first.
+
 - **The autofetch failure no longer sends a scratch directory to a file it
   does not have.** It advised setting `new.autofetch=false` in
   `.jailbee/config.yaml` — the one file a synthesized config is defined by
   lacking, as `jailbee new` reports two lines earlier. It now names
   `scratch.config.new.autofetch` in `global.yaml`, with the path spelled out.
+
 - **`jailbee config init --global` now documents every browser.** The
   generated file carried only `browsers.chrome`, so nothing in it revealed
   that Firefox or `browsers.default` exist. Firefox ships present but
   disabled, the same way `github` does, since it defaults to `source: image`
   and enabling it would promise a browser no golden image has installed yet.
+
 - **`jailbee doctor`'s uid-delegation fix is now sized to the host's own user
   namespace.** It prescribed `root:1000000:1000000000` unconditionally;
   inside an unprivileged container that range does not fit, and appending it
@@ -213,6 +218,7 @@
   write to uid_map failed: Operation not permitted`. The advice is now
   computed from `/proc/self/uid_map` and capped at the documented billion, so
   an ordinary host sees no change.
+
 - **`jailbee ls` and both dashboards now show a container sitting in an
   unresolved merge or rebase** (`conflict!`, `merging`, `rebasing`,
   `cherry-picking`, `reverting`), instead of only ever predicting whether
