@@ -13,6 +13,7 @@ import yaml
 
 from jailbee import __version__, completion, table_format
 from jailbee.config import ConfigError, load_config, load_config_unsanitized
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.global_config import (
     GlobalConfig,
     default_global_config_path,
@@ -2328,6 +2329,7 @@ if TYPE_CHECKING:
         SourcePref,
         SyncRefsResult,
     )
+    from jailbee.tui import ConfirmFn
 
 
 def _resolve_existing(
@@ -3835,7 +3837,7 @@ def retarget(
     """
     from jailbee import git as git_helpers
     from jailbee import sync
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
@@ -3852,7 +3854,19 @@ def retarget(
 
     if merge:
         try:
-            _do_single_push(cfg, incus, short, source=result.new_base, action="merge")
+            _do_single_push(
+                cfg,
+                incus,
+                short,
+                source=result.new_base,
+                action="merge",
+                # No `--no-ff` of its own: retarget merges a *new* base into
+                # the container's branch, so the automatic choice is a merge
+                # commit and the ff-only path is not reachable here. `confirm`
+                # is passed anyway so a container that somehow is on the new
+                # base gets the prompt rather than a dead end.
+                confirm=default_confirm if _stdin_is_interactive() else None,
+            )
         except (sync.SyncError, git_helpers.GitError) as exc:
             error(str(exc))
             info(
@@ -4481,6 +4495,8 @@ def _do_single_push(
     prefer_ref: "SourcePref | None" = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    no_ff: bool | None = None,
+    confirm: "ConfirmFn | None" = None,
 ) -> str:
     """Run one container's push + immediate per-container output.
 
@@ -4492,6 +4508,9 @@ def _do_single_push(
     to push and whether to refresh it first; ``None`` defers to
     ``push.push_from`` / ``push.autofetch``. ``source_ref`` overrides both
     with an exact host ref (a PR head — see ``pr.pr_head_ref``).
+
+    ``no_ff`` / ``confirm`` reach ``sync.push_and_merge`` and are meaningless
+    for the other three actions — see that function for the tri-state.
     """
     from jailbee import sync
     from jailbee.lifecycle import resolve_container_name
@@ -4515,6 +4534,8 @@ def _do_single_push(
             prefer_ref=prefer_ref,
             fetch=fetch,
             source_ref=source_ref,
+            no_ff=no_ff,
+            confirm=confirm,
         )
         _print_bridge_direction(
             merge_result.push.source, "host", merge_result.container_branch, "container"
@@ -4646,6 +4667,17 @@ def push(
             "configured push.default_action.",
         ),
     ] = False,
+    ff: Annotated[
+        bool | None,
+        typer.Option(
+            "--ff/--no-ff",
+            help="How --merge merges. --no-ff always writes a merge commit; "
+            "--ff demands a fast-forward and fails on divergence. Default: "
+            "fast-forward when the container is already on the pushed branch, "
+            "merge commit otherwise — and if that fast-forward is impossible, "
+            "you are asked whether to make a merge commit instead.",
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -4725,6 +4757,13 @@ def push(
     container's current branch; conflicts leave the container in
     merge/rebase state for resolution inside `jailbee shell`.
 
+    --merge picks its own merge mode: a fast-forward when the container is
+    already on the branch being pushed (which --pr always is), a merge
+    commit otherwise. When that fast-forward turns out to be impossible —
+    the container has commits the pushed ref does not — you are shown both
+    commit counts and asked whether to make a merge commit instead. --no-ff
+    answers that up front and --ff refuses it, failing on divergence.
+
     With --force, the container's current branch and working tree are
     hard-reset to the pushed ref (discarding container-only commits).
     It is single-container only, refuses a dirty tree, and refuses when
@@ -4761,6 +4800,7 @@ def push(
       jailbee git push feat-foo                 # honors push.default_* or prompts
       jailbee git push feat-foo --current       # send host's current branch
       jailbee git push feat-foo --merge --current
+      jailbee git push feat-foo --pr --merge --no-ff  # merge commit, diverged PR head
       jailbee git push feat-foo --from develop --rebase
       jailbee git push feat-foo --plain         # transport only, no apply
       jailbee git push feat-foo --from develop --force   # replace container branch + worktree
@@ -4775,6 +4815,11 @@ def push(
     """
     if sum([merge, rebase, plain, force]) > 1:
         error("--merge, --rebase, --plain, and --force are mutually exclusive.")
+        raise typer.Exit(2)
+    if ff is not None and (rebase or plain or force):
+        other = "--rebase" if rebase else ("--plain" if plain else "--force")
+        flag = "--ff" if ff else "--no-ff"
+        error(f"{flag} only applies to --merge, not {other}.")
         raise typer.Exit(2)
     if force and name is None:
         error(
@@ -4818,6 +4863,15 @@ def push(
         source_flag=source,
         current_flag=current,
     )
+    # `--ff` means "fast-forward only", so it is the *negation* of the
+    # `no_ff` tri-state `sync.push_and_merge` takes. `None` stays `None`:
+    # neither flag given leaves the automatic choice in place.
+    merge_no_ff = None if ff is None else not ff
+    # Only an interactive run may be asked about a divergence. A piped or
+    # redirected stdin gets the error naming --no-ff instead: `default_confirm`
+    # would return its documented `False` on EOF, which reads as a decision
+    # the user never made.
+    merge_confirm = default_confirm if _stdin_is_interactive() else None
 
     if name is None:
         from jailbee import tui
@@ -4975,6 +5029,8 @@ def push(
                     prefer_ref=ref_pref,
                     fetch=fetch_arg,
                     source_ref=pr_source_ref,
+                    no_ff=merge_no_ff,
+                    confirm=merge_confirm,
                 )
                 outcomes.append(_PushOutcome(short=short, ok=True, summary=summary))
             except (sync.SyncError, git_helpers.GitError) as exc:
@@ -5052,6 +5108,8 @@ def push(
             prefer_ref=ref_pref,
             fetch=fetch,
             source_ref=single_source_ref,
+            no_ff=merge_no_ff,
+            confirm=merge_confirm,
         )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
@@ -6024,7 +6082,8 @@ def submodule_checkout(
     cfg = _load_or_exit(config)
     hint(
         [
-            "`jailbee submodule checkout` is now `jailbee branch`.",
+            "`jailbee submodule checkout` is now `jailbee branch`. It keeps "
+            f"working until {LEGACY_REMOVAL_VERSION}, where it is removed.",
             "  jailbee branch [BRANCH] [--container NAME] [--submodules-only]",
         ]
     )
@@ -8828,7 +8887,10 @@ def chrome_cmd(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Argument(help="URL to open. Falls back to `browsers.chrome.url` config."),
+        typer.Argument(
+            help="URL to open. Falls back to `browsers.chrome.url`, then to the "
+            "shared `browsers.url`."
+        ),
     ] = None,
     force: Annotated[
         bool,
@@ -8856,7 +8918,10 @@ def firefox_cmd(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Argument(help="URL to open. Falls back to `browsers.firefox.url` config."),
+        typer.Argument(
+            help="URL to open. Falls back to `browsers.firefox.url`, then to the "
+            "shared `browsers.url`."
+        ),
     ] = None,
     force: Annotated[
         bool,
@@ -10294,14 +10359,20 @@ def chrome_pool_ls_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Deprecated: use `jailbee pool ls chrome-profile`."""
-    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    warn(
+        "`jailbee chrome-pool` is deprecated — use `jailbee pool` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     pool_ls_cmd(name="chrome-profile", fmt=fmt, fields=fields, config=config)
 
 
 @chrome_pool_app.command("prune")
 def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
     """Deprecated: use `jailbee pool prune chrome-profile`."""
-    warn("`jailbee chrome-pool` is deprecated — use `jailbee pool` instead.")
+    warn(
+        "`jailbee chrome-pool` is deprecated — use `jailbee pool` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     pool_prune_cmd(name="chrome-profile", config=config)
 
 

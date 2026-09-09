@@ -261,6 +261,16 @@ class BrowsersConfig(BaseModel):
             "command asks you to set this. Naming a disabled browser is a config error."
         ),
     )
+    url: str | None = Field(
+        default=None,
+        description=(
+            "URL every enabled browser opens on launch, unless that browser sets its "
+            "own `url`. Most repos have one app URL and no reason to write it once per "
+            "browser. Note that a browser cannot opt back out of a shared URL: `url: "
+            "null` on a browser reads the same as not setting it, so it inherits. Set "
+            "the URL per browser instead when one of them should launch bare."
+        ),
+    )
     chrome: BrowserConfig = Field(
         default_factory=lambda: BrowserConfig(host_path=_DEFAULT_CHROME_HOST_PATH),
         description=(
@@ -285,6 +295,23 @@ class BrowsersConfig(BaseModel):
         """
         return [n for n in ("chrome", "firefox") if getattr(self, n).enabled]
 
+    def effective_url(self, name: str) -> str | None:
+        """The URL browser `name` launches with, or `None` for a bare launch.
+
+        A browser's own `url` wins over the shared `browsers.url`. That
+        precedence also settles the legacy `chrome:` block, whose `url`
+        `loader.resolve_browsers_raw` folds to `browsers.chrome.url`: a host
+        that has not migrated its `global.yaml` keeps the URL it configured
+        even after someone adds a shared one.
+
+        Resolved on read rather than backfilled at load time because the
+        loaded `Config` is read-only, and because `config edit` must keep
+        showing which layer each value actually came from — a backfill would
+        make every browser's `url` look explicitly set.
+        """
+        browser: BrowserConfig = getattr(self, name)
+        return browser.url if browser.url is not None else self.url
+
     @field_validator("chrome", mode="before")
     @classmethod
     def _default_chrome_host_path(cls, v: object) -> object:
@@ -296,9 +323,9 @@ class BrowsersConfig(BaseModel):
         return _backfill_firefox_default_source(v)
 
 
-# Kept as a name for one release so `from jailbee.config import ChromeConfig`
-# keeps working while `chrome:` is still an accepted alias. Retire in 1.4.0
-# together with the alias itself.
+# Kept as a name so `from jailbee.config import ChromeConfig` keeps working
+# while `chrome:` is still an accepted alias. Retire in 2.0.0 together with
+# the alias itself (see `loader.resolve_browsers_raw`).
 ChromeConfig = BrowserConfig
 
 

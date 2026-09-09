@@ -266,6 +266,12 @@ resurrect the ambiguity.
     ref into the container's branch, or just transport it (`--plain`). Refuses on a
     dirty container tree; conflicts leave the container mid-merge/rebase — resolve
     inside `jailbee shell <name>`.
+  - `--ff` / `--no-ff` (with `--merge`) — `--merge` fast-forwards when the
+    container is already on the pushed branch, which `--pr` always is, and makes
+    a merge commit otherwise. When the two have diverged, that fast-forward is
+    impossible: you are shown both commit counts and asked whether to make a
+    merge commit instead. `--no-ff` answers yes up front, `--ff` refuses and
+    fails. Without a TTY the divergence is an error naming `--no-ff`.
   - `--from <branch>` (default: host default branch) / `--current` (host's current
     branch).
   - `--pr` (PR containers only) — re-fetch the PR head from GitHub first, pulling in

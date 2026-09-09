@@ -244,6 +244,87 @@ def test_legacy_chrome_block_warns_where_it_moved(capsys):
     assert "chrome:" in err and "browsers.chrome" in err
 
 
+def test_effective_url_falls_back_to_the_shared_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"url": "https://shared.test", "chrome": {"enabled": True}})
+    assert cfg.browsers.effective_url("chrome") == "https://shared.test"
+    assert cfg.browsers.effective_url("firefox") == "https://shared.test"
+    # The per-browser field itself is untouched — the fallback is a read-time
+    # resolution, not a mutation of the loaded Config (which is read-only).
+    assert cfg.browsers.chrome.url is None
+
+
+def test_effective_url_prefers_the_per_browser_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={"url": "https://shared.test", "chrome": {"url": "https://own.test"}},
+    )
+    assert cfg.browsers.effective_url("chrome") == "https://own.test"
+
+
+def test_effective_url_is_none_when_nothing_sets_one(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path).browsers.effective_url("chrome") is None
+
+
+def test_a_legacy_chrome_url_still_wins_over_a_shared_one(tmp_path):
+    """The fold puts the legacy `chrome.url` at `browsers.chrome.url`, which
+    is a per-browser value and must therefore beat `browsers.url` — the same
+    precedence an explicitly written `browsers.chrome.url` gets. A host that
+    has not migrated its `global.yaml` keeps the URL it configured.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    text = (
+        "container_prefix: myrepo\n"
+        "chrome:\n"
+        "  enabled: true\n"
+        "  url: https://legacy.test\n"
+        "browsers:\n"
+        "  url: https://shared.test\n"
+    )
+    cfg = load_config_from_text(text, tmp_path / ".jailbee" / "config.yaml")
+    assert cfg.browsers.effective_url("chrome") == "https://legacy.test"
+    assert cfg.browsers.effective_url("firefox") == "https://shared.test"
+
+
+def test_the_legacy_chrome_notice_prints_once_per_process(capsys):
+    """Three folds, one line.
+
+    `jailbee new` loads the config three times — the CLI's own
+    `_load_or_exit`, then `branch_config._baseline_autostart` and
+    `branch_config.load_branch_autostart`, each of which builds a whole
+    `Config` through `load_config_from_text` — and an unguarded notice
+    printed once per load, so the user saw the same sentence three times.
+    """
+    from jailbee.config.loader import resolve_browsers_raw
+
+    for _ in range(3):
+        resolve_browsers_raw({"chrome": {"enabled": True}})
+    assert capsys.readouterr().err.count("browsers.chrome") == 1
+
+
+def test_the_notice_prints_once_across_three_real_loads(tmp_path, capsys):
+    """The same guarantee through the loader `jailbee new` actually calls.
+
+    The unit above folds a dict directly; this reproduces the reported
+    shape — three full `load_config_from_text` builds in one process — so
+    a guard placed too close to `resolve_browsers_raw`'s internals (and
+    bypassed by the real path) still fails here.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    text = "container_prefix: myrepo\nchrome:\n  enabled: true\n"
+    path = tmp_path / ".jailbee" / "config.yaml"
+    for _ in range(3):
+        load_config_from_text(text, path)
+    assert capsys.readouterr().err.count("browsers.chrome") == 1
+
+
 def test_an_explicit_browsers_block_wins_over_the_legacy_one():
     from jailbee.config.loader import resolve_browsers_raw
 

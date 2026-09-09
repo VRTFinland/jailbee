@@ -602,6 +602,7 @@ are `ask`. CLI flags always win.
 | `--current` | Send the host's current branch. Implies the local ref (no fetch). |
 | `--merge` / `--rebase` | After transport, merge/rebase the pushed ref into the container's branch. Refuse on a dirty container tree; conflicts leave the container mid-op → resolve in `jailbee shell`. |
 | `--plain` | Transport only, no apply. |
+| `--ff` / `--no-ff` | How `--merge` merges; `--merge` only (exit 2 with `--rebase`/`--plain`/`--force`). `--no-ff` always writes a merge commit; `--ff` demands a fast-forward and fails on divergence. Default is neither: a fast-forward when the container is already on the pushed branch (which `--pr` always is), a merge commit otherwise — and when that fast-forward is impossible, JailBee prints both commit counts and asks whether to make a merge commit instead. Without a TTY it errors and names `--no-ff` rather than deciding. |
 | `--pr` | PR containers only: re-fetch the PR head from GitHub into `refs/jailbee/pr/<N>/head` and push that exact ref. The fetch runs host-side, so the container needs no `jailbee net loose`. Refused on non-PR containers, and requires an explicit NAME (the label it reads is the container's, so there is no picker). Mutually exclusive with `--from`, `--current`, `--from-origin` and `--from-local` (the ref is fixed). Both dashboards expose it as "Refresh from PR head". |
 | `--from-local` | Push the host's local `refs/heads/<source>` and skip the host fetch. Use when the host has commits not yet pushed to origin. |
 | `--from-origin` | Force `refs/remotes/origin/<source>` (overrides `push.push_from: local` and the `--current` default). |
@@ -1151,7 +1152,7 @@ throw away a name nothing can supply again until a container runs Claude.
 | Command | Notes |
 |---|---|
 | `jailbee ide [NAME] [--app idea\|webstorm\|pycharm\|...]` | Launch a JetBrains IDE in the container. Needs `jetbrains.enabled`. One IDE at a time across containers (shared profile). |
-| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`. |
+| `jailbee chrome [NAME] [URL]` | Launch Chrome (per-container profile slot, seeded from the most recent). Needs `browsers.chrome.enabled` (the pre-1.3.0 top-level `chrome.enabled` still works too, with a deprecation hint). URL falls back to `browsers.chrome.url`, then to the shared `browsers.url`. |
 | `jailbee firefox [NAME] [URL]` | Launch Firefox (per-container profile slot). Needs `browsers.firefox.enabled`. URL falls back to `browsers.firefox.url`. Defaults to `source: image` — installed into the golden image, since the host's Firefox is normally a snap and not usefully mountable. |
 | `jailbee browser [NAME] [URL]` | Launch the default browser: `browsers.default` when set, otherwise the single enabled browser. Errors and names what to set if that's ambiguous (none, or more than one, enabled). |
 | `jailbee apps ls [NAME] [-o json] [--fields ...] [--force]` | List every GUI app this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without `NAME` this is config only; with it, a STATUS column probes each app for real (`present`/`missing`). |

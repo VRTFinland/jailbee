@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.tui import ConfirmFn
 
 
 SourcePref = Literal["origin", "local"]
@@ -606,6 +607,59 @@ def _container_commit_count(
         return None
     raw = out.strip()
     return int(raw) if raw.isdigit() else None
+
+
+def _container_divergence(
+    incus: Incus, full_name: str, repo_dir: str, ref: str, *, uid: int
+) -> tuple[int, int] | None:
+    """`(commits only on HEAD, commits only on ref)` inside the container.
+
+    One `git rev-list --left-right --count HEAD...<ref>` for both halves, and
+    the left half alone answers the fast-forward question: HEAD can
+    fast-forward to `ref` exactly when nothing is left-only. The right half
+    is not needed for that decision but is what makes the prompt worth
+    showing — "3 commits here, 2 there" is the fact a user needs to judge
+    whether a merge commit is what they want.
+
+    `None` means the count could not be read (exec failure, or output that is
+    not two integers). Callers MUST treat that as *unknown* and not as "no
+    divergence": guessing "no" would turn a failed probe into a merge commit
+    written to the container's history.
+
+    `merge-base --is-ancestor` would answer the yes/no question in one exit
+    code, but it is also what `ff_container_branch` runs earlier in the same
+    push, and reusing the command would make the two indistinguishable to
+    anything reading the call log.
+    """
+    try:
+        out = incus.exec(
+            full_name,
+            ["git", "-C", repo_dir, "rev-list", "--left-right", "--count", f"HEAD...{ref}"],
+            uid=uid,
+        )
+    except IncusError:
+        return None
+    parts = out.split()
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return None
+    return (int(parts[0]), int(parts[1]))
+
+
+def _divergence_report(source: str, container_branch: str, ahead: int, behind: int) -> str:
+    """The shared body of the prompt and the non-interactive error.
+
+    Plain text, not Rich markup: `source` is a branch name, and this repo's
+    real ones look like `feature/#15319-price-adjustment-notice`. A name
+    carrying square brackets would have them read as style tags and silently
+    deleted — the `warn` / `warn_plain` hazard, on a string that names the
+    very thing the user has to reason about.
+    """
+    return (
+        f"'{source}' and the container's branch '{container_branch}' have diverged:\n"
+        f"  container: {ahead} commit(s) not on the pushed ref\n"
+        f"  pushed:    {behind} commit(s) not in the container\n"
+        f"A fast-forward is not possible."
+    )
 
 
 def _container_dirty_quiet(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> bool | None:
@@ -2438,19 +2492,43 @@ def push_and_merge(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    no_ff: bool | None = None,
+    confirm: ConfirmFn | None = None,
 ) -> MergeInContainerResult:
     """Push host's `source` into container and merge it into the current branch.
 
     Preflights (dirty tree, in-progress merge/rebase, detached HEAD) run
     inside the container before the push so a failure does not leave a
-    partially-populated refs/jailbee/host/* ref. When the container's current
-    branch matches `source`, the merge uses --ff-only. Conflicts raise
-    SyncError with a hint pointing at `jailbee shell <short>`; the container
-    is left in merge state for manual resolution.
+    partially-populated refs/jailbee/host/* ref. Conflicts raise SyncError
+    with a hint pointing at `jailbee shell <short>`; the container is left in
+    merge state for manual resolution.
+
+    `no_ff` picks how the merge runs, and is a tri-state:
+
+    - `None` (default) — automatic, and what every caller wanted before this
+      parameter existed: a merge commit when the container is on some other
+      branch, `--ff-only` when it is already on `source`. If that
+      fast-forward is impossible, `confirm` is asked whether to make a merge
+      commit instead; without a `confirm` it raises rather than guessing.
+    - `True` (`--no-ff`) — always a merge commit, and never a prompt: the
+      user has already answered the question the prompt would ask.
+    - `False` (`--ff`) — always `--ff-only`, so a divergence is a failure by
+      request.
+
+    The automatic case used to force `--ff-only` on a matching branch with no
+    way out, which made `jailbee push --pr --merge` unusable the moment a
+    review container had commits of its own: `--pr` pushes the PR head, so
+    the container is on that branch *by construction* and the ff-only path
+    was the only one it could take.
+
+    `confirm=None` is the non-interactive path (no TTY, a script, the
+    detached background worker) — it must never block on stdin, so it is an
+    error rather than a prompt.
 
     `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
+    from jailbee.tui import warn_plain
 
     full_name = resolve_container_name(cfg, incus, short)
 
@@ -2478,7 +2556,36 @@ def push_and_merge(
         source_ref=source_ref,
     )
 
-    fast_forward_only = container_branch == push_result.source
+    if no_ff is not None:
+        fast_forward_only = not no_ff
+    else:
+        fast_forward_only = container_branch == push_result.source
+        if fast_forward_only:
+            divergence = _container_divergence(
+                incus, full_name, repo_dir, push_result.container_ref, uid=uid
+            )
+            # `divergence is None` is "unknown", and falls through to
+            # `--ff-only` on purpose — see `_container_divergence`.
+            if divergence is not None and divergence[0] > 0:
+                divergence_report = _divergence_report(
+                    push_result.source, container_branch, divergence[0], divergence[1]
+                )
+                if confirm is None:
+                    raise SyncError(
+                        f"{divergence_report}\nRe-run with --no-ff to merge with a "
+                        f"merge commit instead, or resolve it yourself in "
+                        f"`jailbee shell {short}`."
+                    )
+                warn_plain(divergence_report)
+                if not confirm("Merge with a merge commit instead?"):
+                    raise SyncError(
+                        f"Merge of '{push_result.source}' into '{container_branch}' "
+                        f"declined — a fast-forward is not possible and no merge "
+                        f"commit was made. The pushed ref is in place, so "
+                        f"--no-ff will finish the job without pushing again."
+                    )
+                fast_forward_only = False
+
     head_oid = _merge_ref_in_container(
         incus,
         full_name,
