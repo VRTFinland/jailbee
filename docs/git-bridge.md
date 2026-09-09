@@ -240,7 +240,9 @@ off — that report is the reason multi-source is allowed at all.
 `--plain` transports the refs only and runs no merge; its report says
 "transported", not "merged" — do not read `--plain` as a kind of merge.
 `-b`/`--branch` reads a specific branch from the source and only applies with
-exactly one source.
+exactly one source. **It does not carry submodules reliably** — the transport
+enumerates the source container's *checked-out* state, not the branch being
+read; see [Submodules](#submodules).
 
 ## Submodules
 
@@ -274,6 +276,40 @@ never buried in the superproject's diff. `jailbee git merge` prints the same
 block, once per source (each source is its own merge commit in the target),
 read from inside the target container: the merge commit exists nowhere else,
 so the host cannot resolve either end of that diff.
+
+**Limitation: the transported submodules come from the sender's checked-out
+state, not from the commit being sent.** Both transports enumerate submodules
+with `git submodule status --recursive` in the sender's working tree, and move
+only what is reachable from each sub-repo's `HEAD` and its *local* branches.
+That is exactly right whenever the commit being sent is the one checked out —
+which is the default for every command here — and wrong when it is not:
+
+- **`-b <branch>` / `--branch <branch>`** on `jailbee git merge`, `fetch`,
+  `pull` and `checkout` names a branch in the container other than the one
+  checked out. A submodule that exists only on that branch is never
+  enumerated, and a gitlink it pins that no local branch of the sub-repo
+  reaches is never transported.
+- **`jailbee git push`** picks its source with `--source`, which defaults to
+  the host repo's **default branch** rather than the checked-out one (and
+  `push.push_from: origin` resolves it to `refs/remotes/origin/<source>`), so
+  the same mismatch is reachable with no flag at all. It only bites when the
+  default branch needs a submodule commit the host's checkout does not have —
+  usually the container already has it from `jailbee new`.
+
+The superproject merge itself **succeeds** either way: a gitlink is a tree
+entry, and git does not check that the commit exists. The failure surfaces one
+step later, when `git submodule update --init --recursive` runs as the verify
+gate — *after* the merge commit has been written — as
+`A submodule commit is missing or a submodule is uninitialized`. It may also
+not surface at all: `--init` falls back to cloning from the submodule's
+upstream, which succeeds in `loose` network mode for a commit that was pushed
+there, and never in `strict` mode or for a commit made inside a container.
+
+So use `-b` only when you know that branch's submodule set matches the
+container's checkout — for a repo with no submodules it is unaffected. To move
+a branch that is not checked out *with* its submodules, check it out in the
+container first (`jailbee shell <name>`, `git checkout <branch>`), then run the
+bridge command without `-b`.
 
 **Conflicting gitlinks.** When both sides moved the same submodule, git stops
 at `CONFLICT (submodule)` and leaves the pointer to you. JailBee merges it

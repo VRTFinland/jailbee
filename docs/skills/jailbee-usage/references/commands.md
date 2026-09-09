@@ -659,7 +659,7 @@ target on whatever it has checked out, so conflicts are resolved there, in
 | Flag | Effect |
 |---|---|
 | `--into <name>` | Container to merge INTO. Never inferred, but asked for when omitted on a TTY. |
-| `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. |
+| `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. **Not submodule-safe** — the transport enumerates the source's *checked-out* state, so a submodule that exists only on `<b>` never travels and the target's `submodule update` fails after the merge commit is written. Check the branch out in the container and merge without `-b` instead. |
 | `--plain` | Transport the refs only; run no merge. The report says "transported", not "merged" — `--plain` is not a kind of merge. |
 
 Several sources are merged **one at a time, in the order given**. The run
