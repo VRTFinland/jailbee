@@ -128,3 +128,58 @@ def test_the_docs_build_never_collides_with_a_committed_directory() -> None:
     assert not (REPO_ROOT / "website" / "docs").exists(), (
         "website/docs/ would be overwritten by the generated docs"
     )
+
+
+CANONICAL = '<link rel="canonical" href="https://jailbee.gisgro.io/docs/config/">'
+
+
+def _page(body: str, tmp_path: Path) -> Path:
+    site = tmp_path / "_site" / "docs"
+    site.mkdir(parents=True)
+    (site / "index.html").write_text(f"<html><head>{CANONICAL}</head><body>{body}</body></html>")
+    return site
+
+
+def test_check_passes_a_page_that_only_links_out_through_anchors(tmp_path: Path) -> None:
+    site = _page('<a href="https://github.com/VRTFinland/jailbee">source</a>', tmp_path)
+    assert docs_site.check(site) == []
+
+
+def test_check_rejects_a_script_from_a_cdn(tmp_path: Path) -> None:
+    site = _page('<script src="https://unpkg.com/mermaid@11/dist/mermaid.min.js"></script>', tmp_path)
+    assert any("unpkg.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_a_webfont_stylesheet(tmp_path: Path) -> None:
+    site = _page('<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto">', tmp_path)
+    assert any("fonts.googleapis.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_a_protocol_relative_image(tmp_path: Path) -> None:
+    site = _page('<img src="//example.com/pixel.png">', tmp_path)
+    assert any("example.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_the_repository_stats_component(tmp_path: Path) -> None:
+    """`data-md-component="source"` makes the bundle call api.github.com from
+    the reader's browser for star and release counts."""
+    site = _page('<a href="https://github.com/x" data-md-component="source">x</a>', tmp_path)
+    assert any("data-md-component" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_an_off_site_url_in_a_stylesheet(tmp_path: Path) -> None:
+    site = _page("", tmp_path)
+    (site / "extra.css").write_text("@font-face { src: url(https://fonts.gstatic.com/x.woff2); }")
+    assert any("fonts.gstatic.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_an_off_site_url_in_an_inline_style(tmp_path: Path) -> None:
+    site = _page('<style>body { background: url("https://cdn.example.com/bg.png"); }</style>', tmp_path)
+    assert any("cdn.example.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_notices_an_empty_build(tmp_path: Path) -> None:
+    """An empty site would otherwise pass every rule above vacuously."""
+    site = tmp_path / "_site" / "docs"
+    site.mkdir(parents=True)
+    assert any("no pages" in problem for problem in docs_site.check(site))

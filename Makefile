@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-skill check build publish-testpypi \
-        changelog release site docs-serve
+        changelog release site site-check docs-serve
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -49,6 +49,11 @@ site:
 	python3 scripts/docs_site.py stage
 	$(ZENSICAL) build --clean --strict
 	rsync -a --exclude 'docs-theme/' website/ _site/
+
+# Enforce the site's no-CDN rule on the generated docs. Run after `make site`;
+# CI runs both.
+site-check:
+	python3 scripts/docs_site.py check
 
 # Preview the docs alone. The staged tree is a copy, so an edit to docs/ needs
 # this target re-run; and the fonts and logo it borrows from the landing page
