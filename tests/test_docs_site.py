@@ -316,3 +316,24 @@ def test_the_page_action_links_the_rendered_source_not_the_raw_file() -> None:
     actions = (THEME / "partials" / "actions.html").read_text()
     assert "/raw/" not in actions, "the stock partial rewrites blob/ to raw/"
     assert "page.edit_url" in actions
+
+
+def test_the_resolver_agrees_with_github_on_punctuated_headings() -> None:
+    """The 46 headings where Python-Markdown's default rule differs are the
+    whole reason `toc.slugify` is configured; this pins the rule itself."""
+    from tests.docs_links import github_slug
+
+    assert github_slug("GPU / NVIDIA passthrough") == "gpu--nvidia-passthrough"
+    assert github_slug("`jailbee git push` sent something I didn't expect — why?") == (
+        "jailbee-git-push-sent-something-i-didnt-expect--why"
+    )
+    assert github_slug("Egress overrides") == "egress-overrides"
+
+
+def test_the_resolver_rejects_a_page_and_an_anchor_that_do_not_exist() -> None:
+    from tests.docs_links import resolve
+
+    assert resolve("docs/config/#scratch") is None
+    assert resolve("https://jailbee.gisgro.io/docs/") is None
+    assert "no such page" in (resolve("docs/nope/") or "")
+    assert "no heading" in (resolve("docs/config/#nope-zz") or "")

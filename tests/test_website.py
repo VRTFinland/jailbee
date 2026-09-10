@@ -1,8 +1,10 @@
 """Structural checks for the published website.
 
-The site has no build step, so these tests are its only safety net: a
-mistyped asset path or a stray CDN reference is invisible until the page is
-live, and a font shipped without its licence is a licence violation.
+`website/` ships as committed — no build step, no bundler — so these tests are
+its only safety net: a mistyped asset path or a stray CDN reference is
+invisible until the page is live, and a font shipped without its licence is a
+licence violation. The documentation under /docs/ *is* generated;
+tests/test_docs_site.py and the strict build cover that half.
 """
 
 from __future__ import annotations
@@ -20,6 +22,16 @@ CANONICAL_URL = "https://jailbee.gisgro.io/"
 # Discovered rather than listed, so a page added to website/ inherits every
 # whole-page check below instead of shipping unverified.
 PAGES = sorted(SITE.glob("*.html"))
+
+# Kept in step with tests/test_docs_site.py::UNPUBLISHED by
+# test_the_unpublished_lists_agree, below.
+UNPUBLISHED_DOCS = frozenset({"manual-testing.md", "releasing.md"})
+
+
+def test_the_unpublished_lists_agree() -> None:
+    from tests.test_docs_site import UNPUBLISHED
+
+    assert UNPUBLISHED_DOCS == UNPUBLISHED
 
 
 def canonical_url_for(page: Path) -> str:
@@ -299,6 +311,11 @@ def test_every_local_reference_resolves_on_disk() -> None:
         # test_every_clip_the_page_references_is_actually_committed.
         if tag == "source" and attr == "src" and value.startswith("assets/media/"):
             continue
+        # A docs/ link is served by the generated documentation, which is not
+        # in website/ — tests/docs_links.py resolves those against docs/*.md
+        # instead, in test_documentation_links_land_on_published_pages.
+        if value.startswith("docs/"):
+            continue
         target = (SITE / value.split("?", 1)[0]).resolve()
         # A directory reference (`./`, `subdir/`) is what a server resolves
         # to that directory's index.html — so check the file it will
@@ -403,29 +420,42 @@ def test_every_page_has_exactly_one_top_level_heading() -> None:
         assert page.read_text().count("<h1") == 1, f"{page.name} needs exactly one <h1>"
 
 
+# Still used by test_llms_txt_follows_the_format_and_links_only_to_real_docs,
+# below — llms.txt moves to the site in a later task, at which point this
+# constant (and that test) go with it.
 DOC_LINK_PREFIX = "https://github.com/VRTFinland/jailbee/blob/main/"
 
 
-def test_documentation_links_point_at_files_that_exist_in_this_repo() -> None:
-    """Verified against the local tree, which is what the repo will publish.
+def test_documentation_links_land_on_published_pages() -> None:
+    """The site links its own docs; only unpublished pages go to GitHub.
 
-    Every page, not just the front one: comparison.html hands the reader
-    off to docs/comparison.md, and a rename there would otherwise break
-    that link silently.
+    Every page, not just the front one: comparison.html hands the reader off
+    to the comparison document, and a rename there would otherwise break that
+    link silently. Anchors are resolved too — a heading that no longer exists
+    is a link into the middle of nowhere.
     """
+    from tests.docs_links import GITHUB_DOCS_PREFIX, is_docs_link, resolve
+
     for page in PAGES:
-        refs = collect_references(page.read_text())
-        doc_links = [v for a, v in refs if a == "href" and v.startswith(DOC_LINK_PREFIX)]
-        for link in doc_links:
-            path = REPO_ROOT / link[len(DOC_LINK_PREFIX) :]
-            assert path.is_file(), (
-                f"{page.name}: documentation link has no local counterpart: {link}"
-            )
+        for attribute, value in collect_references(page.read_text()):
+            if attribute != "href":
+                continue
+            if is_docs_link(value):
+                problem = resolve(value)
+                assert problem is None, f"{page.name}: {problem}"
+            elif value.startswith(GITHUB_DOCS_PREFIX):
+                name = value[len(GITHUB_DOCS_PREFIX) :]
+                assert name in UNPUBLISHED_DOCS, (
+                    f"{page.name}: {name} is published — link the site, not GitHub"
+                )
+                assert (REPO_ROOT / "docs" / name).is_file(), (
+                    f"{page.name}: documentation link has no local counterpart: {value}"
+                )
 
     index_links = [
-        v
-        for a, v in collect_references(INDEX.read_text())
-        if a == "href" and v.startswith(DOC_LINK_PREFIX)
+        value
+        for attribute, value in collect_references(INDEX.read_text())
+        if attribute == "href" and is_docs_link(value)
     ]
     assert len(index_links) >= 6, "the docs section should link at least six documents"
 
