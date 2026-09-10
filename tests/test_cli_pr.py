@@ -489,6 +489,18 @@ def test_no_ai_help_says_the_outbox_is_unaffected():
     assert "Ignore a PR description written in the container's outbox." in flat
 
 
+def test_description_help_says_the_outbox_outranks_it():
+    """`--description` asks for a Claude regeneration, and a pending manifest
+    now wins over it — the help has to say so, and name the escape."""
+    output = CliRunner().invoke(app, ["pr", "--help"]).output
+    flat = " ".join(output.replace("│", " ").split())
+
+    assert (
+        "A description already written in the container's outbox wins over this "
+        "— add --no-outbox to regenerate anyway." in flat
+    )
+
+
 def test_outbox_description_is_used_recorded_and_named(mocker, tmp_path):
     from tests.conftest import flat_output
 
@@ -789,13 +801,19 @@ def test_pr_update_asks_the_outbox_about_the_prs_own_number(mocker, tmp_path):
 
 
 def test_pr_update_no_outbox_restores_the_claude_offer(mocker, tmp_path):
-    _update_setup(mocker, tmp_path)
-    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+    """`--no-outbox` skips the lookup and hands the decision back to the
+    regeneration offer — it must not silence that offer as well."""
+    cfg, _ = _update_setup(mocker, tmp_path)
+    cfg.claude.enabled = True
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"])
 
     assert result.exit_code == 0, result.output
     pending.assert_not_called()
+    confirm.assert_called_once()
 
 
 def test_pr_update_description_regenerates(mocker, tmp_path):
@@ -1487,6 +1505,31 @@ def test_pr_already_adopted_container_skips_gh_and_prompt(mocker, tmp_path):
     pick.assert_not_called()
     create.assert_not_called()
     assert publish.call_args.kwargs["publish_name"] == "alice/worktime-stomp"
+
+
+def test_pr_leaves_an_adopted_foreign_prs_description_alone(mocker, tmp_path):
+    """A `jailbee new --pr 456` container publishes to someone else's PR head,
+    so `offer_regen` is False. Its own agent's manifest must not rewrite that
+    author's title and body with no confirmation and no undo — the outbox is a
+    stronger reason to honour that guard, not a reason to bypass it."""
+    _review_setup(
+        mocker,
+        tmp_path,
+        extra_labels={
+            "user.jailbee.pr_adopted": "1",
+            "user.jailbee.pr_branch": "alice/worktime-stomp",
+        },
+    )
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    pending.assert_not_called()
+    edit.assert_not_called()
+    record.assert_not_called()
 
 
 def test_pr_adopted_push_failure_points_at_pr_refresh(mocker, tmp_path):

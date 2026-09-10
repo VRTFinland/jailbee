@@ -708,7 +708,7 @@ def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
 
 def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):
     """Nothing may be consumed when the manifest's text cannot be used."""
-    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
     edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True)
 
@@ -720,10 +720,71 @@ def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):
 def test_the_update_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     """`jailbee submodule pr` shares this function and keeps the default."""
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
-    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
     assert _update_edit(tmp_path, mocker) is None
     pending.assert_not_called()
+
+
+def test_a_foreign_pr_is_not_rewritten_from_the_outbox(tmp_path, mocker):
+    """`offer_regen=False` means "do not silently rewrite this author's
+    description", and a manifest is a *stronger* reason to honour that: the
+    text was written by an agent, and a `pr: null` manifest is eligible for a
+    stranger's PR number under `_eligible_for`."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, offer_regen=False)
+
+    assert edit is None
+    pending.assert_not_called()
+
+
+def test_an_explicit_title_still_applies_to_a_foreign_pr(tmp_path, mocker):
+    """The outbox gate above must not swallow what the user typed themselves."""
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True, offer_regen=False)
+
+    assert edit is not None and (edit.title, edit.body) == ("typed", None)
+
+
+def test_a_pre_resolved_outbox_hint_is_not_looked_up_again(tmp_path, mocker):
+    """The create path already asked; asking again would put the same choice to
+    the user twice in one run, and the second answer would win after the push."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, outbox_hint=_outbox_source())
+
+    assert edit is not None and (edit.title, edit.body) == ("feat: x", "Body.")
+    assert edit.source is not None and edit.source.manifest == "002-d.json"
+    pending.assert_not_called()
+
+
+def test_without_a_hint_the_update_path_still_looks_up_its_own(tmp_path, mocker):
+    """The create path resolving nothing (no `pr: null` manifest) must not
+    disable the update path's own, first, lookup for a `pr: <number>` one."""
+    pending = mocker.patch(
+        "jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source("003-for-77.json")
+    )
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, for_pr=77, outbox_hint=None)
+
+    assert edit is not None and edit.source is not None
+    assert edit.source.manifest == "003-for-77.json"
+    assert pending.call_args.kwargs["for_pr"] == 77
+
+
+def test_the_picker_is_not_offered_when_prompting_is_disabled(tmp_path, mocker, monkeypatch):
+    """`JAILBEE_NONINTERACTIVE` on a pty: a blocking `questionary.select` here
+    would land after the branch was already pushed."""
+    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    mocker.patch("sys.stdin.isatty", return_value=True)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    _update_edit(tmp_path, mocker, use_outbox=True)
+
+    assert pending.call_args.kwargs["pick"] is None
 
 
 def test_an_empty_outbox_leaves_the_regeneration_offer_in_place(tmp_path, mocker):
@@ -973,6 +1034,22 @@ def test_apply_pr_updates_asks_the_outbox_about_its_own_pr(tmp_path, mocker):
     _apply_updates(tmp_path, mocker, use_outbox=True)
 
     assert pending.call_args.kwargs["for_pr"] == 1234
+
+
+def test_apply_pr_updates_forwards_a_create_path_hint(tmp_path, mocker):
+    """The already-existed path: the create-path lookup's result is reused
+    rather than a second lookup being run against a wider candidate set."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    update = _apply_updates(
+        tmp_path, mocker, use_outbox=True, outbox_hint=_outbox_source("001-hinted.json")
+    )
+
+    pending.assert_not_called()
+    record.assert_called_once()
+    assert update.description_source == "001-hinted.json"
 
 
 def test_a_failed_consumption_record_still_names_the_source(tmp_path, mocker):
@@ -1265,6 +1342,18 @@ def test_the_picker_is_offered_only_on_a_tty(tmp_path, mocker):
     mocker.patch("sys.stdin.isatty", return_value=True)
     _plan(tmp_path, mocker, use_outbox=True)
     assert pending.call_args.kwargs["pick"] is pr_flow._pick_outbox_manifest
+
+
+def test_the_create_picker_honours_jailbee_noninteractive(tmp_path, mocker, monkeypatch):
+    """A pty is not enough: a scripted run sets `JAILBEE_NONINTERACTIVE`, and a
+    `questionary.select` here would block after the branch was pushed."""
+    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    mocker.patch("sys.stdin.isatty", return_value=True)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    _plan(tmp_path, mocker, use_outbox=True)
+
+    assert pending.call_args.kwargs["pick"] is None
 
 
 def test_review_target_is_none_without_a_pr_label(tmp_path, mocker):

@@ -5431,7 +5431,11 @@ def pr_cmd(
         typer.Option(
             "--description",
             "-d",
-            help="Regenerate the PR description with Claude and apply it (update only).",
+            help=(
+                "Regenerate the PR description with Claude and apply it (update only). "
+                "A description already written in the container's outbox wins over "
+                "this — add --no-outbox to regenerate anyway."
+            ),
         ),
     ] = False,
     web: Annotated[
@@ -5899,6 +5903,12 @@ def pr_cmd(
             offer_regen=not is_foreign_pr_head,
             url=created.url,
             use_outbox=not no_outbox,
+            # What the create path already resolved this run, when `gh pr
+            # create` turned out to find an existing PR. Passing it forward is
+            # what keeps the "which pending description?" question to one
+            # asking; `None` (the plain update path) makes the update path do
+            # its own, first, lookup.
+            outbox_hint=plan.outbox_source,
         )
     pr_flow.render_pr_outcome(
         scope,

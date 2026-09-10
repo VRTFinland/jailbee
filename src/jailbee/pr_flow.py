@@ -141,11 +141,26 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
         warn(f"'{chosen}' is not a valid branch name.")
 
 
+def _can_prompt() -> bool:
+    """Whether this run may ask an interactive question at all.
+
+    One predicate for every prompt in this module. A bare `sys.stdin.isatty()`
+    is not it: it misses `JAILBEE_NONINTERACTIVE`, so a scripted run on a pty
+    that sets the variable would still be handed a blocking
+    `questionary.select` — and on the outbox paths that block lands *after* the
+    branch has been pushed.
+    """
+    from jailbee.lifecycle import _stdin_is_interactive
+
+    return _stdin_is_interactive()
+
+
 def _pick_outbox_manifest(names: list[str]) -> str | None:
     """Ask which of several pending descriptions `jailbee pr` should use.
 
     Returns the chosen manifest name, or None to use none of them. Only ever
-    called on a TTY (`pending_pr_text`'s `pick` is None otherwise).
+    called when this run may prompt (`pending_pr_text`'s `pick` is None
+    otherwise — see `_can_prompt`).
     """
     import questionary
 
@@ -253,7 +268,7 @@ def resolve_pr_text_and_head(
             incus,
             full,
             uid=cfg.container_user.uid,
-            pick=_pick_outbox_manifest if sys.stdin.isatty() else None,
+            pick=_pick_outbox_manifest if _can_prompt() else None,
         )
 
     ai_text: PrText | None = None
@@ -367,6 +382,7 @@ def resolve_pr_description_update(
     offer_regen: bool = True,
     use_outbox: bool = False,
     for_pr: int | None = None,
+    outbox_hint: OutboxPrText | None = None,
 ) -> DescriptionUpdate | None:
     """Decide the (title, body) to apply on a PR update, or None to skip.
 
@@ -376,10 +392,13 @@ def resolve_pr_description_update(
     --description, or an interactive TTY confirmation, trigger a Claude
     regeneration of both fields. Returns None when nothing should change.
 
-    `offer_regen=False` suppresses only the interactive offer — used on a PR
-    jailbee did not create, where silently rewriting the author's description is
-    never what the user asked for. Explicit --description/--title/--body still
-    apply.
+    `offer_regen=False` suppresses the interactive offer *and* the outbox —
+    used on a PR jailbee did not create, where silently rewriting the author's
+    description is never what the user asked for. The outbox does not weaken
+    that reason, it strengthens it: the replacement text was written by an
+    agent, not typed by the user, and `_eligible_for` lets a `pr: null`
+    manifest apply to a stranger's PR number. Explicit
+    --description/--title/--body still apply — those the user typed.
 
     `use_outbox` swaps the *source* of the text rather than adding a path, and
     an outbox hit returns before the regeneration offer is reached: the answer
@@ -393,9 +412,16 @@ def resolve_pr_description_update(
     whenever `use_outbox` is: the lookup accepts `pr: null` manifests and ones
     naming `for_pr`, so leaving it None here would silently ignore the
     description the container wrote *for this very PR*.
+
+    `outbox_hint` is a description the *create* path already resolved in this
+    same run — the case where `gh pr create` turned out to find an existing PR.
+    Looking it up a second time here would ask the "which pending description?"
+    question twice in one run, with a wider candidate set the second time, so
+    the second answer would silently overrule the first *after* the push.
+    A hint is therefore used as-is; only when there is none does this path run
+    its own lookup, and that one is a first question, not a second.
     """
     from jailbee import pr_ai
-    from jailbee.lifecycle import _stdin_is_interactive
 
     if title is not None or body is not None:
         return DescriptionUpdate(title=title, body=body)
@@ -403,17 +429,19 @@ def resolve_pr_description_update(
     # Looked up only past the explicit-flag check above: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    if use_outbox:
+    if use_outbox and offer_regen:
         from jailbee import pr_outbox
 
-        outbox_source = pr_outbox.pending_pr_text(
-            cfg,
-            incus,
-            full,
-            uid=cfg.container_user.uid,
-            for_pr=for_pr,
-            pick=_pick_outbox_manifest if sys.stdin.isatty() else None,
-        )
+        outbox_source = outbox_hint
+        if outbox_source is None:
+            outbox_source = pr_outbox.pending_pr_text(
+                cfg,
+                incus,
+                full,
+                uid=cfg.container_user.uid,
+                for_pr=for_pr,
+                pick=_pick_outbox_manifest if _can_prompt() else None,
+            )
         if outbox_source is not None:
             return DescriptionUpdate(
                 title=outbox_source.text.title,
@@ -422,7 +450,7 @@ def resolve_pr_description_update(
             )
 
     want_regen = description
-    if not want_regen and offer_regen and _stdin_is_interactive() and ai_on:
+    if not want_regen and offer_regen and _can_prompt() and ai_on:
         want_regen = typer.confirm(
             f"Update {scope.prefix}the PR description with Claude?",
             default=False,
@@ -1178,6 +1206,7 @@ def apply_pr_updates(
     offer_regen: bool,
     url: str,
     use_outbox: bool = False,
+    outbox_hint: OutboxPrText | None = None,
 ) -> PrUpdate:
     """Apply description and ready/draft updates to an already-existing PR.
 
@@ -1189,7 +1218,10 @@ def apply_pr_updates(
     `url` is the PR's own URL, recorded as the receipt for a consumed outbox
     description. `use_outbox` lets that description replace the Claude
     regeneration; it defaults to False, so `jailbee submodule pr` — which never
-    passes it — reaches none of that. The consumption is recorded only after
+    passes it — reaches none of that. `outbox_hint` carries a description the
+    create path already resolved in this same run, so the choice between
+    several pending ones is not put to the user twice; see
+    `resolve_pr_description_update`. The consumption is recorded only after
     `edit_pr` has actually succeeded: on a failure nothing is written and the
     manifest stays pending, so a retry reuses it.
     """
@@ -1212,6 +1244,7 @@ def apply_pr_updates(
         offer_regen=offer_regen,
         use_outbox=use_outbox,
         for_pr=number,
+        outbox_hint=outbox_hint,
     )
     if edit is not None:
         try:
