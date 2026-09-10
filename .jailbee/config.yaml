@@ -3,10 +3,10 @@
 # See docs/config.md for the full reference.
 #
 # Dogfood scope: Python dev loop (uv sync, pytest, ruff, mypy) + git push/pull,
-# plus driving jailbee itself against the nested Incus daemon that
-# .jailbee/install.d/75-incus.sh bakes in. Running `jailbee init`/`jailbee new`
-# inside the container used to be listed here as out of scope; recording the
-# website's workflow clips is exactly that, so it is in scope now.
+# plus driving jailbee itself (`jailbee init`/`jailbee new`, e.g. to record the
+# website's workflow clips) against the nested Incus daemon that
+# .jailbee/install.d/75-incus.sh bakes in.
+#
 # Quickstart:
 #   jailbee new --net loose feat/dogfood   # loose so on_create can `uv sync` deps
 #   jailbee net strict feat-dogfood        # tighten egress for normal dev
@@ -22,20 +22,11 @@ container_user:
   uid: -1   # -1 = current host uid/gid at load time
   gid: -1
 
-# Host paths bind-mounted into every container.
-# RO-mount git/GPG credentials so push/pull works without re-provisioning.
-# (~/.ssh is no longer mounted here — it's seeded RW into <shared_dir>/ssh
-# on `jailbee init` so SSH ControlMaster can write its sockets.)
-host_mounts:
-  - host: ~/.gnupg
-    container: /home/dev/.gnupg
-    readonly: true
-  - host: ~/.gitconfig
-    container: /home/dev/.gitconfig
-    readonly: true
-  - host: ~/.local/share/JetBrains/Toolbox
-    container: /opt/jetbrains-toolbox
-    readonly: true
+# No `host_mounts` here: this repo needs none of its own. Personal credentials
+# (~/.gnupg, ~/.gitconfig, JetBrains Toolbox) belong in
+# ~/.config/jailbee/global.yaml — via its `gpg`/`jetbrains` auto-mounts or its
+# own `host_mounts` list. Don't write `host_mounts: []` here either: an empty
+# list resets the global entries instead of adding nothing.
 
 # Shared caches — bind-mounted from <shared_dir>/<host_subpath> into every
 # container, so downloads survive container churn and are reused across
@@ -69,9 +60,12 @@ optional_mounts: {}
 # (e.g. github.com, archive.ubuntu.com:443). Hostnames are resolved to
 # IPv4 at ACL-apply time. The `loose` network mode ignores this list
 # (everything reachable).
-# Daily dev only needs Claude API + JetBrains licence checks. github.com,
-# pypi/astral are NOT here on purpose — switch to `jailbee net loose <name>`
-# for `git push`/`git fetch`/`gh`/dep installs, then back to strict.
+# Daily dev only needs the Claude API and JetBrains licence hosts, and those
+# need no entry here: enabling `agents.claude` / `jetbrains` (in global.yaml)
+# appends them automatically. github.com and pypi/astral are left out on
+# purpose — switch to `jailbee net loose <name>` for `git push`/`git fetch`/
+# `gh`/dep installs, then back to strict. Being `[]`, this also drops any
+# `egress_allow` entries set in global.yaml for this repo's containers.
 egress_allow: []
 
 
@@ -97,8 +91,8 @@ defaults:
 golden:
   # alias defaults to <container_prefix>-base if unset
   ubuntu_version: "26.04"
-  java: amazon-corretto-17
-  node: 24
+  # No Java or Node: jailbee is Python-only, so `stacks` stays unset and no
+  # java/node version pin is needed.
   # python is not configurable — the container Python is the base image's
   # system python3 (26.04 → 3.14).
   # libgl1 ships libGL.so.1 (the libglvnd dispatcher), which the optional
@@ -134,21 +128,18 @@ golden:
     - ttyd
     - ffmpeg
 
+# IDE that `jailbee ide feat-dogfood` opens (needs `jetbrains.enabled: true`
+# in global.yaml). Neither the IDE nor Chrome auto-launches on
+# `jailbee new` — `autostart` defaults to false for both.
+jetbrains:
+  ide: pycharm
+
 # Autostart steps run as the dev user inside the container.
 #   on_create: once after `jailbee new` provisions the container (initial setup).
 #   on_start:  every stopped→running transition — both `jailbee new` (after
 #              on_create) and `jailbee start` (recurring launches, e.g. servers).
 # Put one-shot setup in on_create, recurring launches in on_start — don't
 # duplicate. See docs/config.md for the full step reference.
-# Don't auto-launch the IDE/Chrome on `jailbee new` — run `jailbee ide feat-dogfood`
-# when (and if) you want PyCharm. cfg.jetbrains.ide still drives that command.
-jetbrains:
-  ide: pycharm
-  autostart: false
-
-chrome:
-  autostart: false
-
 autostart:
   step_timeout: 600
   on_create:
