@@ -2791,3 +2791,93 @@ def test_a_skipped_check_does_not_hide_a_real_failure(tmp_path, mocker):
     result = _invoke_doctor(mocker, tmp_path, results)
 
     assert result.exit_code == 1
+
+def test_a_skipped_row_is_neither_a_pass_nor_a_failure(tmp_path, mocker):
+    """`skipped` has to carry the exemption on its own: a skipped row built
+    with ok=True would make doctor's exit-code guard redundant, and the next
+    person writing ok=False would silently turn a skip into a failure."""
+    from jailbee.doctor import CheckResult
+
+    def interrupted(_on_progress):
+        raise KeyboardInterrupt
+
+    results = [CheckResult("registry cache", True, "hint", deferred=interrupted)]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    assert "SKIPPED" in result.output
+
+
+def test_a_deferred_check_that_raises_does_not_crash_doctor(tmp_path, mocker):
+    """Anything but a KeyboardInterrupt used to escape through the Live display
+    and take the command down with a traceback."""
+    from jailbee.doctor import CheckResult
+
+    def broken(_on_progress):
+        raise OSError("no such file: registry_cache_scan.py")
+
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult("registry cache", True, "hint", deferred=broken),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "no such file" in result.output
+    assert "found" in result.output
+
+
+def test_an_interrupt_stops_the_deferred_checks_after_it(tmp_path, mocker):
+    """Ctrl+C means "don't spend minutes on this", so a second slow check must
+    not start either — it is reported as not run."""
+    from jailbee.doctor import CheckResult
+
+    started = []
+
+    def interrupted(_on_progress):
+        started.append("first")
+        raise KeyboardInterrupt
+
+    def second(_on_progress):
+        started.append("second")
+        return CheckResult("later check", True, "done")
+
+    results = [
+        CheckResult("registry cache", True, "hint", deferred=interrupted),
+        CheckResult("later check", True, "run it yourself", deferred=second),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert started == ["first"]
+    assert result.exit_code == 0, result.output
+    assert "not run" in result.output
+
+
+def test_the_running_row_renders_its_spinner_and_progress(tmp_path):
+    """CliRunner's console is not a terminal, so Live renders only the final
+    table: without this, the live cell is covered by no test at all."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jailbee.cli import _DeferredDetail, _doctor_table
+    from jailbee.doctor import CheckResult
+    from jailbee.registry_cache import CacheProgress
+
+    detail = _DeferredDetail()
+    detail.progress = CacheProgress(1200, 1352, 12_025_908_428, 19_327_352_832)
+    results = [
+        CheckResult("registry mirror", True, "status: running"),
+        CheckResult("registry cache", True, "hint", deferred=lambda _p: results[1]),
+    ]
+
+    console = Console(force_terminal=True, width=100, file=StringIO())
+    console.print(_doctor_table(results, running=(1, detail)))
+    out = console.file.getvalue()
+
+    assert "1200/1352" in out
+    assert "11.2" in out

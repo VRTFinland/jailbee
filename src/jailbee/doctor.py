@@ -439,7 +439,7 @@ def _verify_mirror_cache(
     return CheckResult(
         CACHE_CHECK_NAME,
         False,
-        f"{count} corrupt {noun} ({first.repo} sha256:{first.expected[:12]}{more}) — "
+        f"{count} corrupt {noun} ({first.repo} sha256:{first.expected[:12]}…{more}) — "
         "run 'jailbee registry verify --purge'",
     )
 
