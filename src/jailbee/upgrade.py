@@ -133,6 +133,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"apply"}),
         reason="Firefox adds a host mount and a per-container profile pool slot",
     ),
+    UpgradeNote(
+        version=(1, 3, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the `jailbee-pr-review` skill is new and `jailbee apply` syncs it "
+            "into the shared skills mount"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

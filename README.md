@@ -99,6 +99,13 @@ sped up and say so on screen; nothing else is edited.
   repo's config; see
   [Running an agent without prompts](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#running-an-agent-without-prompts)
   for what it does and doesn't cover.
+- **PR review outbox** — a container's `gh` is read-only, so an agent
+  reviewing a PR inside it stages comments, replies and description
+  rewrites as JSON manifests instead of posting them straight to GitHub. A
+  human reviews the exact text and publishes it with one confirmation:
+  `jailbee review apply` (also `ls`/`show`/`drop`); `jailbee ls` and both
+  dashboards mark a container carrying pending manifests, and `jailbee pr`
+  picks up a pending description in place of its own Claude run.
 - **Generic agent support** — `agents: {codex: {enabled: true}}` wires any
   terminal coding agent into the same mount/egress/install/autostart
   pipeline Claude Code uses, via a shipped preset or one you write yourself.
