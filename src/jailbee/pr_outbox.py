@@ -27,11 +27,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, assert_never
 
+from rich.markup import escape
+
 from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.incus import Incus, IncusError
 from jailbee.pr_ai import PrText
-from jailbee.tui import warn
+from jailbee.tui import console, error_plain, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -1506,3 +1508,349 @@ def pending_pr_text(
         manifest=name,
         index=index,
     )
+
+
+# --------------------------------------------------------------------------
+# The shared offer: gate everything, show the plan, ask once, publish
+#
+# `jailbee review apply` and the offer `jailbee pr` makes once a PR is up are
+# the same loop behind two different questions, so the loop lives here once
+# and each caller injects its own `confirm`. That keeps `cli.py` thin and, more
+# to the point, keeps the two from drifting: the rule that a failed
+# container-side write *stops* the run rather than publishing the next manifest
+# into a container that can no longer record it must hold on both paths.
+#
+# This is the one part of the module that prints. Everything above it renders
+# to strings and lets a caller decide; here the printing *is* the behaviour
+# being shared, and splitting it back out would leave each caller with its own
+# copy of the loop again.
+# --------------------------------------------------------------------------
+
+
+def _current_pr_body(cfg: Config, target: Target) -> str | None:
+    """The PR's current description, when the manifest proposes rewriting it.
+
+    Fetched only for a manifest carrying a ``description`` action — that diff
+    is the one part of the plan `plan_lines` renders in full — and a failure
+    to read it degrades the diff instead of blocking the plan.
+    """
+    if target.pr is None:
+        return None
+    if not any(isinstance(a, DescriptionAction) for a in target.manifest.actions):
+        return None
+    try:
+        return pr.pr_body(cfg.repo_root, target.pr.number)
+    except pr.PrError as e:
+        warn_plain(
+            f"could not read PR #{target.pr.number}'s current description ({e}); "
+            "the proposed body is shown as an addition"
+        )
+        return None
+
+
+def _print_plan(cfg: Config, short: str, target: Target, progress: Progress) -> None:
+    """Print one manifest's header and its plan.
+
+    Every plan line is printed with markup off and wrapping soft: the bodies
+    were written inside the container, and Rich would read a ``[note]`` in
+    one of them as a style tag and *silently delete it* — in exactly the text
+    the user is being asked to vouch for.
+    """
+    # `_gate_manifests` held back every `pr: null` manifest, so a target
+    # reaching the plan always has a resolved PR to head it.
+    assert target.pr is not None
+    manifest = target.manifest
+    console.print()
+    console.print(
+        f"[bold]PR #{target.pr.number}[/bold]  {escape(manifest.repo)}  "
+        f"head {escape(target.pr.head_sha)}"
+    )
+    console.print(f"container {escape(short)} · manifest {escape(manifest.name)}")
+    if target.stale:
+        console.print("[yellow]the PR head has moved since this was written[/yellow]")
+    already = [i for i in sorted(progress.applied) if i < len(manifest.actions)]
+    if already:
+        console.print(
+            f"{len(already)} of {len(manifest.actions)} actions already published — skipped"
+        )
+    for line in plan_lines(target, _current_pr_body(cfg, target)):
+        console.print(f"  {line}", markup=False, highlight=False, soft_wrap=True)
+
+
+def _print_identity(cfg: Config, total: int) -> None:
+    """The plan's closing line: how much is about to be published, and as whom.
+
+    Not decoration. Every comment below will carry the *host* user's GitHub
+    identity, and this is the moment that becomes obvious. `pr.gh_login`
+    swallows every failure, so an unknown login drops the clause rather than
+    standing between the user and a publish.
+    """
+    login = pr.gh_login(cfg.repo_root)
+    plural = "" if total == 1 else "s"
+    tail = f" as [bold]{escape(login)}[/bold]" if login else ""
+    console.print()
+    console.print(f"{total} action{plural} will be published to GitHub{tail}.")
+
+
+def _print_receipts(target: Target, outcome: ApplyOutcome) -> None:
+    """Print what actually landed — one line per published action, with its URL."""
+    for index, url in zip(outcome.applied, outcome.urls, strict=True):
+        console.print(
+            f"  ✓ {target.manifest.name} action {index}: {url or _NO_URL}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
+def _has_pending_comment(manifest: Manifest, progress: Progress) -> bool:
+    """True if `manifest` still has an unapplied action other than a description.
+
+    The offer's selection rule. A description is excluded because `jailbee pr`
+    has just decided this PR's description itself — offering to publish another
+    one in the same breath would ask the user to overrule the run they are
+    still reading the output of.
+    """
+    return any(
+        not isinstance(manifest.actions[i], DescriptionAction)
+        for i in pending_indices(manifest, progress)
+    )
+
+
+def _held_back(reason: str, manifest: Manifest, short: str, *, forceable: bool) -> str:
+    """A gate failure on the offer path, phrased as something to act on.
+
+    The interesting case is staleness: `jailbee pr` has just pushed, so on the
+    adopted path the PR's head moved and a `review` action's line anchors no
+    longer point where they were written. `--force` is named only for a
+    `GateError` (`forceable`) on a manifest that carries such an action,
+    because that is the only refusal `resolve_target` relaxes under it —
+    advertising it for a wrong-repo manifest, or for a `gh` that would not
+    answer, would be advice that cannot work.
+    """
+    if forceable and any(isinstance(a, ReviewAction) for a in manifest.actions):
+        remedy = f"`jailbee review apply --force {short}` posts them as outdated comments."
+    else:
+        remedy = f"`jailbee review apply {short}` deals with it separately."
+    return f"held back: {reason}\n  {remedy}"
+
+
+def _gate_manifests(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    outbox: Outbox,
+    short: str,
+    *,
+    force: bool,
+    comments_only: bool,
+) -> tuple[list[Target], list[str], list[str]]:
+    """Gate every pending manifest: (publishable targets, refusals, notes).
+
+    Nothing is printed here. All three lists go back to the caller so it can
+    report every problem *before* the first line of the plan — a plan
+    interrupted halfway by a refusal is worse than a refusal on its own.
+
+    `comments_only` is the offer's rule and it changes two things. It narrows
+    the candidates to manifests that still hold an unapplied non-`description`
+    action (see `_has_pending_comment`), and it turns every refusal into a
+    warning: `jailbee pr` has already created or updated the PR, so nothing a
+    container wrote may turn that run into a failure. A malformed manifest, a
+    moved head, a `gh` that would not answer — each is reported as held back,
+    with the command that deals with it, and the run goes on.
+
+    Without it — `jailbee review apply`'s own mode — a manifest that cannot be
+    published is a refusal the caller exits non-zero on, and a ``pr: null``
+    manifest is a *deferral*, not a refusal: it carries the description of a PR
+    that does not exist yet, which `jailbee pr` will consume. It must never
+    reach `apply_manifest`, whose own precondition rejects it as a caller
+    routing bug rather than as anything the user did.
+    """
+    targets: list[Target] = []
+    refusals: list[str] = []
+    notes: list[str] = []
+    for name in outbox.manifest_names:
+        try:
+            manifest = parse_manifest(name, outbox.files[name], outbox.files)
+        except ManifestError as e:
+            if comments_only:
+                notes.append(f"Ignoring outbox manifest {name}: {e}")
+            else:
+                refusals.append(str(e))
+            continue
+        if comments_only and not _has_pending_comment(manifest, read_progress(outbox, name)):
+            continue
+        try:
+            target = resolve_target(cfg, incus, container, manifest, force=force)
+        except GateError as e:
+            if comments_only:
+                notes.append(_held_back(str(e), manifest, short, forceable=True))
+            else:
+                refusals.append(str(e))
+            continue
+        except (pr.PrError, IncusError) as e:
+            # Only on the offer path: `resolve_target` reaches `gh` and the
+            # container to answer "which PR is this, and where is its head",
+            # and neither is guaranteed to still answer once the push is done.
+            # `jailbee review apply` lets these out, where a traceback is at
+            # least about the command the user actually ran.
+            if not comments_only:
+                raise
+            notes.append(_held_back(str(e), manifest, short, forceable=False))
+            continue
+        if target.pr is None:
+            if not comments_only:
+                # Two lines on purpose: the command must not be split across a
+                # wrap, which is exactly what a single long line does at 80
+                # columns.
+                notes.append(
+                    f"manifest {name} describes a PR that does not exist yet.\n"
+                    f"  Run `jailbee pr {short}` to create it."
+                )
+            continue
+        targets.append(target)
+    return targets, refusals, notes
+
+
+def offer_pending_comments(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    short: str,
+    *,
+    pr_number: int | None,
+    confirm: Callable[[int], bool],
+    outbox: Outbox | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+    can_prompt: bool = True,
+) -> int:
+    """Show what `container` wants to publish, ask once, publish it.
+
+    Returns the number of failures, so the caller can set its own exit code.
+    Both callers of this function set it to 1 on anything above zero; nothing
+    here raises `typer.Exit` of its own, and the injected `confirm` is the only
+    thing that may.
+
+    `pr_number` chooses the mode.
+
+    ``None`` is `jailbee review apply`: every pending manifest, descriptions
+    included, and anything that cannot be published is a refusal the caller
+    exits non-zero on.
+
+    An integer is the offer `jailbee pr` makes once that PR is up: only
+    manifests still holding an unapplied non-`description` action, and a
+    manifest that cannot be published is held back with a reason rather than
+    failing the run. Note what it does *not* do: it does not filter manifests
+    by the number. On the `--stacked` path the run just opened a *different*
+    PR from the one the container was reviewing, and the reviewed PR's comments
+    are exactly what there is to offer — gate 2 in `resolve_target` already
+    restricts every manifest to a PR this container owns, which is the check
+    that matters. The number names the PR this run touched; the mode is what it
+    decides.
+
+    `confirm` is injected so the CLI owns prompting and this stays unit
+    testable; it is handed the number of actions and answers once, for all of
+    them — the plan *is* the question, so there is never a second one.
+    `can_prompt=False` degrades the offer to a single line naming the count and
+    the command that publishes it: no plan is rendered and `confirm` is never
+    called. `jailbee review apply` leaves it True, because its own `confirm`
+    already decides what a non-interactive run means (`-y`, or a refusal).
+
+    `outbox` is a snapshot the caller has already read; without one the outbox
+    is read here, and a container that will not answer is reported and treated
+    as nothing pending rather than raised — the offer's caller has a PR on
+    screen that must not be retracted by this.
+    """
+    for_offer = pr_number is not None
+    uid = cfg.container_user.uid
+    if outbox is None:
+        try:
+            outbox = read_outbox(incus, container, uid=uid)
+        except OutboxReadError as e:
+            warn(f"{e}; nothing was offered.")
+            return 0
+    if not outbox.manifest_names:
+        return 0
+
+    targets, refusals, notes = _gate_manifests(
+        cfg, incus, container, outbox, short, force=force, comments_only=for_offer
+    )
+    for message in refusals:
+        error_plain(message)
+    for message in notes:
+        warn_plain(message)
+    if not targets:
+        # Refusals are failures; a deferral or a held-back manifest only means
+        # the work belongs to another command, which is not a reason to fail.
+        return len(refusals)
+
+    plans = [(t, read_progress(outbox, t.manifest.name)) for t in targets]
+    total = sum(len(pending_indices(t.manifest, p)) for t, p in plans)
+    if not can_prompt:
+        plural = "" if total == 1 else "s"
+        info(
+            f"{total} pending PR comment{plural} in {short}: "
+            f"`jailbee review apply {short}` publishes {'it' if total == 1 else 'them'}."
+        )
+        return len(refusals)
+
+    for target, progress in plans:
+        _print_plan(cfg, short, target, progress)
+    _print_identity(cfg, total)
+
+    if dry_run:
+        info("Dry run: nothing was published.")
+        # A refusal sets the exit code on every path: something the container
+        # wrote will not be published, and a script has to be able to see that
+        # whether or not this run was going to publish anything anyway.
+        return len(refusals)
+    if total == 0:
+        # Everything here landed on an earlier run that then failed to record
+        # it. There is nothing to publish and so nothing to confirm — only the
+        # bookkeeping below, which deletes the spent manifests.
+        info("Every action here has already been published; finishing the bookkeeping.")
+    elif not confirm(total):
+        info(
+            f"Nothing published. `jailbee review apply {short}` posts them later."
+            if for_offer
+            else "Nothing published."
+        )
+        return len(refusals)
+
+    failures = len(refusals)
+    for position, (target, progress) in enumerate(plans):
+        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid)
+        _print_receipts(target, outcome)
+        stop = False
+        try:
+            finalize(incus, container, outbox, target, outcome, uid=uid)
+        except FinalizeError as e:
+            # The GitHub side is settled but the container could not be told.
+            # Publishing the next manifest would post more that nothing can
+            # record — the very thing the sidecar exists to prevent.
+            error_plain(str(e))
+            stop = True
+        if outcome.failure is not None:
+            error_plain(f"{target.manifest.name}: {outcome.failure}")
+            warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
+            stop = True
+        # `finalize` deletes a spent manifest together with the body files no
+        # *other* manifest in this snapshot references. Drop the spent one from
+        # the snapshot so a `.md` shared by two completed manifests doesn't
+        # look referenced by each of them in turn and outlive them both — the
+        # same hazard `jailbee review drop` guards against.
+        if not pending_indices(
+            target.manifest,
+            Progress(applied=progress.applied | set(outcome.applied), urls={}),
+        ):
+            outbox = Outbox(
+                files={k: v for k, v in outbox.files.items() if k != target.manifest.name}
+            )
+        if stop:
+            failures += 1
+            left = [t.manifest.name for t, _ in plans[position + 1 :]]
+            if left:
+                warn_plain(f"Stopped here; still pending: {', '.join(left)}")
+            break
+    return failures

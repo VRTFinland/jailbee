@@ -69,6 +69,12 @@ def _setup(mocker, tmp_path, labels=None):
     # below re-patch it. Without this the real `read_outbox` would run against
     # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    # And an empty outbox for the offer `jailbee pr` makes once the PR is up,
+    # for the same reason: every test that does not opt in below takes the
+    # "nothing to offer" path instead of reading a MagicMock.
+    from jailbee.pr_outbox import Outbox
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={}))
     cfg_mock.claude.enabled = False
     cfg_mock.claude.ai_pr_description = True
     cfg_mock.upstream_remote = "origin"
@@ -2501,3 +2507,202 @@ def test_open_prefers_the_stacked_pr(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     open_browser.assert_called_once_with(tmp_path, 123)
+
+
+# ---- the post-run offer to publish pending outbox comments ------------------
+
+
+def _tty(mocker):
+    """Make the run look interactive without hiding `JAILBEE_NONINTERACTIVE`.
+
+    `CliRunner`'s stdin is never a TTY, so `lifecycle._stdin_is_interactive` is
+    False for every test in this file and the offer would never be made.
+    Patching the predicate to a real reading of the environment variable keeps
+    it load-bearing in the off-TTY test below, which would otherwise pass on
+    `CliRunner`'s stdin alone and prove nothing.
+    """
+    import os
+
+    mocker.patch(
+        "jailbee.lifecycle._stdin_is_interactive",
+        side_effect=lambda: not os.environ.get("JAILBEE_NONINTERACTIVE"),
+    )
+
+
+def _pending_comment_manifest(mocker, actions=None):
+    """One pending manifest in the container's outbox, already gated.
+
+    Patches the three reads the offer makes — `read_outbox`, `resolve_target`
+    and `read_progress` — plus `pr.gh_login`, which the plan's identity line
+    would otherwise really shell out for.
+    """
+    import json
+
+    from jailbee.pr import PrInfo
+    from jailbee.pr_outbox import Outbox, Progress, Target, parse_manifest
+
+    text = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123,
+            "head_sha": "abc1234",
+            "actions": actions or [{"type": "comment", "body": "ok"}],
+        }
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-x.json": text}))
+    target = Target(
+        manifest=parse_manifest("001-x.json", text, {}),
+        pr=PrInfo(
+            number=123,
+            head_ref="feat/foo",
+            head_sha="def5678",
+            state="OPEN",
+            base_ref="main",
+        ),
+        stale=False,
+    )
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
+    mocker.patch(
+        "jailbee.pr_outbox.read_progress", return_value=Progress(applied=frozenset(), urls={})
+    )
+    mocker.patch("jailbee.pr.gh_login", return_value="octocat")
+    return target
+
+
+def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
+    from jailbee.pr_outbox import ApplyOutcome
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    plan = mocker.patch("jailbee.pr_outbox.plan_lines", return_value=["COMMENT (general): ok"])
+    apply_mock = mocker.patch(
+        "jailbee.pr_outbox.apply_manifest",
+        return_value=ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+    )
+    mocker.patch("jailbee.pr_outbox.finalize")
+    _pending_comment_manifest(mocker)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    plan.assert_called()  # the plan is the question
+    apply_mock.assert_called_once()
+    assert "https://x/c" in result.output
+
+
+def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+    _pending_comment_manifest(mocker)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="n\n")
+
+    assert result.exit_code == 0, result.output
+    apply_mock.assert_not_called()
+    assert "jailbee review apply" in result.output
+
+
+def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
+    from jailbee.pr_outbox import GateError
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    # A *review* manifest: the run just pushed, so its line anchors are stale by
+    # construction — the asymmetry §F.2 describes, and the only gate `--force`
+    # relaxes.
+    _pending_comment_manifest(
+        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=GateError("manifest 001-x.json: PR #123's head moved abc1234 → def5678"),
+    )
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 0, result.output  # the PR itself succeeded
+    apply_mock.assert_not_called()
+    assert "head moved" in result.output
+    assert "--force" in result.output
+
+
+def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
+    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+    _pending_comment_manifest(mocker)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    apply_mock.assert_not_called()
+    assert "1 pending" in result.output and "jailbee review apply" in result.output
+
+
+def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    read = mocker.patch("jailbee.pr_outbox.read_outbox")
+
+    assert CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"]).exit_code == 0
+
+    read.assert_not_called()
+
+
+def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
+    from jailbee.pr_outbox import ApplyOutcome
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    _pending_comment_manifest(mocker)
+    mocker.patch(
+        "jailbee.pr_outbox.apply_manifest",
+        return_value=ApplyOutcome(applied=(), urls=(), failure="HTTP 500"),
+    )
+    mocker.patch("jailbee.pr_outbox.finalize")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 1
+    assert "#123" in result.output  # the PR outcome was printed first
+    assert "HTTP 500" in result.output
+
+
+def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
+    """`jb pr` has just decided the description; the offer is about comments."""
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+    _pending_comment_manifest(mocker, actions=[{"type": "description", "body": "a body"}])
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    apply_mock.assert_not_called()
+    resolve.assert_not_called()  # not even gated: there is nothing to offer
