@@ -56,6 +56,24 @@ def test_the_index_page_is_first_in_the_nav() -> None:
     assert docs_site.published_pages()[0] == "README.md"
 
 
+def test_no_published_page_references_a_relative_image() -> None:
+    """Staging copies only the `.md` files `nav` names — an image referenced
+    by a relative path would 404 on the site, and `--strict` does not flag a
+    missing image the way it flags a missing page or anchor."""
+    import re
+
+    image_md = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
+    img_tag = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
+
+    for name in docs_site.published_pages():
+        text = (DOCS / name).read_text()
+        for pattern in (image_md, img_tag):
+            for target in pattern.findall(text):
+                assert target.startswith(("http://", "https://")), (
+                    f"{name}: relative image reference {target!r} would 404 on the site"
+                )
+
+
 def test_staging_copies_exactly_the_published_pages(tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -337,3 +355,10 @@ def test_the_resolver_rejects_a_page_and_an_anchor_that_do_not_exist() -> None:
     assert resolve("https://jailbee.gisgro.io/docs/") is None
     assert "no such page" in (resolve("docs/nope/") or "")
     assert "no heading" in (resolve("docs/config/#nope-zz") or "")
+    # These four all 404 on the real site: the target file exists on disk but
+    # is not named in zensical.toml's nav, or the slug is not a valid page at
+    # all. "exists and is not excluded" means both have to hold.
+    assert resolve("https://jailbee.gisgro.io/docs/manual-testing/") is not None
+    assert resolve("docs/releasing/") is not None
+    assert resolve("docs/skills/jailbee-usage/SKILL/") is not None
+    assert resolve("docs/README/") is not None

@@ -290,6 +290,8 @@ def test_the_stylesheet_link_carries_its_current_content_hash() -> None:
 
 
 def test_every_local_reference_resolves_on_disk() -> None:
+    from tests.docs_links import resolve
+
     refs = [
         (tag, attr, value)
         for page in PAGES
@@ -312,9 +314,11 @@ def test_every_local_reference_resolves_on_disk() -> None:
         if tag == "source" and attr == "src" and value.startswith("assets/media/"):
             continue
         # A docs/ link is served by the generated documentation, which is not
-        # in website/ — tests/docs_links.py resolves those against docs/*.md
-        # instead, in test_documentation_links_land_on_published_pages.
+        # in website/ — route it through the resolver instead of the
+        # filesystem.
         if value.startswith("docs/"):
+            problem = resolve(value)
+            assert problem is None, f"{tag} {attr}={value!r}: {problem}"
             continue
         target = (SITE / value.split("?", 1)[0]).resolve()
         # A directory reference (`./`, `subdir/`) is what a server resolves
