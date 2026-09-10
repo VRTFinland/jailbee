@@ -442,9 +442,7 @@ class Incus:
         chatty command could otherwise fill the pipe and block while we are
         reading stdout.
         """
-        args = self._exec_args(
-            name, cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False
-        )
+        args = self._exec_args(name, cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False)
         if self.dry_run:
             return
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr:

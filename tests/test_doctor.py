@@ -2677,9 +2677,7 @@ def test_a_failing_scan_fails_the_deferred_check_without_raising(tmp_path, mocke
     from jailbee.incus import IncusError
 
     cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
-    mocker.patch(
-        "jailbee.registry_cache.verify_cache", side_effect=IncusError("Command not found")
-    )
+    mocker.patch("jailbee.registry_cache.verify_cache", side_effect=IncusError("Command not found"))
 
     result = cache.deferred(lambda _p: None)
 
@@ -2762,9 +2760,7 @@ def test_ctrl_c_skips_only_the_running_deferred_check(tmp_path, mocker):
 
     results = [
         CheckResult("incus binary", True, "found"),
-        CheckResult(
-            "registry cache", True, "run 'jailbee registry verify'", deferred=interrupted
-        ),
+        CheckResult("registry cache", True, "run 'jailbee registry verify'", deferred=interrupted),
     ]
 
     result = _invoke_doctor(mocker, tmp_path, results)
@@ -2791,6 +2787,7 @@ def test_a_skipped_check_does_not_hide_a_real_failure(tmp_path, mocker):
     result = _invoke_doctor(mocker, tmp_path, results)
 
     assert result.exit_code == 1
+
 
 def test_a_skipped_row_is_neither_a_pass_nor_a_failure(tmp_path, mocker):
     """`skipped` has to carry the exemption on its own: a skipped row built

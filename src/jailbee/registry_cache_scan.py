@@ -265,9 +265,7 @@ def _process(cand: _Candidate, tally: _Tally, *, remove: bool) -> None:
 
 def _walk(candidates: Sequence[_Candidate], tally: _Tally, *, remove: bool) -> None:
     """Process ``candidates`` in order, emitting throttled progress."""
-    _emit(
-        {"type": "total", "entries": len(candidates), "bytes": sum(c.size for c in candidates)}
-    )
+    _emit({"type": "total", "entries": len(candidates), "bytes": sum(c.size for c in candidates)})
     done_entries = done_bytes = 0
     last = time.monotonic()
     for cand in candidates:

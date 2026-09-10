@@ -414,9 +414,7 @@ def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckRe
     ]
 
 
-def _verify_mirror_cache(
-    incus: Incus, on_progress: Callable[[CacheProgress], None]
-) -> CheckResult:
+def _verify_mirror_cache(incus: Incus, on_progress: Callable[[CacheProgress], None]) -> CheckResult:
     """The deferred half of the `registry cache` row."""
     from jailbee.maintenance import humanize
     from jailbee.registry_cache import verify_cache
@@ -429,8 +427,7 @@ def _verify_mirror_cache(
         return CheckResult(
             CACHE_CHECK_NAME,
             True,
-            f"{report.checked} entries verified ({humanize(report.bytes_checked)}), "
-            "none corrupt",
+            f"{report.checked} entries verified ({humanize(report.bytes_checked)}), none corrupt",
         )
     count = len(report.corrupt)
     first = report.corrupt[0]

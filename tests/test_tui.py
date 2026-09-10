@@ -670,6 +670,7 @@ def test_elapsed_status_relabel_keeps_the_clock_running(mocker):
         "⏳ verifying the registry cache — 812/1352 entries… — 1m04s"
     )
 
+
 def test_status_with_elapsed_stops_its_ticker_on_exit(mocker):
     """The ticker is a thread; leaking one per invocation would keep the
     process alive past the command in a long-running host process."""

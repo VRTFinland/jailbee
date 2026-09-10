@@ -44,9 +44,7 @@ CORRUPT = {
 def _incus(*records: dict | str) -> MagicMock:
     incus = MagicMock()
     # A generator, like the real exec_lines — `verify_cache` closes it.
-    incus.exec_lines.return_value = (
-        r if isinstance(r, str) else json.dumps(r) for r in records
-    )
+    incus.exec_lines.return_value = (r if isinstance(r, str) else json.dumps(r) for r in records)
     return incus
 
 

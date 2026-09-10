@@ -10853,9 +10853,7 @@ class _DeferredDetail:
         self._started = time.monotonic()
 
     def __rich__(self) -> "Text":
-        text = (
-            self._format_progress(self.progress) if self.progress is not None else "starting"
-        )
+        text = self._format_progress(self.progress) if self.progress is not None else "starting"
         elapsed = self._now() - self._started
         # Same threshold as `tui.ElapsedStatus`: a counter that reads "0s" is
         # flicker, not information.
