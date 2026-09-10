@@ -156,15 +156,14 @@ def check(site_docs: Path = SITE_DOCS) -> list[str]:
         for component in collector.components:
             if component == "source":
                 problems.append(
-                    f"{where}: data-md-component=\"source\" makes the page call api.github.com"
+                    f'{where}: data-md-component="source" makes the page call api.github.com'
                 )
         problems += [f"{where}: stylesheet fetches {url}" for url in _CSS_URL.findall(html)]
 
     for stylesheet in sorted(site_docs.rglob("*.css")):
         where = stylesheet.relative_to(site_docs)
         problems += [
-            f"{where}: stylesheet fetches {url}"
-            for url in _CSS_URL.findall(stylesheet.read_text())
+            f"{where}: stylesheet fetches {url}" for url in _CSS_URL.findall(stylesheet.read_text())
         ]
 
     return problems

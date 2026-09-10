@@ -146,12 +146,16 @@ def test_check_passes_a_page_that_only_links_out_through_anchors(tmp_path: Path)
 
 
 def test_check_rejects_a_script_from_a_cdn(tmp_path: Path) -> None:
-    site = _page('<script src="https://unpkg.com/mermaid@11/dist/mermaid.min.js"></script>', tmp_path)
+    site = _page(
+        '<script src="https://unpkg.com/mermaid@11/dist/mermaid.min.js"></script>', tmp_path
+    )
     assert any("unpkg.com" in problem for problem in docs_site.check(site))
 
 
 def test_check_rejects_a_webfont_stylesheet(tmp_path: Path) -> None:
-    site = _page('<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto">', tmp_path)
+    site = _page(
+        '<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto">', tmp_path
+    )
     assert any("fonts.googleapis.com" in problem for problem in docs_site.check(site))
 
 
@@ -174,7 +178,9 @@ def test_check_rejects_an_off_site_url_in_a_stylesheet(tmp_path: Path) -> None:
 
 
 def test_check_rejects_an_off_site_url_in_an_inline_style(tmp_path: Path) -> None:
-    site = _page('<style>body { background: url("https://cdn.example.com/bg.png"); }</style>', tmp_path)
+    site = _page(
+        '<style>body { background: url("https://cdn.example.com/bg.png"); }</style>', tmp_path
+    )
     assert any("cdn.example.com" in problem for problem in docs_site.check(site))
 
 
