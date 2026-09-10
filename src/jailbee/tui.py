@@ -60,6 +60,16 @@ class ElapsedStatus:
             self._started = time.monotonic()
         self.refresh()
 
+    def relabel(self, message: str) -> None:
+        """Change the current step's text; unlike ``update``, keep its clock.
+
+        For progress within one step, which arrives far more often than steps
+        change.
+        """
+        with self._lock:
+            self._message = message
+        self.refresh()
+
     def refresh(self) -> None:
         """Re-render with the current elapsed time. Called from the ticker."""
         with self._lock:

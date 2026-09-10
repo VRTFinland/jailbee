@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **`jailbee registry verify [--purge]` finds and removes corrupt entries in
+  the registry mirror's cache.** Every blob and manifest the mirror caches is
+  stored under the digest its content must hash to, but nginx never checks:
+  a single damaged cache file made every pull of that layer, from every
+  container on the host, fail with `unexpected commit digest` — and because
+  rpardini revalidates expired entries against the stored ETag, the bad copy
+  never aged out. `verify` hashes each digest-keyed entry inside the mirror,
+  lists mismatches by image and digest, and on confirmation removes them; the
+  next pull fetches them from upstream again. `--purge` removes without
+  asking.
+
 ### Fixed
 
 - **A cold-cache image pull through the registry mirror could time out and

@@ -653,6 +653,23 @@ def test_elapsed_status_restarts_the_clock_on_a_new_step(mocker):
     assert status.update.call_args[0][0] == "⏳ second step… — 10s"
 
 
+def test_elapsed_status_relabel_keeps_the_clock_running(mocker):
+    """Progress inside one step (`812/1352 entries`) arrives several times a
+    second; restarting the clock on each, as `update` does, would pin the
+    counter at zero."""
+    from jailbee.tui import ElapsedStatus
+
+    status = mocker.MagicMock()
+    monotonic = mocker.patch("jailbee.tui.time.monotonic", return_value=1000.0)
+    handle = ElapsedStatus(status, "verifying the registry cache")
+
+    monotonic.return_value = 1064.0
+    handle.relabel("verifying the registry cache — 812/1352 entries")
+
+    assert status.update.call_args[0][0] == (
+        "⏳ verifying the registry cache — 812/1352 entries… — 1m04s"
+    )
+
 def test_status_with_elapsed_stops_its_ticker_on_exit(mocker):
     """The ticker is a thread; leaking one per invocation would keep the
     process alive past the command in a long-running host process."""

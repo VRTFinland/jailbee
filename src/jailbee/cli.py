@@ -2318,6 +2318,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
+    from jailbee.registry_cache import CacheReport
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
@@ -8155,6 +8156,138 @@ def registry_status_cmd(config: ConfigOption = None) -> None:
     _load_or_exit(config)
     status = registry_status(Incus())
     info(f"Registry mirror: {status.value}")
+
+
+def _entry_count(n: int) -> str:
+    return f"{n} entry" if n == 1 else f"{n} entries"
+
+
+def _print_cache_report(report: "CacheReport") -> None:
+    """The findings of a cache scan, as `registry verify` shows them."""
+    from rich.table import Table
+    from rich.text import Text
+
+    from jailbee.maintenance import humanize
+    from jailbee.tui import console
+
+    # Kept short: `console` wraps at the terminal width, and a wrapped
+    # continuation line loses the two-space indent.
+    skipped = (
+        f"  {report.skipped_no_digest} with no digest in the key, "
+        f"{report.skipped_status} not a plain HTTP 200, {report.skipped_temp} mid-write."
+    )
+    if not report.corrupt:
+        success(
+            f"{report.checked} cache entries verified ({humanize(report.bytes_checked)}), "
+            "none corrupt."
+        )
+        info_plain(skipped)
+    else:
+        count = len(report.corrupt)
+        noun = "entry" if count == 1 else "entries"
+        error(f"{count} corrupt {noun} in the registry mirror cache:")
+        table = Table(box=None, pad_edge=False)
+        for column in ("IMAGE", "DIGEST", "SIZE", "FILE"):
+            table.add_column(column)
+        for entry in report.corrupt:
+            table.add_row(
+                Text(entry.repo),
+                Text(f"{entry.kind} sha256:{entry.expected[:12]}…"),
+                humanize(entry.size),
+                # nginx's own file name: identifying, not actionable (purging
+                # takes the full path from the report), so kept short enough
+                # for an 80-column table.
+                Text(f"{entry.path[:16]}…"),
+            )
+        console.print(table)
+        # Two short lines rather than one long one: `console` wraps at the
+        # terminal width and a wrapped continuation loses this indent.
+        info_plain("  A pull that needs one of these fails until it is removed.")
+        info_plain("  Removing an entry makes the next pull fetch it from upstream again.")
+    if report.errors:
+        warn_plain(
+            f"{_entry_count(report.errors)} could not be checked: "
+            + "; ".join(report.error_samples)
+        )
+
+
+@registry_app.command("verify")
+def registry_verify_cmd(
+    purge: Annotated[
+        bool,
+        typer.Option(
+            "--purge",
+            help="Remove corrupt entries without asking. The next pull fetches them "
+            "from upstream again.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Check the mirror's cached images against their digests.
+
+    Lists every cache entry whose content does not match the digest it is
+    stored under — a pull that needs one fails with `unexpected commit digest`
+    — and offers to remove them. `--purge` removes without asking.
+    """
+    from jailbee.incus import Incus, IncusError
+    from jailbee.registry import MirrorStatus, registry_status
+    from jailbee.registry_cache import format_progress, purge_entries, verify_cache
+    from jailbee.tui import hint, status_with_elapsed
+
+    _load_or_exit(config)
+    incus = Incus()
+    status = registry_status(incus)
+    if status != MirrorStatus.RUNNING:
+        error(f"The registry mirror is {status.value} — run 'jailbee registry up'.")
+        raise typer.Exit(1)
+    try:
+        with status_with_elapsed("verifying the registry cache") as line:
+            report = verify_cache(
+                incus,
+                purge=purge,
+                on_progress=lambda p: line.relabel(
+                    f"verifying the registry cache — {format_progress(p)}"
+                ),
+            )
+    except (IncusError, RuntimeError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+
+    _print_cache_report(report)
+    if not report.corrupt:
+        return
+    count = len(report.corrupt)
+    question = f"Remove {count} corrupt {'entry' if count == 1 else 'entries'}?"
+    if purge:
+        removed = report.purged
+        remaining = [c for c in report.corrupt if not c.purged]
+    elif _is_tty() and default_confirm(question):
+        try:
+            after = purge_entries(incus, [c.path for c in report.corrupt])
+        except (IncusError, RuntimeError) as e:
+            error(str(e))
+            raise typer.Exit(1) from e
+        removed = after.purged
+        remaining = [c for c in after.corrupt if not c.purged]
+        if after.ok:
+            info_plain(
+                f"  {_entry_count(after.ok)} had been replaced by a sound copy meanwhile; "
+                "left in place."
+            )
+    else:
+        hint(["Remove them with: jailbee registry verify --purge"])
+        raise typer.Exit(1)
+    if removed:
+        # The "fetched again on the next pull" half is already on screen from
+        # `_print_cache_report`.
+        success(f"Removed {_entry_count(removed)}.")
+    if remaining:
+        error(
+            f"{_entry_count(len(remaining))} not removed (replaced while being checked, or not "
+            f"removable) — run 'jailbee registry verify' again: "
+            + ", ".join(c.path for c in remaining)
+        )
+        raise typer.Exit(1)
 
 
 # ---- Mount commands ----
