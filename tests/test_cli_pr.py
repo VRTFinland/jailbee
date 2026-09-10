@@ -515,18 +515,34 @@ def test_outbox_description_is_used_recorded_and_named(mocker, tmp_path):
     assert "description from 002-description.json (written in the container)" in flat
 
 
-def test_outbox_is_not_consumed_when_the_pr_already_existed(mocker, tmp_path):
-    """`gh pr create` found an existing PR, so the manifest's body never landed."""
+def test_an_already_existing_pr_consumes_the_outbox_exactly_once(mocker, tmp_path):
+    """`gh pr create` found an existing PR, so the create path's text never
+    landed — the update path edits the PR with it instead, and only that one
+    consumption is recorded. Recording both would burn the action twice."""
+    from tests.conftest import flat_output
+
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created(already=True))
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    record.assert_not_called()
+    assert edit.call_args.kwargs["body"] == "Body."
+    record.assert_called_once()
+    assert record.call_args.args[2:5] == (
+        "002-description.json",
+        0,
+        "https://github.com/acme/widgets/pull/123",
+    )
+    flat = flat_output(result.output)
+    assert "(description from 002-description.json)" in flat
+    # The outcome line carries the name; the create path's `info` sentence would
+    # be the same thing said twice.
+    assert "written in the container" not in flat
 
 
 def test_outbox_is_not_consumed_when_the_pr_creation_fails(mocker, tmp_path):
@@ -734,6 +750,52 @@ def test_pr_update_explicit_title_edits(mocker, tmp_path):
     assert edit.call_args.kwargs["body"] is None
     assert "title updated" in result.output.lower()
     assert "description refreshed" not in result.output.lower()
+
+
+def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tmp_path):
+    """The answer already exists, so the "with Claude?" prompt is never shown."""
+    from tests.conftest import flat_output
+
+    cfg, _ = _update_setup(mocker, tmp_path)
+    cfg.claude.enabled = True
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm")
+    gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body."}
+    gen.assert_not_called()
+    confirm.assert_not_called()
+    record.assert_called_once()
+    assert "(description from 002-description.json)" in flat_output(result.output)
+
+
+def test_pr_update_asks_the_outbox_about_the_prs_own_number(mocker, tmp_path):
+    """A manifest may name the PR it was written for; the create-path lookup
+    (`for_pr=None`) accepts only `pr: null`, so the update path has to ask again
+    with its own number or it never finds that description."""
+    _update_setup(mocker, tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert pending.call_args.kwargs["for_pr"] == 123
+
+
+def test_pr_update_no_outbox_restores_the_claude_offer(mocker, tmp_path):
+    _update_setup(mocker, tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"])
+
+    assert result.exit_code == 0, result.output
+    pending.assert_not_called()
 
 
 def test_pr_update_description_regenerates(mocker, tmp_path):

@@ -5897,6 +5897,8 @@ def pr_cmd(
             ready=ready,
             ai_on=ai_on,
             offer_regen=not is_foreign_pr_head,
+            url=created.url,
+            use_outbox=not no_outbox,
         )
     pr_flow.render_pr_outcome(
         scope,
@@ -5909,10 +5911,11 @@ def pr_cmd(
         update=update,
     )
     if not is_update:
-        # Only the create path published this text. When `gh pr create` found a
-        # PR that already existed, `apply_pr_updates` decided the description
-        # instead and the manifest's body never landed — so it stays pending
-        # for the update path to consume.
+        # Only the create path published *this* text. When `gh pr create` found
+        # a PR that already existed, this run's create-path text never landed:
+        # `apply_pr_updates` above decided the description instead, did its own
+        # outbox lookup (against the PR's real number) and recorded whatever it
+        # consumed. Recording here as well would burn the action twice.
         pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
     if is_stacked_create and review_target is not None:
         info(
@@ -6516,6 +6519,9 @@ def submodule_pr_cmd(
             ready=ready,
             ai_on=ai_on,
             offer_regen=not is_foreign,
+            # No `use_outbox`: a submodule PR is a different repository from
+            # the one the container's outbox manifests name.
+            url=created.url,
         )
     elif did_update:
         # The submodule is detached and no --branch resolved a source: there

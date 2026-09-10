@@ -113,7 +113,7 @@ def test_description_update_explicit_fields_win(tmp_path, mocker):
         description=False,
         ai_on=True,
     )
-    assert result == ("Set", None)
+    assert result is not None and (result.title, result.body) == ("Set", None)
     gen.assert_not_called()
 
 
@@ -153,7 +153,7 @@ def test_description_update_passes_the_scope_subpath_to_the_ai(tmp_path, mocker)
         description=True,
         ai_on=True,
     )
-    assert result == ("t", "b")
+    assert result is not None and (result.title, result.body) == ("t", "b")
     assert gen.call_args.kwargs["subpath"] == "libs/foo"
 
 
@@ -672,6 +672,78 @@ def test_record_outbox_consumption_warns_but_does_not_raise(tmp_path, mocker):
     assert "disk full" in warn.call_args.args[0]
 
 
+# ---- the update path's outbox description ---------------------------------
+
+
+def _update_edit(tmp_path, mocker, **kwargs):
+    """`resolve_pr_description_update` with the update path's usual arguments."""
+    call = {
+        "branch": "feat/foo",
+        "base": "main",
+        "title": None,
+        "body": None,
+        "description": False,
+        "ai_on": True,
+    }
+    call.update(kwargs)
+    return pr_flow.resolve_pr_description_update(
+        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path), **call
+    )
+
+
+def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    confirm = mocker.patch("typer.confirm")
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True)
+
+    assert edit is not None
+    assert (edit.title, edit.body) == ("feat: x", "Body.")
+    assert edit.source is not None and edit.source.manifest == "002-d.json"
+    generate.assert_not_called()
+    confirm.assert_not_called()  # the answer already exists; do not ask
+
+
+def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):
+    """Nothing may be consumed when the manifest's text cannot be used."""
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+
+    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True)
+
+    assert edit is not None and (edit.title, edit.body) == ("typed", None)
+    assert edit.source is None
+    pending.assert_not_called()
+
+
+def test_the_update_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
+    """`jailbee submodule pr` shares this function and keeps the default."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
+
+    assert _update_edit(tmp_path, mocker) is None
+    pending.assert_not_called()
+
+
+def test_an_empty_outbox_leaves_the_regeneration_offer_in_place(tmp_path, mocker):
+    from jailbee.pr_ai import PrText
+
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+    mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="t", body="b", branch="feat/x"),
+    )
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True)
+
+    assert edit is not None and (edit.title, edit.body) == ("t", "b")
+    assert edit.source is None
+    confirm.assert_called_once()
+
+
 def _created(number=123, already=False):
     from jailbee.pr import PrCreated
 
@@ -808,26 +880,35 @@ def test_create_or_view_forwards_record_context_with_the_pr_number(tmp_path, moc
     )
 
 
+def _apply_updates(tmp_path, mocker, **kwargs):
+    """`apply_pr_updates` with the superproject update path's usual arguments."""
+    call = {
+        "number": 1234,
+        "branch": "feat/foo",
+        "base": "main",
+        "title": None,
+        "body": None,
+        "description": False,
+        "ready": None,
+        "ai_on": True,
+        "offer_regen": True,
+        "url": "https://x/pull/1234",
+    }
+    call.update(kwargs)
+    return pr_flow.apply_pr_updates(
+        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path), **call
+    )
+
+
 def test_apply_updates_edits_and_toggles(tmp_path, mocker):
-    mocker.patch("jailbee.pr_flow.resolve_pr_description_update", return_value=("t", "b"))
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b"),
+    )
     edit = mocker.patch("jailbee.pr.edit_pr")
     ready = mocker.patch("jailbee.pr.set_ready")
 
-    result = pr_flow.apply_pr_updates(
-        _cfg(tmp_path),
-        mocker.MagicMock(),
-        "c1",
-        _super_scope(tmp_path),
-        number=123,
-        branch="feat/foo",
-        base="main",
-        title=None,
-        body=None,
-        description=True,
-        ready=True,
-        ai_on=True,
-        offer_regen=True,
-    )
+    result = _apply_updates(tmp_path, mocker, number=123, description=True, ready=True)
 
     edit.assert_called_once()
     ready.assert_called_once_with(tmp_path, 123, True)
@@ -839,26 +920,93 @@ def test_apply_updates_edits_and_toggles(tmp_path, mocker):
 def test_apply_updates_warns_but_survives_an_edit_failure(tmp_path, mocker):
     from jailbee.pr import PrEditError
 
-    mocker.patch("jailbee.pr_flow.resolve_pr_description_update", return_value=("t", "b"))
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b"),
+    )
     mocker.patch("jailbee.pr.edit_pr", side_effect=PrEditError("boom"))
 
-    result = pr_flow.apply_pr_updates(
-        _cfg(tmp_path),
-        mocker.MagicMock(),
-        "c1",
-        _super_scope(tmp_path),
-        number=123,
-        branch="feat/foo",
-        base="main",
-        title=None,
-        body=None,
-        description=True,
-        ready=None,
-        ai_on=True,
-        offer_regen=True,
-    )
+    result = _apply_updates(tmp_path, mocker, number=123, description=True)
 
     assert result == pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
+
+
+def test_apply_pr_updates_records_the_consumed_description(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b", source=_outbox_source()),
+    )
+    mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    update = _apply_updates(tmp_path, mocker)
+
+    record.assert_called_once()
+    # `record_outbox_consumption` passes manifest/index/url positionally.
+    assert record.call_args.args[2:5] == ("002-d.json", 0, "https://x/pull/1234")
+    assert update.description_source == "002-d.json"
+
+
+def test_a_failed_edit_leaves_the_manifest_pending(tmp_path, mocker):
+    """Nothing recorded on failure, so a retry reuses the manifest."""
+    from jailbee.pr import PrEditError
+
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b", source=_outbox_source()),
+    )
+    mocker.patch("jailbee.pr.edit_pr", side_effect=PrEditError("HTTP 403"))
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+
+    update = _apply_updates(tmp_path, mocker)
+
+    record.assert_not_called()
+    assert update.description_source is None
+
+
+def test_apply_pr_updates_asks_the_outbox_about_its_own_pr(tmp_path, mocker):
+    """Without its own number the lookup would accept only `pr: null` manifests
+    and never find the description written for the PR being updated."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    _apply_updates(tmp_path, mocker, use_outbox=True)
+
+    assert pending.call_args.kwargs["for_pr"] == 1234
+
+
+def test_a_failed_consumption_record_still_names_the_source(tmp_path, mocker):
+    """The edit landed; a container-side bookkeeping failure must not hide that."""
+    from jailbee.pr_outbox import FinalizeError
+
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b", source=_outbox_source()),
+    )
+    mocker.patch("jailbee.pr.edit_pr")
+    mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=FinalizeError("disk full"))
+    warn = mocker.patch("jailbee.pr_flow.warn")
+
+    update = _apply_updates(tmp_path, mocker)
+
+    assert update.description_source == "002-d.json"
+    assert "disk full" in warn.call_args.args[0]
+
+
+def test_the_update_path_does_not_announce_the_source_twice(tmp_path, mocker):
+    """`render_pr_outcome` carries the manifest name on this path, so the create
+    path's `info` line would be the same sentence a second time."""
+    mocker.patch(
+        "jailbee.pr_flow.resolve_pr_description_update",
+        return_value=pr_flow.DescriptionUpdate(title="t", body="b", source=_outbox_source()),
+    )
+    mocker.patch("jailbee.pr.edit_pr")
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    info = mocker.patch("jailbee.pr_flow.info")
+
+    _apply_updates(tmp_path, mocker)
+
+    info.assert_not_called()
 
 
 def test_render_outcome_create_draft(tmp_path, mocker):
@@ -951,6 +1099,30 @@ def test_render_outcome_update_all_variants(tmp_path, mocker):
     )
     success.assert_called_with(
         "PR #1 updated — head moved; description unchanged. (marked draft) U"
+    )
+
+
+def test_render_outcome_names_the_description_source(tmp_path, mocker):
+    """A user who sees no such line knows Claude wrote the description."""
+    success = mocker.patch("jailbee.pr_flow.success")
+    pr_flow.render_pr_outcome(
+        _super_scope(tmp_path),
+        url="U",
+        number=1,
+        is_update=True,
+        publish_name="feat/foo",
+        forced=False,
+        ready=None,
+        update=pr_flow.PrUpdate(
+            title_changed=True,
+            body_changed=True,
+            state_note="",
+            description_source="002-d.json",
+        ),
+    )
+    success.assert_called_once_with(
+        "PR #1 updated — head moved, title and description refreshed "
+        "(description from 002-d.json). U"
     )
 
 
