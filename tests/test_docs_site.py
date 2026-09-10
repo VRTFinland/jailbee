@@ -221,3 +221,47 @@ def test_check_rejects_a_canonical_link_pointing_off_site(tmp_path: Path) -> Non
         "<body></body></html>"
     )
     assert any("evil.example.com" in problem for problem in docs_site.check(site))
+
+
+DOCS_CSS = REPO_ROOT / "website" / "docs-theme" / "assets" / "jailbee-docs.css"
+SITE_CSS = REPO_ROOT / "website" / "assets" / "style.css"
+
+# The landing page tokens the docs theme reuses. Fewer than style.css defines:
+# these are the ones the docs actually need, and a token that is not used here
+# has no business being copied.
+SHARED_TOKENS = ("ground", "surface", "surface-2", "border", "text", "muted", "amber", "amber-dim")
+
+
+def _tokens(css: str) -> dict[str, str]:
+    import re
+
+    return {
+        name: value.strip() for name, value in re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]+)", css)
+    }
+
+
+def test_the_docs_palette_matches_the_landing_page() -> None:
+    """One brand, two stylesheets. A colour edited on the landing page and not
+    here shows up as a docs section that no longer matches the front door."""
+    landing = _tokens(SITE_CSS.read_text())
+    docs = _tokens(DOCS_CSS.read_text())
+    for token in SHARED_TOKENS:
+        assert token in docs, f"the docs stylesheet does not define --{token}"
+        assert docs[token] == landing[token], (
+            f"--{token} is {docs[token]} in the docs and {landing[token]} on the landing page"
+        )
+
+
+def test_the_docs_stylesheet_makes_no_external_requests() -> None:
+    css = DOCS_CSS.read_text()
+    assert "http://" not in css
+    assert "https://" not in css
+
+
+def test_the_docs_stylesheet_uses_the_fonts_the_site_already_ships() -> None:
+    """Root-absolute paths into website/assets/fonts — the files are shipped
+    once, for both halves of the site."""
+    css = DOCS_CSS.read_text()
+    for font in ("IBMPlexSans-Regular", "IBMPlexSans-SemiBold", "IBMPlexMono-Regular"):
+        assert f"/assets/fonts/{font}.woff2" in css, f"the docs do not use {font}"
+        assert (REPO_ROOT / "website" / "assets" / "fonts" / f"{font}.woff2").is_file()

@@ -12,6 +12,9 @@ site_description = "Isolated per-branch development environments in Incus system
 site_url = "https://jailbee.gisgro.io/docs/"
 docs_dir = "_build/docs"
 site_dir = "_site/docs"
+# The brand layer that maps the landing page's palette onto the theme's own
+# variables — see website/docs-theme/assets/jailbee-docs.css.
+extra_css = ["assets/jailbee-docs.css"]
 
 # The sections mirror README.md's own documentation tables, so a reader who
 # arrives from either place sees the same grouping.
@@ -38,6 +41,9 @@ nav = [
 # `font = false` keeps Google Fonts out; the brand stylesheet declares
 # @font-face against the landing page's own IBM Plex files.
 font = false
+# Holds the brand layer and template overrides; build input only — `make
+# site` does not copy this directory into `_site/`.
+custom_dir = "website/docs-theme"
 logo = "/assets/img/jailbee-mark.png"
 favicon = "/assets/img/jailbee-mark.png"
 features = [
