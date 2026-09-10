@@ -4,9 +4,13 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "docs/**"
+      - "zensical.toml"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
-# The site is website/ as committed — no build step, so this job only
-# needs to read the repo and publish it to Pages.
+# The site is website/ as committed plus the docs Zensical renders from docs/,
+# assembled into _site/ by `make site`. The job needs to read the repo and
+# publish; it never writes to it.
 permissions:
   contents: read
   pages: write
@@ -22,10 +26,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --only-group docs
+      - run: make site
+      - run: make site-check
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: website
+          path: _site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
