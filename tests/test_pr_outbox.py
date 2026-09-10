@@ -270,9 +270,16 @@ def test_parse_rejects_non_integer_comment_id():
 
 
 def _archive(files: dict[str, bytes], *, extra: list[tarfile.TarInfo] | None = None) -> str:
-    """Build a base64 tar exactly as the container-side command would emit it."""
+    """Build a base64 tar exactly as the container-side command would emit it.
+
+    `tar -cf - .` always leads with the archive root itself (`./`, which
+    `tarfile` reads back as `.`), so the fixture does too.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
+        root = tarfile.TarInfo(name="./")
+        root.type = tarfile.DIRTYPE
+        tar.addfile(root)
         for name, data in files.items():
             info = tarfile.TarInfo(name=f"./{name}")
             info.size = len(data)
@@ -320,6 +327,19 @@ def test_read_outbox_skips_progress_files_in_manifest_names(mocker):
     assert read_outbox(incus, "c", uid=1000).manifest_names == ["001-a.json", "002-b.json"]
 
 
+def test_read_outbox_does_not_count_the_archive_root_as_hostile(mocker):
+    from jailbee.pr_outbox import read_outbox
+
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _archive({"001-x.json": b"{}", "001-x.md": b"prose"})
+
+    read_outbox(incus, "c", uid=1000)
+
+    # The `./` entry every real archive leads with is not a skipped member.
+    warn.assert_not_called()
+
+
 def test_read_outbox_drops_hostile_members(mocker):
     from jailbee.pr_outbox import read_outbox
 
@@ -337,12 +357,15 @@ def test_read_outbox_drops_hostile_members(mocker):
     hardlink.type = tarfile.LNKTYPE
     hardlink.linkname = "./001-x.json"
 
+    warn = mocker.patch("jailbee.pr_outbox.warn")
     incus = mocker.MagicMock()
     incus.exec.return_value = _archive(
         {"001-x.json": b"{}"}, extra=[absolute, escape, link, nested, hardlink]
     )
 
     assert read_outbox(incus, "c", uid=1000).files == {"001-x.json": "{}"}
+    # Exactly the five planted members; the archive root is not among them.
+    warn.assert_called_once_with("c: skipped 5 hostile outbox member(s)")
 
 
 def test_read_outbox_drops_oversized_member(mocker):
