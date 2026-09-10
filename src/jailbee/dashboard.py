@@ -640,6 +640,13 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
+    "Apply N PR action(s)" (``review apply``) appears whenever the container's
+    PR outbox is non-empty (``ctx.git_status.pending_pr_actions``), gated only
+    by ``_bridge_possible`` — like the rest of this block, since ``review
+    apply`` reads the container's own clone — and not by ``pr_number is not
+    None``: a container can hold a description for a PR ``jailbee pr`` has not
+    opened yet.
+
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
     :func:`_app_menu_verb`): every front-end splits them into argv, and Typer
@@ -663,6 +670,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
             prefix.append(("Send commits to host (git pull)", "git pull"))
         if _has_diff_to_show(ctx.git_status):
             prefix.append(("Show diff (git diff)", "git diff"))
+        pending = ctx.git_status.pending_pr_actions if ctx.git_status else None
+        if pending:
+            prefix.append((f"Apply {pending} PR action(s) (review apply)", "review apply"))
     if ctx.state == "Running":
         actions = [
             ("Attach tmux", "tmux"),

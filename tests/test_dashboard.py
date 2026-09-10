@@ -875,6 +875,30 @@ def test_menu_actions_omits_pr_refresh_when_the_bridge_is_impossible():
         assert "git push --pr" not in [v for _, v in dashboard.menu_actions(ctx)]
 
 
+def test_menu_offers_apply_pr_actions_only_when_something_is_pending():
+    """A container can hold outbox manifests for a PR that does not exist yet,
+    so this entry lives outside the `pr_number is not None` guard — same
+    reason `_pr_cell`'s "✉N" marker does."""
+    pending = dashboard.menu_actions(_ctx(git_status=_dirty(pending_pr_actions=2)))
+    labels = [label for label, _ in pending]
+    assert any("Apply" in label and "PR action" in label for label in labels)
+    verb_by_label = dict(pending)
+    apply_label = next(label for label in labels if "Apply" in label and "PR action" in label)
+    assert verb_by_label[apply_label] == "review apply"
+
+    assert not any(
+        "Apply" in label and "PR action" in label
+        for label, _ in dashboard.menu_actions(_ctx(git_status=_dirty(pending_pr_actions=0)))
+    )
+    assert not any(
+        "Apply" in label and "PR action" in label
+        for label, _ in dashboard.menu_actions(_ctx(git_status=_dirty(pending_pr_actions=None)))
+    )
+    assert not any(
+        "Apply" in label and "PR action" in label for label, _ in dashboard.menu_actions(_ctx())
+    )
+
+
 def test_pr_refresh_is_dispatched_as_a_printing_verb():
     """PRINTING_VERBS is matched exactly, not by leading token — without its
     own entry the refresh would lose its output in both front-ends."""

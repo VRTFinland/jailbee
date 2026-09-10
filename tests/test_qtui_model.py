@@ -164,6 +164,29 @@ def test_git_segment_still_prefixes_a_predicted_conflict():
     assert ("merge conflict", "conflict") in git_segments(cc)
 
 
+def test_git_segments_show_the_pending_pr_actions_marker():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="✉2")
+    assert ("✉2", "ahead") in git_segments(cc)
+
+
+def test_git_segments_omit_the_marker_without_pending_actions():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="#1234↓")
+    assert git_segments(cc) == []
+
+
+def test_pending_pr_actions_make_an_otherwise_clean_container_read_as_dirty():
+    """`is_git_clean` is `not git_segments(cc)`, so a clean tree with a
+    non-empty PR outbox now reads as "not clean" — there is something to do."""
+    from jailbee.qtui.model import is_git_clean
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="✉1")
+    assert is_git_clean(cc) is False
+
+
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 

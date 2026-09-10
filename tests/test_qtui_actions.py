@@ -195,6 +195,12 @@ def test_launch_mode_classifies_the_verbs():
         assert a.launch_mode(verb) == "detached", verb
 
 
+def test_review_apply_runs_in_a_terminal_because_it_prompts():
+    """`jailbee review apply` asks a y/N confirmation (unless `--yes`), and a
+    prompting command run without a terminal just hangs."""
+    assert a.launch_mode("review apply") == "terminal"
+
+
 def test_build_action_sets_the_launch_mode():
     ac = a.build_action("git diff", "alpha-x", _t("/repo/.jailbee/config.yaml"))
     assert ac.launch == "output"
