@@ -13,15 +13,10 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+from tests.docs_links import UNPUBLISHED
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS = REPO_ROOT / "docs"
-
-# Pages that live in docs/ but are deliberately not published: maintainer
-# procedure, and the skills the wheel force-includes for the in-container
-# agent. Listing them here rather than in zensical.toml is the point — a new
-# page has to be added to one list or the other, so it cannot ship, or fail to
-# ship, by accident.
-UNPUBLISHED = frozenset({"manual-testing.md", "releasing.md"})
 
 
 def _load() -> ModuleType:
@@ -187,6 +182,20 @@ def test_check_rejects_the_repository_stats_component(tmp_path: Path) -> None:
     the reader's browser for star and release counts."""
     site = _page('<a href="https://github.com/x" data-md-component="source">x</a>', tmp_path)
     assert any("data-md-component" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_a_glightbox_element(tmp_path: Path) -> None:
+    """The theme bundle fetches glightbox from a CDN when this class is
+    present, to power an image lightbox."""
+    site = _page('<a class="glightbox" href="img.png">img</a>', tmp_path)
+    assert any("glightbox" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_a_pyodide_element(tmp_path: Path) -> None:
+    """The theme bundle fetches ace + pyodide from a CDN when this class is
+    present, to power an in-page Python console."""
+    site = _page('<div class="pyodide"></div>', tmp_path)
+    assert any("pyodide" in problem for problem in docs_site.check(site))
 
 
 def test_check_rejects_an_off_site_url_in_a_stylesheet(tmp_path: Path) -> None:

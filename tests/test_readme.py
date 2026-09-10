@@ -54,8 +54,7 @@ def test_the_readme_sends_readers_to_the_documentation_site() -> None:
     live on the site; only the maintainer-only ones stay on GitHub."""
     import re
 
-    from tests.docs_links import GITHUB_DOCS_PREFIX, SITE_DOCS_URL, resolve
-    from tests.test_docs_site import UNPUBLISHED
+    from tests.docs_links import GITHUB_DOCS_PREFIX, SITE_DOCS_URL, UNPUBLISHED, resolve
 
     text = README.read_text()
     site_links = re.findall(rf"{re.escape(SITE_DOCS_URL)}[^\s\)\"']*", text)

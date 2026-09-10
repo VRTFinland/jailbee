@@ -131,6 +131,7 @@ class _ReferenceCollector(HTMLParser):
         self.references: list[tuple[str, str, str, str | None]] = []
         self.components: list[str] = []
         self.style_texts: list[str] = []
+        self.classes: list[str] = []
         self._in_style = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -138,6 +139,9 @@ class _ReferenceCollector(HTMLParser):
         component = attributes.get("data-md-component")
         if component:
             self.components.append(component)
+        class_ = attributes.get("class")
+        if class_:
+            self.classes.append(class_)
         style = attributes.get("style")
         if style:
             self.style_texts.append(style)
@@ -168,9 +172,17 @@ def check(site_docs: Path = SITE_DOCS) -> list[str]:
     The site's rule — no CDN, no webfont service, no third-party image — is
     enforced on the landing page by `tests/test_website.py`. The docs are
     generated, so the same rule has to be checked on the build output: the
-    theme fetches its fonts from Google and mermaid from unpkg by default, and
-    a repository link carrying `data-md-component="source"` makes the bundle
-    call api.github.com from every page.
+    theme fetches its fonts from Google and mermaid from unpkg by default, a
+    repository link carrying `data-md-component="source"` makes the bundle
+    call api.github.com from every page, and a `glightbox` or `pyodide` class
+    anywhere on a page makes the theme bundle fetch that feature's JS (and, for
+    pyodide, its `ace` editor dependency) from unpkg/jsdelivr — this repo uses
+    neither feature, so their classes should never appear in the build output.
+
+    Not checked here because it never causes an off-site request on its own:
+    the bundle's resize-observer polyfill only fetches anything when the
+    reader's browser has no native `ResizeObserver`, which is not something a
+    static scan of the HTML can determine.
 
     CSS is scanned only where a browser actually parses text as CSS: inline
     `<style>` element bodies, `style="..."` attribute values, and standalone
@@ -206,6 +218,12 @@ def check(site_docs: Path = SITE_DOCS) -> list[str]:
                 problems.append(
                     f'{where}: data-md-component="source" makes the page call api.github.com'
                 )
+        for class_ in collector.classes:
+            names = class_.split()
+            if "glightbox" in names:
+                problems.append(f'{where}: class="{class_}" makes the bundle fetch glightbox')
+            if "pyodide" in names:
+                problems.append(f'{where}: class="{class_}" makes the bundle fetch ace + pyodide')
         problems += [
             f"{where}: stylesheet fetches {url}"
             for text in collector.style_texts

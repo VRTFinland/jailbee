@@ -12,6 +12,8 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from pathlib import Path
 
+from tests.docs_links import UNPUBLISHED
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
 INDEX = SITE / "index.html"
@@ -22,16 +24,6 @@ CANONICAL_URL = "https://jailbee.gisgro.io/"
 # Discovered rather than listed, so a page added to website/ inherits every
 # whole-page check below instead of shipping unverified.
 PAGES = sorted(SITE.glob("*.html"))
-
-# Kept in step with tests/test_docs_site.py::UNPUBLISHED by
-# test_the_unpublished_lists_agree, below.
-UNPUBLISHED_DOCS = frozenset({"manual-testing.md", "releasing.md"})
-
-
-def test_the_unpublished_lists_agree() -> None:
-    from tests.test_docs_site import UNPUBLISHED
-
-    assert UNPUBLISHED_DOCS == UNPUBLISHED
 
 
 def canonical_url_for(page: Path) -> str:
@@ -443,7 +435,7 @@ def test_documentation_links_land_on_published_pages() -> None:
                 assert problem is None, f"{page.name}: {problem}"
             elif value.startswith(GITHUB_DOCS_PREFIX):
                 name = value[len(GITHUB_DOCS_PREFIX) :]
-                assert name in UNPUBLISHED_DOCS, (
+                assert name in UNPUBLISHED, (
                     f"{page.name}: {name} is published — link the site, not GitHub"
                 )
                 assert (REPO_ROOT / "docs" / name).is_file(), (
@@ -694,7 +686,7 @@ def test_llms_txt_follows_the_format_and_links_only_to_real_docs() -> None:
         assert problem is None, problem
 
     for link in re.findall(rf"{re.escape(GITHUB_DOCS_PREFIX)}([^\s\)\"']+)", text):
-        assert link in UNPUBLISHED_DOCS, f"{link} is published — link the site, not GitHub"
+        assert link in UNPUBLISHED, f"{link} is published — link the site, not GitHub"
 
 
 def _structured_data() -> dict[str, object]:

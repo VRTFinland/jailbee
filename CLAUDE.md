@@ -106,7 +106,7 @@ make docs-serve    # preview the docs alone
 - **`nav` in `zensical.toml` is the publication whitelist.** Zensical cannot
   exclude a file, so `scripts/docs_site.py stage` copies exactly the pages
   `nav` names into `_build/docs/` and builds from there. A new page in `docs/`
-  must be added to `nav`, or to `UNPUBLISHED` in `tests/test_docs_site.py` —
+  must be added to `nav`, or to `UNPUBLISHED` in `tests/docs_links.py` —
   the suite fails until it is in one of them.
 - **Cross-page links stay relative** (`config.md#scratch`): they work on GitHub
   and the build rewrites them. Anchors follow GitHub's slug rule, which
