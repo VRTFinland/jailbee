@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-skill check build publish-testpypi \
-        changelog release
+        changelog release site docs-serve
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -35,6 +35,27 @@ check:
 	uv run ruff format --check src/ tests/
 	uv run mypy src/
 	uv run pytest -q
+
+# The documentation site generator, from the `docs` dependency group. Never a
+# bare `zensical`: the pinned version is the one the config was written for.
+ZENSICAL := uv run --only-group docs zensical
+
+# Assemble the published site into _site/: the docs Zensical builds from the
+# staged page whitelist, plus website/ exactly as committed. Order matters —
+# the docs build cleans its own site_dir (_site/docs), so it runs first, and
+# the landing page is copied over the top. `docs-theme/` is build input, not
+# something to publish.
+site:
+	python3 scripts/docs_site.py stage
+	$(ZENSICAL) build --clean --strict
+	rsync -a --exclude 'docs-theme/' website/ _site/
+
+# Preview the docs alone. The staged tree is a copy, so an edit to docs/ needs
+# this target re-run; and the fonts and logo it borrows from the landing page
+# only resolve in the assembled site (`make site`, then serve _site/).
+docs-serve:
+	python3 scripts/docs_site.py stage
+	$(ZENSICAL) serve
 
 # Build a clean sdist + wheel and validate the packaged metadata.
 build:

@@ -1,0 +1,81 @@
+# Configuration for the documentation site published at
+# https://jailbee.gisgro.io/docs/.
+#
+# `docs_dir` is NOT `docs/`: Zensical has no way to exclude a file, and this
+# repo keeps maintainer-only pages (manual-testing, releasing) and the bundled
+# Claude skills under `docs/`. `scripts/docs_site.py stage` copies exactly the
+# pages `nav` names into `_build/docs/`, so `nav` is the publication whitelist.
+# Build with `make site`, never with a bare `zensical build`.
+[project]
+site_name = "JailBee"
+site_description = "Isolated per-branch development environments in Incus system containers."
+site_url = "https://jailbee.gisgro.io/docs/"
+docs_dir = "_build/docs"
+site_dir = "_site/docs"
+
+# The sections mirror README.md's own documentation tables, so a reader who
+# arrives from either place sees the same grouping.
+nav = [
+  { "Overview" = "README.md" },
+  { "Setup" = ["installation.md", "getting-started.md", "macos.md"] },
+  { "Daily use" = [
+    "faq.md",
+    "commands.md",
+    "git-bridge.md",
+    "project-config.md",
+    "troubleshooting.md",
+  ] },
+  { "Reference" = [
+    "config.md",
+    "agents.md",
+    "security.md",
+    "architecture.md",
+    "comparison.md",
+  ] },
+]
+
+[project.theme]
+# `font = false` keeps Google Fonts out; the brand stylesheet declares
+# @font-face against the landing page's own IBM Plex files.
+font = false
+logo = "/assets/img/jailbee-mark.png"
+favicon = "/assets/img/jailbee-mark.png"
+features = [
+  "navigation.sections",
+  "navigation.footer",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "content.code.copy",
+]
+
+# `primary`/`accent` MUST stay "custom". With a named colour, the theme ships
+# a `[data-md-color-scheme=slate][data-md-color-primary=<name>]` rule that
+# outranks the brand stylesheet, and links render in that colour instead.
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+
+# The header logo leads back to the landing page rather than to /docs/.
+[project.extra]
+homepage = "https://jailbee.gisgro.io/"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+def_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+# GitHub-compatible heading ids. Without this the anchors in 46 headings
+# differ between github.com and the site — `#gpu--nvidia-passthrough` there,
+# `#gpu-nvidia-passthrough` here — and 164 in-repo links break in one place or
+# the other.
+toc.slugify.object = "pymdownx.slugs.slugify"
+toc.slugify.kwds.case = "lower"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
