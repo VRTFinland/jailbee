@@ -98,7 +98,7 @@ def test_find_repo_config_accepts_legacy_gie_dir_with_one_warning(tmp_path, monk
     (tmp_path / ".gie" / "config.yaml").write_text("")
     monkeypatch.chdir(tmp_path)
     paths._warn_legacy_config_dir.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn")
+    warn = mocker.patch("jailbee.tui.warn_plain")
 
     assert paths.find_repo_config() == tmp_path / ".gie" / "config.yaml"
     assert paths.find_repo_config() == tmp_path / ".gie" / "config.yaml"
@@ -134,7 +134,7 @@ def test_repo_config_path_warned_warns_once_for_legacy_dir(tmp_path, mocker):
     from jailbee.paths import _warn_legacy_config_dir, repo_config_path_warned
 
     _warn_legacy_config_dir.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn")
+    warn = mocker.patch("jailbee.tui.warn_plain")
     repo = tmp_path / "legacy"
     (repo / ".gie").mkdir(parents=True)
     (repo / ".gie" / "config.yaml").write_text("{}\n")
@@ -142,6 +142,45 @@ def test_repo_config_path_warned_warns_once_for_legacy_dir(tmp_path, mocker):
     assert repo_config_path_warned(repo) == repo / ".gie" / "config.yaml"
     assert repo_config_path_warned(repo) == repo / ".gie" / "config.yaml"
     assert warn.call_count == 1
+
+
+def test_the_legacy_dir_warning_names_the_repo_it_is_about(tmp_path, mocker):
+    """`jailbee claude ls` and the dashboards load every registered repo's
+    config, so this warning routinely fires for a repo the user is not
+    standing in. It used to end "run `git mv .gie .jailbee` in this repo",
+    which in a migrated checkout named a directory that does not exist.
+    """
+    from jailbee.paths import _warn_legacy_config_dir, repo_config_path_warned
+
+    _warn_legacy_config_dir.cache_clear()
+    warn = mocker.patch("jailbee.tui.warn_plain")
+    repo = tmp_path / "other-repo"
+    (repo / ".gie").mkdir(parents=True)
+    (repo / ".gie" / "config.yaml").write_text("{}\n")
+
+    repo_config_path_warned(repo)
+
+    message = warn.call_args.args[0]
+    assert str(repo) in message
+    assert "this repo" not in message
+
+
+def test_each_legacy_repo_gets_its_own_warning(tmp_path, mocker):
+    """The once-only guard keys on the path, so a host-wide command reports
+    every unmigrated repo rather than only the first one it reads.
+    """
+    from jailbee.paths import _warn_legacy_config_dir, repo_config_path_warned
+
+    _warn_legacy_config_dir.cache_clear()
+    warn = mocker.patch("jailbee.tui.warn_plain")
+    for name in ("alpha", "beta"):
+        (tmp_path / name / ".gie").mkdir(parents=True)
+        (tmp_path / name / ".gie" / "config.yaml").write_text("{}\n")
+        repo_config_path_warned(tmp_path / name)
+
+    assert warn.call_count == 2
+    assert str(tmp_path / "alpha") in warn.call_args_list[0].args[0]
+    assert str(tmp_path / "beta") in warn.call_args_list[1].args[0]
 
 
 def test_repo_config_path_warned_returns_none_when_absent(tmp_path):

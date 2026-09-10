@@ -36,17 +36,20 @@ def test_the_removal_release_is_the_one_that_drops_the_gie_directory():
     assert LEGACY_REMOVAL_VERSION == "2.0.0"
 
 
-def test_legacy_chrome_block_notice_names_the_removal_release(capsys):
-    from jailbee.config.loader import resolve_browsers_raw
+def test_legacy_chrome_block_notice_names_the_removal_release(tmp_path, capsys):
+    from jailbee.config.loader import load_config_from_text
 
-    resolve_browsers_raw({"chrome": {"enabled": True}})
+    load_config_from_text(
+        "container_prefix: myrepo\nchrome:\n  enabled: true\n",
+        tmp_path / ".jailbee" / "config.yaml",
+    )
     assert LEGACY_REMOVAL_VERSION in capsys.readouterr().err
 
 
 def test_legacy_gie_dir_notice_names_the_removal_release(tmp_path, mocker):
     from jailbee import paths
 
-    warn = mocker.patch("jailbee.tui.warn")
+    warn = mocker.patch("jailbee.tui.warn_plain")
     legacy = tmp_path / ".gie" / "config.yaml"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("defaults:\n  cpu: 3\n")
