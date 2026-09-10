@@ -3060,9 +3060,7 @@ def test_new_container_applies_mirror_registries_from_cfg(tmp_path, mocker):
     )
     new_container(cfg, incus, opts)
 
-    sync_env.assert_called_once_with(
-        incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"]
-    )
+    sync_env.assert_called_once_with(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"])
 
 
 def test_new_container_skips_mirror_registries_when_no_endpoint(tmp_path, mocker):

@@ -1159,9 +1159,7 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
 
     run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    sync_env.assert_called_once_with(
-        incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"]
-    )
+    sync_env.assert_called_once_with(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"])
 
 
 def test_run_apply_syncs_mirror_env_for_a_repo_without_extra_registries(

@@ -706,9 +706,7 @@ def test_sync_mirror_env_leaves_a_current_file_alone():
     incus = MagicMock()
     incus.exec.return_value = _CURRENT_ENV
 
-    changed = sync_mirror_env(
-        incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com", "quay.io"]
-    )
+    changed = sync_mirror_env(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com", "quay.io"])
 
     assert changed is False
     assert _exec_bash_calls(incus) == []
