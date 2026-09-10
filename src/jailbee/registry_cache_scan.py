@@ -179,8 +179,26 @@ def _inspect(path: str) -> _Verdict:
     )
 
 
-def _record(tally: _Tally, cand: _Candidate, verdict: _Verdict) -> None:
-    """Count one verdict; emit a ``corrupt`` record for a mismatch."""
+def _unlink_if_unchanged(path: str, verdict: _Verdict) -> bool:
+    """Remove a corrupt entry unless nginx replaced it after it was hashed.
+
+    nginx swaps a new entry in by rename, so a different inode (or a touched
+    mtime) means the file on disk is no longer the one found corrupt. The
+    window between this stat and the unlink is microseconds; a copy landing
+    inside it is lost and simply fetched again on the next pull.
+    """
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return False
+    if (st.st_ino, st.st_mtime_ns) != (verdict.inode, verdict.mtime_ns):
+        return False
+    os.unlink(path)
+    return True
+
+
+def _record(tally: _Tally, cand: _Candidate, verdict: _Verdict, *, remove: bool) -> None:
+    """Count one verdict; for a mismatch, remove it if asked and emit ``corrupt``."""
     if verdict.outcome == "no_digest":
         tally.skipped_no_digest += 1
     elif verdict.outcome == "status":
@@ -191,6 +209,13 @@ def _record(tally: _Tally, cand: _Candidate, verdict: _Verdict) -> None:
     else:
         tally.corrupt += 1
         tally.bytes_checked += cand.size
+        purged = False
+        if remove:
+            try:
+                purged = _unlink_if_unchanged(cand.path, verdict)
+            except OSError as e:
+                tally.error(cand.rel, f"could not remove: {e}")
+        tally.purged += int(purged)
         _emit(
             {
                 "type": "corrupt",
@@ -199,12 +224,12 @@ def _record(tally: _Tally, cand: _Candidate, verdict: _Verdict) -> None:
                 "expected": verdict.expected,
                 "actual": verdict.actual,
                 "size": cand.size,
-                "purged": False,
+                "purged": purged,
             }
         )
 
 
-def _process(cand: _Candidate, tally: _Tally) -> None:
+def _process(cand: _Candidate, tally: _Tally, *, remove: bool) -> None:
     if not _ENTRY_NAME.match(os.path.basename(cand.rel)):
         tally.skipped_temp += 1
         return
@@ -213,10 +238,10 @@ def _process(cand: _Candidate, tally: _Tally) -> None:
     except (OSError, _UnparseableError) as e:
         tally.error(cand.rel, str(e))
         return
-    _record(tally, cand, verdict)
+    _record(tally, cand, verdict, remove=remove)
 
 
-def _walk(candidates: Sequence[_Candidate], tally: _Tally) -> None:
+def _walk(candidates: Sequence[_Candidate], tally: _Tally, *, remove: bool) -> None:
     """Process ``candidates`` in order, emitting throttled progress."""
     _emit(
         {"type": "total", "entries": len(candidates), "bytes": sum(c.size for c in candidates)}
@@ -224,7 +249,7 @@ def _walk(candidates: Sequence[_Candidate], tally: _Tally) -> None:
     done_entries = done_bytes = 0
     last = time.monotonic()
     for cand in candidates:
-        _process(cand, tally)
+        _process(cand, tally, remove=remove)
         done_entries += 1
         done_bytes += cand.size
         now = time.monotonic()
@@ -235,8 +260,31 @@ def _walk(candidates: Sequence[_Candidate], tally: _Tally) -> None:
     _emit(tally.summary())
 
 
-def scan(root: str) -> None:
-    _walk(_candidates(root), _Tally())
+def scan(root: str, *, purge: bool) -> None:
+    _walk(_candidates(root), _Tally(), remove=purge)
+
+
+def purge_paths(root: str, rels: Sequence[str]) -> None:
+    """Re-verify ``rels`` (relative to ``root``) and remove those still corrupt.
+
+    Used after the user confirmed removal of what a scan found: that can be
+    minutes later, so each entry is checked again rather than trusted.
+    """
+    tally = _Tally()
+    candidates: list[_Candidate] = []
+    for rel in rels:
+        norm = os.path.normpath(rel)
+        if os.path.isabs(norm) or norm == ".." or norm.startswith("../"):
+            tally.error(rel, "outside the cache")
+            continue
+        path = os.path.join(root, norm)
+        try:
+            size = os.stat(path).st_size
+        except OSError as e:
+            tally.error(rel, str(e))
+            continue
+        candidates.append(_Candidate(rel=norm, path=path, size=size))
+    _walk(candidates, tally, remove=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -244,12 +292,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     modes = parser.add_subparsers(dest="mode", required=True)
     scan_parser = modes.add_parser("scan")
     scan_parser.add_argument("--root", default=DEFAULT_ROOT)
+    scan_parser.add_argument("--purge", action="store_true")
+    purge_parser = modes.add_parser("purge")
+    purge_parser.add_argument("--root", default=DEFAULT_ROOT)
+    purge_parser.add_argument("paths", nargs="+")
     args = parser.parse_args(argv)
     if not os.path.isdir(args.root):
         print(f"cache root {args.root} does not exist", file=sys.stderr)
         return 2
     try:
-        scan(args.root)
+        if args.mode == "scan":
+            scan(args.root, purge=args.purge)
+        else:
+            purge_paths(args.root, args.paths)
     except BrokenPipeError:
         # The reader went away (Ctrl+C on the jailbee side). Point stdout at
         # /dev/null so the interpreter's own flush at exit cannot raise again.

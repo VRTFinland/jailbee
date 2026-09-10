@@ -189,3 +189,76 @@ def test_scan_fails_when_the_cache_root_is_missing(tmp_path):
     assert proc.returncode == 2
     assert "nope" in proc.stderr
     assert records == []
+
+
+def test_scan_purge_removes_only_the_corrupt_entry(tmp_path):
+    corrupt = _entry(tmp_path, BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    manifest = b'{"schemaVersion": 2}'
+    sound = _entry(tmp_path, "/v2/a/manifests/sha256:" + _sha(manifest), manifest)
+
+    records, proc = _run("scan", "--purge", "--root", str(tmp_path))
+
+    assert proc.returncode == 0, proc.stderr
+    assert not corrupt.exists()
+    assert sound.exists()
+    [record] = _of(records, "corrupt")
+    assert record["purged"] is True
+    assert _of(records, "summary")[0]["purged"] == 1
+
+
+def test_an_entry_replaced_after_hashing_is_not_removed(tmp_path):
+    """nginx swaps a fresh copy in by rename; deleting that copy because the
+    *previous* file was corrupt would throw away a sound entry."""
+    path = _entry(tmp_path, BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    verdict = registry_cache_scan._inspect(str(path))
+    assert verdict.outcome == "corrupt"
+    fresh = path.with_name(path.name + ".0000000007")
+    fresh.write_bytes(path.read_bytes())
+    fresh.replace(path)  # new inode at the same name, as nginx's rename does
+
+    removed = registry_cache_scan._unlink_if_unchanged(str(path), verdict)
+
+    assert removed is False
+    assert path.exists()
+
+
+def test_purge_removes_a_path_that_is_still_corrupt(tmp_path):
+    path = _entry(tmp_path, BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    rel = str(path.relative_to(tmp_path))
+
+    records, proc = _run("purge", "--root", str(tmp_path), rel)
+
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+    [record] = _of(records, "corrupt")
+    assert record["path"] == rel
+    assert record["purged"] is True
+
+
+def test_purge_keeps_a_path_that_is_sound_again(tmp_path):
+    """Between the scan and the user's "yes", a pull may have replaced the
+    entry with a good copy — that one stays."""
+    path = _entry(tmp_path, BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    rel = str(path.relative_to(tmp_path))
+    _entry(tmp_path, BLOB_KEY, GOOD_LAYER)  # same key → same file, now sound
+
+    records, _ = _run("purge", "--root", str(tmp_path), rel)
+
+    assert path.exists()
+    summary = _of(records, "summary")[0]
+    assert summary["ok"] == 1
+    assert summary["purged"] == 0
+    assert _of(records, "corrupt") == []
+
+
+def test_purge_refuses_a_path_outside_the_cache(tmp_path):
+    root = tmp_path / "cache"
+    root.mkdir()
+    outside = tmp_path / "precious"
+    outside.write_text("keep me")
+
+    records, proc = _run("purge", "--root", str(root), "../precious")
+
+    assert proc.returncode == 0, proc.stderr
+    assert outside.exists()
+    assert _of(records, "summary")[0]["errors"] == 1
