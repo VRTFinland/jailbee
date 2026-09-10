@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -1006,3 +1008,68 @@ def test_network_acl_list_returns_names(mocker):
         stderr="",
     )
     assert Incus().network_acl_list() == ["a-allowlist", "b-extra"]
+
+
+def _fake_incus(tmp_path):
+    """An executable standing in for `incus`: runs whatever follows `--`.
+
+    `exec_lines` builds `exec <name> -- <cmd…>`; the fake drops the first three
+    words and execs the rest, so the command runs for real, locally.
+    """
+    fake = tmp_path / "incus"
+    fake.write_text('#!/bin/sh\nshift 3\nexec "$@"\n')
+    fake.chmod(0o755)
+    return Incus(binary=str(fake))
+
+
+def test_exec_lines_yields_stdout_lines_in_order(tmp_path):
+    incus = _fake_incus(tmp_path)
+
+    lines = list(incus.exec_lines("c", ["sh", "-c", "printf 'one\\ntwo\\n'"]))
+
+    assert lines == ["one", "two"]
+
+
+def test_exec_lines_yields_a_line_before_the_command_exits(tmp_path):
+    """Progress is the point: a line must arrive while the command still runs."""
+    incus = _fake_incus(tmp_path)
+    gen = incus.exec_lines("c", ["sh", "-c", "echo first; sleep 5; echo second"])
+
+    started = time.monotonic()
+    first = next(gen)
+    elapsed = time.monotonic() - started
+    gen.close()
+
+    assert first == "first"
+    assert elapsed < 3
+
+
+def test_exec_lines_raises_with_stderr_on_a_failing_command(tmp_path):
+    incus = _fake_incus(tmp_path)
+
+    with pytest.raises(IncusError, match=r"exit 3.*boom"):
+        list(incus.exec_lines("c", ["sh", "-c", "echo boom >&2; exit 3"]))
+
+
+def test_exec_lines_kills_the_command_when_the_reader_stops(tmp_path):
+    """Ctrl+C in `jailbee doctor` closes the generator; the remote scan must
+    not keep hashing gigabytes for nobody."""
+    incus = _fake_incus(tmp_path)
+    gen = incus.exec_lines("c", ["sh", "-c", "echo $$; exec sleep 30"])
+    pid = int(next(gen))
+
+    gen.close()
+
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_exec_lines_reports_a_missing_binary_as_incus_error(tmp_path):
+    incus = Incus(binary=str(tmp_path / "no-such-incus"))
+
+    with pytest.raises(IncusError, match="no-such-incus"):
+        list(incus.exec_lines("c", ["true"]))
+
+
+def test_exec_lines_runs_nothing_in_dry_run():
+    assert list(Incus(dry_run=True).exec_lines("c", ["true"])) == []

@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import yaml
@@ -419,6 +421,55 @@ class Incus:
         )
         result = self._run(args, timeout=timeout)
         return result.stdout
+
+    def exec_lines(self, name: str, cmd: list[str]) -> Iterator[str]:
+        """Run a command inside the container, yielding stdout lines as they arrive.
+
+        For long commands whose progress the caller shows (the registry cache
+        scan): ``exec`` returns only once everything is done. Lines come
+        without their trailing newline. A non-zero exit raises ``IncusError``
+        with the command's stderr once stdout is exhausted.
+
+        Closing the generator early — the caller stopped reading, or Ctrl+C
+        interrupted it — kills the ``incus`` client; the remote command then
+        dies of SIGPIPE on its next write, if incus has not forwarded the
+        signal already. stderr goes to a temporary file rather than a pipe: a
+        chatty command could otherwise fill the pipe and block while we are
+        reading stdout.
+        """
+        args = self._exec_args(
+            name, cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False
+        )
+        if self.dry_run:
+            return
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr:
+            try:
+                proc = subprocess.Popen(
+                    [self.binary, *args],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr,
+                    text=True,
+                    errors="replace",
+                )
+            except FileNotFoundError as e:
+                raise _missing_binary_error(self.binary) from e
+            assert proc.stdout is not None  # stdout=PIPE
+            try:
+                for line in proc.stdout:
+                    yield line.rstrip("\n")
+                returncode = proc.wait()
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                proc.stdout.close()
+            if returncode != 0:
+                stderr.seek(0)
+                detail = stderr.read().strip()
+                raise IncusError(
+                    f"`incus {_render_args(args)}` failed (exit {returncode}): {detail}"
+                )
 
     def exec_interactive(
         self,
