@@ -60,7 +60,7 @@ class _Candidate:
 
 @dataclass(frozen=True)
 class _Verdict:
-    outcome: str  # "ok" | "corrupt" | "no_digest" | "status"
+    outcome: str  # "ok" | "corrupt" | "no_digest" | "status" (not a plain 200)
     key: str = ""
     expected: str = ""
     actual: str = ""
@@ -106,37 +106,49 @@ def _emit(record: dict[str, object]) -> None:
     sys.stdout.flush()
 
 
-def _entries(path: str, *, dirs: bool) -> list[os.DirEntry[str]]:
-    """Sorted subdirectories (or regular files) of ``path``; empty if unreadable."""
+def _subdirs(path: str, rel: str, tally: _Tally) -> list[os.DirEntry[str]]:
+    """Sorted subdirectories of ``path``. An unreadable one is an error, not an
+    empty directory: "none corrupt" must never mean "could not look"."""
     try:
         with os.scandir(path) as it:
-            found = [
-                e
-                for e in it
-                if (e.is_dir(follow_symlinks=False) if dirs else e.is_file(follow_symlinks=False))
-            ]
-    except OSError:
+            found = [e for e in it if e.is_dir(follow_symlinks=False)]
+    except OSError as e:
+        tally.error(rel, f"cannot list: {e.strerror}")
         return []
     return sorted(found, key=lambda e: e.name)
 
 
-def _candidates(root: str) -> list[_Candidate]:
+def _candidates(root: str, tally: _Tally) -> list[_Candidate]:
     """Every regular file at ``root/<level 1>/<level 2>/`` (nginx ``levels=1:2``)."""
     found: list[_Candidate] = []
-    for top in _entries(root, dirs=True):
-        for sub in _entries(top.path, dirs=True):
-            for entry in _entries(sub.path, dirs=False):
+    for top in _subdirs(root, ".", tally):
+        for sub in _subdirs(top.path, top.name, tally):
+            rel_dir = f"{top.name}/{sub.name}"
+            try:
+                with os.scandir(sub.path) as it:
+                    files = sorted(
+                        (e for e in it if e.is_file(follow_symlinks=False)),
+                        key=lambda e: e.name,
+                    )
+            except OSError as e:
+                tally.error(rel_dir, f"cannot list: {e.strerror}")
+                continue
+            for entry in files:
+                rel = f"{rel_dir}/{entry.name}"
                 try:
                     size = entry.stat(follow_symlinks=False).st_size
-                except OSError:
+                except FileNotFoundError:
                     continue  # evicted between listing and stat
-                rel = f"{top.name}/{sub.name}/{entry.name}"
+                except OSError as e:
+                    tally.error(rel, str(e))
+                    continue
                 found.append(_Candidate(rel=rel, path=entry.path, size=size))
     return found
 
 
-def _parse_head(head: bytes) -> tuple[str, int, int]:
-    """Return the entry's cache key, HTTP status and body offset."""
+def _parse_head(head: bytes) -> tuple[str, int, bool, int]:
+    """Return the entry's cache key, HTTP status, whether the stored body is
+    content-encoded, and the body offset."""
     marker = head.find(_KEY_MARKER)
     if marker < 0:
         raise _UnparseableError("no KEY line")
@@ -147,22 +159,30 @@ def _parse_head(head: bytes) -> tuple[str, int, int]:
     header_end = head.find(_HEADER_END, key_end)
     if header_end < 0:
         raise _UnparseableError("no end of the stored response header")
-    status_line = head[key_end + 1 : head.find(b"\r\n", key_end + 1)]
+    status_line, *header_lines = head[key_end + 1 : header_end].split(b"\r\n")
     parts = status_line.split()
     status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+    encoded = False
+    for line in header_lines:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-encoding":
+            encoded = value.strip().lower() not in (b"", b"identity")
     key = head[key_start:key_end].decode("utf-8", "replace")
-    return key, status, header_end + len(_HEADER_END)
+    return key, status, encoded, header_end + len(_HEADER_END)
 
 
 def _inspect(path: str) -> _Verdict:
     """Classify one cache file. Raises ``OSError`` or ``_UnparseableError``."""
     with open(path, "rb") as fh:
         st = os.fstat(fh.fileno())
-        key, status, body_offset = _parse_head(fh.read(_HEAD_BYTES))
+        key, status, encoded, body_offset = _parse_head(fh.read(_HEAD_BYTES))
         match = _DIGEST_KEY.match(key)
         if match is None:
             return _Verdict("no_digest", key=key)
-        if status != 200:
+        # Only a plain 200 body is the content the digest names: a 206 is part
+        # of it, and a Content-Encoding (the client's Accept-Encoding reaches
+        # the upstream through nginx) stores it compressed.
+        if status != 200 or encoded:
             return _Verdict("status", key=key)
         fh.seek(body_offset)
         digest = hashlib.sha256()
@@ -235,6 +255,8 @@ def _process(cand: _Candidate, tally: _Tally, *, remove: bool) -> None:
         return
     try:
         verdict = _inspect(cand.path)
+    except FileNotFoundError:
+        return  # evicted by nginx's cache manager mid-scan: no longer in the cache
     except (OSError, _UnparseableError) as e:
         tally.error(cand.rel, str(e))
         return
@@ -261,7 +283,8 @@ def _walk(candidates: Sequence[_Candidate], tally: _Tally, *, remove: bool) -> N
 
 
 def scan(root: str, *, purge: bool) -> None:
-    _walk(_candidates(root), _Tally(), remove=purge)
+    tally = _Tally()
+    _walk(_candidates(root, tally), tally, remove=purge)
 
 
 def purge_paths(root: str, rels: Sequence[str]) -> None:
@@ -280,6 +303,8 @@ def purge_paths(root: str, rels: Sequence[str]) -> None:
         path = os.path.join(root, norm)
         try:
             size = os.stat(path).st_size
+        except FileNotFoundError:
+            continue  # already gone — which is what was asked for
         except OSError as e:
             tally.error(rel, str(e))
             continue
@@ -297,8 +322,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     purge_parser.add_argument("--root", default=DEFAULT_ROOT)
     purge_parser.add_argument("paths", nargs="+")
     args = parser.parse_args(argv)
-    if not os.path.isdir(args.root):
-        print(f"cache root {args.root} does not exist", file=sys.stderr)
+    try:
+        os.listdir(args.root)
+    except OSError as e:
+        print(f"cannot read the cache root {args.root}: {e.strerror}", file=sys.stderr)
         return 2
     try:
         if args.mode == "scan":

@@ -16,16 +16,17 @@ from jailbee.registry_cache import (
 )
 
 KEY = "/v2/gisgro/typster/blobs/sha256:" + "0251fc1b" + "0" * 56
+# Every count distinct, so a field mapped from the wrong key cannot pass.
 SUMMARY = {
     "type": "summary",
-    "checked": 2,
-    "ok": 1,
+    "checked": 11,
+    "ok": 10,
     "corrupt": 1,
-    "purged": 0,
+    "purged": 4,
     "skipped_no_digest": 3,
-    "skipped_status": 1,
+    "skipped_status": 5,
     "skipped_temp": 2,
-    "errors": 1,
+    "errors": 6,
     "error_samples": ["0/00/x: no KEY line"],
     "bytes_checked": 300,
 }
@@ -42,9 +43,10 @@ CORRUPT = {
 
 def _incus(*records: dict | str) -> MagicMock:
     incus = MagicMock()
-    incus.exec_lines.return_value = [
+    # A generator, like the real exec_lines — `verify_cache` closes it.
+    incus.exec_lines.return_value = (
         r if isinstance(r, str) else json.dumps(r) for r in records
-    ]
+    )
     return incus
 
 
@@ -82,14 +84,21 @@ def test_verify_cache_builds_the_report_from_the_scan_output():
     assert entry.actual.startswith("67f8de43")
     assert entry.size == 19950938
     assert entry.purged is False
-    assert report.checked == 2
-    assert report.ok == 1
+    assert report.checked == 11
+    assert report.ok == 10
+    assert report.purged == 4
     assert report.skipped_no_digest == 3
-    assert report.skipped_status == 1
+    assert report.skipped_status == 5
     assert report.skipped_temp == 2
-    assert report.errors == 1
+    assert report.errors == 6
     assert report.error_samples == ("0/00/x: no KEY line",)
     assert report.bytes_checked == 300
+
+
+def test_a_removed_entry_is_reported_as_purged():
+    report = verify_cache(_incus({**CORRUPT, "purged": True}, SUMMARY), purge=True)
+
+    assert report.corrupt[0].purged is True
 
 
 def test_a_manifest_entry_reports_its_kind():
@@ -124,6 +133,32 @@ def test_purge_entries_hands_the_paths_to_the_scan():
 def test_unparseable_scan_output_is_reported_as_a_format_mismatch():
     with pytest.raises(RuntimeError, match="format"):
         verify_cache(_incus("Traceback (most recent call last):", SUMMARY))
+
+
+def test_an_unknown_record_type_is_reported_as_a_format_mismatch():
+    with pytest.raises(RuntimeError, match="format"):
+        verify_cache(_incus({"type": "banner", "text": "hello"}, SUMMARY))
+
+
+def test_the_scan_is_stopped_when_its_output_cannot_be_used():
+    """A mismatch raised mid-stream must close the exec, or the remote scan —
+    possibly a purging one — runs on until the traceback is collected."""
+    closed = []
+
+    def lines():
+        try:
+            yield "not json"
+            yield json.dumps(SUMMARY)
+        finally:
+            closed.append(True)
+
+    incus = MagicMock()
+    incus.exec_lines.return_value = lines()
+
+    with pytest.raises(RuntimeError):
+        verify_cache(incus)
+
+    assert closed == [True]
 
 
 def test_a_scan_that_ends_without_a_summary_is_an_error():

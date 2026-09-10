@@ -11,7 +11,7 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Any
 
 import yaml
@@ -422,7 +422,11 @@ class Incus:
         result = self._run(args, timeout=timeout)
         return result.stdout
 
-    def exec_lines(self, name: str, cmd: list[str]) -> Iterator[str]:
+    # How long `exec_lines` lets an abandoned command act on SIGTERM before
+    # killing it.
+    _EXEC_LINES_TERM_GRACE = 3
+
+    def exec_lines(self, name: str, cmd: list[str]) -> Generator[str, None, None]:
         """Run a command inside the container, yielding stdout lines as they arrive.
 
         For long commands whose progress the caller shows (the registry cache
@@ -431,9 +435,10 @@ class Incus:
         with the command's stderr once stdout is exhausted.
 
         Closing the generator early — the caller stopped reading, or Ctrl+C
-        interrupted it — kills the ``incus`` client; the remote command then
-        dies of SIGPIPE on its next write, if incus has not forwarded the
-        signal already. stderr goes to a temporary file rather than a pipe: a
+        interrupted it — terminates the ``incus`` client (killing it if it has
+        not exited within ``_EXEC_LINES_TERM_GRACE`` seconds); the remote
+        command then dies of the forwarded signal, or of SIGPIPE on its next
+        write. stderr goes to a temporary file rather than a pipe: a
         chatty command could otherwise fill the pipe and block while we are
         reading stdout.
         """
@@ -461,8 +466,14 @@ class Incus:
                 returncode = proc.wait()
             finally:
                 if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
+                    # SIGTERM first: the incus client forwards it to the remote
+                    # command, which a SIGKILLed client cannot do.
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=self._EXEC_LINES_TERM_GRACE)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
                 proc.stdout.close()
             if returncode != 0:
                 stderr.seek(0)

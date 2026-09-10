@@ -1058,8 +1058,28 @@ def test_exec_lines_kills_the_command_when_the_reader_stops(tmp_path):
     gen = incus.exec_lines("c", ["sh", "-c", "echo $$; exec sleep 30"])
     pid = int(next(gen))
 
+    started = time.monotonic()
+    gen.close()
+    elapsed = time.monotonic() - started
+
+    # Bounded: without the kill, close() would still reap the process — after
+    # waiting out the full `sleep 30`.
+    assert elapsed < 5
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_exec_lines_kills_a_command_that_ignores_sigterm(tmp_path):
+    """terminate() comes first so incus can pass it on; a command that ignores
+    it must still not outlive the reader."""
+    incus = _fake_incus(tmp_path)
+    gen = incus.exec_lines("c", ["sh", "-c", "trap '' TERM; echo $$; sleep 30 & wait"])
+    pid = int(next(gen))
+
+    started = time.monotonic()
     gen.close()
 
+    assert time.monotonic() - started < 10
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from importlib import resources
 from typing import TYPE_CHECKING, Any
@@ -124,38 +125,43 @@ def _run_scan(
     totals = (0, 0)
     corrupt: list[CorruptEntry] = []
     summary: dict[str, Any] | None = None
-    for line in incus.exec_lines(MIRROR_CONTAINER_NAME, ["python3", "-c", source, *args]):
-        if not line.strip():
-            continue
-        progress: CacheProgress | None = None
-        try:
-            record = json.loads(line)
-            kind = record["type"]
-            if kind == "total":
-                totals = (int(record["entries"]), int(record["bytes"]))
-            elif kind == "progress":
-                progress = CacheProgress(
-                    int(record["entries_done"]), totals[0], int(record["bytes_done"]), totals[1]
-                )
-            elif kind == "corrupt":
-                corrupt.append(
-                    CorruptEntry(
-                        path=str(record["path"]),
-                        key=str(record["key"]),
-                        expected=str(record["expected"]),
-                        actual=str(record["actual"]),
-                        size=int(record["size"]),
-                        purged=bool(record["purged"]),
+    # closing(): an exception out of this loop (a format mismatch, a failing
+    # on_progress) must stop the exec now, not whenever the traceback holding
+    # the suspended generator is collected — the scan may be a purging one.
+    command = ["python3", "-c", source, *args]
+    with closing(incus.exec_lines(MIRROR_CONTAINER_NAME, command)) as lines:
+        for line in lines:
+            if not line.strip():
+                continue
+            progress: CacheProgress | None = None
+            try:
+                record = json.loads(line)
+                kind = record["type"]
+                if kind == "total":
+                    totals = (int(record["entries"]), int(record["bytes"]))
+                elif kind == "progress":
+                    progress = CacheProgress(
+                        int(record["entries_done"]), totals[0], int(record["bytes_done"]), totals[1]
                     )
-                )
-            elif kind == "summary":
-                summary = record
-            else:
-                raise ValueError(f"unknown record type {kind!r}")
-        except (ValueError, KeyError, TypeError) as e:
-            raise _mismatch(line, e) from e
-        if progress is not None:
-            on_progress(progress)
+                elif kind == "corrupt":
+                    corrupt.append(
+                        CorruptEntry(
+                            path=str(record["path"]),
+                            key=str(record["key"]),
+                            expected=str(record["expected"]),
+                            actual=str(record["actual"]),
+                            size=int(record["size"]),
+                            purged=bool(record["purged"]),
+                        )
+                    )
+                elif kind == "summary":
+                    summary = record
+                else:
+                    raise ValueError(f"unknown record type {kind!r}")
+            except (ValueError, KeyError, TypeError) as e:
+                raise _mismatch(line, e) from e
+            if progress is not None:
+                on_progress(progress)
     if summary is None:
         raise RuntimeError("the cache scan ended without a summary")
     try:

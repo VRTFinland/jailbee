@@ -5,11 +5,16 @@ The module's *source* is what jailbee ships into the mirror
 subprocess against nginx-shaped cache files in `tmp_path`. No Incus involved.
 """
 
+import gzip
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from jailbee import registry_cache_scan
 
@@ -30,6 +35,7 @@ def _entry(
     *,
     status: str = "200 OK",
     name: str | None = None,
+    extra_headers: str = "",
 ) -> Path:
     """Write a file shaped like an nginx proxy_cache entry; return its path.
 
@@ -44,7 +50,8 @@ def _entry(
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (name or md5)
     header = (
-        f"HTTP/1.1 {status}\r\nContent-Length: {len(body)}\r\nServer: AmazonS3\r\n\r\n"
+        f"HTTP/1.1 {status}\r\nContent-Length: {len(body)}\r\n{extra_headers}"
+        "Server: AmazonS3\r\n\r\n"
     ).encode()
     binary_prefix = b"\x05" + b"\x00" * 40 + b"\r\n\r\n" + b"\x00" * 300
     path.write_bytes(binary_prefix + b"\nKEY: " + key.encode() + b"\n" + header + body)
@@ -100,7 +107,9 @@ def test_scan_reports_a_blob_whose_body_does_not_match_its_key(tmp_path):
     assert corrupt["size"] == path.stat().st_size
     assert corrupt["purged"] is False
     assert path.exists(), "a plain scan must not remove anything"
-    assert _of(records, "summary")[0]["corrupt"] == 1
+    summary = _of(records, "summary")[0]
+    assert summary["corrupt"] == 1
+    assert summary["bytes_checked"] == path.stat().st_size
 
 
 def test_scan_verifies_manifests_fetched_by_digest(tmp_path):
@@ -215,10 +224,26 @@ def test_an_entry_replaced_after_hashing_is_not_removed(tmp_path):
     fresh = path.with_name(path.name + ".0000000007")
     fresh.write_bytes(path.read_bytes())
     fresh.replace(path)  # new inode at the same name, as nginx's rename does
+    cand = registry_cache_scan._Candidate(
+        rel=str(path.relative_to(tmp_path)), path=str(path), size=path.stat().st_size
+    )
+    tally = registry_cache_scan._Tally()
 
-    removed = registry_cache_scan._unlink_if_unchanged(str(path), verdict)
+    registry_cache_scan._record(tally, cand, verdict, remove=True)
 
-    assert removed is False
+    assert path.exists()
+    assert tally.purged == 0
+
+
+def test_an_entry_rewritten_in_place_after_hashing_is_not_removed(tmp_path):
+    """The mtime half of the check: same inode, new content (ext4 can hand an
+    evicted entry's inode to the next file written)."""
+    path = _entry(tmp_path, BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    verdict = registry_cache_scan._inspect(str(path))
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+
+    assert registry_cache_scan._unlink_if_unchanged(str(path), verdict) is False
     assert path.exists()
 
 
@@ -252,13 +277,107 @@ def test_purge_keeps_a_path_that_is_sound_again(tmp_path):
 
 
 def test_purge_refuses_a_path_outside_the_cache(tmp_path):
+    """The outside file is a corrupt entry the purge *would* delete if the
+    path check were missing — otherwise the test proves nothing."""
     root = tmp_path / "cache"
     root.mkdir()
-    outside = tmp_path / "precious"
-    outside.write_text("keep me")
+    outside = _entry(tmp_path / "elsewhere", BLOB_KEY, _flip_one_byte(GOOD_LAYER))
+    relative = os.path.relpath(outside, root)
 
-    records, proc = _run("purge", "--root", str(root), "../precious")
+    records, proc = _run("purge", "--root", str(root), relative, str(outside))
 
     assert proc.returncode == 0, proc.stderr
     assert outside.exists()
-    assert _of(records, "summary")[0]["errors"] == 1
+    assert _of(records, "summary")[0]["errors"] == 2
+    assert _of(records, "corrupt") == []
+
+
+def test_scan_skips_a_content_encoded_response(tmp_path):
+    """A gzip-encoded body never hashes to the digest of the content: counting
+    it corrupt would purge it, refetch it encoded, and flag it again forever."""
+    _entry(
+        tmp_path,
+        BLOB_KEY,
+        gzip.compress(GOOD_LAYER),
+        extra_headers="Content-Encoding: gzip\r\n",
+    )
+
+    records, _ = _run("scan", "--root", str(tmp_path))
+
+    assert _of(records, "summary")[0]["skipped_status"] == 1
+    assert _of(records, "corrupt") == []
+
+
+def test_an_entry_evicted_during_the_scan_is_not_an_error(tmp_path):
+    """nginx's cache manager evicts while we walk; a vanished file is simply no
+    longer part of the cache."""
+    cand = registry_cache_scan._Candidate(
+        rel="0/00/" + "0" * 32, path=str(tmp_path / "gone"), size=10
+    )
+    tally = registry_cache_scan._Tally()
+
+    registry_cache_scan._process(cand, tally, remove=False)
+
+    assert tally.errors == 0
+
+
+_NEEDS_NON_ROOT = pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads through mode 000 directories"
+)
+
+
+@_NEEDS_NON_ROOT
+def test_an_unreadable_directory_is_an_error_not_a_clean_pass(tmp_path):
+    """If the mirror's root cannot read nginx's directories, saying "none
+    corrupt" would be a lie."""
+    _entry(tmp_path, BLOB_KEY, GOOD_LAYER)
+    locked = tmp_path / "z" / "zz"
+    locked.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        records, proc = _run("scan", "--root", str(tmp_path))
+    finally:
+        locked.chmod(0o755)
+
+    assert proc.returncode == 0, proc.stderr
+    summary = _of(records, "summary")[0]
+    assert summary["errors"] == 1
+    assert summary["error_samples"][0].startswith("z/zz")
+
+
+@_NEEDS_NON_ROOT
+def test_an_unreadable_cache_root_fails_the_scan(tmp_path):
+    root = tmp_path / "cache"
+    root.mkdir()
+    root.chmod(0)
+    try:
+        records, proc = _run("scan", "--root", str(root))
+    finally:
+        root.chmod(0o755)
+
+    assert proc.returncode == 2
+    assert "cache" in proc.stderr
+    assert records == []
+
+
+def test_every_record_is_flushed_as_it_is_written(monkeypatch):
+    """Under `incus exec` stdout is a pipe, block-buffered: without a flush per
+    record, progress would reach the host in 8 KiB bursts or only at the end."""
+
+    class Recorder(io.StringIO):
+        unflushed = 0
+
+        def write(self, s: str) -> int:
+            self.unflushed += 1
+            return super().write(s)
+
+        def flush(self) -> None:
+            self.unflushed = 0
+
+    out = Recorder()
+    monkeypatch.setattr(sys, "stdout", out)
+
+    registry_cache_scan._emit({"type": "total", "entries": 0, "bytes": 0})
+
+    assert out.getvalue()
+    assert out.unflushed == 0
