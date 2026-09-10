@@ -2573,3 +2573,133 @@ def test_subid_fix_is_unchanged_when_the_uid_map_cannot_be_read(tmp_path):
     fix = _subid_fix(53023, 53023, uid_map_path=tmp_path / "absent")
 
     assert "root:1000000:1000000000" in fix
+
+
+# ---- registry cache (deferred) ----
+
+
+def _running_mirror_results(tmp_path):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        return run_checks(cfg, incus, gcfg=gcfg)
+
+
+def _cache_report(corrupt=(), **overrides):
+    from jailbee.registry_cache import CacheReport
+
+    fields = {
+        "corrupt": tuple(corrupt),
+        "checked": 1352,
+        "ok": 1352 - len(corrupt),
+        "purged": 0,
+        "skipped_no_digest": 259,
+        "skipped_status": 0,
+        "skipped_temp": 0,
+        "errors": 0,
+        "error_samples": (),
+        "bytes_checked": 19_327_352_832,
+    }
+    return CacheReport(**{**fields, **overrides})
+
+
+def _corrupt_entry(digest_prefix="0251fc1b2897"):
+    from jailbee.registry_cache import CorruptEntry
+
+    digest = digest_prefix + "0" * (64 - len(digest_prefix))
+    return CorruptEntry(
+        path="2/f7/x",
+        key=f"/v2/gisgro/typster/blobs/sha256:{digest}",
+        expected=digest,
+        actual="1" * 64,
+        size=1,
+        purged=False,
+    )
+
+
+def test_doctor_defers_a_cache_check_right_after_a_running_mirror(tmp_path):
+    results = _running_mirror_results(tmp_path)
+
+    names = [r.name for r in results]
+    cache = results[names.index("registry cache")]
+    assert names.index("registry cache") == names.index("registry mirror") + 1
+    assert cache.deferred is not None
+    assert "jailbee registry verify" in cache.detail  # the hint if it gets skipped
+
+
+@pytest.mark.parametrize(
+    "status", [MirrorStatus.STOPPED, MirrorStatus.DEGRADED, MirrorStatus.MISSING]
+)
+def test_doctor_has_no_cache_check_unless_the_mirror_runs(tmp_path, status):
+    """The mirror row already says what is wrong; a second red row for the
+    same cause would only bury it."""
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
+
+    with patch("jailbee.doctor.registry_status", return_value=status):
+        results = run_checks(cfg, incus, gcfg=gcfg)
+
+    assert "registry cache" not in [r.name for r in results]
+
+
+def test_a_sound_cache_passes_the_deferred_check(tmp_path, mocker):
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch("jailbee.registry_cache.verify_cache", return_value=_cache_report())
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is True
+    assert result.deferred is None
+    assert result.detail == "1352 entries verified (18.0 GB), none corrupt"
+
+
+def test_a_corrupt_cache_fails_the_deferred_check_and_names_the_fix(tmp_path, mocker):
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch(
+        "jailbee.registry_cache.verify_cache",
+        return_value=_cache_report([_corrupt_entry(), _corrupt_entry("aaaaaaaaaaaa")]),
+    )
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is False
+    assert "2 corrupt entries" in result.detail
+    assert "gisgro/typster sha256:0251fc1b2897" in result.detail
+    assert "+1 more" in result.detail
+    assert "jailbee registry verify --purge" in result.detail
+
+
+def test_a_failing_scan_fails_the_deferred_check_without_raising(tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch(
+        "jailbee.registry_cache.verify_cache", side_effect=IncusError("Command not found")
+    )
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is False
+    assert result.detail == "could not verify: Command not found"
+
+
+def test_the_deferred_check_passes_progress_through(tmp_path, mocker):
+    from jailbee.registry_cache import CacheProgress
+
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    progress = CacheProgress(1, 2, 3, 4)
+
+    def fake_verify(incus, *, on_progress):
+        on_progress(progress)
+        return _cache_report()
+
+    mocker.patch("jailbee.registry_cache.verify_cache", side_effect=fake_verify)
+    seen = []
+
+    cache.deferred(seen.append)
+
+    assert seen == [progress]
