@@ -2307,6 +2307,8 @@ def _run_dashboard(
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rich.table import Table
+    from rich.text import Text
     from sqlalchemy.engine import Engine
     from sqlmodel import Session
 
@@ -2315,10 +2317,12 @@ if TYPE_CHECKING:
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
+    from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
     from jailbee.pr_outbox import Manifest, Outbox
+    from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
@@ -8241,6 +8245,166 @@ def registry_status_cmd(config: ConfigOption = None) -> None:
     info(f"Registry mirror: {status.value}")
 
 
+def _entry_noun(n: int) -> str:
+    return "entry" if n == 1 else "entries"
+
+
+def _entry_count(n: int) -> str:
+    return f"{n} {_entry_noun(n)}"
+
+
+def _print_cache_report(report: "CacheReport", *, removing: bool = False) -> None:
+    """The findings of a cache scan, as `registry verify` shows them.
+
+    ``removing`` says the scan already deleted what it found (``--purge``), so
+    the advice speaks of entries that are gone rather than entries to remove.
+    """
+    from rich.table import Table
+    from rich.text import Text
+
+    from jailbee.maintenance import humanize
+    from jailbee.tui import console
+
+    if not report.corrupt:
+        success(
+            f"{report.checked} cache entries verified ({humanize(report.bytes_checked)}), "
+            "none corrupt."
+        )
+    else:
+        count = len(report.corrupt)
+        error(f"{count} corrupt {_entry_noun(count)} in the registry mirror cache:")
+        table = Table(box=None, pad_edge=False)
+        for column in ("IMAGE", "DIGEST", "SIZE", "FILE"):
+            table.add_column(column)
+        for entry in report.corrupt:
+            table.add_row(
+                Text(entry.repo),
+                # Digest and nginx file name are identifying, not actionable
+                # (purging takes the full path from the report), and both are
+                # cut so the four columns fit an 80-column terminal unwrapped.
+                Text(f"{entry.kind} sha256:{entry.expected[:8]}…"),
+                humanize(entry.size),
+                Text(f"{entry.path[:12]}…"),
+            )
+        console.print(table)
+        # Short lines rather than one long one: `console` wraps at the terminal
+        # width and a wrapped continuation loses this indent.
+        if removing:
+            info_plain("  The next pull that needs one fetches it from upstream again.")
+        else:
+            info_plain("  A pull that needs one of these fails until it is removed.")
+            info_plain("  Removing an entry makes the next pull fetch it from upstream again.")
+    # Dim, and on both paths: the numbers say how much of the cache the verdict
+    # above actually covers.
+    console.print(
+        Text(
+            f"  skipped: {report.skipped_no_digest} with no digest in the key, "
+            f"{report.skipped_status} not a plain HTTP 200, {report.skipped_temp} mid-write.",
+            style="dim",
+        )
+    )
+    if report.errors:
+        # The scan tallies a failed unlink here too, hence "or removed".
+        warn_plain(
+            f"{_entry_count(report.errors)} could not be checked or removed: "
+            + "; ".join(report.error_samples)
+        )
+
+
+def _report_removals(asked: int, report: "CacheReport") -> None:
+    """Say what a purge did, and exit non-zero if anything is still corrupt.
+
+    ``asked`` is how many entries were meant to go. Everything the scan can
+    report about them has to be accounted for here, or a user who answered
+    "yes" gets silence and exit 0 while the bad entry is still on disk:
+    entries removed (``purged``), entries no longer corrupt by the time the
+    removal ran (``ok``), entries that are still corrupt and were not removed,
+    and outright failures (``errors``, rendered by `_print_cache_report`).
+    """
+    still_corrupt = [c for c in report.corrupt if not c.purged]
+    if report.purged:
+        # The "fetched again on the next pull" half is already on screen from
+        # `_print_cache_report`.
+        success(f"Removed {_entry_count(report.purged)}.")
+    if report.ok:
+        info_plain(f"  {_entry_count(report.ok)} no longer corrupt; left in place.")
+    unexplained = asked - report.purged - report.ok - len(still_corrupt) - report.errors
+    if unexplained > 0:
+        info_plain(f"  {_entry_count(unexplained)} no longer in the cache.")
+    if report.errors:
+        warn_plain(
+            f"{_entry_count(report.errors)} could not be removed: "
+            + "; ".join(report.error_samples)
+        )
+    if still_corrupt or report.errors:
+        error(
+            "Still corrupt — run 'jailbee registry verify' again: "
+            + ", ".join(c.path for c in still_corrupt or report.corrupt)
+        )
+        raise typer.Exit(1)
+
+
+@registry_app.command("verify")
+def registry_verify_cmd(
+    purge: Annotated[
+        bool,
+        typer.Option(
+            "--purge",
+            help="Remove corrupt entries without asking. The next pull fetches them "
+            "from upstream again.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Check the mirror's cached images against their digests.
+
+    Lists every cache entry whose content does not match the digest it is
+    stored under — a pull that needs one fails with `unexpected commit digest`
+    — and offers to remove them. `--purge` removes without asking.
+    """
+    from jailbee.incus import Incus, IncusError
+    from jailbee.registry import MirrorStatus, registry_status
+    from jailbee.registry_cache import format_progress, purge_entries, verify_cache
+    from jailbee.tui import hint, status_with_elapsed
+
+    _load_or_exit(config)
+    incus = Incus()
+    status = registry_status(incus)
+    if status != MirrorStatus.RUNNING:
+        error(f"The registry mirror is {status.value} — run 'jailbee registry up'.")
+        raise typer.Exit(1)
+    try:
+        with status_with_elapsed("verifying the registry cache") as line:
+            report = verify_cache(
+                incus,
+                purge=purge,
+                on_progress=lambda p: line.relabel(
+                    f"verifying the registry cache — {format_progress(p)}"
+                ),
+            )
+    except (IncusError, RuntimeError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+
+    _print_cache_report(report, removing=purge)
+    if not report.corrupt:
+        return
+    count = len(report.corrupt)
+    question = f"Remove {count} corrupt {_entry_noun(count)}?"
+    if purge:
+        _report_removals(count, report)
+        return
+    if not (_is_tty() and default_confirm(question)):
+        hint([f"Remove {'it' if count == 1 else 'them'} with: jailbee registry verify --purge"])
+        raise typer.Exit(1)
+    try:
+        after = purge_entries(incus, [c.path for c in report.corrupt])
+    except (IncusError, RuntimeError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    _report_removals(count, after)
+
+
 # ---- Mount commands ----
 
 
@@ -11208,35 +11372,148 @@ def exec_cmd(
 # ---- Diagnostics & maintenance ----
 
 
-@app.command()
-def doctor(config: ConfigOption = None) -> None:
-    """Run diagnostic checks."""
+class _DeferredDetail:
+    """The DETAIL cell of a deferred check while it runs.
+
+    Rich re-renders ``__rich__`` on every refresh of the `Live` display, so
+    the elapsed time keeps moving between progress callbacks. The refresh
+    thread calls it several times a second, so what it needs is bound once
+    here rather than imported per frame.
+    """
+
+    def __init__(self) -> None:
+        import time
+
+        from rich.text import Text
+
+        from jailbee.registry_cache import format_progress
+        from jailbee.tui import SHOW_ELAPSED_AFTER_SECONDS, format_elapsed
+
+        self.progress: CacheProgress | None = None
+        self._now = time.monotonic
+        self._text = Text
+        self._format_progress = format_progress
+        self._format_elapsed = format_elapsed
+        self._show_elapsed_after = SHOW_ELAPSED_AFTER_SECONDS
+        self._started = time.monotonic()
+
+    def __rich__(self) -> "Text":
+        text = self._format_progress(self.progress) if self.progress is not None else "starting"
+        elapsed = self._now() - self._started
+        # Same threshold as `tui.ElapsedStatus`: a counter that reads "0s" is
+        # flicker, not information.
+        if elapsed >= self._show_elapsed_after:
+            text = f"{text} — {self._format_elapsed(elapsed)}"
+        return self._text(text)
+
+
+def _doctor_table(
+    results: list["CheckResult"], running: tuple[int, _DeferredDetail] | None = None
+) -> "Table":
     from rich.markup import escape
+    from rich.spinner import Spinner
     from rich.table import Table
-
-    from jailbee.doctor import run_checks
-    from jailbee.incus import Incus
-    from jailbee.tui import console
-
-    cfg = _load_or_exit(config)
-    results = run_checks(cfg, Incus(), gcfg=_load_global())
 
     table = Table(title="Diagnostic checks")
     table.add_column("CHECK")
     table.add_column("STATUS")
     table.add_column("DETAIL")
-    for r in results:
+    for index, r in enumerate(results):
+        if running is not None and running[0] == index:
+            # The same `dots` spinner `console.status` draws everywhere else.
+            table.add_row(escape(r.name), Spinner("dots"), running[1])
+            continue
+        if r.deferred is not None:
+            table.add_row(escape(r.name), "[dim]pending[/dim]", "")
+            continue
         # The STATUS cell is markup, so the whole row is rendered with markup
         # enabled — and details are arbitrary text: exception strings
         # (SQLAlchemy appends `[SQL: ...] [parameters: (...)]`), absolute
         # paths in brackets, the upgrade block's own wording. Unescaped, a
         # bracketed run is silently swallowed as a style tag, or raises
         # MarkupError and takes `doctor` down with it. Escape every detail.
-        status = "[green]✓ OK[/green]" if r.ok else "[red]✗ FAIL[/red]"
+        if r.skipped:
+            status = "[yellow]⊘ SKIPPED[/yellow]"
+        elif r.ok:
+            status = "[green]✓ OK[/green]"
+        else:
+            status = "[red]✗ FAIL[/red]"
         table.add_row(escape(r.name), status, escape(r.detail))
-    console.print(table)
+    return table
 
-    if any(not r.ok for r in results):
+
+def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
+    """Print the doctor table, running deferred (slow) checks inside it.
+
+    Fast checks are already done when this is called. Each deferred row shows
+    a spinner and live progress while it runs, then its result. Ctrl+C ends
+    only the running check — it, and any deferred check after it, becomes
+    SKIPPED — and the table stays on screen with every other row.
+
+    A skipped row carries ``ok=False, skipped=True``: it did not pass, and
+    `doctor` exempts it from the exit code by looking at ``skipped``, so that
+    exemption is visible in one place instead of hidden in a `True`.
+
+    Off a terminal, `Live` prints only the final table; the checks still run
+    to completion.
+    """
+    from rich.live import Live
+
+    from jailbee.doctor import CheckResult
+    from jailbee.tui import console
+
+    results = list(results)
+    pending = [i for i, r in enumerate(results) if r.deferred is not None]
+    if not pending:
+        console.print(_doctor_table(results))
+        return results
+    interrupted = False
+    with Live(_doctor_table(results), console=console, refresh_per_second=8) as live:
+        for index in pending:
+            check = results[index]
+            assert check.deferred is not None
+            if interrupted:
+                results[index] = CheckResult(
+                    check.name, False, f"not run — {check.detail}", skipped=True
+                )
+                continue
+            detail = _DeferredDetail()
+            live.update(_doctor_table(results, running=(index, detail)))
+
+            def on_progress(progress: "CacheProgress", detail: _DeferredDetail = detail) -> None:
+                detail.progress = progress
+
+            try:
+                results[index] = check.deferred(on_progress)
+            except KeyboardInterrupt:
+                interrupted = True
+                p = detail.progress
+                after = f" after {p.entries_done}/{p.entries_total} entries" if p else ""
+                results[index] = CheckResult(
+                    check.name, False, f"interrupted{after} — {check.detail}", skipped=True
+                )
+            except Exception as e:
+                # A deferred check converts the failures it expects itself; what
+                # reaches here is unforeseen (a packaging error reading the scan
+                # module, say) and belongs in its row, not in a traceback over
+                # the table every other check just filled in.
+                results[index] = CheckResult(check.name, False, f"could not run: {e}")
+            live.update(_doctor_table(results))
+        # The `continue` above leaves rows replaced without a render of their
+        # own; this is what puts the last of them on screen.
+        live.update(_doctor_table(results))
+    return results
+
+
+@app.command()
+def doctor(config: ConfigOption = None) -> None:
+    """Run diagnostic checks."""
+    from jailbee.doctor import run_checks
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    results = _run_deferred_checks(run_checks(cfg, Incus(), gcfg=_load_global()))
+    if any(not r.ok and not r.skipped for r in results):
         raise typer.Exit(1)
 
 

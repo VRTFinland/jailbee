@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, select
 
@@ -27,6 +27,11 @@ from jailbee.registry import (
     eth0_global_ipv4,
     registry_status,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from jailbee.registry_cache import CacheProgress
 
 # Default Incus subuid mapping puts the container's root at host uid 1000000.
 # runc creates a session keyring per container under this uid; the per-uid
@@ -58,11 +63,21 @@ _PROBE_EXEC_TIMEOUT = 15
 _PROBE_TIMED_OUT = 124
 
 
+CACHE_CHECK_NAME = "registry cache"
+
+
 @dataclass
 class CheckResult:
     name: str
     ok: bool
     detail: str
+    # A check too slow to run inline. `run_checks` leaves it here and the
+    # caller runs it with a progress callback, replacing this row with what it
+    # returns (see `cli.doctor`). Until then `ok` is a placeholder and `detail`
+    # is the hint to show should the check be skipped.
+    deferred: Callable[[Callable[[CacheProgress], None]], CheckResult] | None = None
+    # Not run to completion (Ctrl+C): neither a pass nor a failure.
+    skipped: bool = False
 
 
 def _version_detail(incus: Incus) -> str:
@@ -399,6 +414,33 @@ def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckRe
     ]
 
 
+def _verify_mirror_cache(incus: Incus, on_progress: Callable[[CacheProgress], None]) -> CheckResult:
+    """The deferred half of the `registry cache` row."""
+    from jailbee.maintenance import humanize
+    from jailbee.registry_cache import verify_cache
+
+    try:
+        report = verify_cache(incus, on_progress=on_progress)
+    except (IncusError, RuntimeError) as e:
+        return CheckResult(CACHE_CHECK_NAME, False, f"could not verify: {e}")
+    if not report.corrupt:
+        return CheckResult(
+            CACHE_CHECK_NAME,
+            True,
+            f"{report.checked} entries verified ({humanize(report.bytes_checked)}), none corrupt",
+        )
+    count = len(report.corrupt)
+    first = report.corrupt[0]
+    more = f" +{count - 1} more" if count > 1 else ""
+    noun = "entry" if count == 1 else "entries"
+    return CheckResult(
+        CACHE_CHECK_NAME,
+        False,
+        f"{count} corrupt {noun} ({first.repo} sha256:{first.expected[:12]}…{more}) — "
+        "run 'jailbee registry verify --purge'",
+    )
+
+
 def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -> list[CheckResult]:
     """Run all diagnostic checks. Returns list of results.
 
@@ -624,6 +666,18 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
         else:
             if rstatus == MirrorStatus.RUNNING:
                 results.append(CheckResult("registry mirror", True, "status: running"))
+                # Running is not the same as sound: one corrupt cache file
+                # fails every pull that needs it. Minutes of hashing on a big
+                # cache, so it is deferred to the caller, which can show
+                # progress and let Ctrl+C skip just this row.
+                results.append(
+                    CheckResult(
+                        CACHE_CHECK_NAME,
+                        True,
+                        "run 'jailbee registry verify'",
+                        deferred=lambda on_progress: _verify_mirror_cache(incus, on_progress),
+                    )
+                )
             elif rstatus == MirrorStatus.DEGRADED:
                 results.append(
                     CheckResult(
