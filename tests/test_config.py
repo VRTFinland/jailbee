@@ -4438,7 +4438,7 @@ def test_load_repo_config_accepts_a_legacy_gie_dir_with_one_warning(tmp_path, mo
     from jailbee import paths
 
     paths._warn_legacy_config_dir.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn")
+    warn = mocker.patch("jailbee.tui.warn_plain")
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "legacyrepo"
     (repo / ".git").mkdir(parents=True)

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The two config deprecation notices now name the file they are about.**
+  `jailbee claude ls` and the dashboards load every registered repo's config,
+  so both notices routinely fire for a repo the user is not standing in — and
+  neither said which. The `.gie/config.yaml` line ended "run `git mv .gie
+  .jailbee` in this repo", naming a directory that does not exist in an
+  already-migrated checkout; it now names the repo root to run it in. The
+  legacy `chrome:` line said only "in config", while the block it is about
+  usually lives in `~/.config/jailbee/global.yaml`; it now names the file, and
+  a block in both the global and the repo layer gets a line each. Both notices
+  are still capped at one line per file per process.
+
 ## 1.3.0 - 2026-09-09
 
 ### Added

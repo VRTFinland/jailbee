@@ -51,13 +51,24 @@ def _warn_legacy_config_dir(path: Path) -> None:
 
     Cached rather than flag-guarded so repeated loads inside one dashboard
     refresh do not repeat the line.
-    """
-    from jailbee.tui import warn
 
-    warn(
+    The message names the repo the file is in, because the warning is not
+    necessarily about the repo the user is standing in: `jailbee claude ls`
+    (`claude_overview._config_homes`) and the dashboards
+    (`dashboard.gather_rows`) load *every* registered repo's config, so one
+    unmigrated checkout elsewhere on the host made a migrated repo print
+    "run `git mv .gie .jailbee` in this repo" — advice with no matching
+    directory to run it in.
+
+    `warn_plain`, not `warn`: the repo root is data, and Rich would read a
+    `[...]` in a directory name as a style tag and silently delete it.
+    """
+    from jailbee.tui import warn_plain
+
+    warn_plain(
         f"{path.parent.name}/config.yaml is deprecated and stops working in "
         f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
-        f"in this repo."
+        f"in {display_path(path.parent.parent)}."
     )
 
 

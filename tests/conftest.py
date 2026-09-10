@@ -42,15 +42,16 @@ def make_config(
     ``chrome={...}`` override, and a preset-backed ``agents={...}`` override
     all resolve exactly as they would from a real config file.
 
-    ``emit_hint=False``: the fold happens, the deprecation notice does not.
-    Every ``make_cfg(chrome=...)`` call otherwise writes the notice to
-    stderr, which is harmless until the first test asserts on
-    ``capsys.readouterr().err`` and finds a line no code under test
-    produced. Tests that want the notice call ``resolve_browsers_raw``
-    themselves (see ``test_config_browsers.py``).
+    The fold happens, the deprecation notice does not: ``resolve_browsers_raw``
+    is a pure fold, and the notice belongs to ``load_config_from_layers``,
+    which knows which file spelled it the old way. Were it otherwise, every
+    ``make_cfg(chrome=...)`` call would write the notice to stderr, which is
+    harmless until the first test asserts on ``capsys.readouterr().err`` and
+    finds a line no code under test produced. Tests that want the notice go
+    through a real loader (see ``test_config_browsers.py``).
     """
     cfg = (
-        Config.model_validate(resolve_browsers_raw(resolve_agents_raw(overrides), emit_hint=False))
+        Config.model_validate(resolve_browsers_raw(resolve_agents_raw(overrides)))
         if overrides
         else Config()
     )

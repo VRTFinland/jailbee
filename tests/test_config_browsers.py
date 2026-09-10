@@ -8,6 +8,17 @@ from pydantic import ValidationError
 from jailbee.config.models_tools import BrowserConfig, BrowsersConfig
 
 
+def _unwrapped_stderr(capsys) -> str:
+    """Captured stderr with Rich's soft wrapping undone.
+
+    `tui.hint` renders through a Rich `Console`, which wraps at the capture
+    width (80 columns) and will happily split a long path mid-word. Rejoining
+    the lines keeps a path assertion an assertion about the message rather
+    than about the terminal width the suite happens to run at.
+    """
+    return capsys.readouterr().err.replace("\n", "")
+
+
 def test_chrome_defaults_to_a_host_mount():
     b = BrowsersConfig()
     assert b.chrome.source == "host"
@@ -231,17 +242,73 @@ def test_legacy_chrome_block_still_loads(tmp_path, capsys):
     assert raw["browsers"]["chrome"]["source"] == "host"
 
 
-def test_legacy_chrome_block_warns_where_it_moved(capsys):
-    from jailbee.config.loader import resolve_browsers_raw
+def test_legacy_chrome_block_warns_where_it_moved(tmp_path, capsys):
+    from jailbee.config.loader import load_config_from_text
 
-    resolve_browsers_raw({"chrome": {"enabled": True}})
-    # `resolve_browsers_raw` uses `tui.hint`, not `tui.warn`: this runs on
-    # every config load, and `warn` prints to stdout, which is exactly
-    # where `jailbee ls --format json` puts script-parsed output. `hint`
-    # goes to stderr for that reason (see its own docstring), so the
-    # deprecation notice is read from `.err`, not `.out`.
-    err = capsys.readouterr().err
+    path = tmp_path / ".jailbee" / "config.yaml"
+    load_config_from_text("container_prefix: myrepo\nchrome:\n  enabled: true\n", path)
+    # The notice uses `tui.hint`, not `tui.warn`: it runs on every config
+    # load, and `warn` prints to stdout, which is exactly where `jailbee ls
+    # --format json` puts script-parsed output. `hint` goes to stderr for
+    # that reason (see its own docstring), so the deprecation notice is read
+    # from `.err`, not `.out`.
+    err = _unwrapped_stderr(capsys)
     assert "chrome:" in err and "browsers.chrome" in err
+
+
+def test_the_legacy_chrome_notice_names_the_file_that_carries_the_block(tmp_path, capsys):
+    """Naming the file is the whole point of emitting the notice one layer
+    up from the fold. `jailbee claude ls` and the dashboards load *every*
+    registered repo's config, so a notice that said only "in config" sent
+    the user hunting through a repo they had already migrated.
+    """
+    from jailbee.config.loader import load_config_from_text
+
+    path = tmp_path / ".jailbee" / "config.yaml"
+    load_config_from_text("container_prefix: myrepo\nchrome:\n  enabled: true\n", path)
+
+    assert str(path) in _unwrapped_stderr(capsys)
+
+
+def test_the_notice_names_the_global_config_when_the_block_lives_there(tmp_path, capsys):
+    """The likelier half of the same bug: `chrome:` shipped in `global.yaml`
+    on every host that ever enabled Chrome, so the file to edit is usually
+    not the repo config the command happens to be reading.
+    """
+    from jailbee.config.loader import load_config_from_layers
+    from jailbee.global_config import default_global_config_path
+
+    load_config_from_layers(
+        {"chrome": {"enabled": True}},
+        {"container_prefix": "myrepo"},
+        tmp_path / ".jailbee" / "config.yaml",
+        origin=str(tmp_path / ".jailbee" / "config.yaml"),
+    )
+
+    err = _unwrapped_stderr(capsys)
+    assert str(default_global_config_path()) in err
+    assert str(tmp_path / ".jailbee" / "config.yaml") not in err
+
+
+def test_a_block_in_both_layers_gets_a_line_each(tmp_path, capsys):
+    """Two files, two edits, two lines — the notice is advice about a file,
+    not a statement that the key exists somewhere.
+    """
+    from jailbee.config.loader import load_config_from_layers
+    from jailbee.global_config import default_global_config_path
+
+    repo_path = tmp_path / ".jailbee" / "config.yaml"
+    load_config_from_layers(
+        {"chrome": {"enabled": True}},
+        {"container_prefix": "myrepo", "chrome": {"url": "https://repo.test"}},
+        repo_path,
+        origin=str(repo_path),
+    )
+
+    err = _unwrapped_stderr(capsys)
+    assert err.count("browsers.chrome") == 2
+    assert str(default_global_config_path()) in err
+    assert str(repo_path) in err
 
 
 def test_effective_url_falls_back_to_the_shared_one(tmp_path):
@@ -292,20 +359,24 @@ def test_a_legacy_chrome_url_still_wins_over_a_shared_one(tmp_path):
     assert cfg.browsers.effective_url("firefox") == "https://shared.test"
 
 
-def test_the_legacy_chrome_notice_prints_once_per_process(capsys):
-    """Three folds, one line.
+def test_the_cap_is_per_file_not_per_process(tmp_path, capsys):
+    """Two repos, two lines — the once-only guard keys on the source file.
 
-    `jailbee new` loads the config three times — the CLI's own
-    `_load_or_exit`, then `branch_config._baseline_autostart` and
-    `branch_config.load_branch_autostart`, each of which builds a whole
-    `Config` through `load_config_from_text` — and an unguarded notice
-    printed once per load, so the user saw the same sentence three times.
+    A process-wide cap would make the host-wide commands
+    (`jailbee claude ls`, the dashboards, which load every registered repo's
+    config) report the first unmigrated repo they happen to read and stay
+    silent about the rest.
     """
-    from jailbee.config.loader import resolve_browsers_raw
+    from jailbee.config.loader import load_config_from_text
 
-    for _ in range(3):
-        resolve_browsers_raw({"chrome": {"enabled": True}})
-    assert capsys.readouterr().err.count("browsers.chrome") == 1
+    text = "container_prefix: myrepo\nchrome:\n  enabled: true\n"
+    for name in ("alpha", "beta"):
+        load_config_from_text(text, tmp_path / name / ".jailbee" / "config.yaml")
+
+    err = _unwrapped_stderr(capsys)
+    assert err.count("browsers.chrome") == 2
+    assert str(tmp_path / "alpha" / ".jailbee" / "config.yaml") in err
+    assert str(tmp_path / "beta" / ".jailbee" / "config.yaml") in err
 
 
 def test_the_notice_prints_once_across_three_real_loads(tmp_path, capsys):
@@ -337,11 +408,12 @@ def test_an_explicit_browsers_block_wins_over_the_legacy_one():
 def test_make_cfg_folds_a_legacy_chrome_override_without_printing(tmp_path, capsys):
     """`make_cfg(chrome=...)` must fold the legacy block but stay silent.
 
-    Every such call otherwise writes the deprecation notice to stderr, and
+    Silence comes from `resolve_browsers_raw` being a pure fold; were the
+    notice moved back into it, every such call would write to stderr, and
     the first test to assert on `capsys.readouterr().err` would find a line
     no code under test produced. The fold itself must still happen — this
-    asserts both halves, so suppressing the notice by skipping the fold
-    fails here too.
+    asserts both halves, so buying silence by skipping the fold fails here
+    too.
     """
     from tests.conftest import make_cfg
 
@@ -353,22 +425,44 @@ def test_make_cfg_folds_a_legacy_chrome_override_without_printing(tmp_path, caps
     assert captured.out == ""
 
 
-def test_no_warning_when_there_is_no_legacy_block(capsys):
-    from jailbee.config.loader import resolve_browsers_raw
+def test_no_warning_when_there_is_no_legacy_block(tmp_path, capsys):
+    from jailbee.config.loader import load_config_from_text
 
-    resolve_browsers_raw({"browsers": {"chrome": {"enabled": True}}})
+    text = "container_prefix: myrepo\nbrowsers:\n  chrome:\n    enabled: true\n"
+    load_config_from_text(text, tmp_path / ".jailbee" / "config.yaml")
     assert "chrome:" not in capsys.readouterr().err
 
 
-def test_emit_hint_false_suppresses_the_notice_but_not_the_fold(capsys):
+def test_the_fold_itself_never_prints(capsys):
     """`config_edit.layers.resolve` needs the fold quiet: it runs on every
-    editor reload, including mid-session, where the hint printing to the
-    terminal would corrupt the display.
+    editor reload, including mid-session, where a hint printed to the
+    terminal would corrupt the display. It gets that for free — the fold
+    carries no notice of its own.
     """
     from jailbee.config.loader import resolve_browsers_raw
 
-    raw = resolve_browsers_raw({"chrome": {"enabled": True}}, emit_hint=False)
+    raw = resolve_browsers_raw({"chrome": {"enabled": True}})
     assert raw["browsers"]["chrome"]["enabled"] is True
+    assert capsys.readouterr().err == ""
+
+
+def test_emit_hint_false_suppresses_the_notice_but_not_the_fold(tmp_path, capsys):
+    """`config_edit.layers.validate` calls `load_config_from_layers` from the
+    editor's save handler while the full-screen `Application` is live, where
+    `hint()` writing straight to a Rich stderr `Console` would corrupt the
+    display.
+    """
+    from jailbee.config.loader import load_config_from_layers
+
+    path = tmp_path / ".jailbee" / "config.yaml"
+    cfg = load_config_from_layers(
+        {},
+        {"container_prefix": "myrepo", "chrome": {"enabled": True}},
+        path,
+        origin=str(path),
+        emit_hint=False,
+    )
+    assert cfg.browsers.chrome.enabled is True
     assert capsys.readouterr().err == ""
 
 
