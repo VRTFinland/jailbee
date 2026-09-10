@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #                to say beyond its exit code.
 LaunchMode = Literal["terminal", "output", "detached"]
 
-_TERMINAL_VERBS: frozenset[str] = frozenset({"shell", "tmux"})
+_TERMINAL_VERBS: frozenset[str] = frozenset({"shell", "tmux", "review apply"})
 
 # Verbs that warrant a confirmation dialog before dispatching.
 _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})

@@ -105,6 +105,11 @@ def card_content(c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]]) -> Ca
 # Git field values that mean "nothing to report".
 _GIT_FIELD_NAMES = ("wt", "ahead_diff", "ahead_count", "conflict")
 
+# The "✉N" marker `lifecycle._pr_cell` embeds in the PR column's cell text —
+# with or without a leading "#1234↓" — for N manifests waiting in the
+# container's PR outbox.
+_PENDING_PR_ACTIONS_RE = re.compile(r"✉(\d+)")
+
 
 def card_field(cc: CardContent, name: str) -> str | None:
     """Value for field ``name``, or None if absent or a placeholder."""
@@ -147,6 +152,11 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         # prediction words need the "merge " prefix to read as a sentence.
         label = conflict if conflict in IN_PROGRESS_CELL_LABELS else f"merge {conflict}"
         segs.append((label, "conflict"))
+    pr = card_field(cc, "pr")
+    if pr and (m := _PENDING_PR_ACTIONS_RE.search(pr)):
+        # Same "ahead" style as the ↑N commit count: like ahead commits, this
+        # is something the container has that the PR/host does not yet.
+        segs.append((f"✉{m.group(1)}", "ahead"))
     return segs
 
 

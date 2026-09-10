@@ -26,6 +26,7 @@ Common conventions:
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
+- [PR review outbox (`review apply|ls|show|drop`)](#pr-review-outbox)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
@@ -244,22 +245,29 @@ A container mid-background-destroy refuses attach (`jailbee shell` reports it's 
 destroyed).
 
 **The destroy guard.** Before the confirmation above, JailBee assesses what the
-destroy would discard: a dirty working tree, a changed submodule, or commits
+destroy would discard: a dirty working tree, a changed submodule, commits
 that exist on neither the host nor a remote-tracking ref (`remote_contained
-is not True` counts as at risk — unknown is not safe). Nothing here fires
-for work already pulled to the host (`jailbee git pull`) or pushed to a remote
-(`jailbee git push`, `jailbee pr`, a plain push from inside). Three outcomes:
+is not True` counts as at risk — unknown is not safe), or unapplied PR
+actions still sitting in the container's outbox (see [PR review
+outbox](#pr-review-outbox) — the outbox lives in the container's own
+filesystem, so a destroy takes any unpublished review with it). Nothing here
+fires for work already pulled to the host (`jailbee git pull`), pushed to a
+remote (`jailbee git push`, `jailbee pr`, a plain push from inside), or
+already published (`jailbee review apply`). Three outcomes:
 
 - **Something at risk** → a one-line summary per container (e.g. `feat-foo:
-  working tree +3 -1 · 2 commits not on the host`) and a second confirmation,
-  `Destroying loses this. Continue?`, defaulting to **No**. A submodule is
-  named by which of its signals is set — `submodule sub/bar (added)`,
-  `(removed)`, `(committed +40 -2)`, `(uncommitted +1 -0)`, or a combination —
-  never as a bare `+0 -0`. When the commit count itself is unmeasurable
-  (`AHEAD ↑` shows `?`, e.g. a PR-review container whose base ref never made
-  it into the clone), the commit check still runs off the container's HEAD and
-  reads `commits not on the host (count unknown)`; a container sitting on a
-  commit the host or a remote-tracking ref already holds stays silent.
+  working tree +3 -1 · 2 unapplied PR actions · 2 commits not on the host`)
+  and a second confirmation, `Destroying loses this. Continue?`, defaulting
+  to **No**. A submodule is named by which of its signals is set —
+  `submodule sub/bar (added)`, `(removed)`, `(committed +40 -2)`,
+  `(uncommitted +1 -0)`, or a combination — never as a bare `+0 -0`. When the
+  commit count itself is unmeasurable (`AHEAD ↑` shows `?`, e.g. a
+  PR-review container whose base ref never made it into the clone), the
+  commit check still runs off the container's HEAD and reads `commits not on
+  the host (count unknown)`; a container sitting on a commit the host or a
+  remote-tracking ref already holds stays silent. The PR-action count is
+  deliberately generic — it says a number of manifests would be lost, not
+  what they contain (comments, a description, or both).
 - **A running container whose git status could not be read at all** (every
   probed field came back unmeasured — an `incus exec` failure/timeout) →
   the same treatment, with the reason `could not inspect the container`.
@@ -766,13 +774,14 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--title <t>` / `--body <b>` | Set PR title / body (override AI per field). Default on create: last commit subject / placeholder. |
 | `--base <branch>` | PR base branch (default: the container's recorded base branch). |
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create, unchanged on update. (`--no-draft` is a hidden back-compat alias for `--ready`.) |
-| `--description` / `-d` | Update only: regenerate the PR description with Claude and apply it. |
+| `--description` / `-d` | Update only: regenerate the PR description with Claude and apply it. A description already written in the container's outbox wins over this — add `--no-outbox` to regenerate anyway. |
 | `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. On an undecided review container the rejection waits for the adopt-or-stack choice: legal with `--stacked`, refused (before any push or label write) when the run adopts. |
 | `--stacked` | On a `jailbee new --pr` container: open a NEW PR based on the reviewed PR's head instead of pushing into it. See above. Mutually exclusive with `--pr N` (exit 2). |
 | `--retarget` / `--no-retarget` | Move (or don't) the container's base branch to the stacked PR's base after opening it. Default: ask on a TTY, otherwise skip and print the command. Only acted on when a stacked PR is opened. |
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
-| `--no-ai` | Skip AI generation of the title/body; keep the container branch name as-is. |
+| `--no-ai` | Skip AI generation of the title/body (even when `claude.ai_pr_description` is on); keep the container branch name as-is. Does **not** ignore a description already written in the container's outbox — that is `--no-outbox`. |
+| `--no-outbox` | Ignore a PR description written in the container's outbox. See [PR review outbox](#pr-review-outbox). |
 | `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | Override branch detection. |
@@ -800,6 +809,89 @@ description, fixable afterwards with `jailbee pr --description`. The warning als
 names the container and the session id of the attempt, so you can see how far it
 got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
 transcript as it works, so a run that ran out of budget is still on disk.
+
+## PR review outbox
+
+A container's `gh` cannot write to GitHub; an in-container agent stages
+review comments, replies, general comments and description rewrites as JSON
+manifests in `~/.jailbee/pr-outbox/` instead (the manifest schema is
+normative in the **jailbee-pr-review** skill, not here). These commands read
+and publish what it wrote.
+
+### `jailbee review apply [NAME] [-y] [--dry-run] [--force]`
+
+Show the plan for every pending manifest (comments, replies, and
+descriptions alike), ask once, then publish. No `NAME` + a TTY picks the one
+running container with something pending, or prompts among several; off a
+TTY with more than one candidate it errors naming them. `-y`/`--yes` skips
+the confirmation; without it and without a TTY the command refuses (exit 2)
+rather than publish silently. `--dry-run` prints the plan and exits 0
+without publishing anything. `--force` posts a `review` action's line
+comments even though the PR head moved since the manifest was written — the
+one refusal it relaxes; GitHub then shows those as outdated comments. A
+manifest fully applied is deleted (with any `body_file` no other pending
+manifest still references) and gets a line in
+`~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
+nothing left to publish for it — nothing double-posts. A manifest naming a
+PR the container does not own, a repo mismatch, or a malformed field is a
+refusal (exit non-zero); a `pr: null` manifest is left as a deferral for
+`jailbee pr` to consume, not a refusal.
+
+### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
+
+One row per pending manifest across running containers: CONTAINER, PR,
+MANIFEST, ACTIONS, STATE (`ok`, `stale`, `for jb pr`, or `error`), and ERROR
+(hidden from the default table). A stopped container's outbox cannot be read
+at all, so it is named in a note under the table instead of appearing empty.
+`--fields` is comma-separated from that same list; `-o json` describes
+manifests only (no stopped-container note).
+
+### `jailbee review show [NAME] [MANIFEST]`
+
+Print every pending manifest's action bodies **verbatim**, exactly as the
+container wrote them — markup and long lines are never re-wrapped or
+cropped, so this is the way to actually read a comment before deciding to
+publish it. Omit `MANIFEST` for every pending manifest in the container.
+
+### `jailbee review drop [NAME] [MANIFEST] [-y]`
+
+Delete pending manifests **without publishing them** — no GitHub call, no
+`applied.log` line. Confirms first unless `-y`; refuses off a TTY without
+it. Omit `MANIFEST` to drop everything pending in the container.
+
+### Interaction with `jailbee pr`
+
+- **`--no-outbox`** on `jailbee pr` skips the outbox lookup entirely,
+  including the post-publish offer described below.
+- **Description precedence**, most specific first: explicit
+  `--title`/`--body` → a pending outbox description (`pr: null`, or one
+  naming this PR) → the container's Claude CLI (unless `--no-ai`) →
+  placeholder text. On an update, a pending outbox description also
+  outranks `--description`/`-d` — `-d` regenerates with Claude only once
+  `--no-outbox` removes the manifest from consideration.
+- **`--no-ai` does not disable the outbox.** A manifest is text that
+  already exists, not an AI run; `--no-ai` only turns off the *generation*
+  step.
+- **`claude.ai_pr_branch: false` does not suppress a rename the manifest
+  itself proposes.** The branch field in a `description` action is
+  confirmed like an AI-proposed name regardless of that toggle.
+- After a successful create or update, if non-description actions
+  (comments, replies) are still pending, `jailbee pr` offers to publish
+  them: `Post N pending PR comment(s) now? [y/N]`. A pending description is
+  never part of that offer. Declining, or running off a TTY, prints the
+  count and the `jailbee review apply` command to run later.
+
+### Elsewhere this shows up
+
+- `jailbee ls`'s PR column shows `✉N` for N pending manifests (visible even
+  with no PR yet, since a container can hold a description ahead of
+  `jailbee pr`). Both dashboards show the same marker on their cards and add
+  an "Apply N PR action(s)" (`review apply`) entry, shown for any running
+  container with something pending regardless of network mode.
+- `jailbee destroy`'s guard treats unapplied PR actions as something the
+  destroy would discard, alongside a dirty tree and commits not on the
+  host/a remote — see the destroy guard under [Create &
+  lifecycle](#create--lifecycle).
 
 ## Branch placement
 

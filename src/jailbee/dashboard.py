@@ -609,6 +609,14 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
     return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
 
 
+def _pending_pr_actions(git: GitStatus | None) -> int:
+    """Manifests waiting in the container's PR outbox — `None` and `0` both
+    mean "nothing pending". One place for that rule, mirroring
+    `lifecycle._pending_pr_actions`, which every `jb ls` surface already
+    goes through."""
+    return (git.pending_pr_actions or 0) if git else 0
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -640,6 +648,18 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
+    "Apply N PR action(s)" (``review apply``) appears whenever the container's
+    PR outbox is non-empty (``ctx.git_status.pending_pr_actions``), gated only
+    on ``ctx.state == "Running"`` — deliberately *not* on ``_bridge_possible``:
+    the outbox lives at a fixed in-container path regardless of how the repo
+    got there, and neither `pr_outbox.py` nor the probe behind the count has a
+    mode check, unlike the ``git push``/``pr`` verbs above, which need
+    `sync.assert_container_publishable`'s own clone. A mount-mode container
+    can genuinely accumulate manifests, so excluding it here would hide the
+    one route to acting on them. Also not gated by ``pr_number is not None``:
+    a container can hold a description for a PR ``jailbee pr`` has not opened
+    yet.
+
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
     :func:`_app_menu_verb`): every front-end splits them into argv, and Typer
@@ -663,6 +683,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
             prefix.append(("Send commits to host (git pull)", "git pull"))
         if _has_diff_to_show(ctx.git_status):
             prefix.append(("Show diff (git diff)", "git diff"))
+    pending = _pending_pr_actions(ctx.git_status)
+    if ctx.state == "Running" and pending:
+        prefix.append((f"Apply {pending} PR action(s) (review apply)", "review apply"))
     if ctx.state == "Running":
         actions = [
             ("Attach tmux", "tmux"),

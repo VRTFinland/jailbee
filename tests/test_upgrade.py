@@ -589,12 +589,51 @@ def test_the_130_notes_are_split_by_action() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
     notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 0)]
-    assert len(notes) == 2
-    by_action = {frozenset(n.actions): n.reason for n in notes}
-    assert frozenset({"base_build"}) in by_action
-    assert frozenset({"apply"}) in by_action
+    assert len(notes) == 3
+    base_build_reasons = [n.reason for n in notes if n.actions == frozenset({"base_build"})]
+    apply_reasons = [n.reason for n in notes if n.actions == frozenset({"apply"})]
+    assert len(base_build_reasons) == 1
+    assert len(apply_reasons) == 2
     # The base-build reason must not mention profile or mount work, and
-    # the apply reason must not mention the image: a combined entry would
-    # print each action the other's reasons.
-    assert "image" in by_action[frozenset({"base_build"})]
-    assert "image" not in by_action[frozenset({"apply"})]
+    # neither apply reason mentions the image: a combined entry would print
+    # each action the other's reasons.
+    assert "image" in base_build_reasons[0]
+    assert all("image" not in reason for reason in apply_reasons)
+
+
+def test_upgrade_note_for_the_pr_review_skill_advises_apply() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 0) and "pr-review" in n.reason]
+    assert len(notes) == 1
+    assert notes[0].actions == frozenset({"apply"})
+
+
+def test_the_rendered_hint_names_only_the_apply_action() -> None:
+    """One entry, one reason: a note declaring two actions prints each
+    action against the other's reasons. Render the real manifest through
+    `pending`/`format_advice` (the pipeline `advice_lines` uses) and confirm
+    the pr-review reason shows up only in the `jb apply` block, never in
+    `jb base build`'s."""
+    from jailbee.upgrade import Watermark, format_advice, pending
+
+    owed = pending(
+        "1.3.0",
+        {
+            "base_build": Watermark((1, 2, 0), observed=True),
+            "apply": Watermark((1, 2, 0), observed=True),
+        },
+    )
+    # max_reasons wide enough that the truncation feature (tested elsewhere)
+    # cannot hide the one reason this test cares about.
+    lines = format_advice(owed, max_reasons=10)
+    apply_start = next(i for i, line in enumerate(lines) if "jb apply" in line)
+    base_build_block = lines[:apply_start]
+    apply_block = lines[apply_start:]
+
+    reason = (
+        "the `jailbee-pr-review` skill is new and `jailbee apply` syncs it "
+        "into the shared skills mount"
+    )
+    assert any(reason in line for line in apply_block)
+    assert not any(reason in line for line in base_build_block)

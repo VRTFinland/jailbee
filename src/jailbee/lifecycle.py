@@ -2151,15 +2151,29 @@ def ls_field_specs(
         used = _format_bytes(c.memory_usage)
         return f"{used} / {c.memory_limit}" if c.memory_limit else used
 
+    def _pending_pr_actions(c: ContainerInfo) -> int:
+        return (c.git_status.pending_pr_actions or 0) if c.git_status else 0
+
     def _pr_cell(c: ContainerInfo) -> str:
+        # "✉N" = N manifests waiting in the container's PR outbox. Shown even
+        # with no PR label: a container can hold a description for a PR
+        # `jailbee pr` has not opened yet.
+        pending = _pending_pr_actions(c)
+        mark = f"✉{pending}" if pending else ""
         if c.pr_number is None:
-            return ""
-        return f"#{c.pr_number}" if c.pr_author else f"#{c.pr_number}↓"
+            return mark
+        base = f"#{c.pr_number}" if c.pr_author else f"#{c.pr_number}↓"
+        return f"{base} {mark}" if mark else base
 
     def _pr_json(c: ContainerInfo) -> dict[str, object] | None:
+        pending = _pending_pr_actions(c)
         if c.pr_number is None:
-            return None
-        return {"number": c.pr_number, "role": "author" if c.pr_author else "review"}
+            return {"pending_actions": pending} if pending else None
+        return {
+            "number": c.pr_number,
+            "role": "author" if c.pr_author else "review",
+            "pending_actions": pending,
+        }
 
     return [
         table_format.FieldSpec(
@@ -2346,7 +2360,9 @@ def ls_field_specs(
             header="PR",
             cell=_pr_cell,
             json=_pr_json,
-            show_if=lambda rows: any(c.pr_number is not None for c in rows),
+            show_if=lambda rows: any(
+                c.pr_number is not None or _pending_pr_actions(c) for c in rows
+            ),
         ),
         table_format.FieldSpec(
             name="claude_group",

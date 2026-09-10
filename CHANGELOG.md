@@ -8,6 +8,23 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **PR review outbox.** A container's `gh` is read-only by design, so an
+  agent reviewing a PR from inside it cannot post comments, replies, or a
+  description rewrite directly to GitHub. It now stages each as a JSON
+  manifest under `~/.jailbee/pr-outbox/` (documented for the container side
+  in the new `jailbee-pr-review` skill), and the host reviews and publishes
+  them with the new `jailbee review apply|ls|show|drop` command group —
+  `apply` shows the full plan and asks once, `ls`/`show` inspect without
+  publishing, `drop` discards unapplied. `jailbee pr` also consumes a
+  pending description manifest in place of its own Claude run (outranked
+  only by an explicit `--title`/`--body`; `--no-outbox` opts out), and
+  offers to publish any comments/replies still pending once the PR is up.
+  `jailbee ls`'s PR column and both dashboards gain a `✉N` marker for N
+  pending manifests, and `jailbee destroy`'s guard now warns when a
+  container it would remove is still holding unapplied PR actions.
+
 ## 1.3.0 - 2026-09-09
 
 ### Added

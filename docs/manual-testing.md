@@ -1215,6 +1215,233 @@ jailbee pr --force 2>&1 | grep "explicit container name"   # picker refused
 jailbee destroy dev-7 --force
 ```
 
+## `jailbee review apply/ls/show/drop` smoke test
+
+> Host-only. Requires `gh auth login` on the host, push access to origin, and
+> a real PR — nothing about the outbox parser or the gates has ever run
+> against a real GitHub API. Replace `<owner>/<repo>` and `<N>` throughout.
+> The manifest below is worked example 1 from the `jailbee-pr-review` skill's
+> `references/manifest-schema.md` — read that file first if anything here is
+> unclear about the JSON shape.
+
+```bash
+# 1. A container and a real PR to review against.
+git checkout main
+jailbee new feat/outboxsmoke
+jailbee shell feat-outboxsmoke
+# inside container:
+cd ~/SampleApp && echo "outbox smoke" > outbox.txt && git add . && git commit -m "feat: outbox smoke"
+exit
+jailbee pr feat-outboxsmoke
+# expect: "Draft PR #<N> created for 'feat/outboxsmoke': https://github.com/..."
+gh pr view <N> --json headRefOid   # copy the sha — this is the manifest's head_sha
+
+# 2. Write a manifest BY HAND — no agent involved, this is exactly what
+#    `jailbee review ls`/`show`/`apply` must parse and gate correctly.
+jailbee shell feat-outboxsmoke
+mkdir -p ~/.jailbee/pr-outbox
+cat > ~/.jailbee/pr-outbox/001-review.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": <N>,
+  "head_sha": "<the sha from gh pr view above>",
+  "actions": [
+    {
+      "type": "review",
+      "event": "COMMENT",
+      "body": "Smoke-testing the outbox.",
+      "comments": [
+        {"path": "outbox.txt", "line": 1, "side": "RIGHT", "body": "manual outbox smoke comment"}
+      ]
+    }
+  ]
+}
+JSON
+exit
+
+# 3. Inspect without publishing.
+jailbee review ls
+# expect: one row — CONTAINER feat-outboxsmoke, PR #<N>, MANIFEST
+#         001-review.json, ACTIONS "review:1", STATE ok
+jailbee review show feat-outboxsmoke
+# expect: "Smoke-testing the outbox." and "manual outbox smoke comment"
+#         printed verbatim (this is `show`'s whole job: no truncation, no
+#         Rich markup interpretation)
+jailbee review apply feat-outboxsmoke --dry-run
+# expect: the plan (PR #<N>, repo, head sha, the one comment), then
+#         "1 action will be published to GitHub as <your-gh-login>.",
+#         then "Dry run: nothing was published." — exit 0, nothing posted.
+gh api repos/<owner>/<repo>/pulls/<N>/reviews
+# expect: [] — the dry run posted nothing.
+
+# 4. Publish for real.
+jailbee review apply feat-outboxsmoke -y
+# expect: the same plan, then
+#         "  ✓ 001-review.json action 0: https://github.com/<owner>/<repo>/pull/<N>#..."
+gh api repos/<owner>/<repo>/pulls/<N>/reviews
+# expect: one review, body "Smoke-testing the outbox.", with one comment on
+#         outbox.txt line 1 reading "manual outbox smoke comment"
+
+# 5. Cleanup happened, and a re-run does not double-post.
+jailbee shell feat-outboxsmoke
+ls ~/.jailbee/pr-outbox/                    # expect: 001-review.json is GONE
+cat ~/.jailbee/pr-outbox/applied.log
+# expect exactly one line, shaped like:
+#   2026-09-10T12:34:56Z 001-review.json pr=<N> actions=1 urls=https://github.com/...
+exit
+jailbee review apply feat-outboxsmoke -y
+# expect: "Nothing pending: no container in this repo has PR actions waiting."
+#         — confirms the re-run found nothing left to post.
+gh api repos/<owner>/<repo>/pulls/<N>/reviews
+# expect: still exactly one review — no duplicate.
+
+# 6. Stale-head refusal, and --force.
+jailbee shell feat-outboxsmoke
+cat > ~/.jailbee/pr-outbox/002-review.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": <N>,
+  "head_sha": "<the SAME sha used in step 2 — now stale>",
+  "actions": [
+    {
+      "type": "review",
+      "event": "COMMENT",
+      "body": "This should be refused as stale, then forced.",
+      "comments": [
+        {"path": "outbox.txt", "line": 2, "side": "RIGHT", "body": "stale comment"}
+      ]
+    }
+  ]
+}
+JSON
+echo "moved the head" >> outbox.txt && git add . && git commit -m "move the PR head"
+exit
+jailbee pr feat-outboxsmoke   # pushes the new commit; the PR head moves
+# expect, among the push output: a warning shaped like
+#   "held back: manifest 002-review.json: PR #<N>'s head moved <old-sha> →
+#    <new-sha>; re-anchor the comments (ask the agent to re-read the diff) or
+#    pass --force
+#      `jailbee review apply --force feat-outboxsmoke` posts them as outdated
+#    comments."
+#   (the offer finds nothing publishable, so no "Post N pending..." prompt)
+jailbee review apply feat-outboxsmoke
+# expect: refused with "manifest 002-review.json: PR #<N>'s head moved
+#         <old-sha> → <new-sha>; ... or pass --force" (the raw gate error,
+#         no "held back" wrapper this time — `apply`'s own mode treats it as
+#         a refusal) — exit non-zero, WITHOUT even asking to confirm, since
+#         there is nothing left to plan.
+jailbee review apply --force feat-outboxsmoke -y
+# expect: the plan now shows "the PR head has moved since this was written",
+#         then publishes normally.
+gh api repos/<owner>/<repo>/pulls/<N>/comments
+# expect: the new line comment is present, and GitHub's own UI shows it as
+#         "outdated" (anchored to the old, no-longer-current commit).
+
+jailbee destroy feat-outboxsmoke --force
+
+# Cleanup (closes nothing on GitHub — close/delete the smoke PR manually).
+git push origin --delete feat/outboxsmoke   # requires explicit user approval
+```
+
+## `pr: null` outbox description + post-update offer smoke test
+
+> Host-only. Requires `gh auth login` on the host, push access to origin, and
+> `claude.enabled: true` (to prove the manifest wins over the Claude run, the
+> spinner for it must never appear). Replace `<owner>/<repo>`, `<N>` and
+> `<id>` throughout. The description manifest is worked example 2 from the
+> `jailbee-pr-review` skill's `references/manifest-schema.md`.
+
+```bash
+# 1. A container with commits, and a description manifest written before any
+#    PR exists — `pr: null` — proposing a title, body AND head branch name.
+git checkout main
+jailbee new feat/descoutbox
+jailbee shell feat-descoutbox
+cd ~/SampleApp && echo "desc outbox" > desc.txt && git add . && git commit -m "wip"
+mkdir -p ~/.jailbee/pr-outbox
+cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": null,
+  "head_sha": null,
+  "actions": [
+    {
+      "type": "description",
+      "title": "feat: outbox description smoke",
+      "body": "## Summary\n\nSmoke-tests a pr: null description manifest consumed by jailbee pr.",
+      "branch": "feat/outbox-desc-smoke"
+    }
+  ]
+}
+JSON
+exit
+
+jailbee pr feat-descoutbox
+# expect: NO "Generating PR title/description with Claude in
+#         'feat-descoutbox'…" spinner — the pending manifest wins over Claude
+#         even with claude.enabled on. A branch-name confirmation appears for
+#         "feat/outbox-desc-smoke" exactly as an AI proposal would; accept
+#         it. Then: "description from 001-description.json (written in the
+#         container)" and "Draft PR #<N> created for
+#         'feat/outbox-desc-smoke': https://github.com/...".
+gh pr view <N> --json title,body,headRefName
+# expect: title "feat: outbox description smoke", body containing "Smoke-tests
+#         a pr: null description manifest", headRefName
+#         "feat/outbox-desc-smoke"
+jailbee shell feat-descoutbox
+ls ~/.jailbee/pr-outbox/          # expect: 001-description.json is gone
+cat ~/.jailbee/pr-outbox/applied.log
+# expect: one line naming 001-description.json, actions=1
+exit
+
+# 2. Post-update offer with one reply pending. Post one real line comment on
+#    the PR through the GitHub UI first (or `gh api ... -X POST`, from the
+#    HOST, since the container's gh is read-only), and note its id.
+gh api repos/<owner>/<repo>/pulls/<N>/comments
+# copy the id of the comment to reply to → <id>
+
+jailbee shell feat-descoutbox
+cat > ~/.jailbee/pr-outbox/002-reply.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": <N>,
+  "head_sha": null,
+  "actions": [
+    {"type": "reply", "comment_id": <id>, "body": "Fixed, thanks."}
+  ]
+}
+JSON
+cd ~/SampleApp && echo more >> desc.txt && git add . && git commit -m "address feedback"
+exit
+jailbee pr feat-descoutbox
+# expect: the usual push/update line, then — because 002-reply.json still
+#         holds an unapplied non-description action —
+#         "Post 1 pending PR comment(s) now? [y/N]"
+# Answer n:
+# expect: "Nothing published. `jailbee review apply feat-descoutbox` posts
+#         them later." — the reply is still pending, nothing lost.
+jailbee review ls
+# expect: one row, feat-descoutbox, MANIFEST 002-reply.json, ACTIONS
+#         "reply:1", STATE ok
+
+jailbee review apply feat-descoutbox -y
+gh api repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies
+# expect: a reply reading "Fixed, thanks." now on GitHub
+jailbee shell feat-descoutbox
+ls ~/.jailbee/pr-outbox/            # expect: 002-reply.json is gone
+cat ~/.jailbee/pr-outbox/applied.log   # expect: a second line, naming it
+exit
+
+jailbee destroy feat-descoutbox --force
+
+# Cleanup (closes nothing on GitHub — close/delete the smoke PR manually).
+git push origin --delete feat/outbox-desc-smoke   # requires explicit user approval
+```
+
 ## Remote-git retry smoke test
 
 Covers `retry.with_remote_retry` at all three call sites. Each needs a

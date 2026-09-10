@@ -1,7 +1,7 @@
 """Probe git state inside jailbee containers via `incus exec`.
 
 The probe makes one ``incus exec`` round-trip per container, runs a
-small shell snippet that emits twelve NUL-separated fields, and the
+small shell snippet that emits thirteen NUL-separated fields, and the
 host parses them into a ``GitStatus``. Designed to be safe for
 parallel use from a thread pool.
 """
@@ -13,7 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TypedDict
 
+from jailbee.config import CONTAINER_USERNAME
 from jailbee.incus import Incus, IncusError
+from jailbee.pr_outbox import OUTBOX_SUBPATH
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
 
@@ -67,6 +69,11 @@ class GitStatus:
     # prediction about a merge nobody ran. "?" means the probe could not say.
     in_progress: str = "?"  # "" | merge | rebase | cherry-pick | revert | "?"
     unmerged: int | None = None  # paths with unresolved conflicts; None = unknown
+    # Manifests waiting in the container's PR outbox (`pr_outbox`). Not a git
+    # fact, but it rides this probe because the probe is already the one
+    # `incus exec` per running container that every listing pays for. None
+    # means the probe could not say (older output, or an unreadable value).
+    pending_pr_actions: int | None = None
 
 
 # Probe value -> the word shown to the user for an operation in progress.
@@ -415,10 +422,14 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
   | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- field 13: manifests waiting in the container's PR outbox ---
+PENDING=$(ls -1 "$OUTBOX_DIR"/*.json 2>/dev/null | wc -l | tr -d '[:space:]')
+case "$PENDING" in '' | *[!0-9]*) PENDING="?" ;; esac
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED"
+  "$IN_PROGRESS" "$UNMERGED" "$PENDING"
 """
 
 
@@ -464,6 +475,7 @@ def probe_container_git(
                 "BASE_BRANCH": base_branch or "",
                 "DEFAULT_BRANCH": default_branch,
                 "HOST_HEAD": host_head or "",
+                "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 # The probe only reads, but `git diff`/`git diff --cached`/
                 # `git submodule foreach 'git diff'` refresh the index and
                 # write it back — which takes `.git/index.lock`. A listing
@@ -535,6 +547,12 @@ def probe_container_git(
         in_progress = "?"
         unmerged = None
 
+    if len(parts) >= 13:
+        raw_pending = parts[12].strip()
+        pending_pr_actions = int(raw_pending) if raw_pending.isdigit() else None
+    else:
+        pending_pr_actions = None
+
     return GitStatus(
         wt=wt,
         ahead_diff=ahead_diff,
@@ -547,6 +565,7 @@ def probe_container_git(
         local_count=local_count,
         in_progress=in_progress,
         unmerged=unmerged,
+        pending_pr_actions=pending_pr_actions,
     )
 
 

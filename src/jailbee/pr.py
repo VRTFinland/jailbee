@@ -24,7 +24,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Never
+from typing import Any, Literal, Never
 
 from jailbee.retry import with_remote_retry
 
@@ -414,6 +414,131 @@ def set_ready(repo_root: Path, number: int, ready: bool) -> None:
     if not ready:
         cmd.append("--undo")
     _run_gh_mutation(repo_root, cmd, "gh pr ready")
+
+
+class PrReviewError(PrError):
+    """Posting a review, a reply, or a comment failed."""
+
+
+def _run_gh_api(repo_root: Path, cmd: list[str], payload: str | None, label: str) -> dict[str, Any]:
+    """Run a `gh api` call, return its parsed JSON response.
+
+    The sibling of `_run_gh_mutation` for calls whose *response* matters:
+    every mutation here reports the created object's `html_url`, which is what
+    the user is shown afterwards.
+    """
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=repo_root,
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise PrReviewError(
+            f"{label} requires the 'gh' CLI. Install: https://cli.github.com/"
+        ) from e
+    if proc.returncode != 0:
+        stderr = proc.stderr.lower()
+        if "not logged" in stderr or "authentication" in stderr or "gh auth login" in stderr:
+            raise PrReviewError("'gh' is not authenticated. Run: gh auth login")
+        raise PrReviewError(f"'{label}' failed: {proc.stderr.strip()}")
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as e:
+        raise PrReviewError(f"'{label}' returned output that is not JSON") from e
+    return data if isinstance(data, dict) else {}
+
+
+def submit_review(
+    repo_root: Path,
+    number: int,
+    *,
+    commit_id: str,
+    body: str,
+    comments: list[dict[str, Any]],
+) -> str:
+    """Post one review (event COMMENT) carrying every line comment at once.
+
+    A single API call, so the whole set lands or none of it does — which is
+    what makes a retry after a failure safe.
+    """
+    payload = json.dumps(
+        {"commit_id": commit_id, "body": body, "event": "COMMENT", "comments": comments}
+    )
+    cmd = [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
+        "--input",
+        "-",
+    ]
+    return str(_run_gh_api(repo_root, cmd, payload, "gh api pulls/reviews").get("html_url", ""))
+
+
+def reply_to_review_comment(repo_root: Path, number: int, comment_id: int, body: str) -> str:
+    """Reply to review comment `comment_id` on PR #`number` (threaded reply)."""
+    payload = json.dumps({"body": body})
+    cmd = [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{{owner}}/{{repo}}/pulls/{number}/comments/{comment_id}/replies",
+        "--input",
+        "-",
+    ]
+    return str(
+        _run_gh_api(repo_root, cmd, payload, "gh api pulls/comments/replies").get("html_url", "")
+    )
+
+
+def add_issue_comment(repo_root: Path, number: int, body: str) -> str:
+    """Post a top-level (issue-style) comment on PR #`number`."""
+    payload = json.dumps({"body": body})
+    cmd = [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{{owner}}/{{repo}}/issues/{number}/comments",
+        "--input",
+        "-",
+    ]
+    return str(_run_gh_api(repo_root, cmd, payload, "gh api issues/comments").get("html_url", ""))
+
+
+def pr_body(repo_root: Path, number: int) -> str:
+    """Return PR #`number`'s current description (`gh pr view --json body`)."""
+    cmd = ["gh", "pr", "view", str(number), "--json", "body"]
+    data = _run_gh_api(repo_root, cmd, None, "gh pr view")
+    return str(data.get("body") or "")
+
+
+def gh_login(repo_root: Path) -> str | None:
+    """Return the authenticated `gh` login, or None on any failure.
+
+    A courtesy for the plan's "will be published to GitHub as <login>" line —
+    never a gate. Every failure (gh missing, not authenticated, network) is
+    swallowed so it can never block a publish.
+    """
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 def _run_gh_mutation(repo_root: Path, cmd: list[str], label: str) -> None:
