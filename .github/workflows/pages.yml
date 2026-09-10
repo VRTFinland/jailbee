@@ -6,6 +6,8 @@ on:
       - "website/**"
       - "docs/**"
       - "zensical.toml"
+      - "scripts/docs_site.py"
+      - "Makefile"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 # The site is website/ as committed plus the docs Zensical renders from docs/,

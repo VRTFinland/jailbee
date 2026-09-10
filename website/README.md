@@ -81,4 +81,7 @@ font or licence file, a clip the page names but nobody committed, a stale
 stylesheet cache-buster. It runs as part of the normal suite
 (`uv run pytest`) — there is no separate website test command.
 `tests/test_docs_site.py` covers the docs half: the `nav` whitelist, the
-staging step, and the built output.
+staging step, and `check()` against synthetic HTML fixtures. It does not
+build the real site — that's `make site` plus `make site-check` in the
+`docs` job of `.github/workflows/ci.yml`, which runs the actual generator
+against `docs/` and its output.

@@ -36,9 +36,9 @@ jobs:
   docs:
     # The documentation site is generated, so a broken cross-page link or a
     # heading anchor that no longer exists is invisible in the Markdown. The
-    # strict build resolves every internal reference and fails on the first
-    # one that does not land; site-check enforces the no-CDN rule on the
-    # output. Both run per pull request, not only on deploy.
+    # strict build resolves every internal reference, reports every one that
+    # does not land, and then fails; site-check enforces the no-CDN rule on
+    # the output. Both run per pull request, not only on deploy.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
