@@ -1153,13 +1153,14 @@ def new_container(
     # no-op.
     if opts.mirror_endpoint is not None and opts.mirror_ca_path is not None:
         from jailbee.docker_daemon import apply_docker_proxy
-        from jailbee.registry import apply_mirror_registries
+        from jailbee.registry import sync_mirror_env
 
         # Push per-repo extra upstreams (e.g. ECR) into the mirror's
         # REGISTRIES before dockerd starts using the proxy, so the first
-        # pull through HTTPS_PROXY already hits the cache path. No-op if
-        # the list is empty or every entry is already configured.
-        apply_mirror_registries(incus, cfg.docker_registry_mirror.extra_registries)
+        # pull through HTTPS_PROXY already hits the cache path. Also brings
+        # the host-global proxy tuning up to date. No-op when the env file
+        # already matches.
+        sync_mirror_env(incus, cfg.docker_registry_mirror.extra_registries)
 
         _, port = opts.mirror_endpoint
         ca_pem = opts.mirror_ca_path.read_text()

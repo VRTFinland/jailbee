@@ -2,8 +2,37 @@
 
 ## Unreleased
 
+### Added
+
+- **`jailbee registry verify [--purge]` finds and removes corrupt entries in
+  the registry mirror's cache.** Every blob and manifest the mirror caches is
+  stored under the digest its content must hash to, but nginx never checks:
+  a single damaged cache file made every pull of that layer, from every
+  container on the host, fail with `unexpected commit digest` — and because
+  rpardini revalidates expired entries against the stored ETag, the bad copy
+  never aged out. `verify` hashes each digest-keyed entry inside the mirror,
+  lists mismatches by image and digest, and on confirmation removes them; the
+  next pull fetches them from upstream again. `--purge` removes without
+  asking.
+- **`jailbee doctor` checks the registry mirror's cache, not just that the
+  mirror runs.** The new `registry cache` row runs the same verification with
+  live progress while every other row is already on screen; Ctrl+C skips only
+  that row (shown as SKIPPED, not a failure).
+
 ### Fixed
 
+- **A cold-cache image pull through the registry mirror could time out and
+  fail autostart.** On a host without IPv6 egress the mirror still has an
+  IPv6 default route, so nginx tried every AAAA upstream (6–9 of them) before
+  any IPv4 one on each cache miss; and with nginx's default 60 s connect
+  timeout, one unresponsive upstream address held the first response header
+  past dockerd's patience (`net/http: timeout awaiting response headers`). A
+  retry then succeeded from cache, which made it read as a flake. jailbee now
+  sets rpardini's `DISABLE_IPV6=true` and 5 s `PROXY_CONNECT_TIMEOUT` /
+  `PROXY_CONNECT_CONNECT_TIMEOUT` in the proxy's env file. `jailbee registry
+  up`, `jailbee new` and `jailbee apply` now keep that file in sync even for a
+  repo with no `extra_registries`, and restart the proxy only when it
+  changed. Run `jailbee apply` once to bring an existing mirror up to date.
 - **The two config deprecation notices now name the file they are about.**
   `jailbee claude ls` and the dashboards load every registered repo's config,
   so both notices routinely fire for a repo the user is not standing in — and

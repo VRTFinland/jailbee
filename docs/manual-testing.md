@@ -2610,6 +2610,88 @@ jailbee registry status
 # expect: running
 ```
 
+## Registry mirror proxy tuning
+
+`sync_mirror_env` writes `DISABLE_IPV6` and the two connect timeouts into the
+proxy's env file. The unit suite proves what lands in the file; whether
+rpardini acts on it is only visible on a real mirror. The load-bearing
+assumption is that Quadlet runs the proxy with `--rm`, so a service restart
+gives a fresh container whose entrypoint regenerates `resolvers.conf` — an
+existing one is otherwise kept as-is.
+
+On a mirror provisioned before 1.3.1:
+
+```bash
+incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy.env
+# expect: REGISTRIES= only
+jb apply                               # from any repo with the mirror enabled
+incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy.env
+# expect: DISABLE_IPV6=true, PROXY_CONNECT_CONNECT_TIMEOUT=5s,
+#         PROXY_CONNECT_TIMEOUT=5s, and REGISTRIES= unchanged
+
+incus exec jailbee-registry-mirror -- systemctl cat jailbee-registry-proxy.service | grep ExecStart
+# expect: `podman run` carrying --rm (Quadlet's default)
+incus exec jailbee-registry-mirror -- podman exec systemd-jailbee-registry-proxy \
+  cat /etc/nginx/resolvers.conf /etc/nginx/nginx.timeouts.config.conf
+# expect: `resolver … ipv6=off;`, `proxy_connect_timeout 5s;`,
+#         `proxy_connect_connect_timeout 5s;`
+```
+
+The sync must not restart the proxy when nothing changed — a restart drops
+every pull in flight:
+
+```bash
+incus exec jailbee-registry-mirror -- systemctl show -p ActiveEnterTimestamp jailbee-registry-proxy.service
+jb apply
+incus exec jailbee-registry-mirror -- systemctl show -p ActiveEnterTimestamp jailbee-registry-proxy.service
+# expect: identical timestamps
+```
+
+Finally, on a host without IPv6 egress, pull an uncached image through any
+container and read the mirror's access log: `upstream_response_time` should no
+longer open with a run of `0.000` entries against `[2600:…]` addresses.
+
+## Registry cache verification
+
+Reproduces the corrupt-blob failure and its repair. Needs a running mirror
+with at least one cached image; `docker pull` runs in any JailBee container
+using the mirror.
+
+```bash
+# inside the mirror: flip one byte in the middle of a cached blob
+incus exec jailbee-registry-mirror -- sh -c '
+  f=$(grep -rl "blobs/sha256:" /docker_mirror_cache | head -1)
+  printf "\377" | dd of="$f" bs=1 seek=$(( $(stat -c%s "$f") / 2 )) conv=notrunc
+  echo "$f"'
+# note which image that blob belongs to (`head -c 2000 <file> | strings | grep KEY`)
+docker pull <that image>        # in a container, after `docker image rm` of it
+# expect: failed commit on ref … unexpected commit digest
+```
+
+```bash
+jb doctor
+# expect: "registry cache" spins with entries/GB and elapsed time, every other
+#         row already filled in; then ✗ FAIL "1 corrupt entry (<repo> sha256:…)"
+jb doctor                        # press Ctrl+C while the cache row spins
+# expect: the full table stays, "registry cache" reads "– SKIPPED interrupted
+#         after N/M entries — run 'jailbee registry verify'", exit code 0
+incus exec jailbee-registry-mirror -- pgrep -f registry_cache_scan || echo gone
+# expect: gone
+jb registry verify
+# expect: the entry listed by image and digest, then "Remove 1 corrupt entry? [y/n]"
+# answer y → "Removed 1 entry"
+docker pull <that image>
+# expect: succeeds (the layer is fetched from upstream again)
+jb registry verify
+# expect: "… cache entries verified (…), none corrupt."
+```
+
+Host-only facts this recipe establishes: `python3` exists in the mirror
+container; a full sweep of a large cache takes minutes, not hours (the bug
+report measured under two for 18 GB); the parse matches real nginx entries
+(a clean cache reports `none corrupt` and a skipped count in the hundreds, not
+thousands of errors).
+
 ## Nested Incus probe rig (verifying device behaviour from inside a container)
 
 Every recipe above needs the host's daemon. This one does not: it brings up a
