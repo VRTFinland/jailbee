@@ -406,6 +406,8 @@ def _members(blob: bytes, container: str) -> dict[str, str]:
     no leading ``/``, its size is within :data:`MAX_MANIFEST_BYTES`, and its
     bytes decode as UTF-8. Everything else is skipped silently; the count of
     skipped members is reported once via :func:`warn`, never per member.
+    The archive root (`./`, read back as `.`) that `tar -cf - .` always
+    leads with is dropped without being counted.
     """
     files: dict[str, str] = {}
     skipped = 0
@@ -413,6 +415,8 @@ def _members(blob: bytes, container: str) -> dict[str, str]:
         with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
             for member in tar.getmembers():
                 name = member.name
+                if name == "." and member.isdir():
+                    continue
                 if name.startswith("./"):
                     name = name[2:]
                 if (
