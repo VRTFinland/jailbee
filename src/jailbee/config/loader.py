@@ -48,6 +48,8 @@ from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_ho
 from jailbee.tui import hint
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     # Runtime import would be a cycle: `global_config` imports from
     # `jailbee.config` at module level. `from __future__ import annotations`
     # keeps the `scratch_repo_layer` annotation a string, so this is enough.
@@ -194,8 +196,8 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
 
 
 @functools.cache
-def _warn_legacy_chrome_block() -> None:
-    """Print the legacy `chrome:` notice once per process.
+def _warn_legacy_chrome_block(source: str) -> None:
+    """Print the legacy `chrome:` notice once per process, per source file.
 
     One command loads the config many times, and each load folds the block
     again. `jailbee new` is the worst case at three — the CLI's own
@@ -204,28 +206,43 @@ def _warn_legacy_chrome_block() -> None:
     `Config` apiece through `load_config_from_text` — and it printed the
     same sentence three times. The dashboard refresh loop reloads too.
 
-    Cached rather than flag-guarded, and cached *here* rather than
-    suppressed with `emit_hint=False` at each extra call site: a fourth
-    load added later stays quiet by construction instead of re-arming the
-    bug. Takes no arguments because the notice names no path — unlike
-    `paths._warn_legacy_config_dir`, whose message quotes the directory
-    and so keys on it. A `chrome:` block in both `global.yaml` and a repo
-    config is still one line, which is the right count: the advice is
-    identical and applies to both.
+    Cached rather than flag-guarded so a fourth load added later stays quiet
+    by construction instead of re-arming that bug, and keyed on `source` —
+    like `paths._warn_legacy_config_dir` — because the notice names the file
+    to edit. Naming it matters for the same reason it does there: a
+    host-wide command (`jailbee claude ls`, the dashboards) loads every
+    registered repo's config, so an unnamed notice sent the user looking in
+    the wrong file. Two files carrying a `chrome:` block therefore get a
+    line each: they are two edits, not one.
 
     `tests/conftest.py` clears the cache between tests via the autouse
     `_reset_deprecation_notices` fixture.
     """
     hint(
         [
-            "`chrome:` in config is deprecated and moves to `browsers.chrome` — "
+            f"`chrome:` in {source} is deprecated and moves to `browsers.chrome` — "
             f"see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
             "where it is removed."
         ]
     )
 
 
-def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> dict[str, object]:
+def _warn_legacy_chrome_layers(layers: Sequence[tuple[str, dict[str, object]]]) -> None:
+    """Emit `_warn_legacy_chrome_block` for each layer that still spells `chrome:`.
+
+    Lives here, at the one call site that still knows which file each key came
+    from, rather than inside `resolve_browsers_raw`: that function folds the
+    *merged* mapping, by which point the block's origin is gone. Keeping the
+    fold pure also means every non-loading caller of it — the config editor's
+    `layers.resolve`, `tests.conftest.make_cfg` — is quiet by construction
+    instead of by remembering to pass a suppression flag.
+    """
+    for label, raw in layers:
+        if isinstance(raw.get("chrome"), dict):
+            _warn_legacy_chrome_block(label)
+
+
+def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
     """Fold a legacy top-level `chrome:` block into `browsers.chrome`.
 
     `chrome:` was the only browser block through 1.2.x. Rather than the hard
@@ -241,28 +258,16 @@ def resolve_browsers_raw(raw: dict[str, object], *, emit_hint: bool = True) -> d
     way the newer spelling says. The legacy block predates `source:`, so it
     resolves to `source: host` — the behaviour it has always had.
 
-    The notice goes out via `tui.hint` (stderr), not `tui.warn` (stdout):
-    this runs on every config load, and stdout is where `jailbee ls --format
-    json` and friends put script-parsed output. `warn` would inject
-    `⚠ ...` ahead of that payload for any host with a legacy `chrome:`
-    block. See `hint`'s own docstring for the same reasoning. It prints at
-    most once per process, however many times the config is loaded — see
-    `_warn_legacy_chrome_block`.
-
-    `emit_hint=False` suppresses that notice without changing the fold
-    itself, and without consuming the once-per-process budget.
-    `config_edit.layers.resolve` needs the fold — so a legacy `chrome:`
-    block still reports a real origin instead of "default" — but calls it
-    on every reload, including while the full-screen editor `Application`
-    is running; printing to the terminal mid-session would corrupt the
-    display, and the CLI's own load of the same file already prints the
-    notice once elsewhere.
+    A pure fold: the deprecation notice belongs to whoever knows which *file*
+    spelled it the old way, and this function is handed the merged mapping,
+    where that is no longer knowable. `load_config_from_layers` emits it
+    per layer through `_warn_legacy_chrome_layers`; callers that only want
+    the fold — `config_edit.layers.resolve` on every editor reload,
+    `tests.conftest.make_cfg` — get silence without asking for it.
     """
     legacy = raw.get("chrome")
     if not isinstance(legacy, dict):
         return raw
-    if emit_hint:
-        _warn_legacy_chrome_block()
     merged = deep_merge({"source": "host", **legacy}, {})
     browsers = raw.get("browsers")
     overlay = browsers if isinstance(browsers, dict) else {}
@@ -276,7 +281,6 @@ def _build_config_from_dict(
     config_path: Path,
     *,
     origin: str | None = None,
-    emit_hint: bool = True,
 ) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -292,15 +296,16 @@ def _build_config_from_dict(
     `config_path` — a config layer synthesized from `global.yaml`'s
     `scratch.config` has no file of its own.
 
-    `emit_hint` is threaded straight to `resolve_browsers_raw` — see that
-    function's docstring for why a caller would ever want it `False`.
+    Emits no deprecation notice for the `chrome:` fold: by the time a mapping
+    reaches here the layers are merged, so the file to name is unknowable —
+    see `_warn_legacy_chrome_layers`, which runs one level up.
     """
     label = origin or str(config_path)
     try:
         raw = resolve_agents_raw(raw)
     except ConfigError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
-    raw = resolve_browsers_raw(raw, emit_hint=emit_hint)
+    raw = resolve_browsers_raw(raw)
     _check_retired_keys(raw)
     try:
         cfg = Config.model_validate(raw)
@@ -444,12 +449,13 @@ def load_config_from_layers(
     `global_raw` is the whole `global.yaml` mapping, host-level keys
     included; the split is done here, exactly as the on-disk path does it.
 
-    `emit_hint` reaches `resolve_browsers_raw` through `_build_config_from_dict`
-    unchanged. The default `True` is right for every real load — the CLI path
+    `emit_hint` gates the legacy `chrome:` notice, which is emitted here —
+    the last point at which each key's source file is still known. The
+    default `True` is right for every real load: the CLI path
     (`_load_config_from_repo_raw`) never overrides it, and the notice is
-    capped at one line per process by `_warn_legacy_chrome_block`, so a
-    command that loads the config several times (`jailbee new` loads it
-    three times) still prints it once.
+    capped at one line per source file per process by
+    `_warn_legacy_chrome_block`, so a command that loads the config several
+    times (`jailbee new` loads it three times) still prints it once.
     `config_edit.layers.validate` passes `False`: it calls this function
     synchronously from the editor's save handler, while the full-screen
     `Application` is live, and `hint()` writes straight to a Rich stderr
@@ -465,6 +471,10 @@ def load_config_from_layers(
     _check_retired_keys(global_raw)
     host_raw, global_for_merge = _split_host_keys(global_raw)
     _check_retired_keys(repo_raw)
+    if emit_hint:
+        _warn_legacy_chrome_layers(
+            [(str(default_global_config_path()), global_for_merge), (origin, repo_raw)]
+        )
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 
@@ -498,7 +508,7 @@ def load_config_from_layers(
     repo_apps = repo_raw.get("apps")
     if isinstance(global_apps, dict) and isinstance(repo_apps, dict):
         merged["apps"] = merge_apps_raw(global_apps, repo_apps)
-    cfg = _build_config_from_dict(merged, path, origin=origin, emit_hint=emit_hint)
+    cfg = _build_config_from_dict(merged, path, origin=origin)
 
     creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))

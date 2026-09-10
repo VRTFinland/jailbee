@@ -126,16 +126,19 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     Looks up paths through `resolve_browsers_raw`'s fold rather than
     `layer_set.repo_raw`/`global_raw` directly, so a legacy top-level
     `chrome:` block still reports a real origin for `browsers.chrome.*`
-    instead of lying and saying "default". `emit_hint=False` because this
-    runs on every reload — including while the editor `Application` is
-    live — and the deprecation notice writing to the terminal mid-session
-    would corrupt the display. The stored `layer_set.repo_raw`/`global_raw`
-    are left untouched: they are also the write path's base mapping
-    (`raw_for`), and folding there would rewrite a user's `chrome:` block
-    into `browsers:` as a side effect of an unrelated save.
+    instead of lying and saying "default". The fold is silent by
+    construction — the deprecation notice lives in
+    `loader.load_config_from_layers`, not in the fold — which is what this
+    reload path needs: it runs on every reload, including while the editor
+    `Application` is live, where a notice written to the terminal
+    mid-session would corrupt the display. The stored
+    `layer_set.repo_raw`/`global_raw` are left untouched: they are also the
+    write path's base mapping (`raw_for`), and folding there would rewrite a
+    user's `chrome:` block into `browsers:` as a side effect of an unrelated
+    save.
     """
-    repo_raw = resolve_browsers_raw(layer_set.repo_raw, emit_hint=False)
-    global_raw = resolve_browsers_raw(layer_set.global_raw, emit_hint=False)
+    repo_raw = resolve_browsers_raw(layer_set.repo_raw)
+    global_raw = resolve_browsers_raw(layer_set.global_raw)
     out: dict[KeyPath, Origin] = {}
     for spec in specs:
         present, value = lookup(repo_raw, spec.path)
@@ -335,9 +338,9 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
 
     `emit_hint=False`: this runs synchronously from the editor's save
     handler while the full-screen `Application` is live. Without it, a
-    legacy top-level `chrome:` block would print `resolve_browsers_raw`'s
-    deprecation notice straight to the terminal on every save — the same
-    hazard `resolve()` already guards against on reload.
+    legacy top-level `chrome:` block would print the loader's deprecation
+    notice straight to the terminal on every save — the same hazard
+    `resolve()` already guards against on reload.
     """
     global_raw = layer_set.global_raw
     repo_raw = layer_set.repo_raw
