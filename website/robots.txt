@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://jailbee.gisgro.io/sitemap.xml
+Sitemap: https://jailbee.gisgro.io/docs/sitemap.xml
