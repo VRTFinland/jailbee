@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-09-10
+
 ### Added
 
 - **`jailbee registry verify [--purge]` finds and removes corrupt entries in
