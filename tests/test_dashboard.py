@@ -899,6 +899,22 @@ def test_menu_offers_apply_pr_actions_only_when_something_is_pending():
     )
 
 
+def test_menu_offers_apply_pr_actions_on_a_running_mount_mode_container():
+    """The outbox lives at a fixed in-container path regardless of how the
+    repo got there — `pr_outbox.py` and the probe behind `pending_pr_actions`
+    have no mode check, unlike `git push`/`pr`/etc, which need
+    `sync.assert_container_publishable`'s own clone. Gating this entry on
+    `_bridge_possible` (which excludes mount mode) would hide the one route
+    to acting on manifests a mount-mode container can genuinely accumulate."""
+    verbs = [
+        verb
+        for _, verb in dashboard.menu_actions(
+            _ctx(mode="mount", git_status=_dirty(pending_pr_actions=1))
+        )
+    ]
+    assert "review apply" in verbs
+
+
 def test_pr_refresh_is_dispatched_as_a_printing_verb():
     """PRINTING_VERBS is matched exactly, not by leading token — without its
     own entry the refresh would lose its output in both front-ends."""
