@@ -2307,6 +2307,8 @@ def _run_dashboard(
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rich.table import Table
+    from rich.text import Text
     from sqlalchemy.engine import Engine
     from sqlmodel import Session
 
@@ -2315,10 +2317,11 @@ if TYPE_CHECKING:
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
     from jailbee.db.models import BackgroundJob
+    from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
     from jailbee.pool import Pool
-    from jailbee.registry_cache import CacheReport
+    from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,
@@ -10796,35 +10799,125 @@ def exec_cmd(
 # ---- Diagnostics & maintenance ----
 
 
-@app.command()
-def doctor(config: ConfigOption = None) -> None:
-    """Run diagnostic checks."""
+class _DeferredDetail:
+    """The DETAIL cell of a deferred check while it runs.
+
+    Rich re-renders ``__rich__`` on every refresh of the `Live` display, so
+    the elapsed time keeps moving between progress callbacks.
+    """
+
+    def __init__(self) -> None:
+        import time
+
+        self.progress: CacheProgress | None = None
+        self._started = time.monotonic()
+
+    def __rich__(self) -> "Text":
+        import time
+
+        from rich.text import Text
+
+        from jailbee.registry_cache import format_progress
+        from jailbee.tui import format_elapsed
+
+        text = format_progress(self.progress) if self.progress is not None else "starting"
+        return Text(f"{text} — {format_elapsed(time.monotonic() - self._started)}")
+
+
+def _doctor_table(
+    results: list["CheckResult"], running: tuple[int, _DeferredDetail] | None = None
+) -> "Table":
     from rich.markup import escape
+    from rich.spinner import Spinner
     from rich.table import Table
-
-    from jailbee.doctor import run_checks
-    from jailbee.incus import Incus
-    from jailbee.tui import console
-
-    cfg = _load_or_exit(config)
-    results = run_checks(cfg, Incus(), gcfg=_load_global())
 
     table = Table(title="Diagnostic checks")
     table.add_column("CHECK")
     table.add_column("STATUS")
     table.add_column("DETAIL")
-    for r in results:
+    for index, r in enumerate(results):
+        if running is not None and running[0] == index:
+            # The same `dots` spinner `console.status` draws everywhere else.
+            table.add_row(escape(r.name), Spinner("dots"), running[1])
+            continue
+        if r.deferred is not None:
+            table.add_row(escape(r.name), "[dim]pending[/dim]", "")
+            continue
         # The STATUS cell is markup, so the whole row is rendered with markup
         # enabled — and details are arbitrary text: exception strings
         # (SQLAlchemy appends `[SQL: ...] [parameters: (...)]`), absolute
         # paths in brackets, the upgrade block's own wording. Unescaped, a
         # bracketed run is silently swallowed as a style tag, or raises
         # MarkupError and takes `doctor` down with it. Escape every detail.
-        status = "[green]✓ OK[/green]" if r.ok else "[red]✗ FAIL[/red]"
+        if r.skipped:
+            status = "[yellow]⊘ SKIPPED[/yellow]"
+        elif r.ok:
+            status = "[green]✓ OK[/green]"
+        else:
+            status = "[red]✗ FAIL[/red]"
         table.add_row(escape(r.name), status, escape(r.detail))
-    console.print(table)
+    return table
 
-    if any(not r.ok for r in results):
+
+def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
+    """Print the doctor table, running deferred (slow) checks inside it.
+
+    Fast checks are already done when this is called. Each deferred row shows
+    a spinner and live progress while it runs, then its result. Ctrl+C ends
+    only the running check — it, and any deferred check after it, becomes
+    SKIPPED — and the table stays on screen with every other row.
+
+    Off a terminal, `Live` prints only the final table; the checks still run
+    to completion.
+    """
+    from rich.live import Live
+
+    from jailbee.doctor import CheckResult
+    from jailbee.tui import console
+
+    results = list(results)
+    pending = [i for i, r in enumerate(results) if r.deferred is not None]
+    if not pending:
+        console.print(_doctor_table(results))
+        return results
+    interrupted = False
+    with Live(_doctor_table(results), console=console, refresh_per_second=8) as live:
+        for index in pending:
+            check = results[index]
+            assert check.deferred is not None
+            if interrupted:
+                results[index] = CheckResult(
+                    check.name, True, f"not run — {check.detail}", skipped=True
+                )
+                continue
+            detail = _DeferredDetail()
+            live.update(_doctor_table(results, running=(index, detail)))
+
+            def on_progress(progress: "CacheProgress", detail: _DeferredDetail = detail) -> None:
+                detail.progress = progress
+
+            try:
+                results[index] = check.deferred(on_progress)
+            except KeyboardInterrupt:
+                interrupted = True
+                p = detail.progress
+                after = f" after {p.entries_done}/{p.entries_total} entries" if p else ""
+                results[index] = CheckResult(
+                    check.name, True, f"interrupted{after} — {check.detail}", skipped=True
+                )
+            live.update(_doctor_table(results))
+    return results
+
+
+@app.command()
+def doctor(config: ConfigOption = None) -> None:
+    """Run diagnostic checks."""
+    from jailbee.doctor import run_checks
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    results = _run_deferred_checks(run_checks(cfg, Incus(), gcfg=_load_global()))
+    if any(not r.ok and not r.skipped for r in results):
         raise typer.Exit(1)
 
 

@@ -2703,3 +2703,91 @@ def test_the_deferred_check_passes_progress_through(tmp_path, mocker):
     cache.deferred(seen.append)
 
     assert seen == [progress]
+
+
+# ---- doctor CLI: deferred rows ----
+
+
+def _invoke_doctor(mocker, tmp_path, results):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.doctor.run_checks", return_value=results)
+    return CliRunner().invoke(app, ["doctor"])
+
+
+def test_doctor_shows_the_result_of_a_deferred_check(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    done = CheckResult("registry cache", True, "1352 entries verified (18.0 GB), none corrupt")
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult(
+            "registry cache", True, "run 'jailbee registry verify'", deferred=lambda _p: done
+        ),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    assert "verified" in result.output  # space-free token: table cells wrap at 80 cols
+    assert "found" in result.output
+
+
+def test_a_failing_deferred_check_fails_doctor(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    failed = CheckResult("registry cache", False, "1 corrupt entry")
+    results = [CheckResult("registry cache", True, "hint", deferred=lambda _p: failed)]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1
+    assert "corrupt" in result.output
+
+
+def test_ctrl_c_skips_only_the_running_deferred_check(tmp_path, mocker):
+    """The other rows are the point of doctor; an impatient Ctrl+C must not
+    take them down with the slow one."""
+    from jailbee.doctor import CheckResult
+    from jailbee.registry_cache import CacheProgress
+
+    def interrupted(on_progress):
+        on_progress(CacheProgress(812, 1352, 1, 2))
+        raise KeyboardInterrupt
+
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult(
+            "registry cache", True, "run 'jailbee registry verify'", deferred=interrupted
+        ),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    # Space-free tokens only: the 80-column table wraps the detail cell.
+    assert "SKIPPED" in result.output
+    assert "interrupted" in result.output
+    assert "812/1352" in result.output
+    assert "found" in result.output
+
+
+def test_a_skipped_check_does_not_hide_a_real_failure(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    def interrupted(_on_progress):
+        raise KeyboardInterrupt
+
+    results = [
+        CheckResult("uid delegation", False, "missing"),
+        CheckResult("registry cache", True, "hint", deferred=interrupted),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1

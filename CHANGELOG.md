@@ -14,6 +14,10 @@
   lists mismatches by image and digest, and on confirmation removes them; the
   next pull fetches them from upstream again. `--purge` removes without
   asking.
+- **`jailbee doctor` checks the registry mirror's cache, not just that the
+  mirror runs.** The new `registry cache` row runs the same verification with
+  live progress while every other row is already on screen; Ctrl+C skips only
+  that row (shown as SKIPPED, not a failure).
 
 ### Fixed
 
