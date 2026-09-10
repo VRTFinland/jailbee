@@ -2607,11 +2607,15 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
+    # The prompt was shown and answered — the two assertions below are also
+    # true of the off-TTY hint, which asks nothing, so the prompt is the pin.
+    assert "Post 1 pending PR comment now?" in result.output
+    assert "Nothing published." in result.output
     assert "jailbee review apply" in result.output
 
 
 def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
-    from jailbee.pr_outbox import GateError
+    from jailbee.pr_outbox import StaleError
 
     _setup(mocker, tmp_path)
     _tty(mocker)
@@ -2626,16 +2630,41 @@ def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
     )
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
-        side_effect=GateError("manifest 001-x.json: PR #123's head moved abc1234 → def5678"),
+        side_effect=StaleError("manifest 001-x.json: PR #123's head moved abc1234 → def5678"),
     )
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output  # the PR itself succeeded
+    assert "pull/123" in result.output  # ...and said so, before holding anything back
     apply_mock.assert_not_called()
     assert "head moved" in result.output
     assert "--force" in result.output
+
+
+def test_a_non_stale_refusal_is_not_told_to_retry_with_force(mocker, tmp_path):
+    """`--force` relaxes gate 3 only; naming it elsewhere sends the user back for the same no."""
+    from jailbee.pr_outbox import GateError
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    _pending_comment_manifest(
+        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=GateError("manifest 001-x.json targets acme/other, not acme/widgets"),
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "acme/other" in result.output
+    assert "--force" not in result.output
 
 
 def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
@@ -2646,13 +2675,21 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    _pending_comment_manifest(mocker)
+    # Two pending actions, one of them a description: the hint counts what the
+    # offer would publish, and must not call a body rewrite a "comment".
+    _pending_comment_manifest(
+        mocker,
+        actions=[
+            {"type": "comment", "body": "ok"},
+            {"type": "description", "body": "a new body"},
+        ],
+    )
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
-    assert "1 pending" in result.output and "jailbee review apply" in result.output
+    assert "1 pending PR comment" in result.output and "jailbee review apply" in result.output
 
 
 def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
@@ -2686,8 +2723,9 @@ def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
 
     assert result.exit_code == 1
-    assert "#123" in result.output  # the PR outcome was printed first
-    assert "HTTP 500" in result.output
+    # The PR outcome was printed *first*: §F.2 is about the user seeing that the
+    # PR landed and the comments did not, which is an ordering, not a set.
+    assert result.output.index("#123") < result.output.index("HTTP 500")
 
 
 def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
@@ -2706,3 +2744,43 @@ def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
     resolve.assert_not_called()  # not even gated: there is nothing to offer
+
+
+def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
+    """`--body` won the description; the offer must not overwrite it with the outbox's.
+
+    §F.1's precedence leaves the outbox `description` action pending when an
+    explicit flag wins, and the manifest is still offered — for its *comment*.
+    `apply_manifest` applies every pending index unless told otherwise, so the
+    restriction has to reach it, not just the selection.
+    """
+    from jailbee.pr_outbox import ApplyOutcome
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    apply_mock = mocker.patch(
+        "jailbee.pr_outbox.apply_manifest",
+        return_value=ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
+    )
+    mocker.patch("jailbee.pr_outbox.finalize")
+    _pending_comment_manifest(
+        mocker,
+        actions=[
+            {"type": "comment", "body": "ok"},
+            {"type": "description", "body": "the agent's body"},
+        ],
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--body", "my own body"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    # Only the comment is offered, published and counted...
+    assert apply_mock.call_args.kwargs["indices"] == frozenset({0})
+    assert "1 action will be published" in result.output
+    assert "Post 1 pending PR comment now?" in result.output
+    assert "the agent's body" not in result.output  # no description diff in the plan
+    # ...and the user is told where the description went.
+    assert "not in this offer" in result.output
+    assert "jailbee review apply feat-foo" in result.output

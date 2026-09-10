@@ -501,6 +501,16 @@ class GateError(Exception):
     """
 
 
+class StaleError(GateError):
+    """Gate 3 specifically: the PR's head moved since the manifest was written.
+
+    A subclass rather than a flag on `GateError` so a caller can tell the one
+    refusal ``--force`` relaxes from the ones it cannot — a non-GitHub remote,
+    the wrong repo, a PR the container does not own — without matching on
+    message text. Every ``except GateError`` still catches it.
+    """
+
+
 @dataclass(frozen=True)
 class Target:
     """What one manifest resolves to, once the gates have run."""
@@ -524,9 +534,10 @@ def resolve_target(
        ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX`` labels, or,
        when neither is set, the PR (if any) for the container's own branch.
     3. Staleness: computed for every manifest with a PR, but it only raises
-       when the manifest carries a `ReviewAction` and `force` was not
-       given — a moved head invalidates line anchors, but `reply`, `comment`
-       and `description` actions don't depend on `head_sha`.
+       (as `StaleError`, the one refusal `force` relaxes) when the manifest
+       carries a `ReviewAction` and `force` was not given — a moved head
+       invalidates line anchors, but `reply`, `comment` and `description`
+       actions don't depend on `head_sha`.
     """
     remote_url = git.get_remote_url(cfg.repo_root, cfg.upstream_remote)
     slug = github_slug(remote_url or "")
@@ -573,7 +584,7 @@ def resolve_target(
     info = pr.resolve_pr(cfg.repo_root, manifest.pr, remote=cfg.upstream_remote)
     stale = manifest.head_sha not in (None, info.head_sha)
     if stale and not force and any(isinstance(a, ReviewAction) for a in manifest.actions):
-        raise GateError(
+        raise StaleError(
             f"manifest {manifest.name}: PR #{info.number}'s head moved "
             f"{manifest.head_sha} → {info.head_sha}; re-anchor the comments "
             "(ask the agent to re-read the diff) or pass --force"
@@ -606,17 +617,26 @@ def _comment_anchor(comment: LineComment) -> str:
     return f"{comment.path}:{comment.line}"
 
 
-def plan_lines(target: Target, current_body: str | None) -> list[str]:
+def plan_lines(
+    target: Target, current_body: str | None, *, indices: frozenset[int] | None = None
+) -> list[str]:
     """Render the plan for `target` as plain text lines. Pure — no printing.
 
     One line per action (plus a sub-line per line comment, and per general
     comment reply), bodies truncated to their first line via `_first_line`.
     The exception is a `DescriptionAction`, whose body is rendered in full
     as a unified diff against `current_body`. Rich markup is the caller's
-    job (Task 9), not this function's.
+    job, not this function's.
+
+    `indices` restricts the rendering to those action indices, and is the same
+    set the caller passes to `apply_manifest`: the plan is the question a user
+    answers, so it must show what will actually be published and nothing else.
+    `None` renders the manifest whole.
     """
     lines: list[str] = []
-    for action in target.manifest.actions:
+    for index, action in enumerate(target.manifest.actions):
+        if indices is not None and index not in indices:
+            continue
         if isinstance(action, ReviewAction):
             lines.append(f"REVIEW ({action.event}): {_first_line(action.body)}")
             for comment in action.comments:
@@ -706,6 +726,9 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
     ("comment", CommentAction),
     ("description", DescriptionAction),
 )
+
+
+_ACTION_LABEL_BY_TYPE: dict[type[Action], str] = {cls: label for label, cls in _ACTION_LABELS}
 
 
 def action_summary(manifest: Manifest) -> str:
@@ -946,6 +969,7 @@ def apply_manifest(
     progress: Progress,
     *,
     uid: int | None,
+    indices: frozenset[int] | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
 
@@ -962,6 +986,16 @@ def apply_manifest(
     `container` and `uid` are parameters here and not only on `finalize`: a
     crash between two actions — or between the last action and `finalize` —
     must still leave the container's own record accurate.
+
+    `indices` narrows that to a subset of the manifest's action indices —
+    everything outside it is left pending, exactly as if it had not been
+    written yet, and is *not* recorded in the sidecar (recording an action as
+    applied when it was not is how a proposal disappears without being
+    published). `jailbee pr`'s offer uses it to publish a manifest's comments
+    without touching a `description` action the run has not consumed: §F.1's
+    "explicit flags keep winning" cannot be reversed by a prompt about
+    comments. `None` — `jailbee review apply`'s own mode — applies everything
+    still pending.
 
     Stops at the first `PrError`; remaining actions are never attempted.
 
@@ -992,7 +1026,7 @@ def apply_manifest(
     running_urls = dict(progress.urls)
 
     for index in _apply_order(manifest.actions):
-        if index in progress.applied:
+        if index in progress.applied or (indices is not None and index not in indices):
             continue
         try:
             url = _apply_one(cfg.repo_root, target, manifest.actions[index])
@@ -1527,16 +1561,23 @@ def pending_pr_text(
 # --------------------------------------------------------------------------
 
 
-def _current_pr_body(cfg: Config, target: Target) -> str | None:
-    """The PR's current description, when the manifest proposes rewriting it.
+def _current_pr_body(cfg: Config, target: Target, indices: frozenset[int] | None) -> str | None:
+    """The PR's current description, when the plan is about to diff against it.
 
-    Fetched only for a manifest carrying a ``description`` action — that diff
-    is the one part of the plan `plan_lines` renders in full — and a failure
-    to read it degrades the diff instead of blocking the plan.
+    Fetched only when a ``description`` action is actually being rendered —
+    that diff is the one part of the plan `plan_lines` shows in full — and a
+    failure to read it degrades the diff instead of blocking the plan. A
+    description held out of this run (`indices`) is not rendered, so the `gh`
+    call is not made either: the offer would otherwise pay for, and warn
+    about, a body it is not going to show.
     """
     if target.pr is None:
         return None
-    if not any(isinstance(a, DescriptionAction) for a in target.manifest.actions):
+    if not any(
+        isinstance(a, DescriptionAction)
+        for i, a in enumerate(target.manifest.actions)
+        if indices is None or i in indices
+    ):
         return None
     try:
         return pr.pr_body(cfg.repo_root, target.pr.number)
@@ -1548,13 +1589,25 @@ def _current_pr_body(cfg: Config, target: Target) -> str | None:
         return None
 
 
-def _print_plan(cfg: Config, short: str, target: Target, progress: Progress) -> None:
+def _print_plan(
+    cfg: Config,
+    short: str,
+    target: Target,
+    progress: Progress,
+    *,
+    indices: frozenset[int] | None = None,
+) -> None:
     """Print one manifest's header and its plan.
 
     Every plan line is printed with markup off and wrapping soft: the bodies
     were written inside the container, and Rich would read a ``[note]`` in
     one of them as a style tag and *silently delete it* — in exactly the text
     the user is being asked to vouch for.
+
+    `indices` is the set that will actually be published (see `plan_lines` and
+    `apply_manifest`). Anything still pending and outside it is named in a line
+    of its own rather than silently dropped from the plan: the user wrote it
+    and has to be told where it went.
     """
     # `_gate_manifests` held back every `pr: null` manifest, so a target
     # reaching the plan always has a resolved PR to head it.
@@ -1573,8 +1626,21 @@ def _print_plan(cfg: Config, short: str, target: Target, progress: Progress) -> 
         console.print(
             f"{len(already)} of {len(manifest.actions)} actions already published — skipped"
         )
-    for line in plan_lines(target, _current_pr_body(cfg, target)):
+    for line in plan_lines(target, _current_pr_body(cfg, target, indices), indices=indices):
         console.print(f"  {line}", markup=False, highlight=False, soft_wrap=True)
+    held = _held_out(manifest, progress, indices)
+    if held:
+        # `.get` rather than `[]`: a fifth `Action` variant without a label in
+        # `_ACTION_LABELS` must not crash `jailbee pr` *after* the PR landed.
+        kinds = ", ".join(
+            sorted({_ACTION_LABEL_BY_TYPE.get(type(manifest.actions[i]), "other") for i in held})
+        )
+        plural = "" if len(held) == 1 else "s"
+        it = "it" if len(held) == 1 else "them"
+        # Two lines, as with the `pr: null` deferral: the command must not be
+        # split across a wrap, which is what one long line does at 80 columns.
+        console.print(f"  not in this offer: {len(held)} pending {kinds} action{plural}.")
+        console.print(f"  `jailbee review apply {escape(short)}` publishes {it}.")
 
 
 def _print_identity(cfg: Config, total: int) -> None:
@@ -1603,32 +1669,45 @@ def _print_receipts(target: Target, outcome: ApplyOutcome) -> None:
         )
 
 
-def _has_pending_comment(manifest: Manifest, progress: Progress) -> bool:
-    """True if `manifest` still has an unapplied action other than a description.
+def _offerable_indices(manifest: Manifest, progress: Progress) -> frozenset[int]:
+    """The unapplied indices of `manifest` the offer may publish: everything but a description.
 
-    The offer's selection rule. A description is excluded because `jailbee pr`
-    has just decided this PR's description itself — offering to publish another
-    one in the same breath would ask the user to overrule the run they are
-    still reading the output of.
+    The offer's rule, and it selects *actions*, not just manifests: `jb pr` has
+    already decided this PR's description this run, and §F.1 is explicit that an
+    explicit `--title`/`--body` outranks the outbox. When the flags won, the
+    description action is still pending — and publishing it here, under a
+    prompt about comments, would silently overwrite the body the user typed in
+    the same command. So it stays behind, and `apply_manifest` is told to skip
+    it rather than being handed a manifest and trusted not to.
+
+    An empty set means there is nothing to offer for this manifest at all.
     """
-    return any(
-        not isinstance(manifest.actions[i], DescriptionAction)
+    return frozenset(
+        i
         for i in pending_indices(manifest, progress)
+        if not isinstance(manifest.actions[i], DescriptionAction)
     )
 
 
-def _held_back(reason: str, manifest: Manifest, short: str, *, forceable: bool) -> str:
+def _held_out(manifest: Manifest, progress: Progress, indices: frozenset[int] | None) -> list[int]:
+    """Pending indices of `manifest` that `indices` leaves behind. Empty when None."""
+    if indices is None:
+        return []
+    return [i for i in pending_indices(manifest, progress) if i not in indices]
+
+
+def _held_back(reason: str, short: str, *, stale: bool) -> str:
     """A gate failure on the offer path, phrased as something to act on.
 
     The interesting case is staleness: `jailbee pr` has just pushed, so on the
     adopted path the PR's head moved and a `review` action's line anchors no
     longer point where they were written. `--force` is named only for a
-    `GateError` (`forceable`) on a manifest that carries such an action,
-    because that is the only refusal `resolve_target` relaxes under it —
-    advertising it for a wrong-repo manifest, or for a `gh` that would not
-    answer, would be advice that cannot work.
+    `StaleError`, because that is the only refusal `resolve_target` relaxes
+    under it — offering it for a non-GitHub remote, a wrong repo slug, a PR the
+    container does not own, or a `gh` that would not answer would send the user
+    back for the identical refusal.
     """
-    if forceable and any(isinstance(a, ReviewAction) for a in manifest.actions):
+    if stale:
         remedy = f"`jailbee review apply --force {short}` posts them as outdated comments."
     else:
         remedy = f"`jailbee review apply {short}` deals with it separately."
@@ -1678,13 +1757,15 @@ def _gate_manifests(
             else:
                 refusals.append(str(e))
             continue
-        if comments_only and not _has_pending_comment(manifest, read_progress(outbox, name)):
+        if comments_only and not _offerable_indices(manifest, read_progress(outbox, name)):
             continue
         try:
             target = resolve_target(cfg, incus, container, manifest, force=force)
         except GateError as e:
             if comments_only:
-                notes.append(_held_back(str(e), manifest, short, forceable=True))
+                # `StaleError` is the only refusal `--force` relaxes; every
+                # other `GateError` would refuse again identically.
+                notes.append(_held_back(str(e), short, stale=isinstance(e, StaleError)))
             else:
                 refusals.append(str(e))
             continue
@@ -1696,9 +1777,12 @@ def _gate_manifests(
             # least about the command the user actually ran.
             if not comments_only:
                 raise
-            notes.append(_held_back(str(e), manifest, short, forceable=False))
+            notes.append(_held_back(str(e), short, stale=False))
             continue
         if target.pr is None:
+            # Unreachable under `comments_only`: `parse_manifest` refuses a
+            # `pr: null` manifest that carries anything but a lone description,
+            # and `_offerable_indices` has already skipped those above.
             if not comments_only:
                 # Two lines on purpose: the command must not be split across a
                 # wrap, which is exactly what a single long line does at 80
@@ -1738,8 +1822,10 @@ def offer_pending_comments(
     included, and anything that cannot be published is a refusal the caller
     exits non-zero on.
 
-    An integer is the offer `jailbee pr` makes once that PR is up: only
-    manifests still holding an unapplied non-`description` action, and a
+    An integer is the offer `jailbee pr` makes once that PR is up: only the
+    unapplied non-`description` actions (see `_offerable_indices` — the
+    restriction reaches `apply_manifest`, so a description this run did not
+    consume is genuinely left pending rather than merely unmentioned), and a
     manifest that cannot be published is held back with a reason rather than
     failing the run. Note what it does *not* do: it does not filter manifests
     by the number. On the `--stacked` path the run just opened a *different*
@@ -1754,8 +1840,11 @@ def offer_pending_comments(
     them — the plan *is* the question, so there is never a second one.
     `can_prompt=False` degrades the offer to a single line naming the count and
     the command that publishes it: no plan is rendered and `confirm` is never
-    called. `jailbee review apply` leaves it True, because its own `confirm`
-    already decides what a non-interactive run means (`-y`, or a refusal).
+    called. It is not a short-circuit — the gates still run in full (a
+    `gh pr view` and two `config_get` per candidate manifest), because an
+    honest count is a gated count. `jailbee review apply` leaves it True,
+    because its own `confirm` already decides what a non-interactive run means
+    (`-y`, or a refusal).
 
     `outbox` is a snapshot the caller has already read; without one the outbox
     is read here, and a container that will not answer is reported and treated
@@ -1785,8 +1874,17 @@ def offer_pending_comments(
         # the work belongs to another command, which is not a reason to fail.
         return len(refusals)
 
-    plans = [(t, read_progress(outbox, t.manifest.name)) for t in targets]
-    total = sum(len(pending_indices(t.manifest, p)) for t, p in plans)
+    # Per target: the progress snapshot, and which of its pending indices this
+    # run will publish (`None` = all of them, `jailbee review apply`'s mode).
+    plans: list[tuple[Target, Progress, frozenset[int] | None]] = []
+    for target in targets:
+        progress = read_progress(outbox, target.manifest.name)
+        plans.append(
+            (target, progress, _offerable_indices(target.manifest, progress) if for_offer else None)
+        )
+    total = sum(
+        len(idx) if idx is not None else len(pending_indices(t.manifest, p)) for t, p, idx in plans
+    )
     if not can_prompt:
         plural = "" if total == 1 else "s"
         info(
@@ -1795,8 +1893,8 @@ def offer_pending_comments(
         )
         return len(refusals)
 
-    for target, progress in plans:
-        _print_plan(cfg, short, target, progress)
+    for target, progress, idx in plans:
+        _print_plan(cfg, short, target, progress, indices=idx)
     _print_identity(cfg, total)
 
     if dry_run:
@@ -1819,8 +1917,8 @@ def offer_pending_comments(
         return len(refusals)
 
     failures = len(refusals)
-    for position, (target, progress) in enumerate(plans):
-        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid)
+    for position, (target, progress, idx) in enumerate(plans):
+        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid, indices=idx)
         _print_receipts(target, outcome)
         stop = False
         try:
@@ -1849,7 +1947,7 @@ def offer_pending_comments(
             )
         if stop:
             failures += 1
-            left = [t.manifest.name for t, _ in plans[position + 1 :]]
+            left = [t.manifest.name for t, _, _ in plans[position + 1 :]]
             if left:
                 warn_plain(f"Stopped here; still pending: {', '.join(left)}")
             break

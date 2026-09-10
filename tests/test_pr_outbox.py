@@ -684,6 +684,48 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
     assert calls["comment"].call_count == 2  # the third was never attempted
 
 
+def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, tmp_path):
+    """`indices` must reach GitHub *and* the sidecar, or a held-back action is lost.
+
+    `jailbee pr`'s offer publishes a manifest's comments without touching a
+    `description` the run did not consume. Recording the description as applied
+    would be worse than publishing it: it would disappear from every later
+    `jailbee review apply` without ever having been posted.
+    """
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            actions=[
+                {"type": "comment", "body": "one"},
+                {"type": "description", "body": "a new body"},
+            ]
+        ),
+        {},
+    )
+    incus = mocker.MagicMock()
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+        indices=frozenset({0}),
+    )
+
+    assert outcome.applied == (0,)
+    calls["comment"].assert_called_once()
+    calls["edit"].assert_not_called()  # the description was never published...
+    sidecar = " ".join(
+        a for c in incus.exec.call_args_list for a in c.args[1] if "applied" in str(a)
+    )
+    assert '"applied": [0]' in sidecar  # ...and never recorded as if it had been
+
+
 def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, tmp_path):
     """A crash between actions must not lose what already landed.
 
