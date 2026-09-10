@@ -589,11 +589,11 @@ def test_the_130_notes_are_split_by_action() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
     notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 0)]
-    assert len(notes) == 3
+    assert len(notes) == 2
     base_build_reasons = [n.reason for n in notes if n.actions == frozenset({"base_build"})]
     apply_reasons = [n.reason for n in notes if n.actions == frozenset({"apply"})]
     assert len(base_build_reasons) == 1
-    assert len(apply_reasons) == 2
+    assert len(apply_reasons) == 1
     # The base-build reason must not mention profile or mount work, and
     # neither apply reason mentions the image: a combined entry would print
     # each action the other's reasons.
@@ -604,7 +604,7 @@ def test_the_130_notes_are_split_by_action() -> None:
 def test_upgrade_note_for_the_pr_review_skill_advises_apply() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
-    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 0) and "pr-review" in n.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 1) and "pr-review" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
 
@@ -618,7 +618,7 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
     from jailbee.upgrade import Watermark, format_advice, pending
 
     owed = pending(
-        "1.3.0",
+        "1.3.1",
         {
             "base_build": Watermark((1, 2, 0), observed=True),
             "apply": Watermark((1, 2, 0), observed=True),
