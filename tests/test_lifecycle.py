@@ -6385,7 +6385,7 @@ def test_pr_field_cell_author():
         pr_author=True,
     )
     assert field.cell(c) == "#123"
-    assert field.json(c) == {"number": 123, "role": "author"}
+    assert field.json(c) == {"number": 123, "role": "author", "pending_actions": 0}
 
 
 def test_pr_field_cell_review():
@@ -6402,7 +6402,7 @@ def test_pr_field_cell_review():
         pr_author=False,
     )
     assert field.cell(c) == "#456↓"
-    assert field.json(c) == {"number": 456, "role": "review"}
+    assert field.json(c) == {"number": 456, "role": "review", "pending_actions": 0}
 
 
 def test_pr_field_cell_empty_when_no_pr():
@@ -6430,6 +6430,123 @@ def test_pr_field_show_if():
     assert field.show_if is not None
     assert field.show_if([no_pr]) is False
     assert field.show_if([no_pr, with_pr]) is True
+
+
+def test_pr_field_cell_marks_pending_outbox_actions():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _pr_field()
+    c = ContainerInfo(
+        name="r-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        pr_number=1234,
+        pr_author=False,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=2,
+        ),
+    )
+    assert field.cell(c) == "#1234↓ ✉2"
+    assert field.json(c) == {"number": 1234, "role": "review", "pending_actions": 2}
+
+
+def test_pr_field_cell_shows_marker_without_a_pr_number():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _pr_field()
+    c = ContainerInfo(
+        name="r-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=1,
+        ),
+    )
+    assert field.cell(c) == "✉1"
+    assert field.json(c) == {"pending_actions": 1}
+
+
+def test_pr_field_cell_no_marker_when_pending_is_none_or_zero():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _pr_field()
+    none_pending = ContainerInfo(
+        name="r-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        pr_number=1234,
+        pr_author=True,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=None,
+        ),
+    )
+    zero_pending = ContainerInfo(
+        name="r-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        pr_number=1234,
+        pr_author=True,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=0,
+        ),
+    )
+    assert field.cell(none_pending) == "#1234"
+    assert field.json(none_pending) == {"number": 1234, "role": "author", "pending_actions": 0}
+    assert field.cell(zero_pending) == "#1234"
+    assert field.json(zero_pending) == {"number": 1234, "role": "author", "pending_actions": 0}
+
+
+def test_pr_field_show_if_widens_for_pending_actions_without_a_pr_number():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _pr_field()
+    only_pending = ContainerInfo(
+        name="r-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=1,
+        ),
+    )
+    nothing = ContainerInfo(name="r-b", state="Running", network=None, ip=None, memory_limit=None)
+
+    assert field.show_if is not None
+    assert field.show_if([only_pending]) is True
+    assert field.show_if([nothing]) is False
 
 
 def test_mode_field_shows_only_when_a_mount_container_exists():
