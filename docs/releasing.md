@@ -94,9 +94,11 @@ happens. Step by step:
    is a valid version, the `v1.0.1` tag does not already exist, and `gh`/`uv`
    are installed. Then runs `make check` (ruff, format check, mypy, pytest).
 2. **CHANGELOG** — if the `## Unreleased` section is empty (or you pass
-   `REGEN=1`), entries are drafted from `git log` since the last tag using the
-   `claude` CLI. The `CHANGELOG.md` then opens in `$EDITOR` for you to review
-   and edit. While you're in there: check whether anything in this release
+   `REGEN=1`), entries are drafted from `git log` since the last release tag
+   using the `claude` CLI. The `CHANGELOG.md` then opens in `$EDITOR` for you
+   to review and edit — see [What belongs in the Unreleased
+   section](#what-belongs-in-the-unreleased-section) for what to keep and what
+   to cut. While you're in there: check whether anything in this release
    changed what `jb base build` produces or what `jb apply` writes; if so,
    `UPGRADE_NOTES` in `src/jailbee/upgrade.py` needs an entry at **this**
    release's version, with a one-line reason a user can act on. The entry is
@@ -124,6 +126,44 @@ rest.
   make release VERSION=1.0.1 REGEN=1
   ```
 
+## What belongs in the Unreleased section
+
+The changelog is read by someone upgrading from one released version to
+another. The released versions are exactly the `v*` tags — everything after
+the newest one is unreleased, and nobody has ever run any intermediate state
+of it. So the `## Unreleased` section describes the **net difference from the
+last tag**, not the route the work took to get there:
+
+```bash
+git log $(git describe --tags --abbrev=0 --match 'v[0-9]*')..HEAD --oneline
+```
+
+- **One feature, one entry.** A feature built over ten commits is written as
+  if it had arrived finished.
+- **A fix to something unreleased gets no entry of its own.** If the bug was
+  introduced in this same range, no user could hit it, so it is not news. Fold
+  its outcome into the entry for the feature it belongs to — usually silently,
+  because that entry should describe the behaviour as it now ships. It never
+  goes under `### Fixed`.
+- **`### Fixed` means "broken in a version you can have installed."** The
+  regression has to predate the last tag. A fix for a feature that shipped in
+  the *previous* release is a `### Fixed` entry; a fix for a feature that is
+  still sitting in Unreleased is not.
+- **Added-then-reverted work is omitted entirely.** The net difference is
+  nothing.
+- **Internal churn gets no entry** — tests, refactors, lint, CI, plumbing —
+  unless it changes what a user sees or does.
+
+The test for any entry: does it tell a user something they can act on? An
+entry that only makes sense to someone who watched the branch develop is
+churn, and cutting it makes the section easier to read, not poorer.
+
+The auto-draft (`scripts/changelog.py draft`) is told all of this, but it
+works from commit subjects and cannot know which of them cancel out — the
+review in `$EDITOR` is where the folding actually happens. Trimming is an edit
+to the *upcoming* section only: released sections are historical records and
+are never rewritten, even where they carry entries this rule would have cut.
+
 ## Drafting the CHANGELOG without releasing
 
 To draft and edit the Unreleased section on its own — e.g. while wrapping up a
@@ -135,7 +175,10 @@ make changelog
 
 This drafts from git history (best effort; skipped if `claude` is unavailable
 or there are no new commits) and opens `CHANGELOG.md` in `$EDITOR`. Nothing is
-committed.
+committed. The same rule applies as at release time — see [What belongs in the
+Unreleased section](#what-belongs-in-the-unreleased-section); a draft written
+mid-batch is the most likely place for an entry about a fix to something that
+has not shipped.
 
 ## If something goes wrong
 
@@ -180,7 +223,7 @@ rely on.
 | `finalize <version> [--date YYYY-MM-DD]` | stamp `## Unreleased` with a version + date and open a fresh Unreleased |
 | `extract <version> [--raw]` | print a version's section body (used as GitHub Release notes), with each block's hard-wrapped lines joined onto one line; `--raw` prints it verbatim |
 | `unreleased-empty` | exit 0 if the Unreleased section is empty, 1 otherwise |
-| `draft [--from <ref>]` | draft Unreleased entries from `git log` via the `claude` CLI |
+| `draft [--from <ref>]` | draft Unreleased entries from `git log` since the last `v*` tag via the `claude` CLI |
 
 `scripts/site_version.py`:
 

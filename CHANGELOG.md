@@ -1,5 +1,11 @@
 # Changelog
 
+Each section is the difference between two released versions (the `v*` tags),
+as a user upgrading between them sees it — not a log of the work. Changes that
+were made and then corrected before ever being released appear only in their
+final form. Maintainers: see [docs/releasing.md](docs/releasing.md#what-belongs-in-the-unreleased-section)
+before editing `## Unreleased`.
+
 ## Unreleased
 
 ### Added
@@ -19,6 +25,19 @@
   pending manifests, and `jailbee destroy`'s guard now warns when a
   container it would remove is still holding unapplied PR actions.
 
+## 1.3.0 - 2026-09-09
+
+### Added
+
+- **`jailbee merge` now exists as a top-level alias for `jailbee git merge`**,
+  like `jailbee pull` / `push` / `fetch` / `checkout` / `diff` / `retarget`
+  before it. It was withheld when the command landed because that bare verb
+  used to name today's `jailbee git pull`, and a second command answering to it
+  looked like a way to resurrect the ambiguity. It is not: the merge target is
+  never inferred, so the old command's `jailbee merge <name>` shape asks which
+  container to merge *into* on a TTY, and off one exits 1 naming `--into
+  <target>` — it can never quietly merge into the host the way the old verb
+  did.
 - **`browsers.url` — one URL for every browser.** Most repos have a single
   app URL, and writing it once per browser was the only way to say so. A
   browser's own `browsers.<name>.url` still wins where it is set, which is
@@ -30,6 +49,19 @@
 
 ### Changed
 
+- **`-b`/`--branch` is documented as not submodule-safe** on `jailbee git
+  merge`, `fetch`, `pull` and `checkout`. Behaviour is unchanged; the
+  limitation is pre-existing and was undocumented. Both submodule transports
+  enumerate the sender's *checked-out* state (`git submodule status
+  --recursive`) and move only what each sub-repo's `HEAD` and local branches
+  reach, so naming a branch the container does not have checked out can leave
+  a gitlink's objects behind. The superproject merge still succeeds — a
+  gitlink is a tree entry git does not verify — and the failure surfaces one
+  step later in `submodule update --init --recursive`, after the merge commit
+  has been written. `jailbee git push` can reach the same mismatch with no
+  flag, since `--source` defaults to the host's default branch rather than its
+  checkout. The remedy in every case: check the branch out in the container
+  (or on the host) and run the command without the override.
 - **Every legacy spelling now names one removal release: 2.0.0.** The four
   pre-1.3.0 spellings still accepted disagreed about how long they had.
   `chrome:` promised removal in 1.4.0 — one minor release of grace for a
@@ -66,14 +98,6 @@
   that cannot be read falls through to the old `--ff-only` behaviour rather
   than guessing "no divergence" — a failed probe must not write a merge
   commit into the container's history.
-
-- **The legacy `chrome:` deprecation notice printed three times on
-  `jailbee new`.** The command loads the config three times — the CLI's
-  own load, plus the privilege baseline and the branch's own autostart
-  config, the latter two each building a whole `Config` and re-reading
-  `global.yaml` — and the notice went out on every one. It is now capped
-  at one line per process, matching the `.gie/config.yaml` notice, which
-  already worked this way.
 
 - **`jailbee net egress add <host> <container>` actually opens the hole
   now.** The default (container) scope reported success, stored the label,
@@ -127,6 +151,7 @@
   naming the file to edit; `--for` and `--no-revert` decide the TTL
   themselves and keep working regardless. `jailbee config validate` also
   flags the value now, so it can be found before a switch fails.
+
 - **`jailbee new` no longer fails on compositors that don't use
   `wayland-0`.** jailbee decided a host was Wayland from
   `$WAYLAND_DISPLAY` and then bind-mounted `/run/user/<uid>/wayland-0`
@@ -139,6 +164,7 @@
   absolute path the Wayland spec also allows — is skipped with a warning
   instead of aborting the create. Existing containers pick the profile
   half up on `jailbee apply`. ([#17](https://github.com/VRTFinland/jailbee/issues/17))
+
 - **A renumbered compositor socket no longer needs a `jailbee apply`.** The
   profile's `WAYLAND_DISPLAY` is only ever an apply-time snapshot of the
   session that ran it, while the socket mount is recomputed on every boot —
@@ -147,11 +173,13 @@
   container start now pins `WAYLAND_DISPLAY` on the instance alongside the
   mount that decides it, and clears it when no socket was mounted. A
   `WAYLAND_DISPLAY` set in `container.env` still wins.
+
 - **The grok agent preset now includes SuperGrok's auth and chat-proxy
   hosts.** Strict mode already allowed `api.x.ai` and `x.ai`; SuperGrok
   also needs `auth.x.ai` and `cli-chat-proxy.grok.com` for login,
   inference, and hosted web search. Existing grok containers pick this
   up on `jailbee apply`.
+
 - **A repo whose containers used two credential groups could park a login
   under the wrong account's name.** `jailbee claude park`/`use` named a
   parked slot from whichever container's config home had run Claude most
@@ -159,6 +187,7 @@
   group than the one being parked from — silently mislabeling the stored
   login. Parking and switching now only trust a container's config home
   when it is an *authoritative* member of the group in question.
+
 - **A submodule created inside a container now lands on the host in git's
   normal layout, as of the next `jailbee git pull`/`checkout`.** Cloning a
   sub-repo out of a container over `ext::` used to leave a legacy `.git`
@@ -169,12 +198,14 @@
   their next `jailbee git pull`/`checkout`. `jailbee submodule pr` does not
   run this step, so a submodule it first materialises on the host keeps the
   legacy layout until the following `jailbee git pull`/`checkout`.
+
 - **Such a submodule's `origin` is no longer left pointing at the dead
   `ext::incus exec …` transport URL**, which would have pushed the host's
   commits into a container that no longer exists. The upstream now comes
   from the container's `.gitmodules`, else the container sub-repo's own
   `remote.origin.url`; when neither names one, `origin` is removed and the
   fix is printed instead of silently leaving a broken remote behind.
+
 - **A `jailbee new` that fails after the container is created no longer
   leaves it behind.** The instance was created before `incus profile assign`,
   so an assign that failed — a `host_mounts` entry whose source path has gone
@@ -185,20 +216,24 @@
   instance it just created (best-effort, never replacing the original error),
   and "already exists" distinguishes a leftover from a real container and
   points it at `jailbee destroy <name> --force`.
+
 - **`jailbee new` on a repo that never ran `jailbee init` now says so**, and
   refuses before creating anything, instead of reaching `profile_assign` and
   surfacing Incus's "Profile not found". Scratch directories are unaffected —
   their profiles are bootstrapped through `run_apply` first.
+
 - **The autofetch failure no longer sends a scratch directory to a file it
   does not have.** It advised setting `new.autofetch=false` in
   `.jailbee/config.yaml` — the one file a synthesized config is defined by
   lacking, as `jailbee new` reports two lines earlier. It now names
   `scratch.config.new.autofetch` in `global.yaml`, with the path spelled out.
+
 - **`jailbee config init --global` now documents every browser.** The
   generated file carried only `browsers.chrome`, so nothing in it revealed
   that Firefox or `browsers.default` exist. Firefox ships present but
   disabled, the same way `github` does, since it defaults to `source: image`
   and enabling it would promise a browser no golden image has installed yet.
+
 - **`jailbee doctor`'s uid-delegation fix is now sized to the host's own user
   namespace.** It prescribed `root:1000000:1000000000` unconditionally;
   inside an unprivileged container that range does not fit, and appending it
@@ -206,6 +241,7 @@
   write to uid_map failed: Operation not permitted`. The advice is now
   computed from `/proc/self/uid_map` and capped at the documented billion, so
   an ordinary host sees no change.
+
 - **`jailbee ls` and both dashboards now show a container sitting in an
   unresolved merge or rebase** (`conflict!`, `merging`, `rebasing`,
   `cherry-picking`, `reverting`), instead of only ever predicting whether
@@ -553,13 +589,20 @@
   branch into another through the host, submodules included, **without a
   host checkout** — objects travel source → host → target and no host
   branch, index or superproject working tree is touched (a host sub-repo can
-  still be created, for a submodule born in the source container). `--into`
-  is required; nothing is inferred.
+  still be created, for a submodule born in the source container). Neither
+  end is ever inferred, but either may be omitted on a TTY and is then asked
+  for — the sources first (a checkbox over the running clone-mode containers,
+  which merges in the order the rows were *listed*, not ticked; single-select
+  under `-b`, since one branch cannot describe several sources), the target
+  second. Off a TTY both must be given and the error names the missing ones.
   Several sources are merged one at a time, in the order given; the run
   stops at the first conflict or failure and always reports what landed,
   what stopped it, what was not attempted, and the command to resume.
   Conflicts are resolved inside the target with `jailbee shell <target>`.
-  `--plain` transports the refs only and reports "transported", not
+  Each source that lands prints its own `── Submodules` block naming the
+  gitlinks its merge moved, read inside the target container — the merge
+  commit exists nowhere else, so the host can resolve neither end of that
+  diff. `--plain` transports the refs only and reports "transported", not
   "merged". There is no top-level `jailbee merge` alias — that bare verb
   used to name today's `jailbee git pull`, and reusing it here would
   resurrect the ambiguity.

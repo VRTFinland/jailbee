@@ -263,6 +263,12 @@ back to `master` and out again in one command. `jailbee submodule checkout`
 is a hidden alias kept for compatibility; it prints a pointer to
 `jailbee branch`.
 
+One limitation: the transport enumerates the *sender's checked-out state*, so
+`-b <branch>` on `jailbee git merge` / `fetch` / `pull` — which reads a branch
+the container does **not** have checked out — does not carry that branch's
+submodules. Check the branch out in the container first and run the command
+without `-b`.
+
 → [Submodules](git-bridge.md#submodules)
 
 ### How do I review someone's pull request?
@@ -329,12 +335,12 @@ stopping at the first conflict; resolve inside `jailbee shell feat-c`, then
 `jailbee git merge <source…> --into <target>` — objects travel source → host
 → target without a host checkout, and no host branch, index or superproject
 working tree is touched (a host sub-repo can still be created, for a
-submodule born in the source container). `--into` is required; several
+submodule born in the source container). Run it bare (`jailbee git merge`)
+and it asks for the sources, then the target; several
 sources run one at a time in the order given, and the run stops at the
 first conflict with a summary naming what landed, what didn't, and the
-resume command. `--plain` transports the refs without merging. There
-is no top-level `jailbee merge` alias — that bare verb used to name today's
-`jailbee git pull`.
+resume command. `--plain` transports the refs without merging. `jailbee merge` is a
+top-level alias for it.
 
 → [Merging one container into another](git-bridge.md#merging-one-container-into-another--jailbee-git-merge)
 

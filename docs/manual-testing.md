@@ -711,13 +711,34 @@ git merge --abort && exit
 
 # 3. --plain transports without merging.
 jailbee git merge feat-merge-d --into feat-merge-target --plain
-# expect: report says "transported", never "merged"
+# expect: report says "transported", never "merged", and prints NO
+# "── Submodules" block — nothing was merged, so no gitlink moved
 jailbee shell feat-merge-target
 cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline -1 && exit
 
-# 4. --into is required.
+# 4. Neither end is inferred off a TTY.
+jailbee git merge feat-merge-a < /dev/null
+# expect: exit 1, names "--into <target>" and says to run in a TTY
+jailbee git merge < /dev/null
+# expect: exit 1, names BOTH "<source>..." and "--into <target>"
+
+# 4a. Interactive selection (needs a real terminal — pickers only render on a
+#     TTY, so this step cannot be piped or run under `script -c`'s stdin).
+jailbee git merge
+# expect: a checkbox titled "Select containers to merge FROM (merged in
+# listed order):" listing only RUNNING clone-mode containers, then — after
+# space-toggling one or more and pressing Enter — a single-select "Select the
+# container to merge INTO:" over the same list, the source rows included.
+# Ctrl+C at either prompt: "Aborted", nothing merged.
+# Enter with nothing ticked at the first prompt: "Nothing selected.", exit 0,
+# and the second prompt never appears.
 jailbee git merge feat-merge-a
-# expect: exit 2, "Missing option '--into'."
+# expect: only the INTO prompt (the source was given)
+jailbee git merge --into feat-merge-target
+# expect: only the FROM checkbox
+jailbee git merge --into feat-merge-target -b feat/merge-a
+# expect: the FROM prompt is a SINGLE-select ("Select the container to merge
+# FROM:"), not a checkbox — `-b` cannot describe several sources
 
 # 5. A submodule born inside the source container — the least-travelled
 #    line in this branch (submodules.py's create-then-`checkout --detach`
@@ -732,6 +753,19 @@ jailbee new feat/merge-sub-tgt
 jailbee git merge feat-merge-sub-src --into feat-merge-sub-tgt
 # expect: reported as landed, no error about a missing or unresolvable
 # submodule ref
+
+# 5-i. The submodule block. Step 5's merge moved a gitlink (added one, in
+#      fact), so it must print a "── Submodules" block naming `libs/hello`.
+#      The two superproject commits exist ONLY inside the target, so this is
+#      also the check that the diff is read there and not on the host — a
+#      host-side read fails silently, printing nothing at all.
+# expect (from step 5's output): "── Submodules" and a `libs/hello  new → <sha>`
+#      line. Then a second merge that moves the same pointer:
+jailbee shell feat-merge-sub-src
+cd ~/SampleApp/libs/hello && git commit --allow-empty -m "move the pointer" \
+  && cd ~/SampleApp && git commit -am "bump libs/hello" && exit
+jailbee git merge feat-merge-sub-src --into feat-merge-sub-tgt
+# expect: "libs/hello  <old>..<new>  (1 commits, +0 -0)"
 
 # 5a. Target sub-repo exists and is at the source's commit — proves the
 #     create + checkout --detach path ran and actually resolved.
@@ -1495,11 +1529,12 @@ uv run jailbee checkout --help | grep "jailbee git checkout"   # "Alias for `jai
 uv run jailbee fetch --help    | grep "jailbee git fetch"
 uv run jailbee retarget --help | grep "jailbee git retarget"
 uv run jailbee diff --help     | grep "jailbee git diff"
+uv run jailbee merge --help    | grep "jailbee git merge"
 # (The full docstring with Examples lives on the canonical form:)
 uv run jailbee git pull --help | grep "Examples:"
 
-# `merge` is the one canonical subcommand with no top-level alias.
-uv run jailbee merge 2>&1 | grep -i "no such command"
+# The `merge` alias never merges into a guess: off a TTY it names --into.
+uv run jailbee merge feat-foo 2>&1 | grep -- "--into <target>"
 
 # The old commands are gone.
 uv run jailbee git create-pr 2>&1 | grep -i "no such command"

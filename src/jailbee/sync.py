@@ -20,10 +20,11 @@ from jailbee.incus import IncusError
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.submodules import GitRun
     from jailbee.tui import ConfirmFn
 
 
@@ -103,7 +104,12 @@ class MergeResult:
 
 @dataclass(frozen=True)
 class SubmoduleMove:
-    """A submodule pointer that moved as part of a host-side merge."""
+    """A submodule pointer that moved as part of a merge.
+
+    Produced for a host superproject merge (`jailbee git pull`) and for one
+    that ran inside a container (`jailbee git merge`) alike — the two differ
+    only in which repository the diff was read from.
+    """
 
     path: str
     old_sha: str | None
@@ -285,12 +291,21 @@ class MergeInContainerResult:
     unchanged HEAD and `fast_forward_only` is a `False` sentinel meaning "no
     merge was attempted", not a fact about one. Renderers must not print
     fast-forward semantics from a plain run.
+
+    `submodule_moves` are the gitlinks the merge moved *inside the target*,
+    read there rather than on the host: the merge commit is created in the
+    container and the target's pre-merge HEAD was never fetched, so a
+    host-side diff of the two would find neither commit. Empty for a `plain`
+    run (nothing merged) and for `push_and_merge`, whose own summary has never
+    printed a submodule block — giving it one is a separate change, not a
+    field it is expected to fill.
     """
 
     push: PushResult
     container_branch: str
     fast_forward_only: bool
     head_oid: str
+    submodule_moves: tuple[SubmoduleMove, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2319,15 +2334,35 @@ def compute_submodule_moves(
 ) -> list[SubmoduleMove]:
     """Gitlinks that moved between superproject commits ``old`` and ``new``.
 
-    Commit counts and shortstats come from the host sub-repo
-    (``repo_root/<path>``); objects are present after submodule transport.
+    The host entry point, and the one the CLI calls: it keeps `cli.py` from
+    having to know which `GitRun` reads the host. A merge that ran inside a
+    container reads the container instead — see :func:`_submodule_moves_between`.
+    """
+    return _submodule_moves_between(git.run_capture, str(repo_root), old, new)
+
+
+def _submodule_moves_between(
+    run: GitRun, repo_dir: str, old: str | None, new: str | None
+) -> list[SubmoduleMove]:
+    """Gitlinks that moved between superproject commits ``old`` and ``new``.
+
+    ``run`` decides *where* the repositories are read — `git.run_capture` for
+    the host, `submodules._container_runner(...)` for a container — and
+    ``repo_dir`` is the superproject's directory there. Commit counts and
+    shortstats come from the sub-repo at ``<repo_dir>/<path>``; objects are
+    present after submodule transport.
+
+    The path join is POSIX (a plain ``/``) rather than `pathlib`: half the
+    callers name a path inside a Linux container, where the host's separator
+    would be wrong to apply.
+
     Best-effort: any sub-repo query failure degrades to zero counts.
     """
     from jailbee.git_status import _shortstat_ints
 
     if not old or not new or old == new:
         return []
-    ok, raw = git.run_capture(str(repo_root), ["diff", "--raw", "--abbrev=40", f"{old}..{new}"])
+    ok, raw = run(repo_dir, ["diff", "--raw", "--abbrev=40", f"{old}..{new}"])
     if not ok:
         return []
     moves: list[SubmoduleMove] = []
@@ -2342,7 +2377,7 @@ def compute_submodule_moves(
         om, nm, os_sha, ns_sha = parts[0], parts[1], parts[2], parts[3]
         if om != "160000" and nm != "160000":
             continue
-        sub = str(repo_root / path)
+        sub = f"{repo_dir}/{path}"
         old_zero = set(os_sha) == {"0"}
         new_zero = set(ns_sha) == {"0"}
         if old_zero:
@@ -2357,16 +2392,16 @@ def compute_submodule_moves(
             old_out, new_out = os_sha, None
         else:
             status = "modified"
-            commits = _count(sub, f"{os_sha}..{ns_sha}")
-            ok2, ss = git.run_capture(sub, ["diff", "--shortstat", f"{os_sha}..{ns_sha}"])
+            commits = _count(run, sub, f"{os_sha}..{ns_sha}")
+            ok2, ss = run(sub, ["diff", "--shortstat", f"{os_sha}..{ns_sha}"])
             ins, dels = _shortstat_ints(ss) if ok2 else (0, 0)
             old_out, new_out = os_sha, ns_sha
         moves.append(SubmoduleMove(path, old_out, new_out, status, commits, ins, dels))
     return moves
 
 
-def _count(sub: str, rev: str) -> int:
-    ok, out = git.run_capture(sub, ["rev-list", "--count", rev])
+def _count(run: GitRun, sub: str, rev: str) -> int:
+    ok, out = run(sub, ["rev-list", "--count", rev])
     return int(out.strip()) if ok and out.strip().isdigit() else 0
 
 
@@ -2375,7 +2410,7 @@ _REPORT_RULE = "── Submodules " + "─" * 22
 
 def render_submodule_report(
     *,
-    moves: list[SubmoduleMove] | None = None,
+    moves: Sequence[SubmoduleMove] | None = None,
     conflict: ConflictReport | None = None,
 ) -> str | None:
     """Render the delimited submodule report block, or None if empty.
@@ -2711,6 +2746,11 @@ def merge_container_into_container(
         )
 
     fast_forward_only = target_branch == fetch_result.branch
+    # Read *before* the merge, and after the transport rather than with the
+    # preflight: the transport cannot move it (`ff_container_branch` skips
+    # HEAD's own branch), so both points are equivalent, and taking it here
+    # keeps a refused transport from paying for a probe it never uses.
+    pre_merge_head = _container_head_oid(incus, target_full, target_repo_dir, uid=uid)
     head_oid = _merge_ref_in_container(
         incus,
         target_full,
@@ -2727,6 +2767,16 @@ def merge_container_into_container(
         container_branch=target_branch,
         fast_forward_only=fast_forward_only,
         head_oid=head_oid,
+        # Inside the target: the merge commit exists nowhere else, so this is
+        # the only place the two superproject commits can both be resolved.
+        submodule_moves=tuple(
+            _submodule_moves_between(
+                submodules._container_runner(incus, target_full, uid=uid),
+                target_repo_dir,
+                pre_merge_head,
+                head_oid,
+            )
+        ),
     )
 
 

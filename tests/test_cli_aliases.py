@@ -5,9 +5,10 @@ Every `jailbee git <sub>` command has a top-level alias (e.g. `jailbee checkout`
 command list stays short, but they remain invocable and the canonical forms
 are listed under `jailbee git --help`.
 
-`jailbee git merge` is the exception and has no top-level alias — see
-`test_jailbee_git_merge_needs_an_explicit_target` and the note beside the
-command in `cli.py`.
+`jailbee merge` was withheld at first (the bare verb used to name today's
+`jailbee git pull`) and now exists like the rest — see
+`test_jailbee_git_merge_needs_an_explicit_target` for what keeps the old
+one-argument shape from merging into a guess.
 """
 
 from __future__ import annotations
@@ -19,37 +20,26 @@ from jailbee.cli import app
 from jailbee.lifecycle import ResolvedContainer
 
 # Every canonical `jailbee git` subcommand that has a top-level alias.
-ALIASES = ["fetch", "checkout", "pull", "retarget", "diff", "push"]
+ALIASES = ["fetch", "checkout", "pull", "retarget", "diff", "push", "merge"]
 
 
-def test_jailbee_git_merge_needs_an_explicit_target():
-    """`jailbee git merge feat-foo` must fail — it never merges into a guess.
+@pytest.mark.parametrize("argv", [["git", "merge", "feat-foo"], ["merge", "feat-foo"]])
+def test_jailbee_git_merge_needs_an_explicit_target(argv):
+    """`jailbee [git] merge feat-foo` must fail — it never merges into a guess.
 
-    Historically it failed with "no such command": the old container->host
-    `jailbee git merge` was renamed to `jailbee git pull`, and this test kept
-    the name dead so the ambiguous form could not come back. The name now
-    belongs to the container->container merge, whose `--into` is *required* —
-    so the bare one-argument form the old command accepted is still an error,
-    now a missing-option usage error instead of an unknown command.
+    Historically the top-level form failed with "no such command": the old
+    container->host `jailbee git merge` was renamed to `jailbee git pull`, and
+    the name was kept dead so the ambiguous form could not come back. The name
+    now belongs to the container->container merge, whose target is asked for on
+    a TTY and never inferred — so off a TTY (which is what `CliRunner` is) the
+    bare one-argument form the old command accepted is an error either way,
+    which is what makes the top-level alias safe to hand back.
     """
-    result = CliRunner().invoke(app, ["git", "merge", "feat-foo"])
-    assert result.exit_code == 2
+    result = CliRunner().invoke(app, argv)
+    assert result.exit_code == 1
     combined = (result.output or "") + (result.stderr or "")
-    assert "merge" in combined.lower()
-    assert "missing option" in combined.lower()
-    assert "--into" in combined
-
-
-def test_jailbee_merge_has_no_top_level_alias():
-    """`jailbee merge` is deliberately not registered — unlike every other sub.
-
-    A bare `merge` verb is exactly the ambiguity the earlier removal was about,
-    and `--into` reads worse without the `git` qualifier.
-    """
-    result = CliRunner().invoke(app, ["merge", "c1", "--into", "c4"])
-    assert result.exit_code != 0
-    combined = (result.output or "") + (result.stderr or "")
-    assert "no such command" in combined.lower()
+    assert "--into <target>" in combined
+    assert "TTY" in combined
 
 
 # --- aliases are hidden from `jailbee --help` but reachable ---------------------
@@ -213,6 +203,28 @@ def test_top_level_push_calls_same_function(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     push_mock.assert_called_once()
+
+
+def test_top_level_merge_calls_same_function(mocker, tmp_path):
+    """`jailbee merge c1 --into c4` runs the same code path as `jailbee git merge ...`."""
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "sampleapp"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        side_effect=lambda _cfg, name: (mocker.MagicMock(), f"sampleapp-{name}"),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", side_effect=lambda _cfg, full: full)
+    mocker.patch("jailbee.cli._print_container_merge_result")
+    merge_mock = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = CliRunner().invoke(app, ["merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    merge_mock.assert_called_once()
+    args = merge_mock.call_args.args
+    assert args[2:4] == ("sampleapp-c1", "sampleapp-c4")
 
 
 def test_top_level_diff_calls_same_function(mocker, tmp_path):

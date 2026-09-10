@@ -142,6 +142,14 @@ The CHANGELOG step of that flow (`docs/releasing.md`) is also where you check
 `UPGRADE_NOTES` in `src/jailbee/upgrade.py` for a needed entry — see that
 document for the procedure.
 
+Contributors don't need to touch `CHANGELOG.md`: entries are drafted from the
+commit log at release time. That draft describes the net difference from the
+last release tag, so a good commit subject is what makes it into the changelog
+— and a fix to something that has not shipped yet is folded into the entry for
+the feature it belongs to rather than listed on its own. The rules are in
+[What belongs in the Unreleased
+section](docs/releasing.md#what-belongs-in-the-unreleased-section).
+
 ## Reporting bugs and proposing features
 
 Please use the issue templates (`.github/ISSUE_TEMPLATE/`) — they ask for
