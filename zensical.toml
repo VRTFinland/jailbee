@@ -20,11 +20,10 @@ edit_uri = "blob/main/docs/"
 # The brand layer that maps the landing page's palette onto the theme's own
 # variables — see website/docs-theme/assets/jailbee-docs.css.
 extra_css = ["assets/jailbee-docs.css"]
-# Self-hosted mermaid. Defining window.mermaid before the theme's bundle runs
-# is what stops it fetching https://unpkg.com/mermaid@11/dist/mermaid.min.js
-# from the reader's browser. Pinned by filename and by sha256 in
-# tests/test_docs_site.py.
-extra_javascript = ["assets/mermaid-11.17.2.min.js"]
+# Mermaid is NOT listed here: it would ship on all 14 pages. Instead
+# website/docs-theme/main.html loads the pinned, self-hosted bundle only on a
+# page whose rendered content contains a mermaid diagram — see that file's
+# header comment.
 
 # The sections mirror README.md's own documentation tables, so a reader who
 # arrives from either place sees the same grouping.

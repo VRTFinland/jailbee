@@ -303,13 +303,19 @@ MERMAID = "mermaid-11.17.2.min.js"
 MERMAID_SHA256 = "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
 
 
-def test_mermaid_is_the_pinned_file_and_nothing_else() -> None:
-    """The theme fetches mermaid from unpkg unless the page defines
-    window.mermaid first. This is that file, byte for byte."""
+def test_mermaid_is_the_pinned_file_loaded_only_where_needed() -> None:
+    """The theme fetches mermaid from unpkg unless something defines
+    window.mermaid first. main.html does that conditionally — only on a page
+    whose content contains a mermaid diagram — instead of extra_javascript
+    shipping the 3.6 MB bundle on all 14 pages. This pins the file itself,
+    byte for byte, and that the template is what references it."""
     import hashlib
 
-    scripts = docs_site.config()["extra_javascript"]
-    assert scripts == [f"assets/{MERMAID}"], f"unexpected extra_javascript: {scripts}"
+    assert "extra_javascript" not in docs_site.config(), (
+        "extra_javascript would ship mermaid on every page — load it from main.html instead"
+    )
+    main_html = (THEME / "main.html").read_text()
+    assert f"assets/{MERMAID}" in main_html, "main.html does not reference the pinned mermaid file"
     path = THEME / "assets" / MERMAID
     assert path.is_file(), "the pinned mermaid bundle is not committed"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == MERMAID_SHA256
@@ -318,7 +324,7 @@ def test_mermaid_is_the_pinned_file_and_nothing_else() -> None:
 def test_no_configured_asset_is_an_absolute_url() -> None:
     """A CDN reference would enter through configuration, not through markup."""
     config = docs_site.config()
-    for value in [*config["extra_css"], *config["extra_javascript"]]:
+    for value in [*config["extra_css"], *config.get("extra_javascript", [])]:
         assert not value.startswith(("http://", "https://", "//")), value
 
 
