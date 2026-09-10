@@ -2573,3 +2573,308 @@ def test_subid_fix_is_unchanged_when_the_uid_map_cannot_be_read(tmp_path):
     fix = _subid_fix(53023, 53023, uid_map_path=tmp_path / "absent")
 
     assert "root:1000000:1000000000" in fix
+
+
+# ---- registry cache (deferred) ----
+
+
+def _running_mirror_results(tmp_path):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
+    with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
+        return run_checks(cfg, incus, gcfg=gcfg)
+
+
+def _cache_report(corrupt=(), **overrides):
+    from jailbee.registry_cache import CacheReport
+
+    fields = {
+        "corrupt": tuple(corrupt),
+        "checked": 1352,
+        "ok": 1352 - len(corrupt),
+        "purged": 0,
+        "skipped_no_digest": 259,
+        "skipped_status": 0,
+        "skipped_temp": 0,
+        "errors": 0,
+        "error_samples": (),
+        "bytes_checked": 19_327_352_832,
+    }
+    return CacheReport(**{**fields, **overrides})
+
+
+def _corrupt_entry(digest_prefix="0251fc1b2897"):
+    from jailbee.registry_cache import CorruptEntry
+
+    digest = digest_prefix + "0" * (64 - len(digest_prefix))
+    return CorruptEntry(
+        path="2/f7/x",
+        key=f"/v2/gisgro/typster/blobs/sha256:{digest}",
+        expected=digest,
+        actual="1" * 64,
+        size=1,
+        purged=False,
+    )
+
+
+def test_doctor_defers_a_cache_check_right_after_a_running_mirror(tmp_path):
+    results = _running_mirror_results(tmp_path)
+
+    names = [r.name for r in results]
+    cache = results[names.index("registry cache")]
+    assert names.index("registry cache") == names.index("registry mirror") + 1
+    assert cache.deferred is not None
+    assert "jailbee registry verify" in cache.detail  # the hint if it gets skipped
+
+
+@pytest.mark.parametrize(
+    "status", [MirrorStatus.STOPPED, MirrorStatus.DEGRADED, MirrorStatus.MISSING]
+)
+def test_doctor_has_no_cache_check_unless_the_mirror_runs(tmp_path, status):
+    """The mirror row already says what is wrong; a second red row for the
+    same cause would only bury it."""
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    gcfg = GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=True))
+
+    with patch("jailbee.doctor.registry_status", return_value=status):
+        results = run_checks(cfg, incus, gcfg=gcfg)
+
+    assert "registry cache" not in [r.name for r in results]
+
+
+def test_a_sound_cache_passes_the_deferred_check(tmp_path, mocker):
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch("jailbee.registry_cache.verify_cache", return_value=_cache_report())
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is True
+    assert result.deferred is None
+    assert result.detail == "1352 entries verified (18.0 GB), none corrupt"
+
+
+def test_a_corrupt_cache_fails_the_deferred_check_and_names_the_fix(tmp_path, mocker):
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch(
+        "jailbee.registry_cache.verify_cache",
+        return_value=_cache_report([_corrupt_entry(), _corrupt_entry("aaaaaaaaaaaa")]),
+    )
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is False
+    assert "2 corrupt entries" in result.detail
+    assert "gisgro/typster sha256:0251fc1b2897" in result.detail
+    assert "+1 more" in result.detail
+    assert "jailbee registry verify --purge" in result.detail
+
+
+def test_a_failing_scan_fails_the_deferred_check_without_raising(tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    mocker.patch("jailbee.registry_cache.verify_cache", side_effect=IncusError("Command not found"))
+
+    result = cache.deferred(lambda _p: None)
+
+    assert result.ok is False
+    assert result.detail == "could not verify: Command not found"
+
+
+def test_the_deferred_check_passes_progress_through(tmp_path, mocker):
+    from jailbee.registry_cache import CacheProgress
+
+    cache = next(r for r in _running_mirror_results(tmp_path) if r.name == "registry cache")
+    progress = CacheProgress(1, 2, 3, 4)
+
+    def fake_verify(incus, *, on_progress):
+        on_progress(progress)
+        return _cache_report()
+
+    mocker.patch("jailbee.registry_cache.verify_cache", side_effect=fake_verify)
+    seen = []
+
+    cache.deferred(seen.append)
+
+    assert seen == [progress]
+
+
+# ---- doctor CLI: deferred rows ----
+
+
+def _invoke_doctor(mocker, tmp_path, results):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=_cfg(tmp_path))
+    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.doctor.run_checks", return_value=results)
+    return CliRunner().invoke(app, ["doctor"])
+
+
+def test_doctor_shows_the_result_of_a_deferred_check(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    done = CheckResult("registry cache", True, "1352 entries verified (18.0 GB), none corrupt")
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult(
+            "registry cache", True, "run 'jailbee registry verify'", deferred=lambda _p: done
+        ),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    assert "verified" in result.output  # space-free token: table cells wrap at 80 cols
+    assert "found" in result.output
+
+
+def test_a_failing_deferred_check_fails_doctor(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    failed = CheckResult("registry cache", False, "1 corrupt entry")
+    results = [CheckResult("registry cache", True, "hint", deferred=lambda _p: failed)]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1
+    assert "corrupt" in result.output
+
+
+def test_ctrl_c_skips_only_the_running_deferred_check(tmp_path, mocker):
+    """The other rows are the point of doctor; an impatient Ctrl+C must not
+    take them down with the slow one."""
+    from jailbee.doctor import CheckResult
+    from jailbee.registry_cache import CacheProgress
+
+    def interrupted(on_progress):
+        on_progress(CacheProgress(812, 1352, 1, 2))
+        raise KeyboardInterrupt
+
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult("registry cache", True, "run 'jailbee registry verify'", deferred=interrupted),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    # Space-free tokens only: the 80-column table wraps the detail cell.
+    assert "SKIPPED" in result.output
+    assert "interrupted" in result.output
+    assert "812/1352" in result.output
+    assert "found" in result.output
+
+
+def test_a_skipped_check_does_not_hide_a_real_failure(tmp_path, mocker):
+    from jailbee.doctor import CheckResult
+
+    def interrupted(_on_progress):
+        raise KeyboardInterrupt
+
+    results = [
+        CheckResult("uid delegation", False, "missing"),
+        CheckResult("registry cache", True, "hint", deferred=interrupted),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1
+
+
+def test_a_skipped_row_is_neither_a_pass_nor_a_failure(tmp_path, mocker):
+    """`skipped` has to carry the exemption on its own: a skipped row built
+    with ok=True would make doctor's exit-code guard redundant, and the next
+    person writing ok=False would silently turn a skip into a failure."""
+    from jailbee.doctor import CheckResult
+
+    def interrupted(_on_progress):
+        raise KeyboardInterrupt
+
+    results = [CheckResult("registry cache", True, "hint", deferred=interrupted)]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 0, result.output
+    assert "SKIPPED" in result.output
+
+
+def test_a_deferred_check_that_raises_does_not_crash_doctor(tmp_path, mocker):
+    """Anything but a KeyboardInterrupt used to escape through the Live display
+    and take the command down with a traceback."""
+    from jailbee.doctor import CheckResult
+
+    def broken(_on_progress):
+        raise OSError("no such file: registry_cache_scan.py")
+
+    results = [
+        CheckResult("incus binary", True, "found"),
+        CheckResult("registry cache", True, "hint", deferred=broken),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "no such file" in result.output
+    assert "found" in result.output
+
+
+def test_an_interrupt_stops_the_deferred_checks_after_it(tmp_path, mocker):
+    """Ctrl+C means "don't spend minutes on this", so a second slow check must
+    not start either — it is reported as not run."""
+    from jailbee.doctor import CheckResult
+
+    started = []
+
+    def interrupted(_on_progress):
+        started.append("first")
+        raise KeyboardInterrupt
+
+    def second(_on_progress):
+        started.append("second")
+        return CheckResult("later check", True, "done")
+
+    results = [
+        CheckResult("registry cache", True, "hint", deferred=interrupted),
+        CheckResult("later check", True, "run it yourself", deferred=second),
+    ]
+
+    result = _invoke_doctor(mocker, tmp_path, results)
+
+    assert started == ["first"]
+    assert result.exit_code == 0, result.output
+    assert "not run" in result.output
+
+
+def test_the_running_row_renders_its_spinner_and_progress(tmp_path):
+    """CliRunner's console is not a terminal, so Live renders only the final
+    table: without this, the live cell is covered by no test at all."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jailbee.cli import _DeferredDetail, _doctor_table
+    from jailbee.doctor import CheckResult
+    from jailbee.registry_cache import CacheProgress
+
+    detail = _DeferredDetail()
+    detail.progress = CacheProgress(1200, 1352, 12_025_908_428, 19_327_352_832)
+    results = [
+        CheckResult("registry mirror", True, "status: running"),
+        CheckResult("registry cache", True, "hint", deferred=lambda _p: results[1]),
+    ]
+
+    console = Console(force_terminal=True, width=100, file=StringIO())
+    console.print(_doctor_table(results, running=(1, detail)))
+    out = console.file.getvalue()
+
+    assert "1200/1352" in out
+    assert "11.2" in out

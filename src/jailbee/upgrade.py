@@ -134,11 +134,19 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason="Firefox adds a host mount and a per-container profile pool slot",
     ),
     UpgradeNote(
-        version=(1, 3, 0),
+        version=(1, 3, 1),
         actions=frozenset({"apply"}),
         reason=(
             "the `jailbee-pr-review` skill is new and `jailbee apply` syncs it "
             "into the shared skills mount"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 3, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the registry mirror stops trying unreachable IPv6 upstreams and fails "
+            "over from an unresponsive one after 5 s instead of 60 s"
         ),
     ),
 )
