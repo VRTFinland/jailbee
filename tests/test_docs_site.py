@@ -265,3 +265,54 @@ def test_the_docs_stylesheet_uses_the_fonts_the_site_already_ships() -> None:
     for font in ("IBMPlexSans-Regular", "IBMPlexSans-SemiBold", "IBMPlexMono-Regular"):
         assert f"/assets/fonts/{font}.woff2" in css, f"the docs do not use {font}"
         assert (REPO_ROOT / "website" / "assets" / "fonts" / f"{font}.woff2").is_file()
+
+
+def test_the_brand_layer_is_wired_into_the_theme() -> None:
+    """Dropping either line silently unbrands the docs and nothing else fails:
+    `extra_css` and `custom_dir` are the only two config keys that connect
+    website/docs-theme/assets/jailbee-docs.css to the built site."""
+    config = docs_site.config()
+    assert config["extra_css"] == ["assets/jailbee-docs.css"]
+    assert config["theme"]["custom_dir"] == "website/docs-theme"
+    assert DOCS_CSS.is_file()
+
+
+THEME = REPO_ROOT / "website" / "docs-theme"
+# mermaid 11.17.2, package/dist/mermaid.min.js from the npm tarball whose
+# published integrity is
+# sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==
+MERMAID = "mermaid-11.17.2.min.js"
+MERMAID_SHA256 = "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
+
+
+def test_mermaid_is_the_pinned_file_and_nothing_else() -> None:
+    """The theme fetches mermaid from unpkg unless the page defines
+    window.mermaid first. This is that file, byte for byte."""
+    import hashlib
+
+    scripts = docs_site.config()["extra_javascript"]
+    assert scripts == [f"assets/{MERMAID}"], f"unexpected extra_javascript: {scripts}"
+    path = THEME / "assets" / MERMAID
+    assert path.is_file(), "the pinned mermaid bundle is not committed"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MERMAID_SHA256
+
+
+def test_no_configured_asset_is_an_absolute_url() -> None:
+    """A CDN reference would enter through configuration, not through markup."""
+    config = docs_site.config()
+    for value in [*config["extra_css"], *config["extra_javascript"]]:
+        assert not value.startswith(("http://", "https://", "//")), value
+
+
+def test_the_repository_link_does_not_call_the_github_api() -> None:
+    source = (THEME / "partials" / "source.html").read_text()
+    assert "data-md-component" not in source, (
+        "the stock partial's component id is what triggers the api.github.com fetch"
+    )
+    assert "config.repo_url" in source, "the header should still link the repository"
+
+
+def test_the_page_action_links_the_rendered_source_not_the_raw_file() -> None:
+    actions = (THEME / "partials" / "actions.html").read_text()
+    assert "/raw/" not in actions, "the stock partial rewrites blob/ to raw/"
+    assert "page.edit_url" in actions

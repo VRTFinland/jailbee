@@ -1,0 +1,11 @@
+{#-
+  Overrides the stock partial. `edit_uri` is `blob/main/docs/`, and the stock
+  template rewrites the rendered-blob path to the unrendered-file path for
+  its view action — which serves the reader raw Markdown instead of the file
+  on github.com.
+-#}
+{% if page.edit_url %}
+  <a href="{{ page.edit_url }}" title="View source on GitHub" class="md-content__button md-icon">
+    {% include ".icons/lucide/file-code-2.svg" %}
+  </a>
+{% endif %}
