@@ -59,6 +59,25 @@ _RPARDINI_DEFAULT_REGISTRIES: frozenset[str] = frozenset(
 )
 
 _PROXY_ENV_FILE = "/etc/jailbee-registry-proxy.env"
+
+# rpardini knobs jailbee sets in the proxy's env file (see `sync_mirror_env`).
+#
+# DISABLE_IPV6: the mirror's `jailbee-loose` NIC gets an Incus ULA address and
+# an IPv6 default route whether or not the host can route IPv6 anywhere. Where
+# it cannot, nginx still resolves AAAA records and tries each one before any
+# IPv4 upstream — 6 to 9 doomed connects per cache miss. rpardini's entrypoint
+# turns this into `ipv6=off` on nginx's resolver.
+#
+# PROXY_CONNECT_TIMEOUT / PROXY_CONNECT_CONNECT_TIMEOUT: nginx's 60 s default
+# (cached upstreams, and CONNECT tunnels to uncached ones). One black-holed
+# upstream address then delays the first response header past dockerd's
+# patience, failing a pull that nginx itself goes on to complete. 5 s is far
+# above any healthy TCP handshake and fails over to the next address quickly.
+_PROXY_TUNING: dict[str, str] = {
+    "DISABLE_IPV6": "true",
+    "PROXY_CONNECT_TIMEOUT": "5s",
+    "PROXY_CONNECT_CONNECT_TIMEOUT": "5s",
+}
 _QUADLET_UNIT_PATH = "/etc/containers/systemd/jailbee-registry-proxy.container"
 
 
@@ -545,6 +564,11 @@ def registry_up(
     _ensure_service_active(
         incus, provisioned=provisioned, repair_failure=repair_failure, on_step=on_step
     )
+    # After the wait: the sync restarts the service when it changes the file,
+    # and a restart only means something once the service is up. No repo is
+    # in play here, so no extra registries — this is for the tuning.
+    on_step("syncing the proxy settings")
+    sync_mirror_env(incus, [])
 
 
 def registry_down(incus: Incus) -> None:
@@ -565,47 +589,67 @@ def registry_down(incus: Incus) -> None:
     )
 
 
-def _read_registries_env_file(incus: Incus) -> set[str]:
-    """Parse REGISTRIES= from the mirror's env file. Empty set if absent."""
+def _read_proxy_env_file(incus: Incus) -> dict[str, str]:
+    """Parse the mirror's env file into ``KEY -> VALUE``. Empty if absent.
+
+    Lines without ``=`` (blanks, comments) are dropped: the file is
+    jailbee-written, and ``sync_mirror_env`` re-renders it from this dict.
+    """
     out = incus.exec(
         MIRROR_CONTAINER_NAME,
         ["sh", "-c", f"cat {_PROXY_ENV_FILE} 2>/dev/null || true"],
         timeout=10,
     )
+    env: dict[str, str] = {}
     for line in out.splitlines():
-        if line.startswith("REGISTRIES="):
-            return set(line.removeprefix("REGISTRIES=").split())
-    return set()
+        key, sep, value = line.partition("=")
+        if sep and key and not key.startswith("#"):
+            env[key] = value
+    return env
 
 
-def apply_mirror_registries(incus: Incus, registries: Iterable[str]) -> bool:
-    """Ensure ``registries`` are cached by the running mirror.
+def sync_mirror_env(incus: Incus, registries: Iterable[str]) -> bool:
+    """Bring the running mirror's env file to what jailbee wants in it.
 
-    rpardini's nginx generates MITM certs + ``proxy_cache`` upstreams only
-    for hostnames listed in its ``REGISTRIES`` env. Unlisted hostnames are
-    CONNECT-tunneled without caching — so per-repo upstreams (notably ECR
-    hosts) need adding here, otherwise every ``jailbee new`` re-pulls them
-    from the internet.
+    The file (``/etc/jailbee-registry-proxy.env``, read by the Quadlet unit's
+    ``EnvironmentFile=``) carries two kinds of setting:
 
-    Idempotent: returns ``False`` when the file already contains everything
-    requested. Otherwise rewrites ``/etc/jailbee-registry-proxy.env`` with the
-    union of (rpardini image defaults + previously persisted set + caller's
-    list), sorted for stable diffs, and restarts the proxy service. Set
-    semantics mean once-added registries stick: a repo whose
-    ``extra_registries`` later shrinks doesn't get them removed from the
-    host-global mirror. To prune, recreate the container.
+    - ``REGISTRIES``: rpardini's nginx generates MITM certs + ``proxy_cache``
+      upstreams only for hostnames listed here. Unlisted hostnames are
+      CONNECT-tunneled without caching — so per-repo upstreams (notably ECR
+      hosts) need adding, otherwise every ``jailbee new`` re-pulls them from
+      the internet. The written value is the union of rpardini's image
+      defaults, what the file already holds, and ``registries``: once-added
+      registries stick, and a repo whose ``extra_registries`` later shrinks
+      doesn't get them removed from the host-global mirror. To prune,
+      recreate the container.
+    - ``_PROXY_TUNING``: host-global, owned by jailbee, and forced — a
+      hand-edited value is put back.
+
+    Keys jailbee does not own (``AUTH_REGISTRIES``, say) are preserved.
+
+    Returns ``False`` and touches nothing when the file already matches.
+    Otherwise rewrites it, sorted for stable diffs, and restarts the proxy
+    service — which drops every pull in flight through the mirror, hence the
+    no-op path. Called with an empty ``registries`` it still applies the
+    tuning, which is how a mirror provisioned before the tuning existed
+    receives it.
     """
-    requested = set(registries)
-    if not requested:
+    current = _read_proxy_env_file(incus)
+    current_registries = set(current.get("REGISTRIES", "").split())
+    all_registries = current_registries | _RPARDINI_DEFAULT_REGISTRIES | set(registries)
+    wanted = {
+        **current,
+        **_PROXY_TUNING,
+        "REGISTRIES": " ".join(sorted(all_registries)),
+    }
+    if "REGISTRIES" in current:
+        # Order-insensitive: a reordered but equal list is no reason to restart.
+        current = {**current, "REGISTRIES": " ".join(sorted(current_registries))}
+    if wanted == current:
         return False
 
-    current = _read_registries_env_file(incus)
-    new_items = requested - current - _RPARDINI_DEFAULT_REGISTRIES
-    if not new_items:
-        return False
-
-    full = sorted(current | _RPARDINI_DEFAULT_REGISTRIES | requested)
-    env_body = f"REGISTRIES={' '.join(full)}\n"
+    env_body = "".join(f"{key}={value}\n" for key, value in sorted(wanted.items()))
     script = f"""\
 set -euo pipefail
 tmp=$(mktemp)

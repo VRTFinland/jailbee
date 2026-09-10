@@ -3040,7 +3040,7 @@ def test_new_container_applies_mirror_registries_from_cfg(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
-    apply_registries = mocker.patch("jailbee.registry.apply_mirror_registries")
+    sync_env = mocker.patch("jailbee.registry.sync_mirror_env")
     incus = MagicMock()
     incus.exists.return_value = False
     ca_path = tmp_path / "ca.crt"
@@ -3060,7 +3060,7 @@ def test_new_container_applies_mirror_registries_from_cfg(tmp_path, mocker):
     )
     new_container(cfg, incus, opts)
 
-    apply_registries.assert_called_once_with(
+    sync_env.assert_called_once_with(
         incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"]
     )
 
@@ -3069,7 +3069,7 @@ def test_new_container_skips_mirror_registries_when_no_endpoint(tmp_path, mocker
     """Mirror disabled (mirror_endpoint=None) → no proxy to talk to. Skip."""
     cfg = _cfg_for_new(tmp_path)
     mocker.patch("jailbee.hosts.apply_hosts")
-    apply_registries = mocker.patch("jailbee.registry.apply_mirror_registries")
+    sync_env = mocker.patch("jailbee.registry.sync_mirror_env")
     incus = MagicMock()
     incus.exists.return_value = False
 
@@ -3087,7 +3087,7 @@ def test_new_container_skips_mirror_registries_when_no_endpoint(tmp_path, mocker
     )
     new_container(cfg, incus, opts)
 
-    apply_registries.assert_not_called()
+    sync_env.assert_not_called()
 
 
 def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocker):

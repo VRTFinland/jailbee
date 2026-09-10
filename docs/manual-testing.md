@@ -2610,6 +2610,47 @@ jailbee registry status
 # expect: running
 ```
 
+## Registry mirror proxy tuning
+
+`sync_mirror_env` writes `DISABLE_IPV6` and the two connect timeouts into the
+proxy's env file. The unit suite proves what lands in the file; whether
+rpardini acts on it is only visible on a real mirror. The load-bearing
+assumption is that Quadlet runs the proxy with `--rm`, so a service restart
+gives a fresh container whose entrypoint regenerates `resolvers.conf` — an
+existing one is otherwise kept as-is.
+
+On a mirror provisioned before 1.3.1:
+
+```bash
+incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy.env
+# expect: REGISTRIES= only
+jb apply                               # from any repo with the mirror enabled
+incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy.env
+# expect: DISABLE_IPV6=true, PROXY_CONNECT_CONNECT_TIMEOUT=5s,
+#         PROXY_CONNECT_TIMEOUT=5s, and REGISTRIES= unchanged
+
+incus exec jailbee-registry-mirror -- systemctl cat jailbee-registry-proxy.service | grep ExecStart
+# expect: `podman run` carrying --rm (Quadlet's default)
+incus exec jailbee-registry-mirror -- podman exec systemd-jailbee-registry-proxy \
+  cat /etc/nginx/resolvers.conf /etc/nginx/nginx.timeouts.config.conf
+# expect: `resolver … ipv6=off;`, `proxy_connect_timeout 5s;`,
+#         `proxy_connect_connect_timeout 5s;`
+```
+
+The sync must not restart the proxy when nothing changed — a restart drops
+every pull in flight:
+
+```bash
+incus exec jailbee-registry-mirror -- systemctl show -p ActiveEnterTimestamp jailbee-registry-proxy.service
+jb apply
+incus exec jailbee-registry-mirror -- systemctl show -p ActiveEnterTimestamp jailbee-registry-proxy.service
+# expect: identical timestamps
+```
+
+Finally, on a host without IPv6 egress, pull an uncached image through any
+container and read the mirror's access log: `upstream_response_time` should no
+longer open with a run of `0.000` entries against `[2600:…]` addresses.
+
 ## Nested Incus probe rig (verifying device behaviour from inside a container)
 
 Every recipe above needs the host's daemon. This one does not: it brings up a

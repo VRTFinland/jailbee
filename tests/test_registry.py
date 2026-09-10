@@ -14,10 +14,10 @@ from jailbee.registry import (
     _read_provision_text,
     _service_state,
     _wait_for_service_active,
-    apply_mirror_registries,
     registry_down,
     registry_status,
     registry_up,
+    sync_mirror_env,
 )
 
 
@@ -286,6 +286,27 @@ def test_up_idempotent_when_already_running(tmp_path):
     incus.init.assert_not_called()
     incus.start.assert_not_called()
     incus.profile_create.assert_not_called()
+
+
+def test_up_configures_the_proxy_env_without_any_repo(tmp_path):
+    """`jailbee registry up` is repo-independent, and `jb apply`/`jb new` are
+    not the only way a mirror comes up — the IPv6/timeout tuning must be in
+    place before any repo has synced its extra registries."""
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": MIRROR_CONTAINER_NAME, "status": "Running"},
+    ]
+    incus.profile_exists.return_value = True
+    incus.exec.return_value = "active\n"
+    gcfg = GlobalConfig.model_validate(
+        {"docker_registry_mirror": {"data_dir": str(tmp_path / "registry")}}
+    )
+
+    registry_up(incus, gcfg)
+
+    env_writes = [b for b in _exec_bash_calls(incus) if "JAILBEE_ENV_EOF" in b]
+    assert env_writes, "registry_up never wrote the proxy env file"
+    assert "DISABLE_IPV6=true" in env_writes[0]
 
 
 def test_up_starts_only_when_container_stopped(tmp_path):
@@ -606,7 +627,7 @@ def test_wait_for_service_active_returns_reason_on_timeout(mocker):
     assert "failed" in reason  # the last observed state is reported
 
 
-# ---------- apply_mirror_registries (per-repo REGISTRIES plumbing)
+# ---------- sync_mirror_env (the proxy's env file: REGISTRIES + tuning)
 
 
 def _exec_bash_calls(incus_mock: MagicMock) -> list[str]:
@@ -621,114 +642,143 @@ def _exec_bash_calls(incus_mock: MagicMock) -> list[str]:
     ]
 
 
-def test_apply_mirror_registries_noop_for_empty_list():
-    """No registries passed → nothing changes; don't even read state."""
+def _written_env(incus_mock: MagicMock) -> dict[str, str]:
+    """The env file `sync_mirror_env` wrote, parsed back into KEY -> VALUE."""
+    body = _exec_bash_calls(incus_mock)[0]
+    heredoc = body.split("<<'JAILBEE_ENV_EOF'\n", 1)[1].split("\nJAILBEE_ENV_EOF", 1)[0]
+    return dict(line.split("=", 1) for line in heredoc.splitlines())
+
+
+# What a fully configured mirror's env file looks like, written by hand rather
+# than derived from registry.py so the tests pin the contract, not the code.
+_CURRENT_ENV = (
+    "DISABLE_IPV6=true\n"
+    "PROXY_CONNECT_CONNECT_TIMEOUT=5s\n"
+    "PROXY_CONNECT_TIMEOUT=5s\n"
+    "REGISTRIES=803520778560.dkr.ecr.eu-north-1.amazonaws.com "
+    "gcr.io ghcr.io quay.io registry.k8s.io\n"
+)
+
+
+def test_sync_mirror_env_configures_a_fresh_mirror_without_extra_registries():
+    """A repo with no extra registries still needs the tuning: IPv6 upstreams
+    the host cannot reach, and nginx's 60 s connect timeout, are what push a
+    cold-cache pull past dockerd's patience."""
     incus = MagicMock()
+    incus.exec.return_value = ""  # no env file yet → `cat … || true` prints nothing
 
-    changed = apply_mirror_registries(incus, [])
-
-    assert changed is False
-    incus.exec.assert_not_called()
-
-
-def test_apply_mirror_registries_writes_env_and_restarts_on_new_registry():
-    """First call with an unlisted upstream writes env file + restarts proxy."""
-    incus = MagicMock()
-    # No existing env file → cat falls back via `|| true`, returns empty.
-    incus.exec.return_value = ""
-
-    changed = apply_mirror_registries(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"])
+    changed = sync_mirror_env(incus, [])
 
     assert changed is True
-    scripts = _exec_bash_calls(incus)
-    assert scripts, "expected a `bash -c` exec writing the env file"
-    body = scripts[0]
-    assert "/etc/jailbee-registry-proxy.env" in body
-    assert "REGISTRIES=" in body
-    assert "803520778560.dkr.ecr.eu-north-1.amazonaws.com" in body
-    assert f"systemctl restart {MIRROR_SERVICE_NAME}" in body
+    assert _written_env(incus) == {
+        "DISABLE_IPV6": "true",
+        "PROXY_CONNECT_CONNECT_TIMEOUT": "5s",
+        "PROXY_CONNECT_TIMEOUT": "5s",
+        "REGISTRIES": "gcr.io ghcr.io quay.io registry.k8s.io",
+    }
+    assert f"systemctl restart {MIRROR_SERVICE_NAME}" in _exec_bash_calls(incus)[0]
 
 
-def test_apply_mirror_registries_written_value_includes_rpardini_defaults():
-    """EnvironmentFile= overrides the image's own ENV, so the file must
-    carry the defaults too — otherwise rpardini drops k8s.io/gcr.io/quay/ghcr."""
-    incus = MagicMock()
-    incus.exec.return_value = ""
-
-    apply_mirror_registries(incus, ["example.com"])
-
-    body = _exec_bash_calls(incus)[0]
-    for default in ("gcr.io", "ghcr.io", "quay.io", "registry.k8s.io"):
-        assert default in body, f"image default {default!r} missing from written env"
-
-
-def test_apply_mirror_registries_idempotent_when_already_present():
-    """Second call with the same list reads the env file, sees nothing new,
-    skips both write and restart."""
-    incus = MagicMock()
-    incus.exec.return_value = (
-        "REGISTRIES=803520778560.dkr.ecr.eu-north-1.amazonaws.com "
-        "gcr.io ghcr.io quay.io registry.k8s.io\n"
-    )
-
-    changed = apply_mirror_registries(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"])
-
-    assert changed is False
-    assert _exec_bash_calls(incus) == []
-
-
-def test_apply_mirror_registries_noop_when_only_defaults_requested():
-    """Caller-supplied list that's a subset of rpardini's image defaults
-    requires no action."""
-    incus = MagicMock()
-    incus.exec.return_value = ""
-
-    changed = apply_mirror_registries(incus, ["quay.io", "ghcr.io"])
-
-    assert changed is False
-    assert _exec_bash_calls(incus) == []
-
-
-def test_apply_mirror_registries_unions_with_existing_state():
-    """Adding ECR-B when ECR-A is already in the env file keeps both."""
+def test_sync_mirror_env_upgrades_a_file_written_by_an_older_jailbee():
+    """Existing mirrors hold only REGISTRIES=. Nothing new is requested, but
+    the tuning is missing — the file must still be rewritten, or the fix never
+    reaches a mirror that predates it."""
     incus = MagicMock()
     incus.exec.return_value = (
         "REGISTRIES=ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io\n"
     )
 
-    changed = apply_mirror_registries(incus, ["ecr-b.example.com"])
+    changed = sync_mirror_env(incus, [])
 
     assert changed is True
-    body = _exec_bash_calls(incus)[0]
-    assert "ecr-a.example.com" in body
-    assert "ecr-b.example.com" in body
+    assert _written_env(incus) == {
+        "DISABLE_IPV6": "true",
+        "PROXY_CONNECT_CONNECT_TIMEOUT": "5s",
+        "PROXY_CONNECT_TIMEOUT": "5s",
+        "REGISTRIES": "ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io",
+    }
 
 
-def test_apply_mirror_registries_writes_sorted_for_stability():
-    """Env file content is sorted so re-runs with the same logical set produce
-    identical bytes — avoids spurious diffs / restarts on re-execution."""
+def test_sync_mirror_env_leaves_a_current_file_alone():
+    """A restart drops every pull in flight through the mirror, from every
+    container on the host — so an up-to-date file must mean no write and no
+    restart, even when the caller's registries are all already covered."""
+    incus = MagicMock()
+    incus.exec.return_value = _CURRENT_ENV
+
+    changed = sync_mirror_env(
+        incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com", "quay.io"]
+    )
+
+    assert changed is False
+    assert _exec_bash_calls(incus) == []
+
+
+def test_sync_mirror_env_restores_a_hand_edited_tuning_value():
+    """The tuning keys are jailbee's: a hand-set 60 s timeout is the bug."""
+    incus = MagicMock()
+    incus.exec.return_value = _CURRENT_ENV.replace(
+        "PROXY_CONNECT_TIMEOUT=5s", "PROXY_CONNECT_TIMEOUT=60s"
+    )
+
+    changed = sync_mirror_env(incus, [])
+
+    assert changed is True
+    assert _written_env(incus)["PROXY_CONNECT_TIMEOUT"] == "5s"
+
+
+def test_sync_mirror_env_preserves_keys_it_does_not_own():
+    """rpardini reads more than jailbee sets (AUTH_REGISTRIES carries upstream
+    credentials); a key added by hand must survive a rewrite."""
+    incus = MagicMock()
+    incus.exec.return_value = (
+        "AUTH_REGISTRIES=reg.example.com:user:secret\n"
+        "REGISTRIES=gcr.io ghcr.io quay.io registry.k8s.io\n"
+    )
+
+    sync_mirror_env(incus, [])
+
+    assert _written_env(incus)["AUTH_REGISTRIES"] == "reg.example.com:user:secret"
+
+
+def test_sync_mirror_env_adds_a_new_registry_and_restarts():
+    incus = MagicMock()
+    incus.exec.return_value = _CURRENT_ENV
+
+    changed = sync_mirror_env(incus, ["ecr-b.example.com"])
+
+    assert changed is True
+    assert _written_env(incus)["REGISTRIES"] == (
+        "803520778560.dkr.ecr.eu-north-1.amazonaws.com ecr-b.example.com "
+        "gcr.io ghcr.io quay.io registry.k8s.io"
+    )
+    assert f"systemctl restart {MIRROR_SERVICE_NAME}" in _exec_bash_calls(incus)[0]
+
+
+def test_sync_mirror_env_written_registries_include_rpardini_defaults():
+    """EnvironmentFile= overrides the image's own ENV, so the file must
+    carry the defaults too — otherwise rpardini drops k8s.io/gcr.io/quay/ghcr."""
     incus = MagicMock()
     incus.exec.return_value = ""
 
-    apply_mirror_registries(incus, ["zzz.example.com", "aaa.example.com"])
+    sync_mirror_env(incus, ["example.com"])
 
-    body = _exec_bash_calls(incus)[0]
-    # Find the REGISTRIES= line and check ordering
-    registries_line = next(line for line in body.splitlines() if line.startswith("REGISTRIES="))
-    items = registries_line.removeprefix("REGISTRIES=").split()
-    assert items == sorted(items), f"REGISTRIES not sorted: {items}"
+    assert _written_env(incus)["REGISTRIES"] == (
+        "example.com gcr.io ghcr.io quay.io registry.k8s.io"
+    )
 
 
-def test_apply_mirror_registries_deduplicates_caller_input():
+def test_sync_mirror_env_writes_registries_sorted_and_deduplicated():
+    """Sorted, deduplicated output keeps re-runs byte-identical — no spurious
+    rewrites or restarts."""
     incus = MagicMock()
     incus.exec.return_value = ""
 
-    apply_mirror_registries(incus, ["foo.example.com", "foo.example.com"])
+    sync_mirror_env(incus, ["zzz.example.com", "aaa.example.com", "zzz.example.com"])
 
-    body = _exec_bash_calls(incus)[0]
-    registries_line = next(line for line in body.splitlines() if line.startswith("REGISTRIES="))
-    items = registries_line.removeprefix("REGISTRIES=").split()
-    assert items.count("foo.example.com") == 1
+    assert _written_env(incus)["REGISTRIES"] == (
+        "aaa.example.com gcr.io ghcr.io quay.io registry.k8s.io zzz.example.com"
+    )
 
 
 def test_quadlet_unit_references_environment_file_with_absolute_path():
@@ -762,7 +812,7 @@ def test_provision_creates_empty_env_file_before_service_start(tmp_path):
 def test_install_sh_does_not_truncate_an_existing_env_file():
     """Reprovisioning an existing mirror re-runs install.sh. An unconditional
     `install -D /dev/null /etc/jailbee-registry-proxy.env` would blow away the
-    REGISTRIES= list apply_mirror_registries() maintains, and every later
+    REGISTRIES= list sync_mirror_env() maintains, and every later
     `gie new` would re-pull those upstreams from the internet instead of the
     cache."""
     body = _read_provision_text("install.sh")

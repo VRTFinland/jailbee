@@ -1155,13 +1155,41 @@ def test_run_apply_pushes_extra_registries_to_mirror_when_enabled(
         return_value="CA",
     )
     mocker.patch("jailbee.apply._list_containers", return_value=[])
-    apply_registries = mocker.patch("jailbee.registry.apply_mirror_registries")
+    sync_env = mocker.patch("jailbee.registry.sync_mirror_env")
 
     run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    apply_registries.assert_called_once_with(
+    sync_env.assert_called_once_with(
         incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"]
     )
+
+
+def test_run_apply_syncs_mirror_env_for_a_repo_without_extra_registries(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The mirror's IPv6/timeout tuning is host-global, not per-repo: `jb
+    apply` in a repo with no extra registries is still how an existing mirror
+    receives it (UPGRADE_NOTES 1.3.1 points users at exactly this command)."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    assert cfg.docker_registry_mirror.extra_registries == []
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.apply._mirror_endpoint_or_warn", return_value=("10.0.0.99", 3128))
+    mocker.patch("jailbee.apply._read_mirror_ca_or_warn", return_value="CA")
+    mocker.patch("jailbee.apply._list_containers", return_value=[])
+    sync_env = mocker.patch("jailbee.registry.sync_mirror_env")
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    sync_env.assert_called_once_with(incus, [])
 
 
 # ---- Polluted pool roots ----
@@ -1592,11 +1620,11 @@ def test_run_apply_skips_extra_registries_when_mirror_disabled(
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     mocker.patch("jailbee.apply._list_containers", return_value=[])
-    apply_registries = mocker.patch("jailbee.registry.apply_mirror_registries")
+    sync_env = mocker.patch("jailbee.registry.sync_mirror_env")
 
     run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    apply_registries.assert_not_called()
+    sync_env.assert_not_called()
 
 
 def test_run_apply_migrates_offline_container_to_strict(

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A cold-cache image pull through the registry mirror could time out and
+  fail autostart.** On a host without IPv6 egress the mirror still has an
+  IPv6 default route, so nginx tried every AAAA upstream (6–9 of them) before
+  any IPv4 one on each cache miss; and with nginx's default 60 s connect
+  timeout, one unresponsive upstream address held the first response header
+  past dockerd's patience (`net/http: timeout awaiting response headers`). A
+  retry then succeeded from cache, which made it read as a flake. jailbee now
+  sets rpardini's `DISABLE_IPV6=true` and 5 s `PROXY_CONNECT_TIMEOUT` /
+  `PROXY_CONNECT_CONNECT_TIMEOUT` in the proxy's env file. `jailbee registry
+  up`, `jailbee new` and `jailbee apply` now keep that file in sync even for a
+  repo with no `extra_registries`, and restart the proxy only when it
+  changed. Run `jailbee apply` once to bring an existing mirror up to date.
+
 ## 1.3.0 - 2026-09-09
 
 ### Added

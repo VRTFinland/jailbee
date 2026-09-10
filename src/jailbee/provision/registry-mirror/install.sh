@@ -28,8 +28,9 @@ install -D -m 0644 /root/jailbee-registry-proxy.container \
 
 # Quadlet's EnvironmentFile= becomes `podman run --env-file=`; the file
 # must exist or podman exits 125 before pulling. Create an empty one now
-# so the first start succeeds; apply_mirror_registries() rewrites the
-# contents (REGISTRIES=...) on each `jailbee new` / `jailbee apply`.
+# so the first start succeeds; sync_mirror_env() rewrites the contents
+# (REGISTRIES=..., the proxy tuning) on `jailbee registry up` / `jailbee
+# new` / `jailbee apply`.
 #
 # Guarded by `test -f` because this script is also re-run to repair a
 # half-provisioned mirror — truncating the file would silently drop every
