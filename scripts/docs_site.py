@@ -101,23 +101,65 @@ _FETCHED_ATTRS = ("src", "href", "poster", "srcset", "data")
 _CSS_URL = re.compile(r"""(?:url\(|@import\s+)\s*['"]?((?:https?:)?//[^)'"\s]+)""", re.IGNORECASE)
 
 
+def _srcset_urls(value: str) -> list[str]:
+    """The URL token of each comma-separated `srcset` candidate.
+
+    `srcset="local.png 1x, https://cdn.example.com/big.png 2x"` is one
+    attribute value with two independent candidates; testing the value as a
+    whole against `_ABSOLUTE` misses the second one because the value starts
+    with a local path.
+    """
+    urls = []
+    for candidate in value.split(","):
+        candidate = candidate.strip()
+        if candidate:
+            urls.append(candidate.split()[0])
+    return urls
+
+
 class _ReferenceCollector(HTMLParser):
-    """Every fetched reference, plus whether the tag carried a component id."""
+    """Every fetched reference, inline CSS text, and component ids.
+
+    Inline CSS is collected from exactly the two places a browser parses text
+    as CSS — `<style>` element bodies and `style="..."` attribute values —
+    not from the page as a whole, so a `url(...)`-looking string in a
+    `<pre><code>` sample is never mistaken for something the browser fetches.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.references: list[tuple[str, str, str, str | None]] = []
         self.components: list[str] = []
+        self.style_texts: list[str] = []
+        self._in_style = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         component = attributes.get("data-md-component")
         if component:
             self.components.append(component)
+        style = attributes.get("style")
+        if style:
+            self.style_texts.append(style)
+        if tag == "style":
+            self._in_style = True
         for name in _FETCHED_ATTRS:
             value = attributes.get(name)
-            if value:
+            if not value:
+                continue
+            if name == "srcset":
+                for candidate in _srcset_urls(value):
+                    self.references.append((tag, name, candidate, attributes.get("rel")))
+            else:
                 self.references.append((tag, name, value, attributes.get("rel")))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self.style_texts.append(data)
 
 
 def check(site_docs: Path = SITE_DOCS) -> list[str]:
@@ -129,6 +171,12 @@ def check(site_docs: Path = SITE_DOCS) -> list[str]:
     theme fetches its fonts from Google and mermaid from unpkg by default, and
     a repository link carrying `data-md-component="source"` makes the bundle
     call api.github.com from every page.
+
+    CSS is scanned only where a browser actually parses text as CSS: inline
+    `<style>` element bodies, `style="..."` attribute values, and standalone
+    `*.css` files under the site. A `url(...)`-looking string anywhere else in
+    the page — a `<pre><code>` documentation sample, say — is never fetched
+    and is not flagged.
 
     JavaScript bundles are deliberately not scanned: they carry URL strings
     that are never fetched (the unpkg fallback among them), and a text match
@@ -158,7 +206,11 @@ def check(site_docs: Path = SITE_DOCS) -> list[str]:
                 problems.append(
                     f'{where}: data-md-component="source" makes the page call api.github.com'
                 )
-        problems += [f"{where}: stylesheet fetches {url}" for url in _CSS_URL.findall(html)]
+        problems += [
+            f"{where}: stylesheet fetches {url}"
+            for text in collector.style_texts
+            for url in _CSS_URL.findall(text)
+        ]
 
     for stylesheet in sorted(site_docs.rglob("*.css")):
         where = stylesheet.relative_to(site_docs)

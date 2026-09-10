@@ -189,3 +189,35 @@ def test_check_notices_an_empty_build(tmp_path: Path) -> None:
     site = tmp_path / "_site" / "docs"
     site.mkdir(parents=True)
     assert any("no pages" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_an_off_site_candidate_in_a_srcset(tmp_path: Path) -> None:
+    """`_ABSOLUTE.match` on the whole attribute value would miss this: the
+    value starts with a local path, and only the second comma-separated
+    candidate is off-site."""
+    site = _page('<img srcset="local.png 1x, https://cdn.example.com/big.png 2x">', tmp_path)
+    assert any("cdn.example.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_rejects_an_off_site_url_in_a_style_attribute(tmp_path: Path) -> None:
+    site = _page('<div style="background:url(https://cdn.example.com/x.png)"></div>', tmp_path)
+    assert any("cdn.example.com" in problem for problem in docs_site.check(site))
+
+
+def test_check_ignores_a_css_looking_string_in_a_code_sample(tmp_path: Path) -> None:
+    """A `url(...)` string inside a documentation code sample is text, not
+    something the browser fetches."""
+    site = _page("<pre><code>url(https://cdn.example.com/bg.png)</code></pre>", tmp_path)
+    assert docs_site.check(site) == []
+
+
+def test_check_rejects_a_canonical_link_pointing_off_site(tmp_path: Path) -> None:
+    """Guards `value.startswith(site_url)`: only an in-site canonical is
+    exempt from the off-site check, never a canonical pointing elsewhere."""
+    site = tmp_path / "_site" / "docs"
+    site.mkdir(parents=True)
+    (site / "index.html").write_text(
+        '<html><head><link rel="canonical" href="https://evil.example.com/"></head>'
+        "<body></body></html>"
+    )
+    assert any("evil.example.com" in problem for problem in docs_site.check(site))
