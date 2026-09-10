@@ -37,6 +37,11 @@ def format_elapsed(seconds: float) -> str:
     return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
 
 
+#: Below this many seconds an elapsed counter is flicker rather than
+#: information. Shared with `cli`'s live doctor row so both hide it alike.
+SHOW_ELAPSED_AFTER_SECONDS = 5.0
+
+
 class ElapsedStatus:
     """The live line driven by :func:`status_with_elapsed`.
 
@@ -44,9 +49,6 @@ class ElapsedStatus:
     on screen always answers "how long has *this* been going", not "how long
     since the command started".
     """
-
-    #: Below this, a counter is flicker rather than information.
-    _SHOW_AFTER_SECONDS = 5.0
 
     def __init__(self, status: Status, message: str) -> None:
         self._status = status
@@ -60,12 +62,22 @@ class ElapsedStatus:
             self._started = time.monotonic()
         self.refresh()
 
+    def relabel(self, message: str) -> None:
+        """Change the current step's text; unlike ``update``, keep its clock.
+
+        For progress within one step, which arrives far more often than steps
+        change.
+        """
+        with self._lock:
+            self._message = message
+        self.refresh()
+
     def refresh(self) -> None:
         """Re-render with the current elapsed time. Called from the ticker."""
         with self._lock:
             message, started = self._message, self._started
         elapsed = time.monotonic() - started
-        suffix = f" — {format_elapsed(elapsed)}" if elapsed >= self._SHOW_AFTER_SECONDS else ""
+        suffix = f" — {format_elapsed(elapsed)}" if elapsed >= SHOW_ELAPSED_AFTER_SECONDS else ""
         self._status.update(f"⏳ {message}…{suffix}")
 
 

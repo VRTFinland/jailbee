@@ -1390,9 +1390,20 @@ which pulls hit the rpardini cache on second run.
 
 Mechanics: `jailbee new` and `jailbee apply` write the union of these entries
 into `/etc/jailbee-registry-proxy.env` inside the
-`jailbee-registry-mirror` container and restart `jailbee-registry-proxy.service`.
-The mirror is host-global, so the set accumulates across repos —
-once added, a hostname stays until the mirror container is recreated.
+`jailbee-registry-mirror` container and restart `jailbee-registry-proxy.service`
+— only when the file actually changes, since a restart drops every pull in
+flight through the mirror. The mirror is host-global, so the set accumulates
+across repos — once added, a hostname stays until the mirror container is
+recreated.
+
+The same file carries jailbee's host-global proxy tuning, written by
+`jailbee registry up`, `jailbee new` and `jailbee apply` whether or not the
+repo lists any registries: `DISABLE_IPV6=true` (nginx stops trying IPv6
+upstreams the host may not be able to route) and `PROXY_CONNECT_TIMEOUT` /
+`PROXY_CONNECT_CONNECT_TIMEOUT` of `5s` instead of nginx's 60 s, so one
+unresponsive upstream address cannot hold a pull past dockerd's patience.
+These three keys are jailbee's and a hand-edited value is put back; any
+other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
 
 ### `new`
 
