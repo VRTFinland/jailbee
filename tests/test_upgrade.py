@@ -604,7 +604,7 @@ def test_the_130_notes_are_split_by_action() -> None:
 def test_upgrade_note_for_the_pr_review_skill_advises_apply() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
-    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 1) and "pr-review" in n.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 3, 2) and "pr-review" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
 
@@ -618,7 +618,7 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
     from jailbee.upgrade import Watermark, format_advice, pending
 
     owed = pending(
-        "1.3.1",
+        "1.3.2",
         {
             "base_build": Watermark((1, 2, 0), observed=True),
             "apply": Watermark((1, 2, 0), observed=True),

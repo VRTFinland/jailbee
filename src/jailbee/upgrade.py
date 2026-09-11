@@ -137,16 +137,16 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 3, 1),
         actions=frozenset({"apply"}),
         reason=(
-            "the `jailbee-pr-review` skill is new and `jailbee apply` syncs it "
-            "into the shared skills mount"
+            "the registry mirror stops trying unreachable IPv6 upstreams and fails "
+            "over from an unresponsive one after 5 s instead of 60 s"
         ),
     ),
     UpgradeNote(
-        version=(1, 3, 1),
+        version=(1, 3, 2),
         actions=frozenset({"apply"}),
         reason=(
-            "the registry mirror stops trying unreachable IPv6 upstreams and fails "
-            "over from an unresponsive one after 5 s instead of 60 s"
+            "the `jailbee-pr-review` skill is new and `jailbee apply` syncs it "
+            "into the shared skills mount"
         ),
     ),
 )
