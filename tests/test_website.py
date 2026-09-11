@@ -743,13 +743,10 @@ def test_the_structured_data_version_tracks_pyproject() -> None:
 
 def test_the_header_matches_the_docs_header() -> None:
     """The top bar is the docs header rebuilt by hand, so nothing but this
-    keeps the two from drifting apart.
-
-    The search form is a contract with website/docs-theme/main.html, which
-    reads `q` on the docs side (tests/test_docs_site.py pins that half): a
-    renamed field or a changed action sends the terms nowhere, and the
-    reader lands on the docs overview with no search open. The source box
-    must name the repository, mark and release the docs header does.
+    keeps the two from drifting apart: the source box must name the
+    repository, mark and release the docs header does. The Docs link is
+    the bar's only way into the documentation, standing where the docs
+    have their search box.
     """
     import tomllib
 
@@ -761,9 +758,7 @@ def test_the_header_matches_the_docs_header() -> None:
         return found[0]
 
     the_one("header", "topbar")
-    form = the_one("form", "topbar__search")
-    assert (form.get("action"), form.get("method")) == ("docs/", "get")
-    assert the_one("input", "topbar__search-input").get("name") == "q"
+    assert the_one("a", "topbar__link").get("href") == "docs/"
 
     with (REPO_ROOT / "zensical.toml").open("rb") as handle:
         docs = tomllib.load(handle)["project"]

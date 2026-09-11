@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=e0373cce" />
+    <link rel="stylesheet" href="assets/style.css?v=b57eff63" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -79,36 +79,19 @@
   </head>
   <body>
     <!-- The documentation's header bar, rebuilt by hand so the front page and
-         the docs read as one site: same height, glass, search box and
-         source box, measured off the docs build (website/docs-theme). The
-         page has no search index of its own, so the search is a form that
-         hands its terms to the docs as ?q=, and docs-theme/main.html opens
-         the dialog there with them filled in. Below 960px it collapses to
-         its icon, as the docs' does, and the source box goes. -->
+         the docs read as one site: same height, glass, mark and source box,
+         measured off the docs build (website/docs-theme). No search box:
+         the index is the docs', and the docs' search dialog cannot run
+         outside the theme's page, so a box here could only navigate away —
+         which reads as leaving the site. A Docs link stands in its place.
+         Below 960px the source box goes, as the docs' does. -->
     <header class="topbar">
       <div class="topbar__inner">
         <a class="topbar__brand" href="./">
           <img src="assets/img/jailbee-mark.png" alt="" width="340" height="345" />
           <span>JailBee</span>
         </a>
-        <form class="topbar__search" action="docs/" method="get" role="search">
-          <button class="topbar__search-go" type="submit" aria-label="Search the documentation">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m21 21-4.34-4.34" />
-              <circle cx="11" cy="11" r="8" />
-            </svg>
-          </button>
-          <input
-            class="topbar__search-input"
-            type="search"
-            name="q"
-            placeholder="Search"
-            aria-label="Search the documentation"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <kbd class="topbar__kbd">Ctrl+K</kbd>
-        </form>
+        <a class="topbar__link" href="docs/">Docs</a>
         <!-- `topbar__version` is rewritten by scripts/site_version.py during a
              release, with the JSON-LD above and the docs header's copy. -->
         <a class="topbar__source" href="https://github.com/VRTFinland/jailbee" title="VRTFinland/jailbee">
@@ -838,40 +821,6 @@
               }, 1500);
             });
           });
-        });
-      })();
-
-      // Header search shortcuts, as the docs have them: Ctrl+K (⌘K on a Mac,
-      // where the hint says so too) and "/" outside a text field. Below
-      // 960px the field is collapsed to its icon, so the shortcut submits
-      // the empty form instead and the docs open their dialog. preventScroll
-      // because the bar is sticky: a plain focus() scrolls to the field's
-      // place in the flow, which is the top of the page, from anywhere.
-      (function () {
-        var form = document.querySelector(".topbar__search");
-        var input = form && form.querySelector("input[name=q]");
-        if (!input) {
-          return;
-        }
-        if (/^Mac/.test(navigator.platform)) {
-          form.querySelector(".topbar__kbd").textContent = "⌘K";
-        }
-        document.addEventListener("keydown", function (event) {
-          var target = event.target;
-          var typing =
-            target instanceof HTMLInputElement ||
-            target instanceof HTMLTextAreaElement ||
-            target.isContentEditable;
-          var chord = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
-          if (!chord && (event.key !== "/" || typing)) {
-            return;
-          }
-          event.preventDefault();
-          if (input.offsetParent !== null) {
-            input.focus({ preventScroll: true });
-          } else {
-            form.submit();
-          }
         });
       })();
 
