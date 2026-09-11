@@ -128,6 +128,39 @@ for name in "${names[@]}"; do
     jailbee exec <container> -- bash -lc 'claude -p \"reply with exactly: ok\"'"
             fi
         fi
+
+        # A dashboard tape harvests nothing, so the substrate never moves and
+        # the check above cannot speak for it. Two things it does assert by
+        # running at all: that the agents were logged in, and that the
+        # container-creation beat finished.
+        #
+        # The credential is the one that matters. When the shared token goes
+        # stale an agent rewrites it as a stub (509 bytes become 281,
+        # expiresAt 0), every container's window says "Login expired", and the
+        # render still exits 0 — the exact failure that cost a take on video A.
+        if grep -q "jb dashboard" "$tape"; then
+            creds="$HOME/.local/share/jailbee/shared/jailbee-demo/claude/.credentials.json"
+            if ! python3 - "$creds" <<'PY'; then
+import json
+import sys
+import time
+
+try:
+    with open(sys.argv[1]) as fh:
+        expires = json.load(fh)["claudeAiOauth"]["expiresAt"]
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+raise SystemExit(0 if expires > time.time() * 1000 else 1)
+PY
+                die "the take is invalid: $creds is expired or a stub, so an
+    agent's window said 'Login expired' on camera. Re-seed and stage again:
+    rig/seed-claude.sh && rig/stage-d.sh"
+            fi
+            if ! (cd "$substrate" && jailbee ls -o json 2>/dev/null | grep -q feat-pagination); then
+                die "the take is invalid: feat-pagination does not exist, so the
+    tape's container-creation beat never finished. Look at the frames."
+            fi
+        fi
     fi
 
     raw_webm="$WORKFLOWS/$name.webm"
