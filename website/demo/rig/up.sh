@@ -89,6 +89,12 @@ dashboard:
   hide:
     - created
     - conflict
+    # TTL is in the built-in dashboard hide list because the NETWORK cell
+    # already folds it in ("loose (3h 59m)"), and this block replacing that
+    # list is what brought it back as a second, duplicate column the moment a
+    # container went loose. Measured from a frame, exactly as the comment
+    # above says to.
+    - ttl
 YAML
 
 say "Allowing the identity uid range for nested containers"
