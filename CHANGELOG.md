@@ -11,6 +11,24 @@
   release, and a link or heading anchor that no longer resolves fails CI rather
   than shipping.
 
+### Fixed
+
+- **Chrome aborted on launch in every container on an Ubuntu 24.04+ host**
+  (`FATAL:sandbox/linux/services/credentials.cc … Permission denied`), and so
+  did anything else the dev user ran that creates a user namespace — bwrap,
+  rootless podman, `unshare -U`. Those hosts only let an unprivileged process
+  create one through an AppArmor profile, and Incus looks that profile up in
+  the container's own AppArmor namespace, which nothing in the golden image
+  ever loaded policy into. The image now installs `apparmor`, which loads
+  Ubuntu's profiles there on every boot, including the ones for Chrome's and
+  Firefox's install paths: Chrome starts with its sandbox intact, with no
+  `--no-sandbox` and no AppArmor confinement lifted from the container.
+  **Run `jb base build`**; `jb` shows the advice after the upgrade. Containers
+  created from an older image stay broken until recreated — or until
+  `sudo apt-get install apparmor` is run inside one, which takes effect
+  immediately. An Electron app under `apps:` that Ubuntu ships no profile for
+  still cannot sandbox itself, exactly as on the host.
+
 ## 1.3.1 - 2026-09-10
 
 ### Added

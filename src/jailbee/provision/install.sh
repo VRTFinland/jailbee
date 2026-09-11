@@ -51,6 +51,20 @@ systemctl mask \
 echo "==> Updating apt cache"
 apt-get update -y
 
+# apparmor: a container installing an LSM's userspace looks odd, but it is
+# the only way the dev user gets an unprivileged user namespace. Ubuntu
+# hosts set kernel.apparmor_restrict_unprivileged_userns=1, under which an
+# unprivileged unshare(CLONE_NEWUSER) needs an AppArmor profile that allows
+# it — looked up in the *container's* policy namespace, which Incus creates
+# per container and which stays empty unless something in here loads
+# policy. Without this package Chrome's zygote aborts (credentials.cc:
+# Permission denied), and bwrap and rootless podman fail alike. The package
+# ships the `chrome` and `firefox` profiles whose paths match where
+# jailbee's browsers live, plus the `unprivileged_userns` fallback, and
+# apparmor.service reloads them on every boot. An app with no profile of
+# its own lands in `unprivileged_userns`, which strips capabilities inside
+# the new namespace — so an Electron app outside those paths still can't
+# sandbox itself, same as on an Ubuntu host.
 echo "==> Installing LXC plumbing apt packages"
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apt-transport-https ca-certificates curl gnupg lsb-release wget \
@@ -58,7 +72,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git make tmux \
     build-essential libssl-dev pkg-config \
     ripgrep fd-find jq htop \
-    openssh-server
+    openssh-server \
+    apparmor
 
 # tzdata installs /etc/localtime as a symlink (-> /usr/share/zoneinfo/Etc/UTC).
 # The <repo>-binds profile bind-mounts the host's /etc/localtime onto this

@@ -141,6 +141,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "over from an unresponsive one after 5 s instead of 60 s"
         ),
     ),
+    UpgradeNote(
+        version=(1, 3, 2),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "install.sh installs AppArmor, without which Chrome and anything else "
+            "needing an unprivileged user namespace aborts in the container"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

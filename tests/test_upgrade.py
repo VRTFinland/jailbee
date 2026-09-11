@@ -598,3 +598,16 @@ def test_the_130_notes_are_split_by_action() -> None:
     # print each action the other's reasons.
     assert "image" in by_action[frozenset({"base_build"})]
     assert "image" not in by_action[frozenset({"apply"})]
+
+
+def test_the_apparmor_note_advises_base_build_only() -> None:
+    """Chrome dies in every container built before the golden image gained
+    the apparmor package, and only a rebuilt image fixes it — the profiles
+    are untouched, so `apply` must not be advised for this reason."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    matches = [n for n in UPGRADE_NOTES if "AppArmor" in n.reason]
+    assert len(matches) == 1
+    note = matches[0]
+    assert note.version == (1, 3, 2)
+    assert note.actions == frozenset({"base_build"})
