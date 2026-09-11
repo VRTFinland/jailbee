@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
+import shlex
+import subprocess
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
 # unless the environment already chose one. Harmless for non-Qt tests.
@@ -222,9 +225,10 @@ def _isolate_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     assert on an empty home) takes the function-scoped ``private_home``
     fixture instead.
 
-    Note this does not isolate the host *session*: `systemctl --user`,
-    `docker` and `incus` calls that escape mocking still reach the real
-    daemons. Those belong in the individual test's mocks.
+    Note this does not isolate the host *session*: `systemctl --user` and
+    `docker` calls that escape mocking still reach the real daemons. Those
+    belong in the individual test's mocks. `incus` is the exception —
+    ``_block_real_incus`` refuses to run it.
     """
     home = tmp_path_factory.mktemp("home", numbered=False)
     with pytest.MonkeyPatch.context() as mp:
@@ -245,6 +249,54 @@ def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     return home
+
+
+@pytest.fixture(autouse=True)
+def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Fail any test that runs the real ``incus`` binary.
+
+    The unit suite is fully mocked, but nothing enforced it: a test whose
+    mocks missed one ``Incus`` call ran the developer's own ``incus`` — and
+    passed, because a ``check=False`` lookup of a container that doesn't
+    exist answers nothing. The CI runner has no ``incus``, so the same test
+    failed there with "`incus` not found in PATH", and nowhere else.
+
+    Every exec of a bare ``incus`` (resolved via PATH) raises the same
+    ``FileNotFoundError`` the CI runner does, so the code under test takes
+    CI's path locally too. The test is then failed at teardown even if that
+    code swallowed the resulting ``IncusError`` — a leak that happens to
+    exit the way a test expects is still a test that never ran what it
+    names. A fake ``incus`` addressed by absolute path
+    (``Incus(binary=str(tmp_path / "incus"))``, as ``test_incus.py``'s
+    ``exec_lines`` tests do) is not blocked.
+
+    Patches ``Popen._execute_child`` — the one point every ``subprocess``
+    entry (``run``, ``check_output``, ``Popen``) passes through — so a test
+    that mocks ``subprocess.run`` is unaffected, and only an exec that
+    would really happen is seen.
+    """
+    attempts: list[list[str]] = []
+    # Private CPython API, absent from typeshed's stubs.
+    real_execute_child = subprocess.Popen._execute_child  # type: ignore[attr-defined]
+
+    def guarded(
+        self: subprocess.Popen[Any], args: Any, executable: Any, *rest: Any, **kwargs: Any
+    ) -> Any:
+        argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
+        if os.fsdecode(executable if executable is not None else argv[0]) == "incus":
+            attempts.append([os.fsdecode(a) for a in argv])
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "incus")
+        return real_execute_child(self, args, executable, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "_execute_child", guarded)
+    yield
+    if attempts:
+        ran = "\n".join(f"  {shlex.join(a)}" for a in attempts)
+        pytest.fail(
+            f"test ran the real `incus` binary (unmocked):\n{ran}\n"
+            "Mock the Incus call, or the jailbee function that makes it.",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)
