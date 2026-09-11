@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=b57eff63" />
+    <link rel="stylesheet" href="assets/style.css?v=6ef33eab" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -91,7 +91,15 @@
           <img src="assets/img/jailbee-mark.png" alt="" width="340" height="345" />
           <span>JailBee</span>
         </a>
-        <a class="topbar__link" href="docs/">Docs</a>
+        <a class="topbar__link" href="docs/">
+          <!-- Lucide book-open-text, the set the source box's icons come from. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 5v16M16 13h2M16 9h2M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2zM6 13h2M6 9h2"
+            />
+          </svg>
+          Docs
+        </a>
         <!-- `topbar__version` is rewritten by scripts/site_version.py during a
              release, with the JSON-LD above and the docs header's copy. -->
         <a class="topbar__source" href="https://github.com/VRTFinland/jailbee" title="VRTFinland/jailbee">
