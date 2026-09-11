@@ -300,6 +300,8 @@ Note: `90-registry-mirror-ca.sh` depends on `keytool` from the JDK installed by 
 
 `golden.provision_script` (path, relative to repo root) replaces the bundled `install.sh` entirely. When set, `install.d/` snippets are **not** staged — the custom script owns the whole provisioning surface. This escape hatch exists for repos that need to do something fundamentally different (e.g. a non-Ubuntu base image).
 
+A replacement script inherits nothing from `install.sh`, including the `apparmor` package. On a host that sets `kernel.apparmor_restrict_unprivileged_userns=1` (Ubuntu 24.04 and later), the dev user can only create a user namespace if AppArmor policy is loaded inside the container. Without that policy, Chrome aborts at launch with `credentials.cc … Permission denied`, and bwrap and rootless podman fail too. A custom script should install `apparmor`, as `install.sh` does. Its comment explains why.
+
 ## Per-repo config (`.jailbee/config.yaml`)
 
 All keys are optional. An empty file (`{}`) is valid and yields full
@@ -1048,7 +1050,43 @@ branch would attach to, and `jailbee figma --container <container>
 `jailbee apps run figma …` — the promotion only drops the `apps run`, and
 everything after the app name is passed through untouched. Arguments that
 start with a dash need a `--` separator, exactly as `jailbee apps run`
-does: `jailbee figma -- --no-sandbox`.
+does: `jailbee figma -- --ozone-platform=wayland`.
+
+**A Chromium-based app sandboxes itself only if AppArmor has a profile for
+its path, both on the host and in the container.** On a host that sets
+`kernel.apparmor_restrict_unprivileged_userns=1` (Ubuntu 24.04 and later),
+Incus stacks two AppArmor labels on every container process: the host's own
+and the container's. Each label attaches to a profile by the binary's path,
+and both must allow the app to create a user namespace. Ubuntu's `apparmor`
+package, which the golden image installs and the host already has, ships
+profiles for Chrome, Chromium, Edge, Brave, VS Code, Slack and Firefox at
+their standard install paths, so those apps are covered on both sides.
+
+An app at any other path, such as the Figma binary above, falls back to the
+`unprivileged_userns` profile. That profile lets the app create a user
+namespace but gives it no capabilities inside it, so Chromium's sandbox
+aborts with `The SUID sandbox helper binary was found, but is not configured
+correctly`. Don't reach for `--no-sandbox`. Instead, write a profile modelled
+on `/etc/apparmor.d/chrome` for the app's container-side path, and load it
+in both places:
+
+```
+abi <abi/5.0>,
+include <tunables/global>
+
+profile figma /opt/figma-linux/figma-linux flags=(unconfined) {
+  userns,
+  @{exec_path} mr,
+}
+```
+
+- **On the host:** save it as `/etc/apparmor.d/figma` and run `sudo
+  apparmor_parser -r /etc/apparmor.d/figma`. The host resolves the path as
+  the container sees it, so the host doesn't need a binary at that path.
+- **In the container:** write the same file from an `install.d/` snippet so
+  the golden image carries it. `apparmor.service` loads it on every boot.
+
+A profile on one side only leaves the sandbox broken.
 
 **`jailbee figma <container>` does not name a container.** `apps run`
 takes the container as an option, not as a positional, so a bare name

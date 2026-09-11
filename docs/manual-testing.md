@@ -3626,6 +3626,57 @@ Audio is the other half of the same fix: with `pulse-socket` read-only,
 `jb chrome` (or any GUI app) must still play sound from inside the container,
 and the host's own audio must survive the container's boot.
 
+## Unprivileged user namespaces (Chrome's sandbox) smoke test
+
+Needs a host with `kernel.apparmor_restrict_unprivileged_userns = 1` (Ubuntu
+24.04 and later). Before the golden image installed `apparmor`, the
+container's own AppArmor namespace held no policy, so every user namespace
+the dev user tried to create was denied, and `jb chrome` aborted in
+`credentials.cc` with `Permission denied`. Run this after `jb base build`,
+in a container created from the new image:
+
+```bash
+cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns     # 1
+
+# Policy is loaded in the container's namespace, and reloads on boot.
+jb exec <container> -- sudo grep -c . /sys/kernel/security/apparmor/profiles  # ~180
+jb exec <container> -- sudo grep -E '^(unprivileged_userns|chrome|firefox) ' \
+    /sys/kernel/security/apparmor/profiles
+jb restart <container>
+jb exec <container> -- sudo grep -c . /sys/kernel/security/apparmor/profiles  # same
+
+# The one-line stand-in for the Chrome failure: denied before the fix.
+jb exec <container> -- unshare -U true && echo ok
+
+# Chrome renders with its sandbox on: the renderers must sit in a different
+# user namespace from the browser process, under the `chrome` profile.
+jb exec <container> -- /opt/google/chrome/google-chrome --headless=new \
+    --disable-gpu --dump-dom about:blank      # <html><head></head><body>...
+jb chrome <container>                         # a window opens
+cat /tmp/jailbee-app-chrome.log               # no FATAL
+```
+
+Docker inside the container must be unaffected. With AppArmor loaded,
+`dockerd` now detects it and loads `docker-default` despite the
+`container=lxc` drop-in from `50-docker.sh`, but its containers still run
+under `runc (unconfined)`, as they did before:
+
+```bash
+jb exec <container> -- docker run --rm hello-world
+jb exec <container> -- docker run --rm busybox cat /proc/1/attr/current   # runc (unconfined)
+```
+
+Verified from inside a container, 2026-09-11: every step above except the
+restart and `jb chrome`'s window. The same run pinned down why a
+Chromium-based `apps:` entry needs an AppArmor profile on **both** sides.
+The test binary made the same identity-mapping user namespace calls
+Chromium's sandbox check makes. With a profile for its path in the container
+and on the host (VS Code's path, which Ubuntu ships profiles for), those
+calls succeeded. With a profile on only one side, the capabilities inside
+the new namespace were stripped. Still host-only: a *custom* profile, like
+the Figma one in `docs/config.md`, loaded on the host and in the image, must
+make that app start with its sandbox on.
+
 ## `jailbee claude` account pool smoke test
 
 Needs two Claude accounts. Everything below runs on the host.

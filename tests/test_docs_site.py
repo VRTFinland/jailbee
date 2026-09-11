@@ -345,6 +345,21 @@ def test_the_repository_link_does_not_call_the_github_api() -> None:
     assert "config.repo_url" in source, "the header should still link the repository"
 
 
+def test_the_docs_header_version_tracks_pyproject() -> None:
+    """The source box in the docs header names the release, from a literal in
+    zensical.toml. `scripts/site_version.py set` rewrites it during
+    `make release`; this catches a release made any other way."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert docs_site.config()["extra"]["version"] == version, (
+        f"[project.extra] version in zensical.toml is stale — set it to {version!r}"
+    )
+    source = (THEME / "partials" / "source.html").read_text()
+    assert "config.extra.version" in source, "the source box no longer shows the version"
+
+
 def test_the_page_action_links_the_rendered_source_not_the_raw_file() -> None:
     actions = (THEME / "partials" / "actions.html").read_text()
     assert "/raw/" not in actions, "the stock partial rewrites blob/ to raw/"

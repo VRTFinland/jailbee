@@ -637,3 +637,16 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
     )
     assert any(reason in line for line in apply_block)
     assert not any(reason in line for line in base_build_block)
+
+
+def test_the_apparmor_note_advises_base_build_only() -> None:
+    """Chrome dies in every container built before the golden image gained
+    the apparmor package, and only a rebuilt image fixes it — the profiles
+    are untouched, so `apply` must not be advised for this reason."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    matches = [n for n in UPGRADE_NOTES if "AppArmor" in n.reason]
+    assert len(matches) == 1
+    note = matches[0]
+    assert note.version == (1, 3, 2)
+    assert note.actions == frozenset({"base_build"})

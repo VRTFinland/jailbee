@@ -6473,7 +6473,12 @@ def test_cli_push_no_name_no_tty_errors(mocker):
 
 
 def test_cli_push_no_name_picker_cancel_aborts(mocker):
-    """Picker cancelled → Abort (exit 1)."""
+    """Picker cancelled → Abort (exit 1), nothing pushed.
+
+    Two pushable containers, because one is auto-selected without the
+    picker ever running: with a single container this test used to exit 1
+    only because the push that followed failed on an unmocked `incus`.
+    """
     from typer.testing import CliRunner
 
     from jailbee.cli import app
@@ -6487,21 +6492,26 @@ def test_cli_push_no_name_picker_cancel_aborts(mocker):
         "jailbee.lifecycle.list_containers",
         return_value=[
             ContainerInfo(
-                name="fake-a",
+                name=name,
                 state="Running",
                 network=None,
                 ip=None,
                 memory_limit=None,
                 repo="fake",
                 mode="clone",
-            ),
+            )
+            for name in ("fake-a", "fake-b")
         ],
     )
-    mocker.patch("jailbee.tui.pick_containers_multi", return_value=None)
+    pick = mocker.patch("jailbee.tui.pick_containers_multi", return_value=None)
+    push = mocker.patch("jailbee.cli._do_single_push")
 
     result = CliRunner().invoke(app, ["git", "push"])
 
     assert result.exit_code == 1
+    assert "Aborted" in result.output
+    pick.assert_called_once()
+    push.assert_not_called()
 
 
 def test_cli_push_help_mentions_current_and_plain():

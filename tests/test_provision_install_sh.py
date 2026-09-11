@@ -83,6 +83,29 @@ def test_install_sh_masks_ubuntus_automatic_apt_machinery():
     assert script.index("systemctl mask") < script.index("apt-get update")
 
 
+def _plumbing_apt_packages() -> set[str]:
+    """Package names in install.sh's "LXC plumbing" `apt-get install` block."""
+    script = _install_sh()
+    start = script.index('echo "==> Installing LXC plumbing apt packages"')
+    start = script.index("apt-get install -y", start) + len("apt-get install -y")
+    end = script.index("\n\n", start)
+    return set(script[start:end].replace("\\\n", " ").split())
+
+
+def test_install_sh_installs_apparmor_for_unprivileged_user_namespaces():
+    """Incus gives every container its own AppArmor policy namespace, and on a
+    host with `kernel.apparmor_restrict_unprivileged_userns=1` an unprivileged
+    `unshare(CLONE_NEWUSER)` is allowed only by a profile loaded in *that*
+    namespace. Without the apparmor package nothing loads one, so the dev user
+    cannot create a user namespace at all — Chrome's zygote aborts with
+    `credentials.cc: Permission denied`, and bwrap and rootless podman fail
+    the same way. The package ships both `unprivileged_userns` and the
+    per-browser profiles (`chrome`, `firefox`) whose paths match where
+    jailbee's browsers live, and its service reloads them on every boot.
+    """
+    assert "apparmor" in _plumbing_apt_packages()
+
+
 def test_install_sh_writes_the_profile_d_snippet():
     assert SNIPPET_HEREDOC_START in _install_sh()
     assert "SSH_AUTH_SOCK" in _jailbee_env_snippet()

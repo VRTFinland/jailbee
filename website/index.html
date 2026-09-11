@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=64a7c149" />
+    <link rel="stylesheet" href="assets/style.css?v=6ef33eab" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -78,73 +78,149 @@
     </script>
   </head>
   <body>
+    <!-- The documentation's header bar, rebuilt by hand so the front page and
+         the docs read as one site: same height, glass, mark and source box,
+         measured off the docs build (website/docs-theme). No search box:
+         the index is the docs', and the docs' search dialog cannot run
+         outside the theme's page, so a box here could only navigate away —
+         which reads as leaving the site. A Docs link stands in its place.
+         Below 960px the source box goes, as the docs' does. -->
+    <header class="topbar">
+      <div class="topbar__inner">
+        <a class="topbar__brand" href="./">
+          <img src="assets/img/jailbee-mark.png" alt="" width="340" height="345" />
+          <span>JailBee</span>
+        </a>
+        <a class="topbar__link" href="docs/">
+          <!-- Lucide book-open-text, the set the source box's icons come from. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 5v16M16 13h2M16 9h2M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2zM6 13h2M6 9h2"
+            />
+          </svg>
+          Docs
+        </a>
+        <!-- `topbar__version` is rewritten by scripts/site_version.py during a
+             release, with the JSON-LD above and the docs header's copy. -->
+        <a class="topbar__source" href="https://github.com/VRTFinland/jailbee" title="VRTFinland/jailbee">
+          <!-- Font Awesome Free 7.3.1 github brand icon, CC BY 4.0
+               (fontawesome.com/license/free) — the one the docs header uses. -->
+          <svg class="topbar__github" viewBox="0 0 512 512" aria-hidden="true">
+            <path
+              d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"
+            />
+          </svg>
+          <span class="topbar__repo">
+            Source code
+            <span class="topbar__facts">
+              <span class="topbar__fact">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+                  />
+                  <circle cx="7.5" cy="7.5" r=".5" />
+                </svg>
+                <span class="topbar__version">v1.3.1</span>
+              </span>
+              <span class="topbar__fact">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v18M19 8l3 8a5 5 0 0 1-6 0zV7" />
+                  <path
+                    d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1M5 8l3 8a5 5 0 0 1-6 0zV7M7 21h10"
+                  />
+                </svg>
+                GPL-3.0
+              </span>
+            </span>
+          </span>
+        </a>
+      </div>
+    </header>
+
     <section class="hero">
       <div class="wrap">
-        <div class="lockup">
-          <img
-            class="lockup__mark"
-            src="assets/img/jailbee-mark.png"
-            alt="JailBee logo: a bee behind bars"
-            width="340"
-            height="345"
-          />
-          <div class="lockup__text">
-            <!-- "ai" is set apart on purpose: jAIlbee. Still one word to a
-                 screen reader, and still one word when selected and copied. -->
-            <span class="lockup__word">J<em>ai</em>lBee</span>
-            <a class="lockup__by" href="https://gisgro.com" rel="noopener">
-              by
-              <img src="assets/img/gisgro-logo.svg" width="72" height="13" alt="GISGRO" />
-            </a>
-          </div>
-        </div>
-        <h1>One container per branch. All of them at once.</h1>
-        <p class="hero__lead">
-          JailBee gives every git branch a full system container of its own: its own services,
-          its own Docker daemon, its own IDE and browser, cloned copy-on-write from one golden
-          image. Several stacks run in parallel on one host, out of each other's way.
-        </p>
+        <!-- The pitch and the install command share one framed panel, so the
+             first screen reads as a single unit rather than a column of
+             separate pieces on the bare page. -->
+        <div class="hero__panel">
+          <div class="hero__copy">
+            <div class="lockup">
+              <img
+                class="lockup__mark"
+                src="assets/img/jailbee-mark.png"
+                alt="JailBee logo: a bee behind bars"
+                width="340"
+                height="345"
+              />
+              <div class="lockup__text">
+                <!-- "ai" is set apart on purpose: jAIlbee. Still one word to a
+                     screen reader, and still one word when selected and copied. -->
+                <span class="lockup__word">J<em>ai</em>lBee</span>
+                <a class="lockup__by" href="https://gisgro.com" rel="noopener">
+                  by
+                  <img src="assets/img/gisgro-logo.svg" width="72" height="13" alt="GISGRO" />
+                </a>
+              </div>
+            </div>
+            <p class="eyebrow eyebrow--solution">Isolated dev environments for Linux</p>
+            <h1>One container per branch. All of them at once.</h1>
+            <p class="hero__lead">
+              JailBee gives every git branch a full system container of its own: its own
+              services, its own Docker daemon, its own IDE and browser, cloned copy-on-write from
+              one golden image. Several stacks run in parallel on one host, out of each other's
+              way.
+            </p>
 
-        <!-- The installer choice is cosmetic: jailbee is a normal PyPI
-             package and needs neither tool at runtime. Both isolate the
-             install, which is why plain `pip` is not offered here — on the
-             Ubuntu hosts jailbee targets it refuses to touch the system
-             Python (PEP 668). -->
-        <!-- The authored state must agree with itself: data-installer, the
-             pressed tab, the visible command and the copy payload all say
-             pipx until the reader clicks. The script only rewrites them on
-             a click, so a mismatch here ships a button that looks selected
-             next to a command from the other tool. -->
-        <div class="install" data-installer="pipx">
-          <div class="install__switch" role="group" aria-label="Installer">
-            <button
-              type="button"
-              class="install__tab"
-              data-installer-choice="pipx"
-              aria-pressed="true"
-            >
-              pipx
-            </button>
-            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="false">
-              uv
-            </button>
+            <div class="actions">
+              <a class="button button--primary" href="https://github.com/VRTFinland/jailbee"
+                >View on GitHub</a
+              >
+              <a class="button button--secondary" href="docs/">Read the docs</a>
+            </div>
           </div>
-          <div class="install__row">
-            <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
-              >pipx install jailbee</code
-            >
-            <button class="copy" data-copy="pipx install jailbee">Copy</button>
-          </div>
-          <p class="install__hint">
-            Linux host required — see <a href="#install">Requirements</a>.
-          </p>
-        </div>
 
-        <div class="actions">
-          <a class="button button--primary" href="https://github.com/VRTFinland/jailbee"
-            >View on GitHub</a
-          >
-          <a class="button button--secondary" href="docs/">Read the docs</a>
+          <!-- The installer choice is cosmetic: jailbee is a normal PyPI
+               package and needs neither tool at runtime. Both isolate the
+               install, which is why plain `pip` is not offered here — on the
+               Ubuntu hosts jailbee targets it refuses to touch the system
+               Python (PEP 668). -->
+          <!-- The authored state must agree with itself: data-installer, the
+               pressed tab, the visible command and the copy payload all say
+               pipx until the reader clicks. The script only rewrites them on
+               a click, so a mismatch here ships a button that looks selected
+               next to a command from the other tool. -->
+          <div class="install" data-installer="pipx">
+            <div class="install__bar">
+              <span class="install__label">Install</span>
+              <div class="install__switch" role="group" aria-label="Installer">
+                <button
+                  type="button"
+                  class="install__tab"
+                  data-installer-choice="pipx"
+                  aria-pressed="true"
+                >
+                  pipx
+                </button>
+                <button
+                  type="button"
+                  class="install__tab"
+                  data-installer-choice="uv"
+                  aria-pressed="false"
+                >
+                  uv
+                </button>
+              </div>
+            </div>
+            <div class="install__row">
+              <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
+                >pipx install jailbee</code
+              >
+              <button class="copy" data-copy="pipx install jailbee">Copy</button>
+            </div>
+            <p class="install__hint">
+              Linux host required — see <a href="#install">Requirements</a>.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -582,7 +658,7 @@
           </tbody>
         </table>
         <p class="compare__more">
-          <a href="comparison.html">Read the full comparison</a>
+          <a href="docs/comparison/">Read the full comparison</a>
           — what each tool does with your working tree, your credentials and the network, and what
           JailBee costs you.
         </p>
