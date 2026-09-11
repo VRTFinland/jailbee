@@ -63,9 +63,16 @@ autostart:
 
 # This is what video A's `jb tmux` beat depends on: autostart appends a
 # `claude` window to the tmux session and jailbee tmux lands in it.
+#
+# --model haiku because video D runs three agents per take and a take is
+# re-recorded several times a session. `claude.command` is the documented
+# override for exactly this, and `effective_install_check` probes only the
+# first token, so the install/update path is unaffected. The model name shows
+# in the agent's startup banner on camera, which is simply true.
 claude:
   enabled: true
   autostart: true
+  command: claude --model haiku
 
 new:
   clone_from: local
