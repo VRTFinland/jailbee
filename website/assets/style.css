@@ -195,9 +195,17 @@ section {
 .topbar__link {
   margin-left: auto;
   padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text);
   font-size: 14px;
   line-height: 48px;
+}
+
+.topbar__link svg {
+  width: 18px;
+  height: 18px;
 }
 
 .topbar__link,
@@ -262,6 +270,11 @@ section {
 .topbar__fact svg {
   width: 12px;
   height: 12px;
+}
+
+/* Lucide icons are outlines: stroked in the text colour, never filled. */
+.topbar__link svg,
+.topbar__fact svg {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
