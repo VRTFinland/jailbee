@@ -7,15 +7,6 @@
   is what stops it fetching https://unpkg.com/mermaid@11/dist/mermaid.min.js
   from the reader's browser. Pinned by filename and by sha256 in
   tests/test_docs_site.py.
-
-  Also adds a search deep link, which the theme has none of: `?q=<terms>`
-  opens the search dialog with the terms filled in, and a bare `?q=` opens
-  it empty. The landing page's header search submits here — it cannot
-  search itself, since the index is the docs'. The dialog lives in a shadow
-  root the theme's bundle mounts on load; clicking the header's search
-  button is the bundle's own way in, and an `input` event is what its
-  field listens to. `q` is dropped from the address afterwards, so a
-  reload or a copied link does not reopen the dialog.
 -#}
 {% extends "base.html" %}
 
@@ -24,37 +15,4 @@
   {% if 'class="mermaid"' in page.content %}
     <script src="{{ 'assets/mermaid-11.17.2.min.js' | url }}"></script>
   {% endif %}
-  <script>
-    window.addEventListener("load", function () {
-      var params = new URLSearchParams(location.search);
-      var query = params.get("q");
-      var button = document.querySelector(".md-search__button");
-      if (query === null || !button) return;
-      params.delete("q");
-      var rest = params.toString();
-      history.replaceState(
-        history.state,
-        "",
-        location.pathname + (rest ? "?" + rest : "") + location.hash
-      );
-      button.click();
-      var tries = 0;
-      (function fill() {
-        var input = null;
-        Array.prototype.some.call(document.body.children, function (el) {
-          input = el.shadowRoot && el.shadowRoot.querySelector("input[role=combobox]");
-          return input;
-        });
-        if (!input) {
-          if (++tries < 40) setTimeout(fill, 50);
-          return;
-        }
-        if (query) {
-          input.value = query;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        input.focus();
-      })();
-    });
-  </script>
 {% endblock %}
