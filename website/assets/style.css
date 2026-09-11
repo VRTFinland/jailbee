@@ -147,6 +147,43 @@ section {
   padding-top: clamp(3rem, 7vw, 5.5rem);
 }
 
+/* The framed first screen: pitch on the left, install card on the right,
+   both on one panel lit from its top-right corner. The light is the amber
+   token faded to transparent, so the panel adds no colour of its own. It
+   stacks to one column below 900px, where two columns would squeeze the
+   headline into single words. */
+.hero__panel {
+  display: grid;
+  gap: clamp(2rem, 4vw, 3.5rem);
+  align-items: center;
+  padding: clamp(1.1rem, 5.5vw, 4.5rem);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.6);
+  background:
+    radial-gradient(
+      60% 80% at 92% 8%,
+      color-mix(in srgb, var(--amber) 22%, transparent),
+      transparent
+    ),
+    radial-gradient(
+      55% 70% at 0% 100%,
+      color-mix(in srgb, var(--amber-dim) 10%, transparent),
+      transparent
+    ),
+    linear-gradient(150deg, var(--surface-2), var(--surface) 55%, var(--ground));
+}
+
+@media (min-width: 900px) {
+  .hero__panel {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+}
+
+/* A half column can't carry the page-wide headline size. */
+.hero__panel h1 {
+  font-size: clamp(2.2rem, 4.6vw, 3.3rem);
+}
+
 /* The wordmark is text, not pixels: the mark image carries only the caged
    bee, and "JailBee" is set in the page's own IBM Plex. It stays sharp at
    any size and matches the rest of the type instead of being a small,
@@ -217,19 +254,42 @@ section {
   font-size: clamp(1.05rem, 1.6vw, 1.2rem);
 }
 
+/* The install card: a terminal-like window set darker than the panel it
+   sits on — a title bar carrying the installer switch, the command, and a
+   footer with the host requirement. */
 .install {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  margin: 1.75rem 0;
+  min-width: 0;
+  background: color-mix(in srgb, var(--ground) 85%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 48px -28px var(--ground);
+  overflow: hidden;
 }
 
-/* Segmented installer switch above the command rows. Sized to the text
+.install__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem 0.6rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.install__label {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* Segmented installer switch in the card's title bar. Sized to the text
    so it reads as a control, not a pair of buttons competing with the
    page's real call to action. */
 .install__switch {
   display: inline-flex;
-  align-self: flex-start;
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) - 4px);
   overflow: hidden;
@@ -262,23 +322,37 @@ section {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
+  padding: 1.5rem 0.75rem 1.5rem 1.1rem;
+}
+
+/* The prompt is decoration: generated content stays out of the copy
+   payload and out of a text selection. The second declaration gives it an
+   empty alternative text so screen readers skip it; a browser that can't
+   parse that form keeps the first. */
+.install__row::before {
+  content: "$";
+  content: "$" / "";
+  color: var(--amber-dim);
+  font-family: var(--mono);
 }
 
 .install__row code {
+  flex: 1;
+  min-width: 0;
   color: var(--text);
-  font-size: 1rem;
+  /* Scales down with the viewport so the longer `uv tool install jailbee`
+     still fits the card on a 400px phone instead of scrolling. */
+  font-size: clamp(0.8rem, 3.6vw, 1.05rem);
   white-space: nowrap;
   overflow-x: auto;
 }
 
 .install__hint {
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   margin: 0;
+  padding: 0.65rem 1.1rem;
+  border-top: 1px solid var(--border);
 }
 
 button.copy {
