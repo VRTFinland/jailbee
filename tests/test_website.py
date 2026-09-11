@@ -21,9 +21,19 @@ FONTS = SITE / "assets" / "fonts"
 
 CANONICAL_URL = "https://jailbee.gisgro.io/"
 
+
+def _is_redirect(page: Path) -> bool:
+    return 'http-equiv="refresh"' in page.read_text()
+
+
 # Discovered rather than listed, so a page added to website/ inherits every
-# whole-page check below instead of shipping unverified.
-PAGES = sorted(SITE.glob("*.html"))
+# whole-page check below instead of shipping unverified. A stub left at a
+# retired URL is not a page — it has no content to check, and it names its
+# target as canonical rather than itself — so it gets the redirect test
+# instead.
+_HTML_FILES = sorted(SITE.glob("*.html"))
+PAGES = [p for p in _HTML_FILES if not _is_redirect(p)]
+REDIRECTS = [p for p in _HTML_FILES if _is_redirect(p)]
 
 
 def canonical_url_for(page: Path) -> str:
@@ -36,7 +46,35 @@ def canonical_url_for(page: Path) -> str:
 def test_the_site_publishes_the_pages_this_module_thinks_it_does() -> None:
     """Guards the glob above: if it ever matches nothing, every per-page
     test below would pass vacuously by iterating an empty list."""
-    assert {p.name for p in PAGES} == {"index.html", "comparison.html"}
+    assert {p.name for p in PAGES} == {"index.html"}
+    assert {p.name for p in REDIRECTS} == {"comparison.html"}
+
+
+def test_every_retired_url_redirects_into_the_docs() -> None:
+    """A retired page's URL is still out there — in search results and in
+    links posted elsewhere — so its stub must land on a page that exists.
+
+    comparison.html moved to docs/comparison/. The refresh target, the
+    canonical link and the visible fallback link must all name the same
+    published page, or the stub sends a reader, a crawler and a no-refresh
+    browser to three different places.
+    """
+    import re
+
+    from tests.docs_links import resolve
+
+    for page in REDIRECTS:
+        html = page.read_text()
+        refresh = re.search(r'<meta http-equiv="refresh" content="0; url=([^"]+)" />', html)
+        assert refresh, f"{page.name}: no zero-delay refresh"
+        target = refresh.group(1)
+        problem = resolve(target)
+        assert problem is None, f"{page.name}: {problem}"
+        assert f'<link rel="canonical" href="{CANONICAL_URL}{target}" />' in html, (
+            f"{page.name}: the canonical link must name the refresh target"
+        )
+        hrefs = [v for attr, v in collect_references(html) if attr == "href"]
+        assert target in hrefs, f"{page.name}: no visible link to {target} without refresh"
 
 
 # Weights the stylesheet declares. Shipping more is dead weight — even as
@@ -357,9 +395,9 @@ def test_every_page_declares_its_own_canonical_url() -> None:
 
 
 def test_every_subpage_links_back_to_the_front_page() -> None:
-    """A subpage here is not reached from the front page — comparison.html
-    is what ranks for the competitors' names, so a reader can arrive on it
-    cold. Without a way in, the site is one page deep and a dead end.
+    """A subpage here is one a reader can arrive on cold, from a search
+    result. Without a way to the front page from it, the site is one page
+    deep and a dead end. (There is no subpage today; this is for the next.)
     """
     for page in PAGES:
         if page.name == "index.html":
@@ -368,41 +406,6 @@ def test_every_subpage_links_back_to_the_front_page() -> None:
         assert hrefs & {"./", "/", "index.html"}, (
             f"{page.name} offers no link back to the front page"
         )
-
-
-VERDICTS = frozenset({"mx--yes", "mx--no", "mx--partial", "mx--na"})
-
-
-def test_every_verdict_cell_is_readable_without_colour_or_sight() -> None:
-    """Green/red ticks are the fastest way to read the grid and the easiest
-    to get wrong. Each cell has to carry its answer three ways: the colour,
-    the glyph shape (for red-green colour deficiency), and text (for a
-    screen reader, which sees neither). This asserts the latter two, since
-    a cell that loses its hidden text still *looks* perfect.
-    """
-    import re
-
-    html = (SITE / "comparison.html").read_text()
-    cells = re.findall(r'<td class="(mx[^"]*)">(.*?)</td>', html, re.DOTALL)
-    assert len(cells) >= 40, f"expected a full verdict grid, found {len(cells)} cells"
-
-    for classes, body in cells:
-        verdict = set(classes.split()) & VERDICTS
-        assert len(verdict) == 1, f"cell must carry exactly one verdict class, got {classes!r}"
-
-        assert 'class="mx__mark" aria-hidden="true"' in body, (
-            f"{classes}: verdict cell has no glyph, so colour is its only carrier"
-        )
-
-        # Whatever is left once the aria-hidden glyph and all markup are
-        # gone is what a screen reader actually announces. `</span\s*>`
-        # rather than `</span>`: the markup breaks the line before the
-        # closing bracket to avoid a space between glyph and text, which is
-        # valid HTML that a stricter pattern silently skips past — taking
-        # the very text this test exists to find with it.
-        readable = re.sub(r'<span class="mx__mark"[^>]*>.*?</span\s*>', "", body, flags=re.DOTALL)
-        readable = re.sub(r"<[^>]+>", "", readable).strip()
-        assert readable, f"{classes}: verdict cell announces nothing to a screen reader"
 
 
 def test_the_stylesheet_makes_no_external_requests() -> None:
@@ -419,10 +422,10 @@ def test_every_page_has_exactly_one_top_level_heading() -> None:
 def test_documentation_links_land_on_published_pages() -> None:
     """The site links its own docs; only unpublished pages go to GitHub.
 
-    Every page, not just the front one: comparison.html hands the reader off
-    to the comparison document, and a rename there would otherwise break that
-    link silently. Anchors are resolved too — a heading that no longer exists
-    is a link into the middle of nowhere.
+    Every page, not just the front one: a subpage handing the reader off to
+    a document breaks just as silently when that document is renamed.
+    Anchors are resolved too — a heading that no longer exists is a link
+    into the middle of nowhere.
     """
     from tests.docs_links import GITHUB_DOCS_PREFIX, is_docs_link, resolve
 
@@ -664,7 +667,9 @@ def test_the_sitemap_lists_every_page_the_site_publishes() -> None:
     """Add a page under website/ and the sitemap has to learn about it.
 
     Without this, a second page ships unlisted and the sitemap quietly
-    describes a site that no longer exists.
+    describes a site that no longer exists. A redirect stub is not listed:
+    a sitemap names pages to index, and the stub's target is already in the
+    docs sitemap.
     """
     import xml.etree.ElementTree as ET
 
@@ -672,7 +677,7 @@ def test_the_sitemap_lists_every_page_the_site_publishes() -> None:
     ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     listed = {loc.text for loc in root.findall(".//sm:url/sm:loc", ns)}
 
-    published = {p.name for p in SITE.glob("*.html")}
+    published = {p.name for p in PAGES}
     expected = {
         CANONICAL_URL if name == "index.html" else f"{CANONICAL_URL}{name}" for name in published
     }
@@ -733,4 +738,42 @@ def test_the_structured_data_version_tracks_pyproject() -> None:
         version = tomllib.load(handle)["project"]["version"]
     assert _structured_data()["softwareVersion"] == version, (
         f"JSON-LD softwareVersion is stale — set it to {version!r}"
+    )
+
+
+def test_the_header_matches_the_docs_header() -> None:
+    """The top bar is the docs header rebuilt by hand, so nothing but this
+    keeps the two from drifting apart.
+
+    The search form is a contract with website/docs-theme/main.html, which
+    reads `q` on the docs side (tests/test_docs_site.py pins that half): a
+    renamed field or a changed action sends the terms nowhere, and the
+    reader lands on the docs overview with no search open. The source box
+    must name the repository, mark and release the docs header does.
+    """
+    import tomllib
+
+    elements = collect_elements(INDEX.read_text())
+
+    def the_one(tag: str, css_class: str) -> dict[str, str | None]:
+        found = [a for t, a in elements if t == tag and css_class in (a.get("class") or "").split()]
+        assert len(found) == 1, f"expected one <{tag} class={css_class!r}>, found {len(found)}"
+        return found[0]
+
+    the_one("header", "topbar")
+    form = the_one("form", "topbar__search")
+    assert (form.get("action"), form.get("method")) == ("docs/", "get")
+    assert the_one("input", "topbar__search-input").get("name") == "q"
+
+    with (REPO_ROOT / "zensical.toml").open("rb") as handle:
+        docs = tomllib.load(handle)["project"]
+    assert the_one("a", "topbar__source").get("href") == docs["repo_url"]
+    start = elements.index(("a", the_one("a", "topbar__brand")))
+    brand = next(a for t, a in elements[start:] if t == "img")
+    assert brand.get("src") == docs["theme"]["logo"].lstrip("/"), "the mark differs from the docs'"
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert f'<span class="topbar__version">v{version}</span>' in INDEX.read_text(), (
+        f"the header's version is stale — set it to v{version}"
     )

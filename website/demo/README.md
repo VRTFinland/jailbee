@@ -175,8 +175,8 @@ The rest of the site contract, also enforced by tests: every clip
 click-to-play (`controls`, `preload="none"`, `poster`, `muted`, `playsinline`,
 and **no** `loop`/`autoplay`, which belonged to the retired hero loops), and
 every clip the page names must actually be committed. Editing
-`../assets/style.css` also means updating the `?v=` cache-buster in **both**
-`index.html` and `comparison.html`; the test fails with the value to paste.
+`../assets/style.css` also means updating the `?v=` cache-buster in
+`index.html`; the test fails with the value to paste.
 
 `README.md` at the repo root shows the clip too, as a poster linked to the
 site — not a `<video>`, because that file is also the PyPI long description

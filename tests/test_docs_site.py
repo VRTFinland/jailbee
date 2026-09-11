@@ -345,6 +345,35 @@ def test_the_repository_link_does_not_call_the_github_api() -> None:
     assert "config.repo_url" in source, "the header should still link the repository"
 
 
+def test_the_docs_open_search_from_a_q_parameter() -> None:
+    """The landing page's header search submits `docs/?q=<terms>`: it has no
+    index of its own. The theme has no such deep link, so main.html adds
+    one, and without it the landing search just lands on the overview.
+    Read as a contract with tests/test_website.py's header-search test —
+    the parameter name and the button the script opens the dialog with
+    are what the two halves agree on. Verified in a real browser; the
+    dialog lives in the bundle's shadow root, beyond a unit test's reach."""
+    main_html = (THEME / "main.html").read_text()
+    assert 'params.get("q")' in main_html, "main.html no longer reads the q parameter"
+    assert '".md-search__button"' in main_html, "main.html no longer opens the search dialog"
+    assert "history.replaceState" in main_html, "q would stay in the address and reopen on reload"
+
+
+def test_the_docs_header_version_tracks_pyproject() -> None:
+    """The source box in the docs header names the release, from a literal in
+    zensical.toml. `scripts/site_version.py set` rewrites it during
+    `make release`; this catches a release made any other way."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert docs_site.config()["extra"]["version"] == version, (
+        f"[project.extra] version in zensical.toml is stale — set it to {version!r}"
+    )
+    source = (THEME / "partials" / "source.html").read_text()
+    assert "config.extra.version" in source, "the source box no longer shows the version"
+
+
 def test_the_page_action_links_the_rendered_source_not_the_raw_file() -> None:
     actions = (THEME / "partials" / "actions.html").read_text()
     assert "/raw/" not in actions, "the stock partial rewrites blob/ to raw/"
