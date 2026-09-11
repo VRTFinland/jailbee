@@ -163,6 +163,14 @@ note = f" (absent: {missing})" if missing else ""
 print(f"wrote {len(out)} keys, claude.json is now {len(payload)} bytes{note}")
 PY
 
+# The legacy path has to go, or jailbee says so on camera. `jailbee new`
+# migrates <shared>/claude.json into <shared>/claude/.claude.json but refuses
+# to overwrite an existing destination, and prints a four-line warning saying
+# to merge it by hand — which landed in the middle of a take, right where the
+# video creates a container. The destination above is the authority here, so
+# the stale file is simply removed.
+rm -f "$SHARED/claude.json"
+
 # The agent has to work while nobody is watching it, and the container is the
 # isolation boundary that makes that safe — which is the claim these videos
 # exist to show. Without this the agent stops on a permission prompt the moment
