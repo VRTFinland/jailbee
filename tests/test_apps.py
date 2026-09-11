@@ -86,6 +86,7 @@ def test_launch_announces_the_app_name_and_log_path(tmp_path, mocker, capsys):
     # A plain config app (no `pool`) so this test doesn't need to mock
     # `jailbee.pool` — that's `test_launch_allocates_the_pool_slot_before_starting`'s job.
     cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.gui.launch_detached")
     launch(cfg, Incus(), "c1", get_app(cfg, "figma"))
     out = capsys.readouterr().out
@@ -98,6 +99,7 @@ def test_launch_appends_call_args_after_configured_args(tmp_path, mocker):
     from jailbee.incus import Incus
 
     cfg = make_cfg(tmp_path, apps={"x": {"command": "/bin/x", "args": ["--a"]}})
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     detached = mocker.patch("jailbee.gui.launch_detached")
     launch(cfg, Incus(), "c1", get_app(cfg, "x"), ["--b"])
     inner = detached.call_args.args[3]
@@ -252,6 +254,7 @@ def test_launch_appends_default_url_when_no_args_given(tmp_path, mocker):
     from jailbee.incus import Incus
 
     cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     detached = mocker.patch("jailbee.gui.launch_detached")
     spec = AppSpec(name="x", command=["/bin/x"], default_url="https://cfg.test")
     launch(cfg, Incus(), "c1", spec)
@@ -268,6 +271,7 @@ def test_launch_prefers_explicit_args_over_default_url(tmp_path, mocker):
     from jailbee.incus import Incus
 
     cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     detached = mocker.patch("jailbee.gui.launch_detached")
     spec = AppSpec(name="x", command=["/bin/x"], default_url="https://cfg.test")
     launch(cfg, Incus(), "c1", spec, ["https://override.test"])
