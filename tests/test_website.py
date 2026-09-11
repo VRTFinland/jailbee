@@ -1,14 +1,18 @@
 """Structural checks for the published website.
 
-The site has no build step, so these tests are its only safety net: a
-mistyped asset path or a stray CDN reference is invisible until the page is
-live, and a font shipped without its licence is a licence violation.
+`website/` ships as committed — no build step, no bundler — so these tests are
+its only safety net: a mistyped asset path or a stray CDN reference is
+invisible until the page is live, and a font shipped without its licence is a
+licence violation. The documentation under /docs/ *is* generated;
+tests/test_docs_site.py and the strict build cover that half.
 """
 
 from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+
+from tests.docs_links import UNPUBLISHED
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -278,6 +282,8 @@ def test_the_stylesheet_link_carries_its_current_content_hash() -> None:
 
 
 def test_every_local_reference_resolves_on_disk() -> None:
+    from tests.docs_links import resolve
+
     refs = [
         (tag, attr, value)
         for page in PAGES
@@ -298,6 +304,13 @@ def test_every_local_reference_resolves_on_disk() -> None:
         # exemption is closed again by
         # test_every_clip_the_page_references_is_actually_committed.
         if tag == "source" and attr == "src" and value.startswith("assets/media/"):
+            continue
+        # A docs/ link is served by the generated documentation, which is not
+        # in website/ — route it through the resolver instead of the
+        # filesystem.
+        if value.startswith("docs/"):
+            problem = resolve(value)
+            assert problem is None, f"{tag} {attr}={value!r}: {problem}"
             continue
         target = (SITE / value.split("?", 1)[0]).resolve()
         # A directory reference (`./`, `subdir/`) is what a server resolves
@@ -403,29 +416,48 @@ def test_every_page_has_exactly_one_top_level_heading() -> None:
         assert page.read_text().count("<h1") == 1, f"{page.name} needs exactly one <h1>"
 
 
-DOC_LINK_PREFIX = "https://github.com/VRTFinland/jailbee/blob/main/"
+def test_documentation_links_land_on_published_pages() -> None:
+    """The site links its own docs; only unpublished pages go to GitHub.
 
-
-def test_documentation_links_point_at_files_that_exist_in_this_repo() -> None:
-    """Verified against the local tree, which is what the repo will publish.
-
-    Every page, not just the front one: comparison.html hands the reader
-    off to docs/comparison.md, and a rename there would otherwise break
-    that link silently.
+    Every page, not just the front one: comparison.html hands the reader off
+    to the comparison document, and a rename there would otherwise break that
+    link silently. Anchors are resolved too — a heading that no longer exists
+    is a link into the middle of nowhere.
     """
+    from tests.docs_links import GITHUB_DOCS_PREFIX, is_docs_link, resolve
+
+    # The documentation's front door on GitHub — the README's documentation
+    # table and the docs/ directory listing. The site has its own at docs/, and
+    # neither of these starts with GITHUB_DOCS_PREFIX, so the check below
+    # would wave them through.
+    github_docs_indexes = {
+        "https://github.com/VRTFinland/jailbee#documentation",
+        "https://github.com/VRTFinland/jailbee/tree/main/docs",
+    }
+
     for page in PAGES:
-        refs = collect_references(page.read_text())
-        doc_links = [v for a, v in refs if a == "href" and v.startswith(DOC_LINK_PREFIX)]
-        for link in doc_links:
-            path = REPO_ROOT / link[len(DOC_LINK_PREFIX) :]
-            assert path.is_file(), (
-                f"{page.name}: documentation link has no local counterpart: {link}"
+        for attribute, value in collect_references(page.read_text()):
+            if attribute != "href":
+                continue
+            assert value.rstrip("/") not in github_docs_indexes, (
+                f"{page.name}: {value} sends the reader to GitHub — link docs/ instead"
             )
+            if is_docs_link(value):
+                problem = resolve(value)
+                assert problem is None, f"{page.name}: {problem}"
+            elif value.startswith(GITHUB_DOCS_PREFIX):
+                name = value[len(GITHUB_DOCS_PREFIX) :]
+                assert name in UNPUBLISHED, (
+                    f"{page.name}: {name} is published — link the site, not GitHub"
+                )
+                assert (REPO_ROOT / "docs" / name).is_file(), (
+                    f"{page.name}: documentation link has no local counterpart: {value}"
+                )
 
     index_links = [
-        v
-        for a, v in collect_references(INDEX.read_text())
-        if a == "href" and v.startswith(DOC_LINK_PREFIX)
+        value
+        for attribute, value in collect_references(INDEX.read_text())
+        if attribute == "href" and is_docs_link(value)
     ]
     assert len(index_links) >= 6, "the docs section should link at least six documents"
 
@@ -614,10 +646,12 @@ def test_the_stylesheet_honours_reduced_motion() -> None:
     assert "prefers-reduced-motion: reduce" in css
 
 
-def test_robots_allows_crawling_and_points_at_the_sitemap() -> None:
+def test_robots_allows_crawling_and_points_at_both_sitemaps() -> None:
     """A stray ``Disallow: /`` here would delist the site silently."""
     robots = (SITE / "robots.txt").read_text()
     assert "Sitemap: https://jailbee.gisgro.io/sitemap.xml" in robots
+    # The docs half has its own sitemap, generated by the build from site_url.
+    assert "Sitemap: https://jailbee.gisgro.io/docs/sitemap.xml" in robots
     disallows = [
         line.split(":", 1)[1].strip()
         for line in robots.splitlines()
@@ -651,12 +685,20 @@ def test_llms_txt_follows_the_format_and_links_only_to_real_docs() -> None:
     """The file LLM crawlers read. A dead link here is a wrong answer later."""
     import re
 
+    from tests.docs_links import GITHUB_DOCS_PREFIX, SITE_DOCS_URL, resolve
+
     text = (SITE / "llms.txt").read_text()
     assert text.startswith("# JailBee\n"), "llms.txt must open with an H1 naming the project"
     assert "\n> " in text, "llms.txt must carry a blockquote summary after the H1"
 
-    for link in re.findall(rf"\]\({re.escape(DOC_LINK_PREFIX)}([^)]+)\)", text):
-        assert (REPO_ROOT / link).is_file(), f"llms.txt links a missing document: {link}"
+    links = re.findall(rf"{re.escape(SITE_DOCS_URL)}[^\s\)\"']*", text)
+    assert links, "llms.txt links no documentation at all"
+    for link in links:
+        problem = resolve(link)
+        assert problem is None, problem
+
+    for link in re.findall(rf"{re.escape(GITHUB_DOCS_PREFIX)}([^\s\)\"']+)", text):
+        assert link in UNPUBLISHED, f"{link} is published — link the site, not GitHub"
 
 
 def _structured_data() -> dict[str, object]:

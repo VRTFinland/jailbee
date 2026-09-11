@@ -24,6 +24,17 @@ before editing `## Unreleased`.
   `jailbee ls`'s PR column and both dashboards gain a `✉N` marker for N
   pending manifests, and `jailbee destroy`'s guard now warns when a
   container it would remove is still holding unapplied PR actions.
+- **The documentation is now a website**, at
+  [jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/) — navigable and
+  searchable, with the same Markdown still readable in the repository's
+  `docs/`. There is one source: the site is generated from those files on every
+  release, and a link or heading anchor that no longer resolves fails CI rather
+  than shipping.
+
+## 1.3.1 - 2026-09-10
+
+### Added
+
 - **`jailbee registry verify [--purge]` finds and removes corrupt entries in
   the registry mirror's cache.** Every blob and manifest the mirror caches is
   stored under the digest its content must hash to, but nginx never checks:

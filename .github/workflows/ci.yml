@@ -33,3 +33,18 @@ jobs:
       - run: uv run ruff format --check src/ tests/
       - run: uv run mypy src/
       - run: uv run pytest -q
+  docs:
+    # The documentation site is generated, so a broken cross-page link or a
+    # heading anchor that no longer exists is invisible in the Markdown. The
+    # strict build resolves every internal reference, reports every one that
+    # does not land, and then fails; site-check enforces the no-CDN rule on
+    # the output. Both run per pull request, not only on deploy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --only-group docs
+      - run: make site
+      - run: make site-check
