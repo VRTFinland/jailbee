@@ -186,8 +186,8 @@ rely on.
 
 | Command | Purpose |
 |---------|---------|
-| `get` | print the version `website/index.html`'s JSON-LD advertises |
-| `set <version>` | rewrite it (exits non-zero unless exactly one field matches) |
+| `get` | print the version each site file advertises: `website/index.html`'s JSON-LD, and `[project.extra] version` in `zensical.toml` (the docs header's source box) |
+| `set <version>` | rewrite both (exits non-zero, writing neither, unless each file has exactly one field) |
 
 `set` runs during a release, after `uv version` and before the commit, so a
 stale value aborts the release while everything is still local. Without it the

@@ -2,13 +2,24 @@
   Overrides the stock partial to drop the theme's "source" component marker
   attribute. That marker is what makes the theme's bundle call api.github.com
   from the reader's browser for star, fork and release counts — a
-  third-party request the site does not make. The link itself stays.
+  third-party request the site does not make.
+
+  The facts line is rendered here instead, statically, in the markup the
+  theme's bundle would have inserted — so the theme's own stylesheet lays it
+  out, version icon included. It carries only what does not go stale
+  between releases: the version, which `scripts/site_version.py set` writes
+  into zensical.toml during a release, and the licence. Star and fork counts
+  would need the API call above.
 -#}
-<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+<a href="{{ config.repo_url }}" title="{{ config.repo_name }}" class="md-source">
   <div class="md-source__icon md-icon">
     {% include ".icons/fontawesome/brands/github.svg" %}
   </div>
   <div class="md-source__repository">
-    {{ config.repo_name }}
+    Source code
+    <ul class="md-source__facts">
+      <li class="md-source__fact md-source__fact--version">v{{ config.extra.version }}</li>
+      <li class="md-source__fact md-source__fact--license">GPL-3.0</li>
+    </ul>
   </div>
 </a>
