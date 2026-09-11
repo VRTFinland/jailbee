@@ -30,6 +30,10 @@ Thumbs.db
 # Internal planning artifacts (specs/plans written by the planning skills).
 # They are working notes, not project documentation — keep them out of the tree.
 docs/superpowers/
+# Documentation site build outputs: `_build/docs` is the staged page whitelist,
+# `_site` the assembled Pages artifact (docs + the landing page).
+/_build/
+/_site/
 
 # Intermediate renders: render.sh copies the finished clips into
 # website/assets/media/, which is what the page references.

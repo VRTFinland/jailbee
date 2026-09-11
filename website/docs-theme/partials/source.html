@@ -1,0 +1,14 @@
+{#-
+  Overrides the stock partial to drop the theme's "source" component marker
+  attribute. That marker is what makes the theme's bundle call api.github.com
+  from the reader's browser for star, fork and release counts — a
+  third-party request the site does not make. The link itself stays.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+  <div class="md-source__icon md-icon">
+    {% include ".icons/fontawesome/brands/github.svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>

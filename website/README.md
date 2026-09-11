@@ -1,21 +1,28 @@
 # website/
 
 The public landing page for JailBee, served from `jailbee.gisgro.io`. This
-directory *is* the site: `index.html`, `assets/`, and `demo/`, as committed.
-There is no build step — nothing here is compiled, bundled, or templated
-before it ships.
+directory holds `index.html`, `assets/`, `demo/`, as committed, plus
+`docs-theme/` — the docs brand layer and template overrides Zensical applies
+when it renders `docs/`. `docs-theme/` is build input, not part of the
+shipped site.
+
+The published site is `_site/`, assembled by `make site`: it builds the docs
+from `docs/` using `docs-theme/`, then copies this directory (minus
+`docs-theme/` itself) into `_site/` alongside them.
 
 ## Previewing locally
 
-From the repo root:
+From the repo root, build the whole site once and serve the result:
 
 ```bash
-uv run python -m http.server -d website 8099
+make site
+uv run python -m http.server -d _site 8099
 ```
 
-Then open <http://localhost:8099>. Opening `website/index.html` directly as
-a `file://` URL also works — the page makes no requests that need a server,
-local or otherwise.
+Then open <http://localhost:8099>. To preview only the docs, `make
+docs-serve` is quicker, but its fonts and logo come from `website/` at build
+time and only resolve once assembled into `_site/` — it's a fast look at the
+docs content, not a substitute for the full preview above.
 
 ## The demo clip
 
@@ -56,10 +63,10 @@ the caption never claims what it wrote, and no stretch is sped up without the
 
 ## Deployment
 
-`.github/workflows/pages.yml` deploys this directory to GitHub Pages on
-every push to `main` that touches `website/**`, plus manual dispatch. There
-is no build job — the artifact uploaded to Pages is `website/` exactly as
-committed.
+`.github/workflows/pages.yml` runs `make site` and `make site-check` on
+every push to `main` that touches `website/**`, `docs/**`, `zensical.toml`,
+or the workflow itself, plus manual dispatch, then publishes the resulting
+`_site/` to GitHub Pages.
 
 `CNAME` pins the custom domain to `jailbee.gisgro.io`. That domain resolves
 only once a DNS record exists pointing it at `vrtfinland.github.io`, and
@@ -73,3 +80,8 @@ mistyped asset paths, a stray absolute URL outside an anchor, a missing
 font or licence file, a clip the page names but nobody committed, a stale
 stylesheet cache-buster. It runs as part of the normal suite
 (`uv run pytest`) — there is no separate website test command.
+`tests/test_docs_site.py` covers the docs half: the `nav` whitelist, the
+staging step, and `check()` against synthetic HTML fixtures. It does not
+build the real site — that's `make site` plus `make site-check` in the
+`docs` job of `.github/workflows/ci.yml`, which runs the actual generator
+against `docs/` and its output.

@@ -91,6 +91,30 @@ uv tool install -e .         # editable install — `jailbee` works globally
 uv tool uninstall jailbee
 ```
 
+### The documentation site
+
+`docs/*.md` is published twice: on github.com as Markdown, and at
+`jailbee.gisgro.io/docs/` as HTML built by [Zensical](https://zensical.org).
+Same files, no second copy.
+
+```bash
+make site          # assemble _site/ (docs + landing page)
+make site-check    # enforce the no-CDN rule on the built docs
+make docs-serve    # preview the docs alone
+```
+
+- **`nav` in `zensical.toml` is the publication whitelist.** Zensical cannot
+  exclude a file, so `scripts/docs_site.py stage` copies exactly the pages
+  `nav` names into `_build/docs/` and builds from there. A new page in `docs/`
+  must be added to `nav`, or to `UNPUBLISHED` in `tests/docs_links.py` —
+  the suite fails until it is in one of them.
+- **Cross-page links stay relative** (`config.md#scratch`): they work on GitHub
+  and the build rewrites them. Anchors follow GitHub's slug rule, which
+  `toc.slugify` reproduces.
+- Links *into* the docs from `README.md`, `website/` and `llms.txt` use
+  `https://jailbee.gisgro.io/docs/<page>/`; `tests/docs_links.py` resolves each
+  one against `docs/*.md` without running the generator.
+
 ## Coding patterns
 
 ### Always use `incus.list_containers()`, not `incus.list()`
