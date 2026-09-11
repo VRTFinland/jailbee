@@ -52,19 +52,20 @@ echo "==> Updating apt cache"
 apt-get update -y
 
 # apparmor: a container installing an LSM's userspace looks odd, but it is
-# the only way the dev user gets an unprivileged user namespace. Ubuntu
-# hosts set kernel.apparmor_restrict_unprivileged_userns=1, under which an
-# unprivileged unshare(CLONE_NEWUSER) needs an AppArmor profile that allows
-# it — looked up in the *container's* policy namespace, which Incus creates
-# per container and which stays empty unless something in here loads
-# policy. Without this package Chrome's zygote aborts (credentials.cc:
+# the only way the dev user gets a usable user namespace. Ubuntu hosts set
+# kernel.apparmor_restrict_unprivileged_userns=1, under which an
+# unprivileged unshare(CLONE_NEWUSER) must be allowed by AppArmor. Incus
+# stacks two labels on a container process — the host's and the
+# container's own policy namespace's — and each must allow it. The
+# container's namespace stays empty unless something in here loads policy,
+# so without this package Chrome's zygote aborts (credentials.cc:
 # Permission denied), and bwrap and rootless podman fail alike. The package
-# ships the `chrome` and `firefox` profiles whose paths match where
-# jailbee's browsers live, plus the `unprivileged_userns` fallback, and
-# apparmor.service reloads them on every boot. An app with no profile of
-# its own lands in `unprivileged_userns`, which strips capabilities inside
-# the new namespace — so an Electron app outside those paths still can't
-# sandbox itself, same as on an Ubuntu host.
+# ships the `unprivileged_userns` fallback plus per-app profiles (`chrome`,
+# `firefox`, ...) whose paths match where jailbee's browsers live, and
+# apparmor.service reloads them on every boot. The fallback strips all
+# capabilities inside the new namespace, so Chromium's sandbox needs the
+# per-app profile — on both sides: an app at a path the host has no
+# profile for stays broken whatever is loaded here (docs/config.md#apps).
 echo "==> Installing LXC plumbing apt packages"
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apt-transport-https ca-certificates curl gnupg lsb-release wget \

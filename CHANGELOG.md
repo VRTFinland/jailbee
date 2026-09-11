@@ -26,8 +26,9 @@
   **Run `jb base build`**; `jb` shows the advice after the upgrade. Containers
   created from an older image stay broken until recreated — or until
   `sudo apt-get install apparmor` is run inside one, which takes effect
-  immediately. An Electron app under `apps:` that Ubuntu ships no profile for
-  still cannot sandbox itself, exactly as on the host.
+  immediately. A Chromium-based app under `apps:` at a path Ubuntu ships no
+  profile for needs one on both the host and in the image; `docs/config.md`
+  shows how.
 
 ## 1.3.1 - 2026-09-10
 
