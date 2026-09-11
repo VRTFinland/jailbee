@@ -149,10 +149,10 @@ section {
 
 /* Top bar — the documentation's header, rebuilt for this page so the two
    halves of the site share one. The sizes are measured off the docs build
-   (a 48px bar, 24px mark, 178x32 search box, 11px source box) and set in
-   px because the docs theme sizes them against its own 20px root, not
-   against this page's rem. The colours are this file's tokens: the docs
-   run on the same palette (test_the_docs_palette_matches_the_landing_page). */
+   (a 48px bar, 24px mark, 11px source box) and set in px because the docs
+   theme sizes them against its own 20px root, not against this page's rem.
+   The colours are this file's tokens: the docs run on the same palette
+   (test_the_docs_palette_matches_the_landing_page). */
 .topbar {
   position: sticky;
   top: 0;
@@ -185,122 +185,53 @@ section {
   letter-spacing: -0.025em;
 }
 
-.topbar__brand:hover,
-.topbar__brand:focus-visible,
-.topbar__source:hover,
-.topbar__source:focus-visible {
-  text-decoration: none;
-}
-
 .topbar__brand img {
   width: auto;
   height: 24px;
 }
 
-.topbar__search {
-  position: relative;
+/* Where the docs have their search box. Padded to the docs bar's 20px
+   edge, which it reaches alone below 960px, once the source box goes. */
+.topbar__link {
   margin-left: auto;
-}
-
-/* Narrow first: the field collapses to its icon, which submits the empty
-   form — the docs then open their search dialog. */
-.topbar__search-go {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  background: none;
+  padding: 0 12px;
   color: var(--text);
-  cursor: pointer;
+  font-size: 14px;
+  line-height: 48px;
 }
 
-.topbar__search-go svg,
-.topbar__fact svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.topbar__link,
+.topbar__source {
+  transition: opacity 0.25s;
 }
 
-.topbar__search-go svg {
-  width: 20px;
-  height: 20px;
+.topbar__link:hover,
+.topbar__link:focus-visible,
+.topbar__source:hover,
+.topbar__source:focus-visible {
+  opacity: 0.7;
 }
 
-.topbar__search-input,
-.topbar__kbd,
+.topbar__brand:hover,
+.topbar__brand:focus-visible,
+.topbar__link:hover,
+.topbar__link:focus-visible,
+.topbar__source:hover,
+.topbar__source:focus-visible {
+  text-decoration: none;
+}
+
 .topbar__source {
   display: none;
-}
-
-.topbar__search-input {
-  width: 178px;
-  height: 32px;
-  padding: 0 44px 0 38px;
-  border: 0;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text) 12%, transparent);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 14px;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.topbar__search-input::placeholder {
-  color: var(--text);
-  opacity: 1;
-}
-
-/* type="search" draws a clear button where the shortcut hint sits. */
-.topbar__search-input::-webkit-search-cancel-button {
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.topbar__search-input:focus-visible {
-  outline: 2px solid var(--amber-dim);
-  outline-offset: 1px;
-}
-
-.topbar__kbd {
-  position: absolute;
-  top: 7px;
-  right: 12px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--ground) 54%, transparent);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 12px;
-  line-height: normal;
-  pointer-events: none;
-}
-
-/* The hint makes way once the reader is typing. */
-.topbar__search-input:focus ~ .topbar__kbd,
-.topbar__search-input:not(:placeholder-shown) ~ .topbar__kbd {
-  visibility: hidden;
-}
-
-.topbar__source {
   align-items: center;
   gap: 7px;
   width: 230px;
-  margin-left: 28px;
+  margin-left: 16px;
   padding-left: 12px;
   color: var(--text);
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
-  transition: opacity 0.25s;
-}
-
-.topbar__source:hover {
-  opacity: 0.7;
 }
 
 .topbar__github {
@@ -331,22 +262,14 @@ section {
 .topbar__fact svg {
   width: 12px;
   height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 @media (min-width: 960px) {
-  .topbar__search-go {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 38px;
-    height: 32px;
-  }
-
-  .topbar__search-input,
-  .topbar__kbd {
-    display: block;
-  }
-
   .topbar__source {
     display: flex;
   }
