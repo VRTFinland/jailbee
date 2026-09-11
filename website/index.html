@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=64a7c149" />
+    <link rel="stylesheet" href="assets/style.css?v=b9843398" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -80,71 +80,88 @@
   <body>
     <section class="hero">
       <div class="wrap">
-        <div class="lockup">
-          <img
-            class="lockup__mark"
-            src="assets/img/jailbee-mark.png"
-            alt="JailBee logo: a bee behind bars"
-            width="340"
-            height="345"
-          />
-          <div class="lockup__text">
-            <!-- "ai" is set apart on purpose: jAIlbee. Still one word to a
-                 screen reader, and still one word when selected and copied. -->
-            <span class="lockup__word">J<em>ai</em>lBee</span>
-            <a class="lockup__by" href="https://gisgro.com" rel="noopener">
-              by
-              <img src="assets/img/gisgro-logo.svg" width="72" height="13" alt="GISGRO" />
-            </a>
-          </div>
-        </div>
-        <h1>One container per branch. All of them at once.</h1>
-        <p class="hero__lead">
-          JailBee gives every git branch a full system container of its own: its own services,
-          its own Docker daemon, its own IDE and browser, cloned copy-on-write from one golden
-          image. Several stacks run in parallel on one host, out of each other's way.
-        </p>
+        <!-- The pitch and the install command share one framed panel, so the
+             first screen reads as a single unit rather than a column of
+             separate pieces on the bare page. -->
+        <div class="hero__panel">
+          <div class="hero__copy">
+            <div class="lockup">
+              <img
+                class="lockup__mark"
+                src="assets/img/jailbee-mark.png"
+                alt="JailBee logo: a bee behind bars"
+                width="340"
+                height="345"
+              />
+              <div class="lockup__text">
+                <!-- "ai" is set apart on purpose: jAIlbee. Still one word to a
+                     screen reader, and still one word when selected and copied. -->
+                <span class="lockup__word">J<em>ai</em>lBee</span>
+                <a class="lockup__by" href="https://gisgro.com" rel="noopener">
+                  by
+                  <img src="assets/img/gisgro-logo.svg" width="72" height="13" alt="GISGRO" />
+                </a>
+              </div>
+            </div>
+            <p class="eyebrow eyebrow--solution">Per-branch dev environments for Linux</p>
+            <h1>One container per branch. All of them at once.</h1>
+            <p class="hero__lead">
+              JailBee gives every git branch a full system container of its own: its own
+              services, its own Docker daemon, its own IDE and browser, cloned copy-on-write from
+              one golden image. Several stacks run in parallel on one host, out of each other's
+              way.
+            </p>
 
-        <!-- The installer choice is cosmetic: jailbee is a normal PyPI
-             package and needs neither tool at runtime. Both isolate the
-             install, which is why plain `pip` is not offered here — on the
-             Ubuntu hosts jailbee targets it refuses to touch the system
-             Python (PEP 668). -->
-        <!-- The authored state must agree with itself: data-installer, the
-             pressed tab, the visible command and the copy payload all say
-             pipx until the reader clicks. The script only rewrites them on
-             a click, so a mismatch here ships a button that looks selected
-             next to a command from the other tool. -->
-        <div class="install" data-installer="pipx">
-          <div class="install__switch" role="group" aria-label="Installer">
-            <button
-              type="button"
-              class="install__tab"
-              data-installer-choice="pipx"
-              aria-pressed="true"
-            >
-              pipx
-            </button>
-            <button type="button" class="install__tab" data-installer-choice="uv" aria-pressed="false">
-              uv
-            </button>
+            <div class="actions">
+              <a class="button button--primary" href="https://github.com/VRTFinland/jailbee"
+                >View on GitHub</a
+              >
+              <a class="button button--secondary" href="docs/">Read the docs</a>
+            </div>
           </div>
-          <div class="install__row">
-            <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
-              >pipx install jailbee</code
-            >
-            <button class="copy" data-copy="pipx install jailbee">Copy</button>
-          </div>
-          <p class="install__hint">
-            Linux host required — see <a href="#install">Requirements</a>.
-          </p>
-        </div>
 
-        <div class="actions">
-          <a class="button button--primary" href="https://github.com/VRTFinland/jailbee"
-            >View on GitHub</a
-          >
-          <a class="button button--secondary" href="docs/">Read the docs</a>
+          <!-- The installer choice is cosmetic: jailbee is a normal PyPI
+               package and needs neither tool at runtime. Both isolate the
+               install, which is why plain `pip` is not offered here — on the
+               Ubuntu hosts jailbee targets it refuses to touch the system
+               Python (PEP 668). -->
+          <!-- The authored state must agree with itself: data-installer, the
+               pressed tab, the visible command and the copy payload all say
+               pipx until the reader clicks. The script only rewrites them on
+               a click, so a mismatch here ships a button that looks selected
+               next to a command from the other tool. -->
+          <div class="install" data-installer="pipx">
+            <div class="install__bar">
+              <span class="install__label">Install</span>
+              <div class="install__switch" role="group" aria-label="Installer">
+                <button
+                  type="button"
+                  class="install__tab"
+                  data-installer-choice="pipx"
+                  aria-pressed="true"
+                >
+                  pipx
+                </button>
+                <button
+                  type="button"
+                  class="install__tab"
+                  data-installer-choice="uv"
+                  aria-pressed="false"
+                >
+                  uv
+                </button>
+              </div>
+            </div>
+            <div class="install__row">
+              <code data-cmd-uv="uv tool install jailbee" data-cmd-pipx="pipx install jailbee"
+                >pipx install jailbee</code
+              >
+              <button class="copy" data-copy="pipx install jailbee">Copy</button>
+            </div>
+            <p class="install__hint">
+              Linux host required — see <a href="#install">Requirements</a>.
+            </p>
+          </div>
         </div>
       </div>
     </section>
