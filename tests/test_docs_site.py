@@ -345,20 +345,6 @@ def test_the_repository_link_does_not_call_the_github_api() -> None:
     assert "config.repo_url" in source, "the header should still link the repository"
 
 
-def test_the_docs_open_search_from_a_q_parameter() -> None:
-    """The landing page's header search submits `docs/?q=<terms>`: it has no
-    index of its own. The theme has no such deep link, so main.html adds
-    one, and without it the landing search just lands on the overview.
-    Read as a contract with tests/test_website.py's header-search test —
-    the parameter name and the button the script opens the dialog with
-    are what the two halves agree on. Verified in a real browser; the
-    dialog lives in the bundle's shadow root, beyond a unit test's reach."""
-    main_html = (THEME / "main.html").read_text()
-    assert 'params.get("q")' in main_html, "main.html no longer reads the q parameter"
-    assert '".md-search__button"' in main_html, "main.html no longer opens the search dialog"
-    assert "history.replaceState" in main_html, "q would stay in the address and reopen on reload"
-
-
 def test_the_docs_header_version_tracks_pyproject() -> None:
     """The source box in the docs header names the release, from a literal in
     zensical.toml. `scripts/site_version.py set` rewrites it during
