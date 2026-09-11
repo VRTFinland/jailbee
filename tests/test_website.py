@@ -426,10 +426,22 @@ def test_documentation_links_land_on_published_pages() -> None:
     """
     from tests.docs_links import GITHUB_DOCS_PREFIX, is_docs_link, resolve
 
+    # The documentation's front door on GitHub — the README's documentation
+    # table and the docs/ directory listing. The site has its own at docs/, and
+    # neither of these starts with GITHUB_DOCS_PREFIX, so the check below
+    # would wave them through.
+    github_docs_indexes = {
+        "https://github.com/VRTFinland/jailbee#documentation",
+        "https://github.com/VRTFinland/jailbee/tree/main/docs",
+    }
+
     for page in PAGES:
         for attribute, value in collect_references(page.read_text()):
             if attribute != "href":
                 continue
+            assert value.rstrip("/") not in github_docs_indexes, (
+                f"{page.name}: {value} sends the reader to GitHub — link docs/ instead"
+            )
             if is_docs_link(value):
                 problem = resolve(value)
                 assert problem is None, f"{page.name}: {problem}"
