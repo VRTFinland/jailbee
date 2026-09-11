@@ -739,3 +739,41 @@ def test_the_structured_data_version_tracks_pyproject() -> None:
     assert _structured_data()["softwareVersion"] == version, (
         f"JSON-LD softwareVersion is stale — set it to {version!r}"
     )
+
+
+def test_the_header_matches_the_docs_header() -> None:
+    """The top bar is the docs header rebuilt by hand, so nothing but this
+    keeps the two from drifting apart.
+
+    The search form is a contract with website/docs-theme/main.html, which
+    reads `q` on the docs side (tests/test_docs_site.py pins that half): a
+    renamed field or a changed action sends the terms nowhere, and the
+    reader lands on the docs overview with no search open. The source box
+    must name the repository, mark and release the docs header does.
+    """
+    import tomllib
+
+    elements = collect_elements(INDEX.read_text())
+
+    def the_one(tag: str, css_class: str) -> dict[str, str | None]:
+        found = [a for t, a in elements if t == tag and css_class in (a.get("class") or "").split()]
+        assert len(found) == 1, f"expected one <{tag} class={css_class!r}>, found {len(found)}"
+        return found[0]
+
+    the_one("header", "topbar")
+    form = the_one("form", "topbar__search")
+    assert (form.get("action"), form.get("method")) == ("docs/", "get")
+    assert the_one("input", "topbar__search-input").get("name") == "q"
+
+    with (REPO_ROOT / "zensical.toml").open("rb") as handle:
+        docs = tomllib.load(handle)["project"]
+    assert the_one("a", "topbar__source").get("href") == docs["repo_url"]
+    start = elements.index(("a", the_one("a", "topbar__brand")))
+    brand = next(a for t, a in elements[start:] if t == "img")
+    assert brand.get("src") == docs["theme"]["logo"].lstrip("/"), "the mark differs from the docs'"
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert f'<span class="topbar__version">v{version}</span>' in INDEX.read_text(), (
+        f"the header's version is stale — set it to v{version}"
+    )
