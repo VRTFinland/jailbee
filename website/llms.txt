@@ -81,8 +81,7 @@ scope.
 - [Configuration reference](https://jailbee.gisgro.io/docs/config/): every `.jailbee/config.yaml` and `global.yaml` key
 - [Generic agent support](https://jailbee.gisgro.io/docs/agents/): the `agents:` config key, the six shipped presets (Claude Code plus five untested templates), and how to add one of your own
 - [Security and limitations](https://jailbee.gisgro.io/docs/security/): isolation model and known limits, including what running an agent without prompts does and does not cover
-- [Who JailBee is for](https://jailbee.gisgro.io/comparison.html): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs
-- [Full technical comparison](https://jailbee.gisgro.io/docs/comparison/): the same comparison at length, with every caveat and the sources each claim was checked against
+- [Who JailBee is for](https://jailbee.gisgro.io/docs/comparison/): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs — every caveat, and the sources each claim was checked against
 - [Architecture](https://jailbee.gisgro.io/docs/architecture/): how the pieces fit together
 
 ## Optional
