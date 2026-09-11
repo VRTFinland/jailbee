@@ -133,6 +133,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"apply"}),
         reason="Firefox adds a host mount and a per-container profile pool slot",
     ),
+    UpgradeNote(
+        version=(1, 3, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the registry mirror stops trying unreachable IPv6 upstreams and fails "
+            "over from an unresponsive one after 5 s instead of 60 s"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

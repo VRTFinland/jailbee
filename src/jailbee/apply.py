@@ -280,14 +280,15 @@ def run_apply(
 
     _ensure_acl_attached_to_bridge(cfg, incus)
 
-    # Push the repo's extra upstream registries into the mirror once,
-    # before re-applying per-container dockerd proxy. apply_mirror_registries
-    # is idempotent and a no-op when the list is empty or already covered.
-    if mirror_endpoint is not None and cfg.docker_registry_mirror.extra_registries:
-        info("Syncing extra registries into mirror...")
-        from jailbee.registry import apply_mirror_registries
+    # Sync the mirror's env file once, before re-applying per-container
+    # dockerd proxy: the repo's extra upstream registries, plus the
+    # host-global proxy tuning — which is why this runs even for a repo with
+    # no extra registries. sync_mirror_env is a no-op when nothing changed.
+    if mirror_endpoint is not None:
+        info("Syncing registry mirror settings...")
+        from jailbee.registry import sync_mirror_env
 
-        apply_mirror_registries(incus, cfg.docker_registry_mirror.extra_registries)
+        sync_mirror_env(incus, cfg.docker_registry_mirror.extra_registries)
 
     info("Listing running containers...")
     hosts_repinned: list[str] = []
