@@ -72,6 +72,9 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* The sticky .topbar is 48px tall; without this an in-page link such as
+     #install scrolls its heading underneath it. */
+  scroll-padding-top: 56px;
 }
 
 body {
@@ -143,8 +146,251 @@ section {
 /* -----------------------------------------------------------------------
    5. Components
    ----------------------------------------------------------------------- */
+
+/* Top bar — the documentation's header, rebuilt for this page so the two
+   halves of the site share one. The sizes are measured off the docs build
+   (a 48px bar, 24px mark, 178x32 search box, 11px source box) and set in
+   px because the docs theme sizes them against its own 20px root, not
+   against this page's rem. The colours are this file's tokens: the docs
+   run on the same palette (test_the_docs_palette_matches_the_landing_page). */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: color-mix(in srgb, var(--ground) 54%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.topbar__inner {
+  display: flex;
+  align-items: center;
+  max-width: 1220px;
+  height: 48px;
+  margin: 0 auto;
+  padding: 0 8px;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-left: 12px;
+  color: var(--text);
+  font-size: 18px;
+  /* 700 as the docs set it, though only 600 ships: the browser emboldens
+     the 600 face the same way on both halves, which is the point. */
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.topbar__brand:hover,
+.topbar__brand:focus-visible,
+.topbar__source:hover,
+.topbar__source:focus-visible {
+  text-decoration: none;
+}
+
+.topbar__brand img {
+  width: auto;
+  height: 24px;
+}
+
+.topbar__search {
+  position: relative;
+  margin-left: auto;
+}
+
+/* Narrow first: the field collapses to its icon, which submits the empty
+   form — the docs then open their search dialog. */
+.topbar__search-go {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.topbar__search-go svg,
+.topbar__fact svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.topbar__search-go svg {
+  width: 20px;
+  height: 20px;
+}
+
+.topbar__search-input,
+.topbar__kbd,
+.topbar__source {
+  display: none;
+}
+
+.topbar__search-input {
+  width: 178px;
+  height: 32px;
+  padding: 0 44px 0 38px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.topbar__search-input::placeholder {
+  color: var(--text);
+  opacity: 1;
+}
+
+/* type="search" draws a clear button where the shortcut hint sits. */
+.topbar__search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.topbar__search-input:focus-visible {
+  outline: 2px solid var(--amber-dim);
+  outline-offset: 1px;
+}
+
+.topbar__kbd {
+  position: absolute;
+  top: 7px;
+  right: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ground) 54%, transparent);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: normal;
+  pointer-events: none;
+}
+
+/* The hint makes way once the reader is typing. */
+.topbar__search-input:focus ~ .topbar__kbd,
+.topbar__search-input:not(:placeholder-shown) ~ .topbar__kbd {
+  visibility: hidden;
+}
+
+.topbar__source {
+  align-items: center;
+  gap: 7px;
+  width: 230px;
+  margin-left: 28px;
+  padding-left: 12px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: opacity 0.25s;
+}
+
+.topbar__source:hover {
+  opacity: 0.7;
+}
+
+.topbar__github {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+.topbar__repo {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar__facts {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  opacity: 0.75;
+}
+
+.topbar__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.topbar__fact svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (min-width: 960px) {
+  .topbar__search-go {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 38px;
+    height: 32px;
+  }
+
+  .topbar__search-input,
+  .topbar__kbd {
+    display: block;
+  }
+
+  .topbar__source {
+    display: flex;
+  }
+}
+
 .hero {
   padding-top: clamp(3rem, 7vw, 5.5rem);
+}
+
+/* The framed first screen: pitch on the left, install card on the right,
+   both on one panel lit from its top-right corner. The light is the amber
+   token faded to transparent, so the panel adds no colour of its own. It
+   stacks to one column below 900px, where two columns would squeeze the
+   headline into single words. */
+.hero__panel {
+  display: grid;
+  gap: clamp(2rem, 4vw, 3.5rem);
+  align-items: center;
+  padding: clamp(1.1rem, 5.5vw, 4.5rem);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.6);
+  background:
+    radial-gradient(
+      60% 80% at 92% 8%,
+      color-mix(in srgb, var(--amber) 22%, transparent),
+      transparent
+    ),
+    radial-gradient(
+      55% 70% at 0% 100%,
+      color-mix(in srgb, var(--amber-dim) 10%, transparent),
+      transparent
+    ),
+    linear-gradient(150deg, var(--surface-2), var(--surface) 55%, var(--ground));
+}
+
+@media (min-width: 900px) {
+  .hero__panel {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+}
+
+/* A half column can't carry the page-wide headline size. */
+.hero__panel h1 {
+  font-size: clamp(2.2rem, 4.6vw, 3.3rem);
 }
 
 /* The wordmark is text, not pixels: the mark image carries only the caged
@@ -217,19 +463,42 @@ section {
   font-size: clamp(1.05rem, 1.6vw, 1.2rem);
 }
 
+/* The install card: a terminal-like window set darker than the panel it
+   sits on — a title bar carrying the installer switch, the command, and a
+   footer with the host requirement. */
 .install {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  margin: 1.75rem 0;
+  min-width: 0;
+  background: color-mix(in srgb, var(--ground) 85%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 48px -28px var(--ground);
+  overflow: hidden;
 }
 
-/* Segmented installer switch above the command rows. Sized to the text
+.install__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem 0.6rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.install__label {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* Segmented installer switch in the card's title bar. Sized to the text
    so it reads as a control, not a pair of buttons competing with the
    page's real call to action. */
 .install__switch {
   display: inline-flex;
-  align-self: flex-start;
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) - 4px);
   overflow: hidden;
@@ -262,23 +531,37 @@ section {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
+  padding: 1.5rem 0.75rem 1.5rem 1.1rem;
+}
+
+/* The prompt is decoration: generated content stays out of the copy
+   payload and out of a text selection. The second declaration gives it an
+   empty alternative text so screen readers skip it; a browser that can't
+   parse that form keeps the first. */
+.install__row::before {
+  content: "$";
+  content: "$" / "";
+  color: var(--amber-dim);
+  font-family: var(--mono);
 }
 
 .install__row code {
+  flex: 1;
+  min-width: 0;
   color: var(--text);
-  font-size: 1rem;
+  /* Scales down with the viewport so the longer `uv tool install jailbee`
+     still fits the card on a 400px phone instead of scrolling. */
+  font-size: clamp(0.8rem, 3.6vw, 1.05rem);
   white-space: nowrap;
   overflow-x: auto;
 }
 
 .install__hint {
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   margin: 0;
+  padding: 0.65rem 1.1rem;
+  border-top: 1px solid var(--border);
 }
 
 button.copy {
@@ -849,179 +1132,6 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
-   Matrix — the capability grid on comparison.html. Six columns cannot fit
-   a phone at a readable size, and the front page's card-stacking trick
-   doesn't transfer: stacking this would make one card per row holding
-   five one-word cells, which is less legible than scrolling. So this one
-   table scrolls sideways inside its own container. The page body never
-   does — that is the rule the container exists to keep.
-   ----------------------------------------------------------------------- */
-.matrix__scroll {
-  overflow-x: auto;
-  margin-top: 2rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.matrix {
-  width: 100%;
-  /* Below this the columns wrap to one word per line and the grid stops
-     being readable at all; scrolling is the better failure mode. */
-  min-width: 48rem;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: 0.85rem;
-}
-
-.matrix th,
-.matrix td {
-  padding: 0.7rem 0.9rem;
-  vertical-align: top;
-  border-bottom: 1px solid var(--border);
-}
-
-.matrix thead th {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  font-weight: 400;
-}
-
-.matrix th[scope="row"] {
-  color: var(--text);
-  font-weight: 400;
-  min-width: 15rem;
-}
-
-.matrix td {
-  color: var(--muted);
-}
-
-.matrix tbody tr:last-child th,
-.matrix tbody tr:last-child td {
-  border-bottom: none;
-}
-
-/* JailBee is the last column, marked the way its row is marked on the
-   front page: a quiet surface tint, not a shout. */
-.matrix th:last-child,
-.matrix td:last-child {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.matrix thead th:last-child {
-  color: var(--amber);
-}
-
-.matrix__hint {
-  margin-top: 0.9rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-/* Verdict cells. Colour is never the only carrier of the answer: the glyph
-   shapes (✓ ✗ ~ –) are distinguishable without it, which matters for the
-   ~8% of men with red-green colour deficiency reading a green/red grid.
-   And a visually-hidden word states the verdict outright for a screen
-   reader, which sees neither shape nor colour. */
-.mx__mark {
-  font-family: var(--mono);
-  font-weight: 600;
-  margin-right: 0.35rem;
-}
-
-.mx--yes .mx__mark {
-  color: var(--green);
-}
-
-.mx--no .mx__mark {
-  color: var(--red);
-}
-
-.mx--partial .mx__mark {
-  color: var(--amber);
-}
-
-.mx--na .mx__mark {
-  color: var(--muted);
-}
-
-/* The two rows where JailBee is the one that can't. Bold, so the concession
-   is as visible as the wins are — the page argues its own limits. */
-.mx--against {
-  color: var(--text);
-  font-weight: 600;
-}
-
-/* -----------------------------------------------------------------------
-   Visually hidden — present for assistive technology, absent on screen.
-   Not `display: none`, which removes it from the accessibility tree too.
-   ----------------------------------------------------------------------- */
-.vh {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* -----------------------------------------------------------------------
-   Page header — the brand on a subpage, and the way back from it.
-
-   A subpage of this site is not reached from the front page: comparison
-   .html is what ranks for the competitors' names, so for many readers it
-   is the first JailBee page they see and has to say whose page it is. The
-   whole lockup is the link home, which is the convention every reader
-   already knows — so no separate "back" affordance is needed.
-
-   Deliberately smaller than the hero lockup: the page's own <h1> should
-   carry the weight here, and the brand only has to be recognisable.
-   ----------------------------------------------------------------------- */
-.page-header {
-  padding-top: 2.5rem;
-  margin-bottom: 2.5rem;
-}
-
-.page-header__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  text-decoration: none;
-}
-
-.page-header__mark {
-  width: auto;
-  /* Same floor as the footer mark: below ~40px the bars stop reading as
-     bars and the mark turns into a smudge. */
-  height: 42px;
-}
-
-.page-header__word {
-  color: var(--amber);
-  font-weight: 600;
-  font-size: 1.25rem;
-  letter-spacing: -0.015em;
-  line-height: 1;
-}
-
-.page-header__word em {
-  color: var(--text);
-  font-style: normal;
-}
-
-.page-header__brand:hover .page-header__word,
-.page-header__brand:focus-visible .page-header__word {
-  color: var(--text);
-}
-
-.page-header__brand:hover .page-header__word em,
-.page-header__brand:focus-visible .page-header__word em {
-  color: var(--amber);
-}
-
-/* -----------------------------------------------------------------------
    The comb — the inline SVG in #parallel. Sized a little wider than
    .split__img because it carries labels: below ~380px the branch names
    stop being readable, and a diagram nobody can read is worse than no
@@ -1155,9 +1265,8 @@ footer p {
    same .card component as #features' six benefit cards. So a skimmer saw
    nine equal headings and two identical sets of cards.
 
-   The signal is a word, not a colour. Red already means "no" in the
-   comparison matrix and it means the same here, but the label reads "The
-   problem" whether or not the reader sees the hue — same rule as .mx__mark.
+   The signal is a word, not a colour. Red means "no" here, but the label
+   reads "The problem" whether or not the reader sees the hue.
    ----------------------------------------------------------------------- */
 .eyebrow {
   display: block;

@@ -63,3 +63,19 @@
   --md-code-bg-color: var(--surface-2);
   --md-footer-bg-color: var(--surface);
 }
+
+/* The header's source box renders a licence fact (partials/source.html),
+   which the theme has no icon for. Lucide's scale, masked exactly the way
+   the theme masks its own lucide tag onto the version fact, so the two sit
+   side by side at the same size and colour. Base64 rather than inline SVG:
+   the SVG's xmlns attribute is a web URL, and this file carries none that
+   could be mistaken for a request
+   (test_the_docs_stylesheet_makes_no_external_requests). */
+.md-source__fact--license::before {
+  -webkit-mask-image: var(--jailbee-license-icon);
+  mask-image: var(--jailbee-license-icon);
+}
+
+:root {
+  --jailbee-license-icon: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBkPSJNMTIgM3YxOE0xOSA4bDMgOGE1IDUgMCAwIDEtNiAwelY3Ii8+PHBhdGggZD0iTTMgN2gxYTE3IDE3IDAgMCAwIDgtMiAxNyAxNyAwIDAgMCA4IDJoMU01IDhsMyA4YTUgNSAwIDAgMS02IDB6VjdNNyAyMWgxMCIvPjwvc3ZnPg==");
+}
