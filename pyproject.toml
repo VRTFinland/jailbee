@@ -54,7 +54,7 @@ jb = "jailbee.entry:main"
 
 [project.urls]
 Homepage = "https://jailbee.gisgro.io"
-Documentation = "https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md"
+Documentation = "https://jailbee.gisgro.io/docs/"
 Repository = "https://github.com/VRTFinland/jailbee"
 Issues = "https://github.com/VRTFinland/jailbee/issues"
 Changelog = "https://github.com/VRTFinland/jailbee/blob/main/CHANGELOG.md"
@@ -70,6 +70,19 @@ dev = [
     "PySide6>=6.7",
     "pytest-timeout>=2.3",
 ]
+# The documentation site generator. Pinned exactly rather than floored: it is
+# 0.0.x, so any release may break the build, and an upgrade should be a commit
+# someone reviewed. `make site` and the CI docs job are its only callers.
+docs = [
+    "zensical==0.0.60",
+]
+
+[tool.uv]
+# `docs` is a default group so that this repo's own containers get it: their
+# `on_create` runs a bare `uv sync` in loose network mode, the one moment they
+# can reach PyPI. A non-default group would never be installed there, and
+# `make site` would fail in a strict container with no way to fix it locally.
+default-groups = ["dev", "docs"]
 
 [build-system]
 requires = ["hatchling"]

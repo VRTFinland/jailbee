@@ -46,3 +46,22 @@ def test_the_readme_links_the_demo_clip_at_an_anchor_the_site_still_has() -> Non
     assert anchor in readme, "the README no longer links the demo clip"
     index = (REPO_ROOT / "website" / "index.html").read_text()
     assert 'id="demos"' in index, f"{anchor} points at a section the page does not have"
+
+
+def test_the_readme_sends_readers_to_the_documentation_site() -> None:
+    """README.md is the repo front page *and* the PyPI description, so its
+    links have to work for a reader who is on neither. The published pages
+    live on the site; only the maintainer-only ones stay on GitHub."""
+    import re
+
+    from tests.docs_links import GITHUB_DOCS_PREFIX, SITE_DOCS_URL, UNPUBLISHED, resolve
+
+    text = README.read_text()
+    site_links = re.findall(rf"{re.escape(SITE_DOCS_URL)}[^\s\)\"']*", text)
+    assert len(site_links) >= 10, "the README barely links the documentation site"
+    for link in site_links:
+        problem = resolve(link)
+        assert problem is None, problem
+
+    for link in re.findall(rf"{re.escape(GITHUB_DOCS_PREFIX)}([^\s\)\"']+)", text):
+        assert link in UNPUBLISHED, f"{link} is published — link the site, not GitHub"

@@ -84,7 +84,7 @@ sped up and say so on screen; nothing else is edited.
   under the same list. `jailbee net egress add` widens one container's copy
   of that list — or this machine's copy of the repo's — without editing the
   committed config, so a host only you need never lands in git; see
-  [Egress overrides](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#egress-overrides).
+  [Egress overrides](https://jailbee.gisgro.io/docs/security/#egress-overrides).
 - **First-class Claude Code** — opt in with `claude.enabled: true` and every
   container gets Claude Code installed, sharing one login and one settings
   directory across the repo's containers while your host `~/.claude` is
@@ -97,14 +97,14 @@ sped up and say so on screen; nothing else is edited.
   (`--dangerously-skip-permissions`), because the boundary is the container
   rather than the agent's own judgement. You size that boundary once in the
   repo's config; see
-  [Running an agent without prompts](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md#running-an-agent-without-prompts)
+  [Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts)
   for what it does and doesn't cover.
 - **Generic agent support** — `agents: {codex: {enabled: true}}` wires any
   terminal coding agent into the same mount/egress/install/autostart
   pipeline Claude Code uses, via a shipped preset or one you write yourself.
   Five presets beyond Claude (`codex`, `gemini`, `aider`, `opencode`, `grok`)
   ship as untested starting points — see
-  [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md).
+  [Generic agent support](https://jailbee.gisgro.io/docs/agents/).
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, `~/.ssh` and Claude's login live in a shared dir outside the
   containers, set up once per repo instead of once per branch. Most of it is
@@ -139,7 +139,7 @@ uv tool install 'jailbee[gui]'      # or: pipx install 'jailbee[gui]'
 ```
 
 Host setup — Incus, firewall, UID mapping, kernel keyring limits — is a
-one-time job with a few moving parts. Follow **[Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md)**
+one-time job with a few moving parts. Follow **[Installation](https://jailbee.gisgro.io/docs/installation/)**
 end-to-end first. Then, from the repo you want to manage:
 
 ```bash
@@ -150,7 +150,7 @@ jailbee base build           # build the golden image (one-time, ~10–15 min)
 jailbee new feat/my-branch   # spin up an isolated env for a branch
 ```
 
-See **[Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md)** for the full first-run
+See **[Getting started](https://jailbee.gisgro.io/docs/getting-started/)** for the full first-run
 walkthrough.
 
 ### Trying it without a repo config
@@ -164,7 +164,7 @@ shared by every such directory on the host (alias `jailbee-scratch-base`).
 The first time, it asks to build that image (a one-time, few-minutes cost);
 every later scratch directory reuses it immediately. A directory that isn't
 a git repo needs `jailbee new --mount work` instead, since there's no
-upstream to clone from. See [`scratch`](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md#scratch)
+upstream to clone from. See [`scratch`](https://jailbee.gisgro.io/docs/config/#scratch)
 for the config block, and run `jailbee config init` once the work outlives
 an afternoon.
 
@@ -187,7 +187,7 @@ It asks about three steps, each idempotent — re-run it after upgrading:
 
 `jailbee doctor` reports any step that is missing. Host prerequisites — Incus,
 the firewall, UID delegation — are separate; see
-[Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md).
+[Installation](https://jailbee.gisgro.io/docs/installation/).
 
 ### Shell completion
 
@@ -210,35 +210,21 @@ directory's* containers, not the repo the flag points at.
 
 ## Documentation
 
-**Setup** — get **JailBee** running:
+The full documentation lives at **[jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/)** —
+the same pages [this repository's `docs/`](https://github.com/VRTFinland/jailbee/tree/main/docs)
+holds, indexed and searchable.
+
+Start here:
 
 | Doc | What's inside |
 |---|---|
-| [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
-| [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
-| [Running on macOS](https://github.com/VRTFinland/jailbee/blob/main/docs/macos.md) | Using JailBee from an Apple Silicon Mac via a Linux VM (Colima/Lima) with the repo shared from macOS (experimental) |
+| [Installation](https://jailbee.gisgro.io/docs/installation/) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
+| [Getting started](https://jailbee.gisgro.io/docs/getting-started/) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
+| [Commands](https://jailbee.gisgro.io/docs/commands/) | Full command + flag reference table |
+| [Configuration reference](https://jailbee.gisgro.io/docs/config/) | Every `.jailbee/config.yaml` and `global.yaml` key |
+| [FAQ](https://jailbee.gisgro.io/docs/faq/) | Short answers to the common questions, each linking to the page that covers it in full |
 
-**Daily use** — working with containers:
-
-| Doc | What's inside |
-|---|---|
-| [FAQ](https://github.com/VRTFinland/jailbee/blob/main/docs/faq.md) | Short answers to the common questions, each linking to the page that covers it in full |
-| [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md) | Full command + flag reference table |
-| [Git bridge and branch workflows](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md) | Host↔container git bridge, stacked PRs, mount vs clone, PR review, `gh` inside containers |
-| [Setting up JailBee in your own project](https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md) | Tutorial for adapting JailBee to your own repo and stack |
-| [Troubleshooting](https://github.com/VRTFinland/jailbee/blob/main/docs/troubleshooting.md) | Common failures by symptom, and how to remove JailBee |
-
-**Reference** — the details:
-
-| Doc | What's inside |
-|---|---|
-| [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md) | Every `.jailbee/config.yaml` and `global.yaml` key |
-| [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md) | Wiring a terminal coding agent (Claude Code or otherwise) into the container lifecycle; the shipped presets and their verification status |
-| [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md) | Isolation model, git-remote handling, known limits |
-| [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md) | How the pieces fit together |
-| [Who JailBee is for](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md) | What JailBee is good at, what it costs, and how it differs from Dev Containers, BranchBox, nono and Docker Sandboxes |
-
-**Meta** — project internals:
+**Project internals** — maintainer procedure, kept in the repository:
 
 | Doc | What's inside |
 |---|---|

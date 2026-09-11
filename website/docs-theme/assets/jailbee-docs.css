@@ -1,0 +1,65 @@
+/* ==========================================================================
+   JailBee documentation — brand layer over the stock theme.
+
+   The landing page (website/assets/style.css) owns the palette; this file
+   copies the tokens it needs and maps them onto the theme's own variables.
+   tests/test_docs_site.py::test_the_docs_palette_matches_the_landing_page
+   fails if a value drifts.
+
+   The fonts are the ones website/ already ships, referenced by root-absolute
+   path: both halves are served from the same origin, so the docs cost the
+   reader no extra download and the repo carries no second copy.
+   ========================================================================== */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/assets/fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/assets/fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --md-text-font: "IBM Plex Sans";
+  --md-code-font: "IBM Plex Mono";
+}
+
+/* The palette entry in zensical.toml is `slate` with a custom primary, so no
+   preset rule outranks these. */
+[data-md-color-scheme="slate"] {
+  --ground: #0b0c0e;
+  --surface: #14161a;
+  --surface-2: #1b1e24;
+  --border: #262a32;
+  --text: #e8e6e3;
+  --muted: #a2a7b0;
+  --amber: #f0a92b;
+  --amber-dim: #c07f12;
+
+  --md-default-bg-color: var(--ground);
+  --md-default-fg-color: var(--text);
+  --md-default-fg-color--light: var(--muted);
+  --md-default-fg-color--lighter: var(--border);
+  --md-primary-fg-color: var(--surface);
+  --md-primary-bg-color: var(--text);
+  --md-accent-fg-color: var(--amber);
+  --md-typeset-a-color: var(--amber);
+  --md-code-bg-color: var(--surface-2);
+  --md-footer-bg-color: var(--surface);
+}

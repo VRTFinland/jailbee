@@ -73,22 +73,22 @@ scope.
 
 ## Documentation
 
-- [FAQ](https://github.com/VRTFinland/jailbee/blob/main/docs/faq.md): short answers to the common questions, indexed into the rest of the documentation
-- [Installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md): one-time host setup — Incus, UID delegation, installing the CLI
-- [Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md): concepts, configuring a repo, building the image, a typical day
-- [Commands](https://github.com/VRTFinland/jailbee/blob/main/docs/commands.md): full command and flag reference
-- [Git bridge](https://github.com/VRTFinland/jailbee/blob/main/docs/git-bridge.md): host↔container git bridge, stacked PRs, PR review
-- [Configuration reference](https://github.com/VRTFinland/jailbee/blob/main/docs/config.md): every `.jailbee/config.yaml` and `global.yaml` key
-- [Generic agent support](https://github.com/VRTFinland/jailbee/blob/main/docs/agents.md): the `agents:` config key, the six shipped presets (Claude Code plus five untested templates), and how to add one of your own
-- [Security and limitations](https://github.com/VRTFinland/jailbee/blob/main/docs/security.md): isolation model and known limits, including what running an agent without prompts does and does not cover
+- [FAQ](https://jailbee.gisgro.io/docs/faq/): short answers to the common questions, indexed into the rest of the documentation
+- [Installation](https://jailbee.gisgro.io/docs/installation/): one-time host setup — Incus, UID delegation, installing the CLI
+- [Getting started](https://jailbee.gisgro.io/docs/getting-started/): concepts, configuring a repo, building the image, a typical day
+- [Commands](https://jailbee.gisgro.io/docs/commands/): full command and flag reference
+- [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/): host↔container git bridge, stacked PRs, PR review
+- [Configuration reference](https://jailbee.gisgro.io/docs/config/): every `.jailbee/config.yaml` and `global.yaml` key
+- [Generic agent support](https://jailbee.gisgro.io/docs/agents/): the `agents:` config key, the six shipped presets (Claude Code plus five untested templates), and how to add one of your own
+- [Security and limitations](https://jailbee.gisgro.io/docs/security/): isolation model and known limits, including what running an agent without prompts does and does not cover
 - [Who JailBee is for](https://jailbee.gisgro.io/comparison.html): how it compares to Dev Containers, BranchBox, nono and Docker Sandboxes, when not to use it, and what it costs
-- [Full technical comparison](https://github.com/VRTFinland/jailbee/blob/main/docs/comparison.md): the same comparison at length, with every caveat and the sources each claim was checked against
-- [Architecture](https://github.com/VRTFinland/jailbee/blob/main/docs/architecture.md): how the pieces fit together
+- [Full technical comparison](https://jailbee.gisgro.io/docs/comparison/): the same comparison at length, with every caveat and the sources each claim was checked against
+- [Architecture](https://jailbee.gisgro.io/docs/architecture/): how the pieces fit together
 
 ## Optional
 
-- [Setting up JailBee in your own project](https://github.com/VRTFinland/jailbee/blob/main/docs/project-config.md): adapting it to your own repo and stack
-- [Running on macOS](https://github.com/VRTFinland/jailbee/blob/main/docs/macos.md): via a Linux VM, experimental
-- [Troubleshooting](https://github.com/VRTFinland/jailbee/blob/main/docs/troubleshooting.md): common failures by symptom
+- [Setting up JailBee in your own project](https://jailbee.gisgro.io/docs/project-config/): adapting it to your own repo and stack
+- [Running on macOS](https://jailbee.gisgro.io/docs/macos/): via a Linux VM, experimental
+- [Troubleshooting](https://jailbee.gisgro.io/docs/troubleshooting/): common failures by symptom
 - [Source repository](https://github.com/VRTFinland/jailbee)
 - [PyPI package](https://pypi.org/project/jailbee/)

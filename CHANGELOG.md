@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **The documentation is now a website**, at
+  [jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/) — navigable and
+  searchable, with the same Markdown still readable in the repository's
+  `docs/`. There is one source: the site is generated from those files on every
+  release, and a link or heading anchor that no longer resolves fails CI rather
+  than shipping.
+
 ## 1.3.1 - 2026-09-10
 
 ### Added
