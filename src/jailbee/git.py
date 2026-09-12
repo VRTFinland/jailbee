@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from jailbee.config.models_behaviour import TagPolicy
 
 _FALLBACK_BRANCH = "main"
 
@@ -493,7 +496,7 @@ class GitError(RuntimeError):
     """Raised when a git command fails. Carries stderr in the message."""
 
 
-def fetch_url(repo_root: Path, url: str, refspec: str) -> None:
+def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "reachable") -> None:
     """Run `git fetch <url> <refspec>` in repo_root.
 
     Used by `jailbee git fetch` to pull commits from a container's clone via the
@@ -514,9 +517,17 @@ def fetch_url(repo_root: Path, url: str, refspec: str) -> None:
     have it) — failing with ``not our ref``. jailbee transports submodule objects
     itself via ``submodules.transport_submodules_to_host``.
 
+    ``tags`` selects what crosses with the commits. ``reachable`` passes no
+    flag at all, because git's automatic tag following already fetches exactly
+    the tags reachable from the fetched ref — including lightweight ones, and
+    including tags added to commits the host already has (both measured; see
+    the design doc). ``none`` and ``all`` map to git's own ``--no-tags`` and
+    ``--tags``.
+
     git's output is inherited by the parent process — the user sees
     progress and the resulting ref update directly.
     """
+    tag_flag = {"none": ["--no-tags"], "all": ["--tags"], "reachable": []}[tags]
     returncode = subprocess.call(
         [
             "git",
@@ -524,6 +535,7 @@ def fetch_url(repo_root: Path, url: str, refspec: str) -> None:
             "protocol.ext.allow=always",
             "fetch",
             "--no-recurse-submodules",
+            *tag_flag,
             url,
             refspec,
         ],
@@ -715,6 +727,33 @@ def list_refs(repo_root: Path, prefix: str) -> list[str]:
     if result.returncode != 0:
         return []
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def tags_reachable_from(repo_root: Path, ref: str) -> list[str]:
+    """Tag names reachable from `ref` — `git tag --merged <ref>`.
+
+    Covers lightweight and annotated tags alike, which is why the push side
+    computes the set here instead of using `git push --follow-tags`: that flag
+    pushes annotated tags only, and would silently drop the lightweight ones
+    the fetch side has always carried.
+
+    Returns [] on any failure (bad ref, missing git): a tag set that cannot be
+    computed must degrade to "send no tags", never abort the transfer the user
+    actually asked for.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "tag", "--merged", ref],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def list_branches(repo_root: Path) -> list[str]:

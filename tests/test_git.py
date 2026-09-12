@@ -1694,3 +1694,46 @@ def test_remove_origin_raises_on_failure(mocker, tmp_path):
 
     with pytest.raises(git.GitError):
         git.remove_origin(tmp_path)
+
+
+def test_tags_reachable_from_lists_both_tag_kinds(mocker, tmp_path):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run")
+    run.return_value = mocker.Mock(returncode=0, stdout="v1.0\nv1.1\n", stderr="")
+
+    assert git.tags_reachable_from(tmp_path, "refs/heads/main") == ["v1.0", "v1.1"]
+    assert run.call_args[0][0] == ["git", "tag", "--merged", "refs/heads/main"]
+
+
+def test_tags_reachable_from_returns_empty_on_failure(mocker, tmp_path):
+    from jailbee import git
+
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=mocker.Mock(returncode=1, stdout="", stderr="fatal: bad ref"),
+    )
+    assert git.tags_reachable_from(tmp_path, "refs/heads/nope") == []
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_flag"),
+    [("none", "--no-tags"), ("all", "--tags")],
+)
+def test_fetch_url_passes_the_tag_flag(mocker, tmp_path, policy, expected_flag):
+    from jailbee import git
+
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    git.fetch_url(tmp_path, "ext::x", "+refs/heads/a:refs/jailbee/s/a", tags=policy)
+    assert expected_flag in call.call_args[0][0]
+
+
+def test_fetch_url_reachable_passes_no_tag_flag(mocker, tmp_path):
+    """git's own auto-follow already does exactly `reachable` — measured, see spec."""
+    from jailbee import git
+
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    git.fetch_url(tmp_path, "ext::x", "+refs/heads/a:refs/jailbee/s/a", tags="reachable")
+    argv = call.call_args[0][0]
+    assert "--tags" not in argv
+    assert "--no-tags" not in argv
