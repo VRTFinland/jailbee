@@ -7768,13 +7768,19 @@ def net_unregister_cmd(
 
 @net_app.command("install")
 def net_install_cmd() -> None:
-    """Install (or refresh) the jailbee-net-refresh user systemd timer + service.
+    """Deprecated: use `jailbee setup --yes --only timer`.
 
-    Idempotent: safe to re-run after upgrading jailbee. Called by ``make install``
-    so the timer stays in sync with the unit template shipped in the package.
+    This predates `jailbee setup`, which owns the timer as one of its three
+    steps and is what `make install` now runs. The two do the same work —
+    `install_systemd_units()` — so nothing is left that only this command can
+    do, and one place to install the timer is one place to keep correct.
     """
     from jailbee.init_command import install_systemd_units
 
+    warn(
+        "`jailbee net install` is deprecated — use `jailbee setup --yes --only timer` "
+        f"instead. It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     install_systemd_units()
 
 
