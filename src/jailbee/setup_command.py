@@ -313,6 +313,37 @@ def setup_status(shells: Sequence[str]) -> list[StepStatus]:
     return [status_for(key, shells) for key in STEP_KEYS]
 
 
+def pending_steps(shells: Sequence[str]) -> list[StepStatus]:
+    """The steps not yet in place, in `STEP_KEYS` order."""
+    return [status for status in setup_status(shells) if not status.installed]
+
+
+def report_step(status: StepStatus) -> None:
+    """Print one step's state, in the wording every caller shares.
+
+    A single renderer on purpose: the interactive run, the read-only listing
+    and the hint describe the same three probes, and two copies of the
+    phrasing drift the moment one of them gains a detail the other lacks.
+    """
+    if status.installed:
+        success_plain(f"{status.title}: installed ({status.detail})")
+    else:
+        warn_plain(f"{status.title}: {status.detail}")
+
+
+def report_status(keys: Sequence[StepKey], shells: Sequence[str]) -> None:
+    """Print the state of `keys`, installing nothing and asking nothing.
+
+    What `jailbee setup --status` prints, and the only view that shows all
+    three steps at once: `jailbee doctor` reports completions and skills but
+    deliberately not the timer, because its egress check says more about that
+    one than a file check could.
+    """
+    for key in STEP_KEYS:
+        if key in keys:
+            report_step(status_for(key, shells))
+
+
 def _install(
     key: StepKey, shells: Sequence[str], confirm: Callable[[str, bool], bool] | None
 ) -> None:
@@ -358,14 +389,14 @@ def run_setup(
             # Nothing can be written, so nothing may be claimed: skip the
             # step outright rather than "installing" an empty set. Always
             # said out loud — it is the reason nothing happened.
-            warn_plain(f"{status.title}: {status.detail}")
+            report_step(status)
             continue
         if status.installed:
-            success_plain(f"{status.title}: installed ({status.detail})")
+            report_step(status)
         elif confirm is not None:
             # What is missing is context for the question that follows. With
             # nothing to answer, the installer's own output says it better.
-            warn_plain(f"{status.title}: {status.detail}")
+            report_step(status)
         if confirm is not None:
             verb = "Refresh" if status.installed else "Install"
             if not confirm(f"{verb} {status.title}?", not status.installed):
@@ -424,28 +455,66 @@ def record_setup(session: Session, version: str, *, now: datetime) -> None:
     session.commit()
 
 
-def consume_hint(session: Session, *, shells: Sequence[str], now: datetime) -> list[str]:
-    """Lines naming the missing setup steps — once, ever. Then `[]`.
+def hint_pending(session: Session, *, shells: Sequence[str], now: datetime) -> list[StepStatus]:
+    """The missing setup steps — once, ever. Then `[]`.
 
-    Called from the commands users run daily, so it is deliberately blunt
-    about not repeating itself: the shown timestamp is written the first time
-    it fires, and `jailbee setup` having run at all silences it too. A user
-    who ran setup and declined a step has decided; a user of long standing
-    whose install predates this hint sees it at most once. `jailbee doctor`
-    is where the state stays visible afterwards.
+    The gate both the printed hint and the interactive offer sit behind, and
+    the reason neither repeats: the shown timestamp is written the first time
+    *either* fires, and `jailbee setup` having run at all silences both. A
+    user who ran setup and declined a step has decided; a user of long
+    standing whose install predates this sees it at most once. `jailbee
+    doctor` is where the state stays visible afterwards.
     """
     row = _load_state(session)
     if row.setup_at is not None or row.hint_shown_at is not None:
         return []
-    pending = [s for s in setup_status(shells) if not s.installed]
+    pending = pending_steps(shells)
     if not pending:
         return []
     row.hint_shown_at = now
     session.add(row)
     session.commit()
-    lines = ["Post-install steps that have not been done on this machine:"]
-    lines.extend(f"    - {s.title}: {s.detail}" for s in pending)
-    lines.append("    Run `jb setup` to install them; `jb doctor` reports them later.")
-    lines.append(f"    Host setup (Incus, firewall, UID delegation): {DOCS_URL}")
-    lines.append("    (shown once)")
-    return lines
+    return pending
+
+
+def _pending_lines(pending: Sequence[StepStatus]) -> list[str]:
+    """The header and one line per missing step — what both blocks open with."""
+    return [
+        "Post-install steps that have not been done on this machine:",
+        *(f"    - {s.title}: {s.detail}" for s in pending),
+    ]
+
+
+def _docs_line() -> str:
+    return f"    Host setup (Incus, firewall, UID delegation): {DOCS_URL}"
+
+
+def consume_hint(session: Session, *, shells: Sequence[str], now: datetime) -> list[str]:
+    """Lines naming the missing setup steps — once, ever. Then `[]`.
+
+    The non-interactive half of the pair: what the commands print when they
+    cannot stop to ask, either because nothing is watching or because they
+    are mid-workflow (`jailbee new` may be heading for a detached worker,
+    `jailbee shell` is about to hand the terminal to a container). It names
+    the steps, points at `jb setup`, and gets out of the way. `offer_lines`
+    is the interactive counterpart.
+    """
+    pending = hint_pending(session, shells=shells, now=now)
+    if not pending:
+        return []
+    return [
+        *_pending_lines(pending),
+        "    Run `jb setup` to install them; `jb doctor` reports them later.",
+        _docs_line(),
+        "    (shown once)",
+    ]
+
+
+def offer_lines(pending: Sequence[StepStatus]) -> list[str]:
+    """The same block without a call to action — the question that follows is it.
+
+    No "(shown once)" either. That line exists to tell a user who cannot act
+    on the notice that it will not return; a user who is about to be asked
+    can act on it right now.
+    """
+    return [*_pending_lines(pending), _docs_line()]

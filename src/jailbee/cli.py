@@ -172,28 +172,82 @@ def _advise_upgrade(cfg: "Config") -> None:
         return
 
 
-def _advise_setup() -> None:
+def _setup_offer_allowed() -> bool:
+    """True when jailbee may stop and *ask* about the missing setup steps.
+
+    All three streams, not just stdin: the question is only fair when someone
+    is watching it (stderr carries the block above it), and the installer's
+    own output would otherwise land in whatever is reading `jailbee ls`'s
+    table. Anything less interactive gets the one-shot hint instead.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
+
+
+def _advise_setup(*, offer: bool = False) -> None:
     """Print the one-shot post-install hint, if it has anything left to say.
 
-    Same contract as `_advise_upgrade`: stderr, non-interactive, and wrapped
-    broadly because a courtesy must never take down the command the user
-    actually ran. `consume_hint` is what makes this fire at most once — the
-    probes it runs are `stat`s, so this costs nothing on the commands it
-    decorates.
+    Same contract as `_advise_upgrade`: stderr, and wrapped broadly because a
+    courtesy must never take down the command the user actually ran.
+    `hint_pending` is what makes this fire at most once — the probes it runs
+    are `stat`s, so this costs nothing on the commands it decorates.
+
+    With `offer`, and only on a terminal, the hint becomes a question. The
+    commands that survey the fleet (`jailbee ls`, `jailbee dashboard`) can
+    afford to stop and install the steps before getting on with their work;
+    `jailbee new` and `jailbee shell` are mid-workflow — one may be heading
+    for a detached worker, the other is about to hand the terminal to a
+    container — so they only ever print. Either way the state is recorded, so
+    the user is bothered at most once.
     """
     from sqlmodel import Session
 
+    from jailbee import setup_command as sc
     from jailbee.db import get_engine
-    from jailbee.setup_command import consume_hint, detect_shell
     from jailbee.tui import hint
 
     try:
-        shell = detect_shell()
+        shell = sc.detect_shell()
+        shells = [shell] if shell else []
         with Session(get_engine()) as session:
-            lines = consume_hint(session, shells=[shell] if shell else [], now=_now())
-        hint(lines)
+            if not (offer and _setup_offer_allowed()):
+                hint(sc.consume_hint(session, shells=shells, now=_now()))
+                return
+            pending = sc.hint_pending(session, shells=shells, now=_now())
+        if not pending:
+            return
+        hint(sc.offer_lines(pending))
     except Exception:  # the hint is a courtesy; must never fail the command
         return
+
+    # Outside the guard above: the user is about to be asked to install
+    # something, and a step that then fails must say so rather than vanish.
+    # Ctrl-C at the prompt keeps its usual meaning — abandon the command —
+    # which is why `typer.Abort` is re-raised rather than swallowed.
+    try:
+        if typer.confirm("Run `jb setup` now?", default=True):
+            _run_setup_steps(list(sc.STEP_KEYS), shells, assume_yes=False)
+    except typer.Abort:
+        raise
+    except Exception as e:
+        error_plain(f"Setup did not finish: {e}")
+
+
+def _run_setup_steps(keys: list["StepKey"], shells: list[str], *, assume_yes: bool) -> None:
+    """Run the selected setup steps and record that setup ran.
+
+    Shared by the `setup` command and the offer `_advise_setup` makes, so the
+    two cannot differ on what "running setup" means — including that the run
+    is recorded even when every step was declined.
+    """
+    from jailbee import setup_command as sc
+
+    def ask(question: str, default: bool) -> bool:
+        return typer.confirm(question, default=default)
+
+    ran = sc.run_setup(keys=keys, shells=shells, confirm=None if assume_yes else ask)
+    if "timer" in ran:
+        sc.linger_tip()
+    _record_setup_run()
 
 
 def _record_setup_run() -> None:
@@ -717,6 +771,10 @@ def setup(
             autocompletion=completion.complete_choices("bash", "zsh", "fish"),
         ),
     ] = None,
+    status: Annotated[
+        bool,
+        typer.Option("--status", help="Report each step's state and exit, installing nothing"),
+    ] = False,
 ) -> None:
     """Set up this machine: shell completions, the refresh timer, Claude skills.
 
@@ -728,7 +786,7 @@ def setup(
 
     Interactive by default and idempotent, so re-run it after upgrading
     jailbee. `--yes` installs everything without asking, which is what
-    `make install` runs.
+    `make install` runs, and `--status` only reports.
 
     Host prerequisites — Incus, the firewall, UID delegation — are not done
     here: run `jailbee doctor` and follow docs/installation.md.
@@ -755,14 +813,16 @@ def setup(
         detected = sc.detect_shell()
         shells = [detected] if detected is not None else []
 
-    def ask(question: str, default: bool) -> bool:
-        return typer.confirm(question, default=default)
+    if status:
+        if yes:
+            # Not a harmless combination to resolve either way: one of the two
+            # flags would silently not mean what it says.
+            error("--status installs nothing, so it cannot be combined with --yes")
+            raise typer.Exit(2)
+        sc.report_status(keys, shells)
+        return
 
-    ran = sc.run_setup(keys=keys, shells=shells, confirm=None if yes else ask)
-
-    if "timer" in ran:
-        sc.linger_tip()
-    _record_setup_run()
+    _run_setup_steps(keys, shells, assume_yes=yes)
 
     info("")
     info("Next: `jb doctor` checks the host — Incus, firewall, UID delegation.")
@@ -894,7 +954,8 @@ def list_cmd(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
-    _advise_setup()
+    # `--format json` is for a parser, terminal or not: never stop to ask there.
+    _advise_setup(offer=fmt == "table")
     show_submodules = submodules and repo_has_submodules(cfg)
 
     containers = list_containers(
@@ -2221,6 +2282,10 @@ def _run_dashboard(
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
 
+    # Before either frontend takes the screen: this is the other command that
+    # surveys the whole fleet, and the other one that can afford to stop.
+    _advise_setup(offer=True)
+
     # A launch-time probe, not a load: the dashboards re-resolve per gather.
     # `Path.cwd()` only counts as a repo if its config actually loads — with
     # `scratch.enabled: false` a config-less directory is still nothing to show,
@@ -2323,6 +2388,7 @@ if TYPE_CHECKING:
     from jailbee.pool import Pool
     from jailbee.pr_outbox import Manifest, Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
+    from jailbee.setup_command import StepKey
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
         BridgePlan,

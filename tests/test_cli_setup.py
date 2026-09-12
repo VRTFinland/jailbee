@@ -242,3 +242,188 @@ def test_nothing_missing_prints_nothing(mocker, capsys) -> None:
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == ""
+
+
+# --------------------------------------------------------------------------
+# the read-only listing
+# --------------------------------------------------------------------------
+
+
+def test_status_reports_the_steps_without_installing(mocker) -> None:
+    run = _stub_run(mocker)
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    report = mocker.patch("jailbee.setup_command.report_status")
+    from jailbee.cli import app
+
+    result = runner.invoke(app, ["setup", "--status"])
+
+    assert result.exit_code == 0, result.output
+    run.assert_not_called()
+    assert list(report.call_args.args[0]) == ["completions", "timer", "skills"]
+    assert report.call_args.args[1] == ["bash"]
+
+
+def test_status_honours_only_and_shell(mocker) -> None:
+    _stub_run(mocker)
+    report = mocker.patch("jailbee.setup_command.report_status")
+    from jailbee.cli import app
+
+    result = runner.invoke(app, ["setup", "--status", "--only", "timer", "--shell", "fish"])
+
+    assert result.exit_code == 0, result.output
+    assert list(report.call_args.args[0]) == ["timer"]
+    assert report.call_args.args[1] == ["fish"]
+
+
+def test_status_and_yes_contradict_each_other(mocker) -> None:
+    run = _stub_run(mocker)
+    report = mocker.patch("jailbee.setup_command.report_status")
+    from jailbee.cli import app
+
+    result = runner.invoke(app, ["setup", "--status", "--yes"])
+
+    assert result.exit_code == 2
+    run.assert_not_called()
+    report.assert_not_called()
+
+
+def test_status_still_rejects_an_unknown_step(mocker) -> None:
+    report = mocker.patch("jailbee.setup_command.report_status")
+    from jailbee.cli import app
+
+    result = runner.invoke(app, ["setup", "--status", "--only", "profiles"])
+
+    assert result.exit_code == 2
+    report.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# the interactive offer
+# --------------------------------------------------------------------------
+
+
+def _stub_pending(mocker, steps=None):
+    from jailbee.setup_command import StepStatus
+
+    rows = (
+        [
+            StepStatus(
+                key="timer", title="egress refresh timer", installed=False, detail="missing: /x"
+            )
+        ]
+        if steps is None
+        else steps
+    )
+    return mocker.patch("jailbee.setup_command.hint_pending", return_value=rows)
+
+
+def _terminal(mocker):
+    mocker.patch("jailbee.cli._setup_offer_allowed", return_value=True)
+    mocker.patch("jailbee.setup_command.linger_tip")
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+
+
+def _ls(mocker, *args, input=None):
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
+    mocker.patch("jailbee.lifecycle.repo_has_submodules", return_value=False)
+    mocker.patch("jailbee.incus.Incus")
+    return runner.invoke(
+        app, ["ls", "--config", str(FIXTURES / "full_config.yaml"), *args], input=input
+    )
+
+
+def test_ls_offers_to_run_setup_on_a_terminal(mocker) -> None:
+    _terminal(mocker)
+    _stub_pending(mocker)
+    run = _stub_run(mocker)
+
+    result = _ls(mocker, input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "egress refresh timer" in result.output
+    run.assert_called_once()
+    assert list(run.call_args.kwargs["keys"]) == ["completions", "timer", "skills"]
+
+
+def test_declining_the_offer_installs_nothing_and_lists_anyway(mocker) -> None:
+    _terminal(mocker)
+    _stub_pending(mocker)
+    run = _stub_run(mocker)
+
+    result = _ls(mocker, input="n\n")
+
+    assert result.exit_code == 0, result.output
+    run.assert_not_called()
+
+
+def test_ls_json_never_stops_to_ask(mocker) -> None:
+    """`--format json` is for a parser, terminal or not."""
+    _terminal(mocker)
+    pending = _stub_pending(mocker)
+    hint = _stub_hint(mocker, lines=[])
+
+    result = _ls(mocker, "--format", "json")
+
+    assert result.exit_code == 0, result.output
+    pending.assert_not_called()
+    assert hint.call_count == 1
+
+
+def test_a_pipe_gets_the_one_shot_hint_instead_of_a_question(mocker) -> None:
+    mocker.patch("jailbee.cli._setup_offer_allowed", return_value=False)
+    pending = _stub_pending(mocker)
+    hint = _stub_hint(mocker)
+
+    result = _ls(mocker)
+
+    assert result.exit_code == 0, result.output
+    pending.assert_not_called()
+    assert hint.call_count == 1
+
+
+def test_shell_never_stops_to_ask(mocker) -> None:
+    """Mid-workflow: the terminal is about to belong to the container."""
+    from jailbee.cli import app
+
+    _terminal(mocker)
+    pending = _stub_pending(mocker)
+    hint = _stub_hint(mocker)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(mocker.MagicMock(), "c1"))
+    mocker.patch("jailbee.cli._attach_shell", return_value=0)
+
+    result = runner.invoke(app, ["shell", "c1", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    pending.assert_not_called()
+    assert hint.call_count == 1
+
+
+def test_a_failing_step_does_not_take_down_the_command(mocker) -> None:
+    _terminal(mocker)
+    _stub_pending(mocker)
+    mocker.patch("jailbee.setup_command.record_setup")
+    mocker.patch("jailbee.setup_command.run_setup", side_effect=RuntimeError("systemctl exploded"))
+
+    result = _ls(mocker, input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "systemctl exploded" in result.output
+
+
+def test_dashboard_offers_to_run_setup(mocker) -> None:
+    from jailbee.cli import app
+    from jailbee.config import ConfigNotFoundError
+
+    _terminal(mocker)
+    _stub_pending(mocker)
+    run = _stub_run(mocker)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.dashboard.run", return_value=0)
+
+    result = runner.invoke(app, ["dashboard"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    run.assert_called_once()
