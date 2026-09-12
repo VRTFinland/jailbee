@@ -1868,11 +1868,18 @@ def merge_from_container(
         return result
 
     if not allow_checkout:
+        also_ff_always = (
+            " Note: with --ff (or pull.ff: always), --checkout will refuse this "
+            "same divergence too — drop --ff, or set pull.ff to 'auto'/'never', "
+            "before retrying."
+            if ff == "always"
+            else ""
+        )
         raise SyncError(
             f"Base branch '{target}' has diverged from container '{short}' and "
             f"is not the checked-out branch, so it can't be fast-forwarded in "
             f"place. Re-run with --checkout to check it out and merge, or "
-            f"check it out yourself and run 'jailbee git pull {short}'."
+            f"check it out yourself and run 'jailbee git pull {short}'.{also_ff_always}"
         )
 
     if ff == "always":
@@ -2267,6 +2274,10 @@ def push_to_container(
             f"refs/tags/{name}:refs/tags/{name}"
             for name in git.tags_reachable_from(cfg.repo_root, host_ref)
         )
+    elif tags == "none":
+        pass
+    else:
+        assert_never(tags)
 
     if len(refspecs) == 1:
         git.push_url(cfg.repo_root, url, refspecs[0])

@@ -6305,6 +6305,7 @@ def pr_cmd(
             publish_name=publish_name,
             force=force,
             on_before_push=lambda result: _print_publish_progress(cfg, short, result),
+            tags=cfg.pull.tags,
         )
     except sync.SyncError as exc:
         error(str(exc))
