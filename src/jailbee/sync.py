@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from jailbee.config import Config
+    from jailbee.config.models_behaviour import TagPolicy
     from jailbee.incus import Incus
     from jailbee.submodules import GitRun
     from jailbee.tui import ConfirmFn
@@ -1258,12 +1259,17 @@ def fetch_from_container(
     short: str,
     *,
     branch: str | None = None,
+    tags: TagPolicy = "reachable",
 ) -> FetchResult:
     """Fetch commits from container `short` into `refs/jailbee/<short>/<branch>`.
 
     Raises `SyncError` for user-visible problems (stopped container, no
     clone, unresolvable branch, a branch the container doesn't have). git
     failures bubble up as `GitError`.
+
+    ``tags`` is the container-to-host tag policy (``cfg.pull.tags``, or the
+    caller's flag). It reaches `git.fetch_url` unchanged; this function is the
+    single choke point for that direction.
     """
     from jailbee.lifecycle import container_repo_dir
 
@@ -1290,7 +1296,7 @@ def fetch_from_container(
     refspec = f"+refs/heads/{resolved}:{ref}"
 
     old_oid = git.rev_parse(cfg.repo_root, ref)
-    git.fetch_url(cfg.repo_root, url, refspec)
+    git.fetch_url(cfg.repo_root, url, refspec, tags=tags)
     new_oid = git.rev_parse(cfg.repo_root, ref)
     if new_oid is None:
         raise SyncError(f"fetch succeeded but {ref} did not resolve")
@@ -1334,6 +1340,7 @@ def sync_refs_from_container(
     branch: str | None = None,
     as_name: str | None = None,
     force: bool = False,
+    tags: TagPolicy = "reachable",
 ) -> SyncRefsResult:
     """Bring container `short`'s state onto the host as refs, without a checkout.
 
@@ -1365,7 +1372,7 @@ def sync_refs_from_container(
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
 
     full_name = resolve_container_name(cfg, incus, short)
     repo_dir = container_repo_dir(cfg, incus, full_name)
@@ -1468,6 +1475,7 @@ def publish_branch_from_container(
     publish_name: str | None = None,
     force: bool = False,
     on_before_push: Callable[[PublishResult], None] | None = None,
+    tags: TagPolicy = "reachable",
 ) -> PublishResult:
     """Fetch container `short`'s branch and push it to the GitHub origin.
 
@@ -1488,7 +1496,7 @@ def publish_branch_from_container(
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
-    fetch = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
 
     full_name = resolve_container_name(cfg, incus, short)
     repo_dir = container_repo_dir(cfg, incus, full_name)
@@ -1541,6 +1549,7 @@ def checkout_from_container(
     *,
     branch: str | None = None,
     as_name: str | None = None,
+    tags: TagPolicy = "reachable",
 ) -> CheckoutResult:
     """Fetch + check out the container's branch on the host (ff-only).
 
@@ -1561,7 +1570,7 @@ def checkout_from_container(
     """
     # force is deliberately left at its default: a checkout must never
     # overwrite host history the way `jailbee git pull --force` can.
-    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name)
+    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name, tags=tags)
     target = refs.target
     status = refs.superproject.status
 
@@ -1739,6 +1748,7 @@ def merge_from_container(
     ff_only: bool = False,
     into: str | None = None,
     allow_checkout: bool = False,
+    tags: TagPolicy = "reachable",
 ) -> MergeResult:
     """Fetch + merge the container's branch into its base branch.
 
@@ -1755,7 +1765,7 @@ def merge_from_container(
     """
     from jailbee.lifecycle import resolve_container_name
 
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
     container_branch = fetch_result.branch
     fetched_ref = f"refs/jailbee/{short}/{container_branch}"
 
@@ -2711,7 +2721,11 @@ def merge_container_into_container(
     uid = cfg.container_user.uid
     target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
 
-    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch)
+    # Decision 7 (design doc): the relay runs source container -> host ->
+    # target container through the same two transports. Inheriting the host's
+    # tag policy would push the HOST's tag set into a target container that
+    # asked for none of it, so both legs are pinned to "none".
+    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch, tags="none")
     source_full = resolve_container_name(cfg, incus, source_short)
     source_repo_dir = container_repo_dir(cfg, incus, source_full)
     submodules.transport_submodules_to_host(

@@ -1021,7 +1021,11 @@ def test_checkout_forwards_branch_and_as_name_without_forcing(mocker, make_cfg, 
         cfg, incus, "feat-foo", branch="other/branch", as_name="mine"
     )
 
-    sync_refs.assert_called_once_with(cfg, incus, "feat-foo", branch="other/branch", as_name="mine")
+    # tags="reachable" is checkout_from_container's own default, forwarded
+    # unconditionally now that it threads the tag policy through.
+    sync_refs.assert_called_once_with(
+        cfg, incus, "feat-foo", branch="other/branch", as_name="mine", tags="reachable"
+    )
     assert result.branch == "mine"
     checkout.assert_called_once_with(cfg.repo_root, "mine")
     update_subs.assert_called_once_with(cfg.repo_root, branch="mine")
@@ -7720,3 +7724,125 @@ def test_an_unreadable_divergence_keeps_the_fast_forward(mocker, make_cfg, tmp_p
 
     assert "--ff-only" in _merge_cmd(incus)
     assert result.fast_forward_only is True
+
+
+# ---------------------------------------------------------------------------
+# tag policy threading (container -> host)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_stub(mocker, tmp_path, make_cfg):
+    """Wire enough mocks for fetch_from_container to reach git.fetch_url."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync.assert_container_publishable", return_value="c-feat-foo")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/x")
+    mocker.patch("jailbee.sync._resolve_branch", return_value="feat/foo")
+    mocker.patch("jailbee.sync._assert_container_has_branch")
+    mocker.patch("jailbee.sync._build_ext_url", return_value="ext::x")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc1234")
+    return cfg, incus
+
+
+def test_fetch_from_container_forwards_the_tag_policy(mocker, tmp_path, make_cfg):
+    from jailbee import sync
+
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    fetch_url = mocker.patch("jailbee.git.fetch_url")
+
+    sync.fetch_from_container(cfg, incus, "feat-foo", tags="all")
+
+    assert fetch_url.call_args.kwargs["tags"] == "all"
+
+
+def test_fetch_from_container_defaults_to_reachable(mocker, tmp_path, make_cfg):
+    from jailbee import sync
+
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    fetch_url = mocker.patch("jailbee.git.fetch_url")
+
+    sync.fetch_from_container(cfg, incus, "feat-foo")
+
+    assert fetch_url.call_args.kwargs["tags"] == "reachable"
+
+
+def test_container_to_container_relay_carries_no_tags(mocker, make_cfg, tmp_path):
+    """Decision 7: the host's tag set must not leak into a relay target.
+
+    Behavioural, not a source-text check: `test_merge_container_into_container_
+    same_branch_uses_ff_only` already builds the full mock surface needed to
+    reach `merge_container_into_container`'s own `fetch_from_container` call
+    (`tests/test_cli_git_merge.py` cannot — it mocks
+    `sync.merge_container_into_container` itself at the CLI boundary, so it
+    never reaches the code under test here). Reusing that surface lets this
+    assert directly on the `tags` kwarg the relay's fetch leg receives,
+    instead of grepping the source for a string literal.
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    fetch = mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=2
+        ),
+    )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert fetch.call_args.kwargs["tags"] == "none"
+
+
+def test_publish_to_origin_pushes_only_the_branch_refspec(mocker, make_cfg, tmp_path):
+    """Decision 8: tags reach the host, never the GitHub origin.
+
+    Behavioural, not a source-text check: `_stub_publish_fetch` (above) already
+    builds the mock surface `publish_branch_from_container` needs to reach
+    `git.push_to_remote` (`tests/test_cli_pr.py` cannot — it mocks
+    `sync.publish_branch_from_container` itself at the CLI boundary). Passing
+    `tags="all"` here proves the tag policy that reached the container-to-host
+    fetch does not also reach the push to origin: `push_to_remote` takes no
+    `tags` parameter at all, and `assert_called_once_with` fails on any extra
+    argument, including one smuggled through as a second refspec.
+    """
+    from jailbee.sync import publish_branch_from_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""  # status --porcelain -> clean
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        return_value=f"{cfg.container_prefix}-feat-foo",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    _stub_publish_fetch(mocker)
+    push = mocker.patch("jailbee.sync.git.push_to_remote")
+
+    publish_branch_from_container(cfg, incus, "feat-foo", tags="all")
+
+    push.assert_called_once_with(
+        cfg.repo_root, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
+    )
