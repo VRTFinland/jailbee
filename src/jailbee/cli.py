@@ -3702,7 +3702,9 @@ def _do_single_pull(
         incus,
         short,
         branch=branch,
-        ff_only=ff_only,
+        # Temporary shim for Task 7, which replaces this with the real
+        # tri-state resolver and the `auto` default.
+        ff="always" if ff_only else "never",
         into=into,
         allow_checkout=allow_checkout,
         tags=tags,
@@ -3971,7 +3973,9 @@ def pull(
                         short_name(cfg, selected[0]),
                         branch=branch,
                         into=into,
-                        ff_only=ff,
+                        # Temporary shim for Task 7, which replaces this with the
+                        # real tri-state resolver and the `auto` default.
+                        ff="always" if ff else "never",
                     )
                 )
 
@@ -4008,7 +4012,16 @@ def pull(
         cfg, auto_selected=resolved.auto_selected, flag=confirm
     ) and not _is_mount_mode(incus, full):
         _confirm_plan_if_buildable(
-            lambda: sync.plan_pull(cfg, incus, short, branch=branch, into=into, ff_only=ff)
+            lambda: sync.plan_pull(
+                cfg,
+                incus,
+                short,
+                branch=branch,
+                into=into,
+                # Temporary shim for Task 7, which replaces this with the real
+                # tri-state resolver and the `auto` default.
+                ff="always" if ff else "never",
+            )
         )
 
     try:

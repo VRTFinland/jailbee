@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from jailbee.config import Config
-    from jailbee.config.models_behaviour import TagPolicy
+    from jailbee.config.models_behaviour import FfPolicy, TagPolicy
     from jailbee.incus import Incus
     from jailbee.submodules import GitRun
     from jailbee.tui import ConfirmFn
@@ -1024,7 +1024,7 @@ def plan_pull(
     *,
     branch: str | None,
     into: str | None,
-    ff_only: bool,
+    ff: FfPolicy,
 ) -> BridgePlan:
     """Describe a pending `jailbee git pull` without mutating anything.
 
@@ -1071,7 +1071,7 @@ def plan_pull(
         container_state=state,
         source=source_summary,
         target=target_summary,
-        action="ff-only" if ff_only else "merge",
+        action={"always": "ff-only", "never": "merge", "auto": "ff-or-merge"}[ff],
         incoming=ahead,
         notes=tuple(notes),
     )
@@ -1745,7 +1745,7 @@ def merge_from_container(
     short: str,
     *,
     branch: str | None = None,
-    ff_only: bool = False,
+    ff: FfPolicy = "auto",
     into: str | None = None,
     allow_checkout: bool = False,
     tags: TagPolicy = "reachable",
@@ -1753,13 +1753,32 @@ def merge_from_container(
     """Fetch + merge the container's branch into its base branch.
 
     The merge target defaults to the container's base branch
-    (``user.jailbee.base_branch``), overridable with ``into``. When the target
-    is the host's current HEAD the merge runs in place (a ``--no-ff`` merge
-    commit, or ``--ff-only`` when ``ff_only``). When the target is a
-    different branch, the target ref is fast-forwarded without a checkout;
-    on a non-fast-forward this raises ``SyncError`` unless ``allow_checkout``
-    is set, in which case the target is checked out and merged, leaving host
-    HEAD on the target.
+    (``user.jailbee.base_branch``), overridable with ``into``. There are
+    three merge paths, and ``ff`` governs the first and third differently
+    from the second:
+
+    1. **In place** (``target == current`` HEAD): ``ff="never"`` writes a
+       ``--no-ff`` merge commit, ``ff="always"`` requires ``--ff-only``, and
+       ``ff="auto"`` passes neither flag — git's own default, which
+       fast-forwards when the target is strictly behind and writes a merge
+       commit otherwise. The provenance message is passed under every
+       policy; git ignores ``-m`` when the merge actually fast-forwards.
+
+    2. **Different target, fast-forwardable**: the target ref is moved at
+       ref level by ``git.fast_forward_branch``, with no checkout and no
+       merge commit. This path is **policy-independent by design** — a
+       non-checked-out target that is strictly behind is fast-forwarded
+       under every value of ``ff``. Honouring ``never`` here would mean
+       checking out a branch the user did not ask to check out, purely to
+       manufacture a merge commit; it is a ref move, not a merge.
+
+    3. **Different target, diverged**: refused with ``SyncError`` unless
+       ``allow_checkout`` is set. With ``allow_checkout``, ``ff="always"``
+       still refuses (reaching this path at all means the branches have
+       diverged, which a fast-forward-only policy cannot satisfy); otherwise
+       the target is checked out and merged via ``_merge_via_checkout``
+       (``ff="never"`` forces a merge commit, ``ff="auto"`` lets git decide),
+       leaving host HEAD on the target.
 
     Cleanup is handled separately by ``run_post_merge_cleanup``.
     """
@@ -1785,15 +1804,18 @@ def merge_from_container(
     if target == current:
         # In-place path: HEAD IS the target branch.
         pre_merge_head = git.rev_parse(cfg.repo_root, "HEAD")
-        if ff_only:
+        if ff == "always":
             git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
         else:
+            # `auto` passes neither flag, which is git's own default: fast-forward
+            # when the target is strictly behind, merge commit otherwise. The
+            # message is passed either way — git ignores `-m` on a fast-forward.
             try:
                 git.merge_ref(
                     cfg.repo_root,
                     fetched_ref,
                     message=f"Merge branch '{container_branch}' from container {short}",
-                    no_ff=True,
+                    no_ff=(ff == "never"),
                     ff_only=False,
                 )
             except git.GitError:
@@ -1851,8 +1873,15 @@ def merge_from_container(
             f"check it out yourself and run 'jailbee git pull {short}'."
         )
 
+    if ff == "always":
+        raise SyncError(
+            f"Target branch '{target}' has diverged from container '{short}', and "
+            f"--ff (or pull.ff: always) asks for a fast-forward only. Re-run "
+            f"without --ff to merge, or resolve the divergence first."
+        )
+
     result = _merge_via_checkout(
-        cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head
+        cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head, ff
     )
     _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
     return result
@@ -1866,10 +1895,13 @@ def _merge_via_checkout(
     fetched_ref: str,
     target: str,
     pre_merge_head: str | None,
+    ff: FfPolicy,
 ) -> MergeResult:
     """Check out ``target``, merge ``fetched_ref``, and stay on ``target``.
 
-    The caller has already verified the working tree is clean. On a merge
+    The caller has already verified the working tree is clean and refused
+    ``ff == "always"`` (reaching this function at all means the branches have
+    diverged, which a fast-forward-only policy cannot satisfy). On a merge
     conflict the host is left on ``target`` in merge state so the user can
     resolve it; a ``SyncError`` carries the hint.
     """
@@ -1879,7 +1911,7 @@ def _merge_via_checkout(
             cfg.repo_root,
             fetched_ref,
             message=f"Merge branch '{container_branch}' from container {short}",
-            no_ff=True,
+            no_ff=(ff == "never"),
             ff_only=False,
         )
     except git.GitError:

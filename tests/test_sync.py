@@ -1847,6 +1847,86 @@ def test_cleanup_branch_delete_skipped_when_into_branch_is_none(mocker, make_cfg
     assert result.deleted_branch is False
 
 
+def _drive_merge_in_place(mocker, tmp_path, make_cfg, *, ff):
+    """Drive `merge_from_container` down the in-place path (target == current
+    HEAD).
+
+    Mirrors the mock surface of `test_merge_runs_no_ff_with_message` /
+    `test_merge_ff_only_passes_through`: no base_branch label, so the target
+    falls back to the current branch and the merge runs in place. Callers
+    patch `jailbee.git.merge_ref` themselves before calling this.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    _stub_fetch(mocker)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    return sync.merge_from_container(cfg, incus, "feat-foo", ff=ff)
+
+
+def _drive_merge_via_checkout(mocker, tmp_path, make_cfg, *, ff):
+    """Drive `merge_from_container` down the checkout path: target (the
+    container's base branch) differs from current, `fast_forward_branch`
+    reports divergence, and `allow_checkout=True`.
+
+    Mirrors the mock surface of `test_merge_checkout_path_merges_and_stays`.
+    Callers patch `jailbee.git.merge_ref` themselves before calling this.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="ccc")
+    mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=False)
+    mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.refresh_container_base")
+
+    return sync.merge_from_container(cfg, incus, "feat-x", ff=ff, allow_checkout=True)
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        ("never", {"no_ff": True, "ff_only": False}),
+        ("auto", {"no_ff": False, "ff_only": False}),
+        ("always", {"no_ff": False, "ff_only": True}),
+    ],
+)
+def test_merge_in_place_honours_the_ff_policy(mocker, tmp_path, make_cfg, policy, expected):
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_in_place(mocker, tmp_path, make_cfg, ff=policy)  # target == current
+
+    assert merge_ref.call_args.kwargs["no_ff"] is expected["no_ff"]
+    assert merge_ref.call_args.kwargs["ff_only"] is expected["ff_only"]
+
+
+def test_auto_keeps_the_provenance_message(mocker, tmp_path, make_cfg):
+    """`-m` is ignored by git on a fast-forward, so `auto` still passes it."""
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
+
+    assert "from container" in (merge_ref.call_args.kwargs["message"] or "")
+
+
+def test_checkout_path_honours_the_ff_policy(mocker, tmp_path, make_cfg):
+    """Pre-existing defect: _merge_via_checkout used to force no_ff regardless."""
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="auto")
+
+    assert merge_ref.call_args.kwargs["no_ff"] is False
+
+
+def test_checkout_path_refuses_under_always(mocker, tmp_path, make_cfg):
+    """`always` means 'fail on divergence' — reaching the checkout merge is divergence."""
+    with pytest.raises(sync.SyncError, match="diverged"):
+        _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="always")
+
+
 def test_merge_returns_merge_result(mocker, make_cfg, tmp_path):
     from jailbee.sync import MergeResult, merge_from_container
 
@@ -1905,7 +1985,9 @@ def test_merge_runs_no_ff_with_message(mocker, make_cfg, tmp_path):
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo")
+    # Explicit "never": the new default is "auto", which no longer forces
+    # no_ff=True — see test_merge_in_place_honours_the_ff_policy for that.
+    merge_from_container(cfg, incus, "feat-foo", ff="never")
 
     mock_merge.assert_called_once_with(
         cfg.repo_root,
@@ -1926,7 +2008,7 @@ def test_merge_ff_only_passes_through(mocker, make_cfg, tmp_path):
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
 
     mock_merge.assert_called_once_with(
         cfg.repo_root,
@@ -1951,7 +2033,7 @@ def test_merge_ff_only_propagates_git_error(mocker, make_cfg, tmp_path):
     )
 
     with pytest.raises(GitError):
-        merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+        merge_from_container(cfg, incus, "feat-foo", ff="always")
 
 
 def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_path):
@@ -1984,7 +2066,7 @@ def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
     mock_merge.assert_called_once()
     mock_input.assert_not_called()
 
@@ -5163,7 +5245,7 @@ def test_ff_only_pull_never_invokes_resolver(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
     resolve = mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
 
     resolve.assert_not_called()
 
@@ -6625,7 +6707,7 @@ def test_plan_pull_targets_the_base_branch_label(mocker, make_cfg, tmp_path):
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff="never")
 
     assert plan.direction == "pull"
     assert plan.source.label == "feat/foo"
@@ -6652,7 +6734,7 @@ def test_plan_pull_into_overrides_the_label_and_notes_a_branch_switch(mocker, ma
         "feat/foo\n" if args[3] == "symbolic-ref" else ""
     )
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into="develop", ff_only=True)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into="develop", ff="always")
 
     assert plan.target.label == "develop"
     assert plan.target.oid is None
@@ -6795,7 +6877,7 @@ def test_plan_pull_explicit_branch_reads_that_refs_tip_not_head(mocker, make_cfg
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch="other", into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch="other", into=None, ff="never")
 
     assert plan.source.label == "other"
     assert plan.source.oid == "d" * 40
@@ -6875,7 +6957,7 @@ def test_plan_pull_detached_head_with_branch_label_still_notes_detached(mocker, 
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff="never")
 
     assert plan.source.label == "feat/foo"
     assert plan.source.oid == "1" * 40
