@@ -7872,3 +7872,92 @@ def test_publish_to_origin_pushes_only_the_branch_refspec(mocker, make_cfg, tmp_
     push.assert_called_once_with(
         cfg.repo_root, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
     )
+
+
+def _drive_push(mocker, tmp_path, make_cfg, *, tags="none"):
+    """Call push_to_container with an explicit source_ref, which is the branch
+    that skips origin/local resolution entirely — fewer mocks, same refspecs."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    # mode label -> not "mount"; base_branch label -> None, so the base-advance
+    # refspec stays out of the way of the tag assertions.
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/x")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    mocker.patch("jailbee.sync._build_receive_url", return_value="ext::x")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc1234")
+    return sync.push_to_container(
+        cfg, incus, "feat-a", source="feat/a", source_ref="refs/heads/feat/a", tags=tags
+    )
+
+
+def test_push_to_container_sends_no_tag_refspec_by_default(mocker, tmp_path, make_cfg):
+
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    push_one = mocker.patch("jailbee.git.push_url")
+    _drive_push(mocker, tmp_path, make_cfg)
+
+    assert not push_multi.called or all(
+        "refs/tags/" not in spec for spec in push_multi.call_args[0][2]
+    )
+    if push_one.called:
+        assert "refs/tags/" not in push_one.call_args[0][2]
+
+
+def test_push_to_container_all_appends_the_wildcard_refspec(mocker, tmp_path, make_cfg):
+
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args[0][2]
+
+
+def test_push_to_container_reachable_appends_one_refspec_per_tag(mocker, tmp_path, make_cfg):
+
+    mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0", "v1.1"])
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="reachable")
+
+    specs = push_multi.call_args[0][2]
+    assert "refs/tags/v1.0:refs/tags/v1.0" in specs
+    assert "refs/tags/v1.1:refs/tags/v1.1" in specs
+
+
+def test_push_to_container_never_forces_a_tag_refspec(mocker, tmp_path, make_cfg):
+    """Decision 4: no tag refspec carries '+', in any policy."""
+
+    mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0"])
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="reachable")
+
+    for spec in push_multi.call_args[0][2]:
+        if "refs/tags/" in spec:
+            assert not spec.startswith("+"), f"tag refspec must not be forced: {spec}"
+
+
+def test_every_tag_policy_value_is_handled_in_both_transports(mocker, tmp_path, make_cfg):
+    """A fourth TagPolicy value must not fall through either transport."""
+    from typing import get_args
+
+    from jailbee import sync
+    from jailbee.config.models_behaviour import TagPolicy
+
+    for policy in get_args(TagPolicy):
+        fetch_url = mocker.patch("jailbee.git.fetch_url")
+        cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+        sync.fetch_from_container(cfg, incus, "feat-foo", tags=policy)
+        assert fetch_url.call_args.kwargs["tags"] == policy
+
+        mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0"])
+        push_multi = mocker.patch("jailbee.git.push_url_multi")
+        push_one = mocker.patch("jailbee.git.push_url")
+        _drive_push(mocker, tmp_path, make_cfg, tags=policy)
+        specs = push_multi.call_args[0][2] if push_multi.called else [push_one.call_args[0][2]]
+        has_tag_spec = any("refs/tags/" in spec for spec in specs)
+        assert has_tag_spec is (policy != "none"), (
+            f"policy {policy!r} produced tag refspecs={has_tag_spec}"
+        )

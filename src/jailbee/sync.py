@@ -2113,6 +2113,7 @@ def push_to_container(
     fetch: bool | None = None,
     source_ref: str | None = None,
     namespace: str = "host",
+    tags: TagPolicy = "none",
 ) -> PushResult:
     """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
@@ -2146,6 +2147,11 @@ def push_to_container(
     container is a different branch that happens to share a name with this
     container's base, and must not silently change what `jailbee ls`'s AHEAD
     column measures against.
+
+    ``tags`` is the host-to-container tag policy (``cfg.push.tags``, or the
+    caller's flag). ``reachable`` resolves the set with `git.tags_reachable_from`
+    rather than `git push --follow-tags`, which would drop lightweight tags. No
+    tag refspec is ever forced.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -2206,19 +2212,32 @@ def push_to_container(
 
     base_label = incus.config_get(full_name, "user.jailbee.base_branch")
     base_branch = base_label if isinstance(base_label, str) and base_label else None
+
+    refspecs = [host_refspec]
     if namespace == "host" and base_branch is not None and resolved_source == base_branch:
         # Pushing the container's base branch — also advance the jailbee-managed
         # base ref so `jailbee ls` reflects the fresh base. Restricted to a real
         # host push: a same-named branch relayed from another container
         # (namespace != "host") is a different branch that happens to share a
         # name, and must not re-anchor the base.
-        git.push_url_multi(
-            cfg.repo_root,
-            url,
-            [host_refspec, f"+{host_ref}:refs/jailbee/base/{base_branch}"],
+        refspecs.append(f"+{host_ref}:refs/jailbee/base/{base_branch}")
+
+    # Tag refspecs are never forced: a tag that already exists in the container
+    # keeps pointing where it does. Re-pointing one stays a deliberate manual
+    # `git push --force`, which is what stops a routine push from rewriting a
+    # release tag.
+    if tags == "all":
+        refspecs.append("refs/tags/*:refs/tags/*")
+    elif tags == "reachable":
+        refspecs.extend(
+            f"refs/tags/{name}:refs/tags/{name}"
+            for name in git.tags_reachable_from(cfg.repo_root, host_ref)
         )
+
+    if len(refspecs) == 1:
+        git.push_url(cfg.repo_root, url, refspecs[0])
     else:
-        git.push_url(cfg.repo_root, url, host_refspec)
+        git.push_url_multi(cfg.repo_root, url, refspecs)
 
     return PushResult(
         source=resolved_source,
