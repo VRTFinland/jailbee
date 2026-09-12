@@ -68,6 +68,33 @@ cat > ~/.config/jailbee/global.yaml <<'YAML'
 # Python/uv/SQLite and pulls no Docker images.
 docker_registry_mirror:
   enabled: false
+
+# Video D records `jailbee dashboard` at video A's geometry (1200px wide, 105
+# columns), and the default column set does not fit. CREATED is a timestamp
+# nobody reads in that story — and it is where the nested container's clock
+# skew shows — while MERGE is `clean` on every row for the whole clip.
+#
+# This block is read ONCE per front-end, from the GLOBAL layer only
+# (dashboard.seed_view_state), and is inert afterwards, so rig/stage-d.sh
+# deletes the stored row to make the seed re-run for every take. A repo-level
+# block would be reported as deprecated and never seeded at all, which is why
+# this is not in the substrate's own config.
+#
+# Seeding does NOT apply DASHBOARD_DEFAULT_HIDE: `hide` here replaces the
+# built-in list rather than extending it. repo/git_status/full_name are off by
+# default anyway and TTL is pruned by its own show_if while every container is
+# strict, so this list is the whole difference. Verify against a recorded
+# frame, not against this comment.
+dashboard:
+  hide:
+    - created
+    - conflict
+    # TTL is in the built-in dashboard hide list because the NETWORK cell
+    # already folds it in ("loose (3h 59m)"), and this block replacing that
+    # list is what brought it back as a second, duplicate column the moment a
+    # container went loose. Measured from a frame, exactly as the comment
+    # above says to.
+    - ttl
 YAML
 
 say "Allowing the identity uid range for nested containers"

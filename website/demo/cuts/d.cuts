@@ -1,0 +1,27 @@
+# Video D, timed against the 191.56s take recorded 2026-09-12. Re-time after
+# ANY change to d.tape. Find the spans with
+#   ffmpeg -i d.webm -vf freezedetect=n=-60dB:d=6 -map 0:v -f null -
+# and check the frames render.sh drops in workflows/d.boundaries/ — and use
+# accurate seeking (`-i file -ss t`, in that order) when sampling by hand.
+
+# The first agent's window: the work it already did, scrolling past. Wall of
+# text nobody reads at 1×, but it has to be on screen long enough to register
+# as "this one is finished", so ×3 rather than ×6.
+speed 26.5 39.0 3
+
+# The second agent's window: same beat, opposite state — a tree being edited
+# while you watch. Same reasoning, same factor.
+speed 48.0 59.0 3
+
+# `jailbee new` from the base-branch prompt to the container being up: the
+# longest dead stretch in the video by a wide margin (freezedetect: 53s of a
+# completely static frame inside it).
+speed 61.0 135.0 6
+
+# The third agent starting: banner, then an empty prompt waiting. Nothing to
+# read at all.
+speed 145.0 164.5 6
+
+# The action menu open under both repo groups — the one frame that says
+# "dashboard" without needing play.
+poster 18.0

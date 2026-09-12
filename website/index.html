@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=6ef33eab" />
+    <link rel="stylesheet" href="assets/style.css?v=7cd59a48" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -227,17 +227,28 @@
 
     <!-- Directly under the hero, and that placement is the whole point: the
          first question a visitor has after "what is this" is "what does it
-         look like when it works", and no paragraph answers it as well as 106
-         seconds of a real terminal. #problem and #parallel below now
-         elaborate on something the reader has already seen.
+         look like when it works", and no paragraph answers it as well as a
+         real terminal does. #problem and #parallel below now elaborate on
+         something the reader has already seen.
 
-         ONE clip, and no tabs. The four-clip tab wiring is in git history
-         (a68553e) and comes back with the second recording, not before:
-         tests/test_website.py asserts exactly that, so a second video fails
-         the suite until its tabs are restored. -->
+         TWO clips now, so the tab wiring is back from a68553e: radio inputs
+         rather than buttons, so one clip shows at a time with JavaScript off
+         and the group is keyboard-navigable for free. Both tapes render the
+         same 1200x900 frame — tests/test_website.py asserts that — so
+         switching tabs swaps the picture without moving the page. -->
     <section id="demos">
       <div class="wrap">
         <h2>See it work.</h2>
+        <div class="tabs">
+          <input class="tabs__radio" type="radio" name="demo" id="tab-feature-flow" checked />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-dashboard" />
+
+          <div class="tabs__bar">
+            <label class="tabs__tab" for="tab-feature-flow">One feature, start to finish</label>
+            <label class="tabs__tab" for="tab-dashboard">Several at once</label>
+          </div>
+
+          <div class="tabs__panels">
         <figure class="demo" id="demo-feature-flow">
           <!-- Click-to-play, not a hero loop: `controls` and `preload="none"`,
                no `loop` and no `autoplay`. At 4.7 MB, autoplaying this on
@@ -285,6 +296,44 @@
             </p>
           </figcaption>
         </figure>
+
+        <figure class="demo" id="demo-dashboard">
+          <div class="demo__frame">
+            <video
+              class="demo__media"
+              muted
+              playsinline
+              controls
+              preload="none"
+              poster="assets/media/d.poster.png"
+            >
+              <source src="assets/media/d.webm" type="video/webm" />
+              <source src="assets/media/d.mp4" type="video/mp4" />
+            </video>
+            <button class="demo__play" type="button" hidden aria-label="Play the demo">
+              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                <circle cx="50" cy="50" r="47" />
+                <path d="M40 30 L74 50 L40 70 Z" />
+              </svg>
+            </button>
+          </div>
+          <figcaption>
+            <code>jb dashboard &middot; Enter &middot; t &middot; n</code>
+            <p>
+              <strong>Several agents, one view.</strong> Waiting on an agent is the normal
+              state. The table says which branch has something to look at &mdash; a commit
+              landed, a working tree went dirty &mdash; and one key attaches to it. Detach,
+              look at the next one, start a third.
+            </p>
+            <p class="demo__note">
+              Every command and every line of output is real. The two agents already at work
+              were given their tasks before recording started. The stretches marked
+              &times;3 and &times;6 are sped up; nothing else is edited.
+            </p>
+          </figcaption>
+        </figure>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -873,6 +922,22 @@
           ["pause", "ended"].forEach(function (event) {
             video.addEventListener(event, function () {
               button.hidden = false;
+            });
+          });
+        });
+      })();
+
+      // A clip left playing inside a hidden tab panel keeps running where
+      // nobody can see it, burning bandwidth on a 2 MB file. The radio group
+      // does the showing and hiding; this only stops what it hid.
+      (function () {
+        document.querySelectorAll(".tabs__radio").forEach(function (radio) {
+          radio.addEventListener("change", function () {
+            document.querySelectorAll(".tabs__panels video").forEach(function (video) {
+              var panel = video.closest(".demo");
+              if (panel && getComputedStyle(panel).display === "none") {
+                video.pause();
+              }
             });
           });
         });

@@ -772,3 +772,30 @@ def test_the_header_matches_the_docs_header() -> None:
     assert f'<span class="topbar__version">v{version}</span>' in INDEX.read_text(), (
         f"the header's version is stale — set it to v{version}"
     )
+
+
+def test_every_workflow_tape_renders_the_same_frame() -> None:
+    """Two clips of different sizes make the demo tabs jump on a switch.
+
+    The page shows one clip at a time behind a radio group, and the frame is
+    what makes that switch invisible: `common.tape` owns Width, FontSize and
+    Padding and no tape may override them, and every tape sets the same
+    Height. A recording that does not fit its frame loses a column — it never
+    gets a different frame. See
+    .local/superpowers/specs/2026-09-11-dashboard-video-design.md, section 6.
+    """
+    all_tapes = sorted((SITE / "demo" / "workflows").glob("*.tape"))
+    tapes = [t for t in all_tapes if t.name != "common.tape"]
+    assert tapes, "no workflow tapes found"
+    heights = {}
+    for tape in tapes:
+        text = tape.read_text()
+        directives = [ln.strip() for ln in text.splitlines() if ln.startswith("Set ")]
+        for owned in ("Set Width", "Set FontSize", "Set Padding"):
+            assert not any(d.startswith(owned) for d in directives), (
+                f"{tape.name} overrides {owned}, which common.tape owns"
+            )
+        found = [d for d in directives if d.startswith("Set Height")]
+        assert len(found) == 1, f"{tape.name} must set Height exactly once, found {found}"
+        heights[tape.name] = found[0].split()[-1]
+    assert len(set(heights.values())) == 1, f"tapes disagree about the frame height: {heights}"

@@ -880,17 +880,85 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
-   Demo — #demos, one click-to-play clip.
+   Demo — #demos, click-to-play clips behind a tab chooser.
 
-   The 1.0 page had four fifteen-second reconstructions behind tabs, all
-   autoplaying on scroll, and the note that survived that round still
-   applies: a 1200px terminal is unreadable at 512px if you put two beside
-   each other, and several moving at once tells the eye nothing. What
-   replaced them is one real recording, minutes long, that starts when the
-   reader asks — so no autoplay rule, no IntersectionObserver, no script at
-   all. The tab CSS is in git history (a68553e) and comes back with the
-   second clip.
+   The 1.0 page had four fifteen-second reconstructions here, all autoplaying
+   on scroll, and the note that survived that round still applies: a 1200px
+   terminal is unreadable at 512px if you put two beside each other, and
+   several moving at once tells the eye nothing. What replaced them is real
+   recordings, minutes long, that start when the reader asks — so no autoplay
+   rule and no IntersectionObserver; the only script is the play affordance
+   and a pause for the clip a tab switch hides.
+
+   The tab state is a radio group, restored from a68553e when the second
+   recording landed, so the chooser works with JavaScript off. Every tape
+   renders the same 1200x900 frame (tests/test_website.py), which is what
+   keeps a switch from moving the page under the reader.
    ----------------------------------------------------------------------- */
+.tabs {
+  margin-top: 2rem;
+}
+
+/* Visually hidden but still focusable and still hit by :checked. */
+.tabs__radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tabs__bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tabs__tab {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.9rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tabs__tab:hover {
+  color: var(--text);
+  border-color: var(--amber-dim);
+}
+
+#tab-feature-flow:checked ~ .tabs__bar .tabs__tab[for="tab-feature-flow"],
+#tab-dashboard:checked ~ .tabs__bar .tabs__tab[for="tab-dashboard"] {
+  background: var(--surface-2);
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+#tab-feature-flow:focus-visible ~ .tabs__bar .tabs__tab[for="tab-feature-flow"],
+#tab-dashboard:focus-visible ~ .tabs__bar .tabs__tab[for="tab-dashboard"] {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+/* Hidden by default, and no top margin of its own: the chooser above already
+   carries the spacing, and `.demo`'s own margin would push the clip away from
+   the tabs that select it. */
+.tabs__panels > .demo {
+  display: none;
+  margin-top: 0;
+}
+
+#tab-feature-flow:checked ~ .tabs__panels > #demo-feature-flow,
+#tab-dashboard:checked ~ .tabs__panels > #demo-dashboard {
+  display: block;
+}
+
 .demo {
   margin: 2rem 0 0;
   background: var(--surface);

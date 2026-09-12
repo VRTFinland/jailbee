@@ -24,6 +24,27 @@ rig/seed-claude.sh    # an authenticated agent inside the containers
 ./render.sh a            # re-cut it without re-recording  (~1 min)
 ```
 
+**Video D** (the dashboard) needs two more, and one of them runs before
+**every** take rather than once per container:
+
+```bash
+rig/filler-repo.sh       # a second repo in the table — once per rig
+rig/stage-d.sh           # two containers, two agents, one of them finished
+./render.sh --record d   # the take itself   (~4 min)
+./render.sh d            # re-cut it
+```
+
+`stage-d.sh` blocks until the first agent has committed and only then gives
+the second its task, which is what makes "one is done, one is still working"
+true at the moment the camera rolls rather than a gamble on how long an agent
+takes. It also re-seeds the credential, resets the substrate and clears the
+dashboard's stored columns — all per take.
+
+`filler-repo.sh` creates `invoicer`: two containers the video never enters,
+one running in loose mode and one stopped, so the table shows more than one
+project and more than one state. It costs no second image build (`golden.alias`
+points at the substrate's).
+
 `jailbee` must be on `PATH` as an **editable** install (`uv tool install -e .`
 from the repo root). A non-editable install bakes a stale copy of the
 provisioning tree into the golden image, and the failures that follow point
@@ -68,9 +89,14 @@ Why each:
 3. `jailbee new` fails on an existing container. Video A destroys its own on
    camera, so this is only needed after a take that did not finish.
 
-`feat-warm` is a container kept running on purpose: it keeps the shared
-`claude-install` store warm, so a new container pays ~1.5s for Claude instead
-of 39s. Do not destroy it.
+**`feat-warm` is not needed, despite what this file used to say.** The claim
+was that a container had to stay running to keep the shared `claude-install`
+store warm, or a new one would pay 39s for the Claude download. The store is a
+host directory under `~/.local/share/jailbee/shared/<prefix>/`, and it outlives
+every container: `rig/stage-d.sh` destroys `feat-warm` before each take, and
+the container video D creates **on camera** still reports
+`install-claude: 1.5s`. The 39s is the price of the *first* container in a
+fresh rig, once.
 
 ## After every take: is it valid?
 
@@ -135,6 +161,33 @@ VHS documentation:
 - **`Output` paths must be relative**, and VHS reports an absolute one as three
   unrelated syntax errors about the path components.
 
+Four more that only `jb dashboard` runs into, each of which cost a render or a
+probe:
+
+- **Arrow keys never arrive. Navigate with `j` / `k`.** In alt-screen mode
+  VHS's terminal emits `ESC O B` for an arrow, and `dashboard.KEY_BINDINGS`
+  maps `ESC [ B` and `j`. The same keypress works in a real tmux pty, which is
+  how this was separated from "the app ignored my input".
+- **The highlight starts on the repo group header**, not on a container, and
+  `Enter` there folds the group instead of opening a menu. Rows inside a group
+  are **newest first**, so a container created during a take appears at the
+  top and reaching it means moving *up*.
+- **Nothing inside the dashboard can be waited on**: it is a Rich
+  `Live(screen=True)` app from its first frame. Even `jailbee new`'s "press
+  Enter to return to the dashboard" is out of reach — it is printed *with* a
+  trailing newline, so the cursor has already moved to the blank line below it
+  and `Wait+Line` matches that empty line. A generous `Sleep` under a `×N`
+  badge is the answer; pressing Enter early is safe, because the terminal is
+  in cooked mode there and the keystroke waits in the buffer.
+- **The dashboard's columns are seeded once, from the global config.**
+  `seed_view_state` reads the `dashboard:` block a single time per front-end
+  and stores the result in `view_prefs`, after which the YAML is inert — and a
+  repo-level block is never seeded at all. `rig/up.sh` writes the block and
+  `rig/stage-d.sh` deletes the stored row, so every take re-seeds. Note that
+  seeding **replaces** the built-in hide list rather than extending it, which
+  is how TTL came back as a duplicate column beside the NETWORK cell that
+  already folds it in.
+
 ## Two git repos
 
 There are always two: this repo, and the substrate at
@@ -163,13 +216,20 @@ These bind every clip, and they are why the videos are worth making at all:
 - The shell prompt says nothing about the dogfood container or the
   maintainer's machine.
 
-## Adding a second clip
+## Adding a third clip
 
-Two jobs, not one. The page currently ships one clip and therefore no tab
-chooser, and `tests/test_website.py::test_a_second_clip_brings_the_demo_tabs_back`
-fails the moment a second `<video>` appears without the radio-group markup —
-restore it from `a68553e`, which pulled it, with matched labels, panels and
-exactly one `checked`.
+The page ships two clips behind a two-tab radio group, so a third needs one
+more `<input class="tabs__radio">`, one more label and one more panel;
+`tests/test_website.py::test_a_second_clip_brings_the_demo_tabs_back` checks
+that the wiring is complete, and the `#tab-*:checked ~ .tabs__panels > #demo-*`
+pairs in `assets/style.css` need the new id too.
+
+**The frame is fixed.** Every tape sources `common.tape` and sets
+`Set Height 900`, and `test_every_workflow_tape_renders_the_same_frame` fails
+otherwise: two clips of different sizes make the page jump when a tab is
+switched. A recording that does not fit its frame loses content — for the
+dashboard that means dropping a column from the global `dashboard:` block
+`rig/up.sh` writes — and never gets a different frame.
 
 The rest of the site contract, also enforced by tests: every clip
 click-to-play (`controls`, `preload="none"`, `poster`, `muted`, `playsinline`,
@@ -188,8 +248,8 @@ and PyPI's sanitiser strips the tag. Its image URL is absolute and points at
 | | |
 |---|---|
 | `substrate/` | the demo app, committed — `rig/substrate.sh` turns it into a git repo with a local bare origin |
-| `rig/` | one-time environment setup; `rig/README.md` explains every step and why it exists |
-| `workflows/*.tape` | the tapes. `common.tape` is the shared look; each video sizes its own `Height` |
+| `rig/` | environment setup; `rig/README.md` explains every step and why it exists. `up.sh`/`substrate.sh`/`filler-repo.sh` are per rig, `seed-claude.sh` and `stage-d.sh` per take |
+| `workflows/*.tape` | the tapes. `common.tape` is the shared look, and every tape sets the same `Height` — the page's tabs depend on it |
 | `cuts/*.cuts` | per-clip speed-up lists, timed against one specific take |
 | `render.sh` | record, cut, poster, and the take-is-valid check |
 | `../assets/media/` | what the page actually serves, committed |
