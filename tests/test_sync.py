@@ -1921,6 +1921,19 @@ def test_checkout_path_honours_the_ff_policy(mocker, tmp_path, make_cfg):
     assert merge_ref.call_args.kwargs["no_ff"] is False
 
 
+def test_checkout_path_honours_ff_never(mocker, tmp_path, make_cfg):
+    """`pull.ff: never` is the documented way back to the pre-1.4.0 always-merge-
+    commit behaviour, and path 3 (`_merge_via_checkout`) is exactly where that
+    behaviour was hardcoded before `ff` existed — `test_checkout_path_honours_the_ff_policy`
+    above only exercises `auto`, so this is the only test asserting `no_ff=True`
+    actually reaches `git.merge_ref` on this path.
+    """
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="never")
+
+    assert merge_ref.call_args.kwargs["no_ff"] is True
+
+
 def test_checkout_path_refuses_under_always(mocker, tmp_path, make_cfg):
     """`always` means 'fail on divergence' — reaching the checkout merge is divergence."""
     with pytest.raises(sync.SyncError, match="diverged"):
