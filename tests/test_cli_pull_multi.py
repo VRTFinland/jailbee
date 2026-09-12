@@ -429,6 +429,12 @@ def _wire_pull(mocker, tmp_path, merge_result):
         "jailbee.sync.run_post_merge_cleanup",
         return_value=mocker.MagicMock(skipped_reason=None),
     )
+    # Unmocked, this reaches git.run_capture and shells out to a real `git
+    # diff` against tmp_path (not a repo) — harmless in outcome (it fails and
+    # degrades to []), but a real subprocess call all the same. Same pair
+    # test_cli.py::test_do_single_pull_prints_direction mocks.
+    mocker.patch("jailbee.sync.compute_submodule_moves", return_value=[])
+    mocker.patch("jailbee.sync.render_submodule_report", return_value=None)
 
 
 def test_pull_reports_a_fast_forward_it_actually_did(mocker, tmp_path):
