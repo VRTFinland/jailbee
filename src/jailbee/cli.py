@@ -52,6 +52,54 @@ ConfigOption = Annotated[
     typer.Option("--config", "-c", help="Path to config.yaml"),
 ]
 
+_CONTAINER_ARG_HELP = (
+    "Container to act on, named either in full or by its short name (the "
+    "slugified branch, which `jailbee ls` shows). Omit it and jailbee picks: "
+    "the repo's only container is used as-is, otherwise an interactive picker "
+    "opens — off a TTY that is an error naming the candidates."
+)
+
+ContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=_CONTAINER_ARG_HELP,
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional shared by every single-target command.
+
+Commands whose omitted-argument behaviour differs — a multi-select picker
+(`destroy`, `git pull`, `git push`), a picker shown even for a single
+candidate (`submodule pr`), a narrowed candidate set (`review *`) — spell
+out their own `typer.Argument` rather than widening this one into a lie.
+"""
+
+AttachContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            _CONTAINER_ARG_HELP + " A container still being created by "
+            "`jailbee new --background` counts here: it resolves by name and the "
+            "command waits for the creation to finish."
+        ),
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional for commands that attach to, or launch into, one."""
+
+ReviewContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            "Container whose staged review to act on, named in full or by its "
+            "short name. Omit it and jailbee picks from the running containers "
+            "that report a pending review, asking only when more than one does."
+        ),
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional shared by the `review` subcommands."""
+
 
 def _resolve_config_path(path: Path | None) -> Path:
     """The repo config file to load, raising when there is none.
@@ -998,13 +1046,81 @@ def new_cmd(
             ),
         ),
     ] = False,
-    name: Annotated[str | None, typer.Option("--name")] = None,
-    network: Annotated[str, typer.Option("--net")] = "",
-    memory: Annotated[str | None, typer.Option("--memory")] = None,
-    cpu: Annotated[int | None, typer.Option("--cpu")] = None,
-    from_base: Annotated[str | None, typer.Option("--from-base")] = None,
-    no_clone: Annotated[bool, typer.Option("--no-clone")] = False,
-    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            help=(
+                "Container name to use instead of the one derived from NAME "
+                "(`<container_prefix>-<slugified branch>`). The branch inside "
+                "the container is unaffected."
+            ),
+        ),
+    ] = None,
+    network: Annotated[
+        str,
+        typer.Option(
+            "--net",
+            help=(
+                "Network mode for the new container: 'strict' (default-deny "
+                "egress allowlist) or 'loose' (wider egress for debugging). "
+                "Overrides `defaults.network`."
+            ),
+        ),
+    ] = "",
+    memory: Annotated[
+        str | None,
+        typer.Option(
+            "--memory",
+            help=(
+                "Memory limit as an Incus size string (e.g. '8GiB'). Overrides `defaults.memory`."
+            ),
+        ),
+    ] = None,
+    cpu: Annotated[
+        int | None,
+        typer.Option(
+            "--cpu",
+            help="CPU core limit for the container. Overrides `defaults.cpu`.",
+        ),
+    ] = None,
+    from_base: Annotated[
+        str | None,
+        typer.Option(
+            "--from-base",
+            help=(
+                "Incus image to create the container from, instead of the "
+                "golden image `jailbee base build` publishes (`golden.alias`). "
+                "Passed straight to `incus init`, so any image reference Incus "
+                "accepts works (alias, fingerprint, remote image). The "
+                "container then carries only what that image provides; in a "
+                "scratch directory it also skips the one-time offer to build "
+                "the golden image."
+            ),
+        ),
+    ] = None,
+    no_clone: Annotated[
+        bool,
+        typer.Option(
+            "--no-clone",
+            help=(
+                "Create the container without cloning the repo into it — an "
+                "empty environment with the profiles, mounts and network of a "
+                "normal one. Incompatible with --pr and --mount."
+            ),
+        ),
+    ] = False,
+    no_autostart: Annotated[
+        bool,
+        typer.Option(
+            "--no-autostart",
+            help=(
+                "Skip the `autostart:` commands after creation, and do not "
+                "launch the configured GUI apps. The container is created and "
+                "started as usual."
+            ),
+        ),
+    ] = False,
     mount: Annotated[
         bool,
         typer.Option(
@@ -1883,7 +1999,17 @@ def _new_worker(
 @app.command("_destroy-worker", hidden=True)
 def _destroy_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to destroy.")],
-    force: Annotated[bool, typer.Option("--force")] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Pull the plug on a running container instead of asking it to "
+                "shut down cleanly. Always passed by the spawning `destroy`, "
+                "which has already confirmed with the user."
+            ),
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Internal: destroy a container detached, tracking phase in SQLite.
@@ -1933,7 +2059,17 @@ def _boot_worker(
         bool,
         typer.Option("--restart", help="Reboot a running container instead of starting it."),
     ] = False,
-    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    no_autostart: Annotated[
+        bool,
+        typer.Option(
+            "--no-autostart",
+            help=(
+                "Skip the `autostart:` commands and the GUI apps that would "
+                "launch after the boot. /etc/hosts pinning and GH_TOKEN "
+                "injection still run — they are infrastructure, not autostart."
+            ),
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Internal: boot a container detached, tracking phase in SQLite.
@@ -2064,10 +2200,7 @@ def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
 
 @app.command()
 def shell(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     user: Annotated[
         str,
         typer.Option(
@@ -2106,10 +2239,7 @@ def shell(
 
 @app.command()
 def tmux(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -2813,11 +2943,18 @@ def _spawn_boot_worker(
 
 @app.command()
 def start(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
-    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    name: ContainerArg = None,
+    no_autostart: Annotated[
+        bool,
+        typer.Option(
+            "--no-autostart",
+            help=(
+                "Skip the `autostart:` commands and the GUI apps that would "
+                "launch after the boot. /etc/hosts pinning and GH_TOKEN "
+                "injection still run — they are infrastructure, not autostart."
+            ),
+        ),
+    ] = False,
     background: Annotated[
         bool,
         typer.Option(
@@ -2869,11 +3006,18 @@ def start(
 
 @app.command()
 def stop(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
-    force: Annotated[bool, typer.Option("--force")] = False,
+    name: ContainerArg = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Pull the plug instead of asking the container to shut down "
+                "cleanly. Unsaved work inside it is lost; use it when a clean "
+                "stop hangs."
+            ),
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Stop a running container."""
@@ -2891,11 +3035,18 @@ def stop(
 
 @app.command()
 def restart(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
-    no_autostart: Annotated[bool, typer.Option("--no-autostart")] = False,
+    name: ContainerArg = None,
+    no_autostart: Annotated[
+        bool,
+        typer.Option(
+            "--no-autostart",
+            help=(
+                "Skip the `autostart:` commands and the GUI apps that would "
+                "launch after the boot. /etc/hosts pinning and GH_TOKEN "
+                "injection still run — they are infrastructure, not autostart."
+            ),
+        ),
+    ] = False,
     background: Annotated[
         bool,
         typer.Option(
@@ -3074,7 +3225,15 @@ def _warn_before_destroy(cfg: "Config", infos: list["ContainerInfo"]) -> bool:
 def destroy(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container to destroy, named in full or by its short name. "
+                "Omit it to tick containers off an interactive checkbox list "
+                "(TTY required — there is no single-container short-circuit "
+                "here); use --all to take every container in the repo."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     all_: Annotated[
         bool,
@@ -3083,7 +3242,17 @@ def destroy(
             help="Destroy every container in this repo (asks for confirmation unless --force).",
         ),
     ] = False,
-    force: Annotated[bool, typer.Option("--force")] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Destroy without asking anything: skips both the confirmation "
+                "and the guard that summarises uncommitted or unpushed work "
+                "found in the targets."
+            ),
+        ),
+    ] = False,
     background: Annotated[
         bool,
         typer.Option(
@@ -3296,10 +3465,7 @@ def _git_group() -> None:
 
 @git_app.command("fetch")
 def fetch(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     branch: Annotated[
         str | None,
         typer.Option(
@@ -3377,10 +3543,7 @@ app.command(
 
 @git_app.command("checkout")
 def checkout(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     branch: Annotated[
         str | None,
         typer.Option(
@@ -3550,7 +3713,16 @@ app.command(
 def pull(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container to pull from, named in full or by its short name. "
+                "Omit it and jailbee picks among the containers eligible for a "
+                "pull (everything but mount mode): the only one is used, "
+                "otherwise a multi-select picker opens and each selection is "
+                "pulled in turn (TTY required)."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     branch: Annotated[
         str | None,
@@ -4386,10 +4558,7 @@ def _pick_push_source(
 
 @git_app.command("diff")
 def git_diff_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     branch: Annotated[
         str | None,
         typer.Option("--branch", "-b", help="Override branch detection"),
@@ -4650,7 +4819,16 @@ def _do_single_push(
 def push(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container to push to, named in full or by its short name. "
+                "Omit it and jailbee picks among the containers eligible for a "
+                "push (running, not in mount mode): the only one is used, "
+                "otherwise a multi-select picker opens and each selection is "
+                "pushed to in turn (TTY required)."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     source: Annotated[
         str | None,
@@ -5590,10 +5768,7 @@ def _offer_outbox_comments(
 
 
 def pr_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     title: Annotated[
         str | None,
         typer.Option("--title", help="PR title (default: last commit's subject on create)"),
@@ -6300,7 +6475,14 @@ def branch_cmd(
 def submodule_checkout(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container whose submodules to align, named in full or by its "
+                "short name. Omitting it does NOT open a picker: the host "
+                "repo's own submodules are aligned instead."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     branch: Annotated[
         str | None,
@@ -6334,11 +6516,28 @@ def submodule_checkout(
 def submodule_pr_cmd(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container holding the submodule commits, named in full or by "
+                "its short name. Omit it and the picker opens on a TTY even "
+                "when there is only one container — this run writes to a "
+                "GitHub repository, so it shows you its target rather than "
+                "settling on one silently."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     path: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_submodule_path),
+        typer.Argument(
+            help=(
+                "Submodule to publish, as its path in the superproject "
+                "(e.g. 'libs/foo'). Omit it to be asked on a TTY; off one the "
+                "single submodule with commits ahead of its base is taken, and "
+                "PATH becomes required as soon as several have."
+            ),
+            autocompletion=completion.complete_submodule_path,
+        ),
     ] = None,
     title: Annotated[str | None, typer.Option("--title", help="PR title")] = None,
     body: Annotated[str | None, typer.Option("--body", help="PR body")] = None,
@@ -6848,10 +7047,27 @@ def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
 
 @egress_app.command("add")
 def egress_add_cmd(
-    entry: str,
+    entry: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Destination to allow, as 'host', 'host:port', an IPv4 address "
+                "or a CIDR block (e.g. 'pypi.org', 'example.com:8443', "
+                "'10.0.0.0/8:443'). Without a port every port is allowed. "
+                "Hostnames are resolved now and the resulting addresses are "
+                "what the ACL carries."
+            ),
+        ),
+    ],
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                _CONTAINER_ARG_HELP + " Ignored with --repo, which changes the "
+                "repo-scope allowlist and so resolves no container at all."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     repo: Annotated[
         bool,
@@ -6908,10 +7124,26 @@ def egress_add_cmd(
 
 @egress_app.command("rm")
 def egress_rm_cmd(
-    entry: str,
+    entry: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Override to remove, spelled exactly as `jailbee net egress ls` "
+                "shows it (the stored string is matched literally, not the "
+                "addresses it resolved to). An entry that comes only from "
+                "config.yaml cannot be removed here."
+            ),
+        ),
+    ],
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                _CONTAINER_ARG_HELP + " Ignored with --repo, which changes the "
+                "repo-scope allowlist and so resolves no container at all."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     repo: Annotated[
         bool,
@@ -6975,7 +7207,15 @@ def egress_rm_cmd(
 def egress_ls_cmd(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container whose own overrides to include, named in full or by "
+                "its short name. Omitting it does NOT open a picker — a read "
+                "command must not prompt — it narrows the output to the "
+                "repo-scope entries."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     fmt: Annotated[
         str,
@@ -7066,7 +7306,15 @@ def egress_ls_cmd(
 def egress_export_cmd(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container whose own overrides to include, named in full or by "
+                "its short name. Omitting it does NOT open a picker — a read "
+                "command must not prompt — it narrows the output to the "
+                "repo-scope entries."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
@@ -7297,10 +7545,7 @@ def _switch(
 
 @net_app.command("strict")
 def net_strict(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Switch to strict (egress allowlist)."""
@@ -7309,10 +7554,7 @@ def net_strict(
 
 @net_app.command("loose")
 def net_loose(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     config: ConfigOption = None,
     for_: Annotated[
         str | None,
@@ -7940,7 +8182,13 @@ def base_prune_cmd(
         int | None,
         typer.Option("--days", help="Only prune archives older than N days."),
     ] = None,
-    yes_to_all: Annotated[bool, typer.Option("--yes-to-all")] = False,
+    yes_to_all: Annotated[
+        bool,
+        typer.Option(
+            "--yes-to-all",
+            help="Delete the listed archives without asking for confirmation.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Prune dated archive golden images (`<alias>-YYYY-MM-DD`).
@@ -8410,11 +8658,17 @@ def registry_verify_cmd(
 
 @app.command("mount")
 def mount_cmd(
-    kind: str,
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    kind: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Name of an entry in the repo's `optional_mounts:` config "
+                "block (e.g. 'aws'). `jailbee config show` lists what this "
+                "repo defines."
+            ),
+        ),
+    ],
+    name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Add an optional bind mount (e.g. 'aws') to a container."""
@@ -8433,11 +8687,17 @@ def mount_cmd(
 
 @app.command("unmount")
 def unmount_cmd(
-    kind: str,
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    kind: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Name of an entry in the repo's `optional_mounts:` config "
+                "block (e.g. 'aws'). `jailbee config show` lists what this "
+                "repo defines."
+            ),
+        ),
+    ],
+    name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Remove an optional bind mount from a container."""
@@ -8466,11 +8726,15 @@ app.add_typer(snapshot_app)
 
 @snapshot_app.command("create")
 def snap_create_cmd(
-    name: Annotated[
+    name: ContainerArg = None,
+    tag: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Snapshot name. Defaults to a sortable timestamp tag, 'snap-YYYY-MM-DD-HHMMSSZ'."
+            ),
+        ),
     ] = None,
-    tag: Annotated[str | None, typer.Argument()] = None,
     config: ConfigOption = None,
 ) -> None:
     """Create a snapshot of a container."""
@@ -8487,11 +8751,20 @@ def snap_create_cmd(
 def snap_restore_cmd(
     name: Annotated[
         str,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container holding the snapshot, named in full or by its short "
+                "name. Required — this command never picks a container for you."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ],
     tag: Annotated[
         str,
-        typer.Argument(autocompletion=completion.complete_snapshot),
+        typer.Argument(
+            help="Snapshot to restore, as listed by `jailbee snapshot ls`.",
+            autocompletion=completion.complete_snapshot,
+        ),
     ],
     config: ConfigOption = None,
 ) -> None:
@@ -8507,10 +8780,7 @@ def snap_restore_cmd(
 
 @snapshot_app.command("ls")
 def snap_ls_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     fmt: Annotated[
         str,
         typer.Option(
@@ -8572,11 +8842,20 @@ def snap_ls_cmd(
 def snap_delete_cmd(
     name: Annotated[
         str,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container holding the snapshot, named in full or by its short "
+                "name. Required — this command never picks a container for you."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ],
     tag: Annotated[
         str,
-        typer.Argument(autocompletion=completion.complete_snapshot),
+        typer.Argument(
+            help="Snapshot to delete, as listed by `jailbee snapshot ls`.",
+            autocompletion=completion.complete_snapshot,
+        ),
     ],
     config: ConfigOption = None,
 ) -> None:
@@ -8647,10 +8926,7 @@ def _parse_ip_literal(raw: str, *, option: str) -> str:
 @port_app.command("to-container")
 def port_to_container_cmd(
     port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     host_port: Annotated[
         int | None,
         typer.Option("--host-port", help="Host-side port. Defaults to PORT."),
@@ -8714,10 +8990,7 @@ def port_to_container_cmd(
 @port_app.command("to-host")
 def port_to_host_cmd(
     port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     host_port: Annotated[
         str | None,
         typer.Option(
@@ -8810,10 +9083,7 @@ def port_rm_cmd(
             autocompletion=completion.complete_port_handle,
         ),
     ],
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Remove one port forward from a container."""
@@ -8834,7 +9104,14 @@ def port_rm_cmd(
 def port_ls_cmd(
     name: Annotated[
         str | None,
-        typer.Argument(autocompletion=completion.complete_container),
+        typer.Argument(
+            help=(
+                "Container to list forwards for, named in full or by its short "
+                "name. Omitting it does NOT open a picker: every container of "
+                "this repo is listed."
+            ),
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     fmt: Annotated[
         str,
@@ -9066,10 +9343,7 @@ def _select_manifests_or_exit(outbox: "Outbox", manifest: str | None, short: str
 
 @review_app.command("apply")
 def review_apply_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ReviewContainerArg = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
     force: Annotated[
@@ -9312,10 +9586,7 @@ def _print_manifest_bodies(manifest: "Manifest") -> None:
 
 @review_app.command("show")
 def review_show_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ReviewContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -9355,10 +9626,7 @@ def review_show_cmd(
 
 @review_app.command("drop")
 def review_drop_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: ReviewContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -9638,10 +9906,7 @@ def _launch_registry_app(
 
 @app.command("browser")
 def browser_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     url: Annotated[
         str | None,
         typer.Argument(help="URL to open. Falls back to the browser's `url` config."),
@@ -9685,10 +9950,7 @@ def browser_cmd(
 
 @app.command("ide")
 def ide_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     app_name: Annotated[
         str | None,
         typer.Option(
@@ -9745,10 +10007,7 @@ def ide_cmd(
 
 @app.command("chrome")
 def chrome_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     url: Annotated[
         str | None,
         typer.Argument(
@@ -9776,10 +10035,7 @@ def chrome_cmd(
 
 @app.command("firefox")
 def firefox_cmd(
-    name: Annotated[
-        str | None,
-        typer.Argument(autocompletion=completion.complete_container),
-    ] = None,
+    name: AttachContainerArg = None,
     url: Annotated[
         str | None,
         typer.Argument(
@@ -11595,7 +11851,16 @@ def disk_usage_cmd(
 
 @app.command()
 def prune(
-    yes_to_all: Annotated[bool, typer.Option("--yes-to-all")] = False,
+    yes_to_all: Annotated[
+        bool,
+        typer.Option(
+            "--yes-to-all",
+            help=(
+                "Destroy every stale container found, without asking about "
+                "each one. Without it you are prompted per container."
+            ),
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Interactively clean up stopped containers older than 30 days."""

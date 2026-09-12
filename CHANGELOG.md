@@ -31,6 +31,21 @@ before editing `## Unreleased`.
   release, and a link or heading anchor that no longer resolves fails CI rather
   than shipping.
 
+### Changed
+
+- **Every CLI flag and positional argument now carries help text.** A long
+  tail of them had none, so `--help` listed the flag and said nothing about
+  it: `jailbee new`'s `--from-base`, `--name`, `--net`, `--memory`, `--cpu`,
+  `--no-clone` and `--no-autostart`, the `--force` on `destroy` and `stop`,
+  `--yes-to-all` on both prune commands, the snapshot and mount positionals,
+  the egress entry, and the container positional on some thirty-five
+  commands. The container positional is now one shared definition, so the
+  commands whose omitted-argument behaviour actually differs — `git pull` /
+  `git push` / `destroy` open a picker, `submodule checkout` falls back to
+  the host repo, `net egress ls|export` and `port ls` deliberately never
+  prompt — say so individually instead of all claiming the same thing. A test
+  fails when a parameter is added without `help=`.
+
 ### Fixed
 
 - **Chrome aborted on launch in every container on an Ubuntu 24.04+ host**
