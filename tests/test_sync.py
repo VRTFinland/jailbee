@@ -6111,7 +6111,7 @@ def test_do_single_pull_prints_submodule_report(mocker, make_cfg, tmp_path):
         incus,
         "feat-x",
         branch=None,
-        ff_only=False,
+        ff="never",
         into=None,
         allow_checkout=False,
         destroy_policy="never",

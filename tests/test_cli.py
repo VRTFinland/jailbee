@@ -8496,7 +8496,7 @@ def test_do_single_pull_prints_direction(mocker, capsys):
         incus,
         "feat-foo",
         branch=None,
-        ff_only=False,
+        ff="never",
         into="dev",
         allow_checkout=False,
         destroy_policy="never",

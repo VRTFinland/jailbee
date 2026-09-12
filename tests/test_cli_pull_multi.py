@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
-from jailbee.cli import app
+from jailbee.cli import _resolve_ff_policy, app
 from jailbee.lifecycle import ContainerInfo, ResolvedContainer
 
 
@@ -369,3 +370,81 @@ def test_pull_unbuildable_plan_value_error_skips_the_prompt_and_still_pulls(mock
     assert result.exit_code == 0
     assert "Pull  container ──▶ host" not in (result.stdout + (result.stderr or ""))
     do_pull.assert_called_once()
+
+
+# --- _resolve_ff_policy and the outcome-derived summary suffix -------------
+
+
+@pytest.mark.parametrize(
+    ("cfg_value", "flag", "expected"),
+    [
+        ("auto", None, "auto"),
+        ("never", None, "never"),
+        ("always", None, "always"),
+        ("never", True, "always"),
+        ("always", False, "never"),
+    ],
+)
+def test_resolve_ff_policy(cfg_value, flag, expected):
+    assert _resolve_ff_policy(cfg_value, flag) == expected
+
+
+def _merge_result(*, head_oid: str, fetched_oid: str):
+    from jailbee.sync import FetchResult, MergeResult
+
+    return MergeResult(
+        fetch=FetchResult(
+            branch="feat/a",
+            old_oid=None,
+            new_oid=fetched_oid,
+            base_oid="base000",
+            commits_added=1,
+        ),
+        branch="feat/a",
+        head_oid=head_oid,
+        into_branch="dev",
+        pre_merge_head="old0000",
+    )
+
+
+def _wire_pull(mocker, tmp_path, merge_result):
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "myrepo"
+    cfg_mock.pull.destroy_container = "never"
+    cfg_mock.pull.delete_branch = "never"
+    cfg_mock.pull.ff = "auto"
+    cfg_mock.pull.tags = "reachable"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    mocker.patch("jailbee.cli._should_show_plan", return_value=False)
+    mocker.patch(
+        "jailbee.cli._resolve_existing_detailed",
+        return_value=(mocker.MagicMock(), ResolvedContainer("myrepo-feat-a", False)),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-a")
+    mocker.patch("jailbee.sync.merge_from_container", return_value=merge_result)
+    mocker.patch("jailbee.cli._print_fetch_summary")
+    mocker.patch("jailbee.cli._print_bridge_direction")
+    mocker.patch(
+        "jailbee.sync.run_post_merge_cleanup",
+        return_value=mocker.MagicMock(skipped_reason=None),
+    )
+
+
+def test_pull_reports_a_fast_forward_it_actually_did(mocker, tmp_path):
+    """The suffix must describe the outcome, not the request."""
+    _wire_pull(mocker, tmp_path, _merge_result(head_oid="aaa1111", fetched_oid="aaa1111"))
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert "(fast-forward)" in result.output
+
+
+def test_pull_omits_the_suffix_when_it_made_a_merge_commit(mocker, tmp_path):
+    _wire_pull(mocker, tmp_path, _merge_result(head_oid="bbb2222", fetched_oid="aaa1111"))
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert "(fast-forward)" not in result.output

@@ -164,7 +164,7 @@ def test_top_level_pull_calls_same_function(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     do_pull.assert_called_once()
     kwargs = do_pull.call_args.kwargs
-    assert kwargs["ff_only"] is True
+    assert kwargs["ff"] == "always"
 
 
 def test_top_level_push_calls_same_function(mocker, tmp_path):

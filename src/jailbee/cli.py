@@ -2470,7 +2470,7 @@ if TYPE_CHECKING:
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
-    from jailbee.config.models_behaviour import TagPolicy
+    from jailbee.config.models_behaviour import FfPolicy, TagPolicy
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
@@ -3682,7 +3682,7 @@ def _do_single_pull(
     short: str,
     *,
     branch: str | None,
-    ff_only: bool,
+    ff: "FfPolicy",
     into: str | None,
     allow_checkout: bool,
     destroy_policy: Literal["prompt", "always", "never"],
@@ -3702,9 +3702,7 @@ def _do_single_pull(
         incus,
         short,
         branch=branch,
-        # Temporary shim for Task 7, which replaces this with the real
-        # tri-state resolver and the `auto` default.
-        ff="always" if ff_only else "never",
+        ff=ff,
         into=into,
         allow_checkout=allow_checkout,
         tags=tags,
@@ -3714,7 +3712,10 @@ def _do_single_pull(
         result.branch, "container", result.into_branch or "(detached HEAD)", "host"
     )
     _print_fetch_summary(cfg, short, result.fetch)
-    mode_suffix = " (fast-forward)" if ff_only else ""
+    # Report what happened, not what was asked for: under `auto` the same
+    # request can produce either outcome.
+    fast_forwarded = result.head_oid == result.fetch.new_oid
+    mode_suffix = " (fast-forward)" if fast_forwarded else ""
     success(
         f"Merged '{result.branch}' from container '{short}' into "
         f"'{result.into_branch or '(detached HEAD)'}'{mode_suffix}."
@@ -3783,13 +3784,18 @@ def pull(
         ),
     ] = None,
     ff: Annotated[
-        bool,
+        bool | None,
         typer.Option(
-            "--ff",
-            help="Fast-forward only (no merge commit). Refuses to merge "
-            "if the host branch has diverged from the container's branch.",
+            "--ff/--no-ff",
+            help=(
+                "How the container's branch is merged. --ff demands a "
+                "fast-forward and fails on divergence; --no-ff always writes a "
+                "merge commit. Default: the `pull.ff` config key, which is "
+                "`auto` — fast-forward when the host branch is strictly behind, "
+                "merge commit otherwise."
+            ),
         ),
-    ] = False,
+    ] = None,
     into: Annotated[
         str | None,
         typer.Option(
@@ -3860,10 +3866,14 @@ def pull(
     on the target afterwards (refuses if the host tree is dirty). In a
     multi-select batch, HEAD ends on the last container's target.
 
-    By default creates an explicit merge commit (`--no-ff`). With `--ff`,
-    runs `git merge --ff-only` instead: fast-forwards HEAD to the container's
-    tip and refuses if histories have diverged. Conflicts leave the working
-    tree in merge state — resolve and `git commit` manually.
+    Merge policy is `--ff`/`--no-ff` or the `pull.ff` config key (default
+    `auto`): fast-forward when the host branch is strictly behind the
+    container's tip, an explicit merge commit otherwise. `--no-ff` always
+    writes a merge commit; `--ff` demands a fast-forward and fails on
+    divergence. Conflicts leave the working tree in merge state — resolve
+    and `git commit` manually. When the merge does fast-forward, the usual
+    "Merge branch 'X' from container Y" provenance line is not written —
+    git skips `-m` on a fast-forward.
 
     Post-merge cleanup (destroy container, delete merged host branch)
     is controlled by the `pull:` config block (`destroy_container` and
@@ -3885,8 +3895,9 @@ def pull(
     Examples:
 
       jailbee git pull                             # multi-select picker (TTY)
-      jailbee git pull feat-foo                    # merge with explicit merge commit
+      jailbee git pull feat-foo                    # pull.ff decides: auto by default
       jailbee git pull feat-foo --ff               # ff-only, refuse on divergence
+      jailbee git pull feat-foo --no-ff            # always an explicit merge commit
       jailbee git pull feat-foo --into dev         # merge into 'dev' instead of base branch
       jailbee git pull feat-foo --current         # merge into the host's checked-out branch
       jailbee git pull feat-foo --checkout         # check out base branch and merge, stay on it
@@ -3903,6 +3914,7 @@ def pull(
     tag_policy = _resolve_tag_policy(
         cfg.pull.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
     )
+    ff_policy = _resolve_ff_policy(cfg.pull.ff, ff)
 
     if cleanup and no_cleanup:
         error("--cleanup and --no-cleanup are mutually exclusive.")
@@ -3973,9 +3985,7 @@ def pull(
                         short_name(cfg, selected[0]),
                         branch=branch,
                         into=into,
-                        # Temporary shim for Task 7, which replaces this with the
-                        # real tri-state resolver and the `auto` default.
-                        ff="always" if ff else "never",
+                        ff=ff_policy,
                     )
                 )
 
@@ -3987,7 +3997,7 @@ def pull(
                         incus,
                         short,
                         branch=branch,
-                        ff_only=ff,
+                        ff=ff_policy,
                         into=into,
                         allow_checkout=checkout,
                         destroy_policy=destroy_policy,
@@ -4018,9 +4028,7 @@ def pull(
                 short,
                 branch=branch,
                 into=into,
-                # Temporary shim for Task 7, which replaces this with the real
-                # tri-state resolver and the `auto` default.
-                ff="always" if ff else "never",
+                ff=ff_policy,
             )
         )
 
@@ -4030,7 +4038,7 @@ def pull(
             incus,
             short,
             branch=branch,
-            ff_only=ff,
+            ff=ff_policy,
             into=into,
             allow_checkout=checkout,
             destroy_policy=destroy_policy,
@@ -4393,6 +4401,18 @@ def _resolve_push_source(
     if configured == "base":
         return _BASE_SOURCE
     return None  # configured == 'ask'
+
+
+def _resolve_ff_policy(cfg_value: "FfPolicy", flag: bool | None) -> "FfPolicy":
+    """Pick the fast-forward policy for one run: the flag wins when given.
+
+    `--ff` is "fast-forward only" and `--no-ff` is "always a merge commit", so
+    the boolean maps onto the outer two policy values; `None` (neither flag)
+    defers to the config key, which may also be `auto`.
+    """
+    if flag is None:
+        return cfg_value
+    return "always" if flag else "never"
 
 
 def _resolve_tag_policy(
