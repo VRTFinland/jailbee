@@ -570,3 +570,71 @@ def test_report_status_honours_the_keys_it_is_given(
     out = capsys.readouterr().out
     assert STEP_TITLES["skills"] in out
     assert STEP_TITLES["timer"] not in out
+
+
+# --------------------------------------------------------------------------
+# the optional Qt extra — reported, never installed
+# --------------------------------------------------------------------------
+
+
+def test_qt_dashboard_status_names_the_install_command_when_missing(
+    home: Path, mocker: MockerFixture
+) -> None:
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", return_value=None)
+
+    installed, detail = qt_dashboard_status()
+
+    assert installed is False
+    assert "jailbee[gui]" in detail
+
+
+def test_qt_dashboard_status_is_content_when_pyside_is_importable(
+    home: Path, mocker: MockerFixture
+) -> None:
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", return_value=object())
+
+    installed, detail = qt_dashboard_status()
+
+    assert installed is True
+    assert "PySide6" in detail
+
+
+def test_qt_dashboard_status_survives_a_broken_import_system(
+    home: Path, mocker: MockerFixture
+) -> None:
+    """`find_spec` raises on a package whose parent cannot be imported."""
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", side_effect=ValueError("__spec__ is None"))
+
+    assert qt_dashboard_status()[0] is False
+
+
+def test_report_status_mentions_the_optional_qt_extra(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = home
+    from jailbee.setup_command import STEP_KEYS, report_status
+
+    report_status(STEP_KEYS, ["bash"])
+
+    assert "Qt dashboard (optional)" in capsys.readouterr().out
+
+
+def test_report_status_leaves_the_extra_out_of_a_filtered_listing(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--only timer` asked about one step; an unrelated extra is noise there."""
+    _ = home
+    from jailbee.setup_command import report_status
+
+    report_status(["timer"], ["bash"])
+
+    assert "Qt dashboard (optional)" not in capsys.readouterr().out

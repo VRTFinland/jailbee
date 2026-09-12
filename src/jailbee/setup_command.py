@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -296,6 +297,39 @@ def skills_status() -> StepStatus:
 
 
 # --------------------------------------------------------------------------
+# the optional Qt extra
+# --------------------------------------------------------------------------
+
+QT_EXTRA_TITLE = "Qt dashboard (optional)"
+
+QT_EXTRA_COMMAND = "uv tool install 'jailbee[gui]'"
+
+
+def qt_dashboard_status() -> tuple[bool, str]:
+    """Whether `jailbee gui` can run, and what to say about it.
+
+    Deliberately *not* a `StepKey`, because unlike the three steps this one
+    cannot be installed from here: the extra lives in jailbee's own
+    environment, so installing it means reinstalling the tool that is
+    currently running — through whichever of uv, pipx or a hand-made
+    virtualenv put it there, which jailbee has no way to know. So
+    `jailbee setup --status` and `jailbee doctor` report it and the user runs
+    the command, which is also why a missing extra never fails either one.
+
+    `find_spec` rather than an import: this runs from `jailbee doctor`, and
+    importing PySide6 to find out whether it exists costs a second and a
+    display connection. It raises rather than returns on a package whose
+    parent cannot be imported, hence the guard.
+    """
+    try:
+        if find_spec("PySide6") is not None:
+            return True, "PySide6 available — `jb gui` works"
+    except (ImportError, ValueError):
+        pass
+    return False, f"not installed — `{QT_EXTRA_COMMAND}` (or pipx) adds `jb gui`"
+
+
+# --------------------------------------------------------------------------
 # status, and running the steps
 # --------------------------------------------------------------------------
 
@@ -338,10 +372,22 @@ def report_status(keys: Sequence[StepKey], shells: Sequence[str]) -> None:
     three steps at once: `jailbee doctor` reports completions and skills but
     deliberately not the timer, because its egress check says more about that
     one than a file check could.
+
+    The optional Qt extra rides along on a full listing only. It is not one
+    of the steps and not something this command can install, so on a
+    `--only`-filtered listing — which asked about something else — it is
+    noise, and `info` rather than `warn_plain` keeps a missing one from
+    reading like a fault.
     """
     for key in STEP_KEYS:
         if key in keys:
             report_step(status_for(key, shells))
+    if set(keys) == set(STEP_KEYS):
+        installed, detail = qt_dashboard_status()
+        if installed:
+            success_plain(f"{QT_EXTRA_TITLE}: {detail}")
+        else:
+            info(f"{QT_EXTRA_TITLE}: {detail}")
 
 
 def _install(

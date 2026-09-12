@@ -42,8 +42,16 @@ steps are all you need — they are per-host and one-time. Per-repo setup
 sudo apt install incus
 sudo adduser $USER incus-admin
 # log out and back in
-incus admin init    # accept defaults
+incus admin init --auto
 ```
+
+`--auto` is Incus's non-interactive mode: it takes the defaults the
+interactive walk proposes — a local storage pool and the `incusbr0` bridge
+JailBee expects — instead of asking a dozen questions you would answer by
+pressing Enter. It is meant for a host that has not been initialised yet;
+there is nothing for it to do on one that has. Drop the flag if you want to
+pick the storage backend (`btrfs`, `lvm`, `zfs`) or a different subnet
+yourself.
 
 `security.nesting=true` (needed for nested Docker and for systemd services
 that use user namespaces) is set automatically by `jailbee` on every container.
@@ -83,10 +91,21 @@ the rationale, the security impact, and a verification recipe.
 uv tool install jailbee     # or: pipx install jailbee
 ```
 
-This installs the `jailbee` and `jb` commands. Add the Qt dashboard with the
-`gui` extra (`uv tool install 'jailbee[gui]'`), and install
-`git+https://github.com/VRTFinland/jailbee` instead of the release when you
-want the unreleased tip.
+This installs the `jailbee` and `jb` commands. For the optional Qt dashboard
+(`jailbee gui`, and `jailbee dashboard --gui`), add the `gui` extra instead:
+
+```bash
+uv tool install 'jailbee[gui]'      # or: pipx install 'jailbee[gui]'
+```
+
+It is the one install step `jailbee setup` cannot do for you: the extra goes
+into jailbee's own environment, so installing it means reinstalling the tool
+that is running — and only you know whether uv, pipx or a virtualenv put it
+there. `jailbee doctor` reports whether it is present, and `jailbee gui`
+prints the command when it is not. Adding it later is the same command again.
+
+Install `git+https://github.com/VRTFinland/jailbee` in place of the release
+when you want the unreleased tip.
 
 JailBee is an ordinary PyPI package and needs neither uv nor pipx at
 runtime — both are here only because Ubuntu 24.04+ marks its system Python
@@ -128,8 +147,10 @@ The timer is a *user* timer, so it only runs while you have a login session
 unless linger is enabled — `jailbee setup` prints the one-liner
 (`sudo loginctl enable-linger $USER`) when it is not.
 
-`jailbee doctor` reports each of these steps afterwards, so a missed one
-does not stay invisible.
+`jailbee setup --status` reports the three without installing anything, and
+`jailbee doctor` reports them afterwards — plus the optional `gui` extra from
+step 3 — so a missed one does not stay invisible. If any are still missing
+the next `jailbee ls` or `jailbee dashboard` offers to install them, once.
 
 ### 5. You're done with host setup
 
