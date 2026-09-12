@@ -4985,10 +4985,11 @@ def push(
         typer.Option(
             "--ff/--no-ff",
             help="How --merge merges. --no-ff always writes a merge commit; "
-            "--ff demands a fast-forward and fails on divergence. Default: "
-            "fast-forward when the container is already on the pushed branch, "
-            "merge commit otherwise — and if that fast-forward is impossible, "
-            "you are asked whether to make a merge commit instead.",
+            "--ff demands a fast-forward and fails on divergence. Default: the "
+            "`push.ff` config key, which is `auto` — fast-forward when the "
+            "container is already on the pushed branch, merge commit otherwise, "
+            "and a question first if that fast-forward turns out to be "
+            "impossible.",
         ),
     ] = None,
     force: Annotated[
@@ -5182,10 +5183,12 @@ def push(
     tag_policy = _resolve_tag_policy(
         cfg.push.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
     )
-    # `--ff` means "fast-forward only", so it is the *negation* of the
-    # `no_ff` tri-state `sync.push_and_merge` takes. `None` stays `None`:
-    # neither flag given leaves the automatic choice in place.
-    merge_no_ff = None if ff is None else not ff
+    # `--ff` means "fast-forward only", so it is the *negation* of the `no_ff`
+    # tri-state `sync.push_and_merge` takes. With no flag the `push.ff` config
+    # key decides, and its `auto` maps to `None` — the automatic rule that
+    # function already implements.
+    ff_policy = _resolve_ff_policy(cfg.push.ff, ff)
+    merge_no_ff = {"never": True, "always": False, "auto": None}[ff_policy]
     # Only an interactive run may be asked about a divergence. A piped or
     # redirected stdin gets the error naming --no-ff instead: `default_confirm`
     # would return its documented `False` on EOF, which reads as a decision

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -26,6 +27,7 @@ def _wire(mocker, tmp_path, *, containers, picked, action="plain", source="defau
     cfg_mock.container_prefix = "myrepo"
     cfg_mock.push.default_action = action
     cfg_mock.push.default_source = source
+    cfg_mock.push.ff = "auto"
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch(
@@ -473,3 +475,50 @@ def test_push_picker_selection_is_not_confirmed(mocker, tmp_path):
 
     assert result.exit_code == 0
     plan_push.assert_not_called()
+
+
+# --- push.ff resolution -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cfg_ff", "flag", "expected_no_ff"),
+    [
+        ("auto", None, None),
+        ("never", None, True),
+        ("always", None, False),
+        ("auto", True, False),  # --ff
+        ("auto", False, True),  # --no-ff
+    ],
+)
+def test_push_resolves_ff_config_into_the_no_ff_tristate(
+    mocker, tmp_path, cfg_ff, flag, expected_no_ff
+):
+    """`push.ff` decides `no_ff` only when neither flag is given; `--ff`/
+    `--no-ff` always win over it (the last two rows).
+
+    Single auto-selected container (the same setup as
+    `test_push_config_off_means_no_plan`), so this reuses `_wire` /
+    `_wire_confirm` rather than adding a new mocking surface for the
+    named-container path.
+    """
+    cfg_mock = _wire(
+        mocker,
+        tmp_path,
+        containers=[_info("myrepo-feat-only")],
+        picked=None,
+        action="merge",
+    )
+    _wire_confirm(cfg_mock, auto_target=False)
+    cfg_mock.push.ff = cfg_ff
+    do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    argv = ["git", "push"]
+    if flag is True:
+        argv.append("--ff")
+    elif flag is False:
+        argv.append("--no-ff")
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code == 0, result.output
+    assert do_push.call_args.kwargs["no_ff"] is expected_no_ff

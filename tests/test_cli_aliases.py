@@ -176,6 +176,7 @@ def test_top_level_push_calls_same_function(mocker, tmp_path):
     cfg_mock.container_prefix = "sampleapp"
     cfg_mock.push.default_action = "ask"
     cfg_mock.push.default_source = "default-branch"
+    cfg_mock.push.ff = "auto"
     cfg_mock.default_branch = "main"
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch(

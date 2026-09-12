@@ -50,6 +50,7 @@ def _wire_single(mocker, tmp_path):
     cfg_mock.container_prefix = "myrepo"
     cfg_mock.pull.tags = "reachable"
     cfg_mock.push.tags = "none"
+    cfg_mock.push.ff = "auto"
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch(
         "jailbee.cli._resolve_existing",
