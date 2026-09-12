@@ -3431,6 +3431,41 @@ def test_push_and_merge_transports_an_explicit_source_ref(mocker, make_cfg, tmp_
     )
 
 
+def test_push_and_merge_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--merge`'s `tags` must reach the same `push_to_container` refspec-building
+    Task 4 gave the `--plain` path — not just be accepted and dropped."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": "",
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+
+    push_and_merge(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
+
+
 def test_push_and_rebase_transports_an_explicit_source_ref(mocker, make_cfg, tmp_path):
     from jailbee.incus import IncusError
     from jailbee.sync import push_and_rebase
@@ -3472,6 +3507,41 @@ def test_push_and_rebase_transports_an_explicit_source_ref(mocker, make_cfg, tmp
     assert push_url.call_args.args[2] == (
         "+refs/jailbee/pr/1234/head:refs/jailbee/host/feat/pr-branch"
     )
+
+
+def test_push_and_rebase_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--rebase`'s `tags` must reach `push_to_container`'s refspec building."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_rebase
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/other\n",
+            "rev_parse_gie": "",
+            "rev_list_count": "2\n",
+            "rebase": "",
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+
+    push_and_rebase(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
 
 
 def test_push_and_merge_dirty_tree_raises(mocker, make_cfg, tmp_path):
@@ -3980,6 +4050,41 @@ def test_push_and_reset_happy_path(mocker, make_cfg, tmp_path):
     reset_cmd = reset_calls[0].args[1]
     assert "--hard" in reset_cmd
     assert "refs/jailbee/host/main" in reset_cmd
+
+
+def test_push_and_reset_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--force`'s `tags` must reach `push_to_container`'s refspec building."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_reset
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "main\n",
+            "rev_parse_gie": "",
+            "rev_parse_head": "old-branch-oid\n",
+            "rev_list_count": "0\n",
+            "reset": "",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+
+    push_and_reset(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
 
 
 def test_push_and_reset_different_branch_refuses(mocker, make_cfg, tmp_path):
@@ -7841,6 +7946,25 @@ def test_container_to_container_relay_carries_no_tags(mocker, make_cfg, tmp_path
     sync.merge_container_into_container(cfg, incus, "c1", "c2")
 
     assert sync.fetch_from_container.call_args.kwargs["tags"] == "none"
+
+
+def test_container_to_container_relay_push_leg_is_pinned_to_none(mocker, make_cfg, tmp_path):
+    """Decision 7's other half: the push into the target is pinned too.
+
+    `test_container_to_container_relay_carries_no_tags` above covers the fetch
+    leg; `push_to_container`'s own default is also `"none"`, so an explicit
+    pin here was previously unverified — this closes that gap and makes the
+    "both legs are pinned" claim in `merge_container_into_container`'s
+    Decision 7 comment literally checked, not just asserted in prose.
+    """
+    from jailbee import sync
+
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert sync.push_to_container.call_args.kwargs["tags"] == "none"
 
 
 def test_publish_to_origin_pushes_only_the_branch_refspec(mocker, make_cfg, tmp_path):

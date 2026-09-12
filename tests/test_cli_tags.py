@@ -112,27 +112,32 @@ def test_git_pull_passes_the_tag_policy(mocker, tmp_path):
     assert do_pull.call_args.kwargs["tags"] == "reachable"
 
 
+def _push_result(**overrides):
+    """A real `PushResult` — `_print_push_summary` does real comparisons
+    (`old_oid == new_oid`, `local_only_commits > 0`) on whatever it's handed,
+    which raises `TypeError` against an unconfigured `MagicMock`."""
+    from jailbee.sync import PushResult
+
+    fields = {
+        "source": "feat-a",
+        "source_ref": "refs/heads/feat-a",
+        "container_ref": "refs/jailbee/host/feat-a",
+        "old_oid": None,
+        "new_oid": "abc1234",
+    } | overrides
+    return PushResult(**fields)
+
+
+# --from names the source explicitly on every push test below so
+# push.default_source (a Mock attribute on cfg, matching none of the
+# 'default-branch'/'current'/'base' literals) never has to resolve — these
+# tests are about the tag flag reaching the transport, not source resolution.
+
+
 def test_git_push_passes_the_tag_policy(mocker, tmp_path):
     _wire_single(mocker, tmp_path)
-    push = mocker.patch("jailbee.sync.push_to_container")
-    # Concrete, non-Mock attributes: `_print_push_summary` does real
-    # comparisons (`old_oid == new_oid`, `local_only_commits > 0`) on the
-    # result, which raise TypeError against an unconfigured MagicMock.
-    push.return_value = mocker.MagicMock(
-        old_oid=None,
-        new_oid="abc1234",
-        source="feat-a",
-        source_ref="refs/heads/feat-a",
-        container_ref="refs/jailbee/host/feat-a",
-        fetch_error=None,
-        local_only_commits=0,
-        local_branch=None,
-    )
+    push = mocker.patch("jailbee.sync.push_to_container", return_value=_push_result())
 
-    # --from names the source explicitly so push.default_source (a Mock
-    # attribute on cfg, matching none of the 'default-branch'/'current'/
-    # 'base' literals) never has to resolve — this test is about the tag
-    # flag reaching push_to_container, not about source resolution.
     result = CliRunner().invoke(
         app, ["git", "push", "feat-a", "--plain", "--tags", "--from", "feat-a"]
     )
@@ -144,19 +149,79 @@ def test_git_push_passes_the_tag_policy(mocker, tmp_path):
 def test_git_push_defaults_to_the_config_key(mocker, tmp_path):
     cfg = _wire_single(mocker, tmp_path)
     cfg.push.tags = "reachable"
-    push = mocker.patch("jailbee.sync.push_to_container")
-    push.return_value = mocker.MagicMock(
-        old_oid=None,
-        new_oid="abc1234",
-        source="feat-a",
-        source_ref="refs/heads/feat-a",
-        container_ref="refs/jailbee/host/feat-a",
-        fetch_error=None,
-        local_only_commits=0,
-        local_branch=None,
-    )
+    push = mocker.patch("jailbee.sync.push_to_container", return_value=_push_result())
 
     result = CliRunner().invoke(app, ["git", "push", "feat-a", "--plain", "--from", "feat-a"])
 
     assert result.exit_code == 0, result.output
     assert push.call_args.kwargs["tags"] == "reachable"
+
+
+def test_git_push_merge_passes_the_tag_policy(mocker, tmp_path):
+    """`--merge`'s `tags` must reach `sync.push_and_merge`, not just `--plain`'s.
+
+    `push_and_merge`/`push_and_rebase`/`push_and_reset` gained `tags` alongside
+    `push_to_container` — this closes the gap where only the `--plain` action
+    forwarded the flag.
+    """
+    from jailbee.sync import MergeInContainerResult
+
+    _wire_single(mocker, tmp_path)
+    merge = mocker.patch(
+        "jailbee.sync.push_and_merge",
+        return_value=MergeInContainerResult(
+            push=_push_result(),
+            container_branch="feat-a",
+            fast_forward_only=True,
+            head_oid="deadbeef1234",
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app, ["git", "push", "feat-a", "--merge", "--tags", "--from", "feat-a"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert merge.call_args.kwargs["tags"] == "all"
+
+
+def test_git_push_rebase_passes_the_tag_policy(mocker, tmp_path):
+    from jailbee.sync import RebaseInContainerResult
+
+    _wire_single(mocker, tmp_path)
+    rebase = mocker.patch(
+        "jailbee.sync.push_and_rebase",
+        return_value=RebaseInContainerResult(
+            push=_push_result(), container_branch="feat-a", head_oid="deadbeef1234"
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app, ["git", "push", "feat-a", "--rebase", "--follow-tags", "--from", "feat-a"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert rebase.call_args.kwargs["tags"] == "reachable"
+
+
+def test_git_push_force_passes_the_tag_policy(mocker, tmp_path):
+    from jailbee.sync import ResetInContainerResult
+
+    _wire_single(mocker, tmp_path)
+    reset = mocker.patch(
+        "jailbee.sync.push_and_reset",
+        return_value=ResetInContainerResult(
+            push=_push_result(),
+            container_branch="feat-a",
+            head_oid="deadbeef1234",
+            discarded_commits=0,
+            old_branch_oid=None,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app, ["git", "push", "feat-a", "--force", "--no-tags", "--from", "feat-a"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert reset.call_args.kwargs["tags"] == "none"

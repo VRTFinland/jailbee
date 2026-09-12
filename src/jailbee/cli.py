@@ -4774,8 +4774,10 @@ def _do_single_push(
 
     ``no_ff`` / ``confirm`` reach ``sync.push_and_merge`` and are meaningless
     for the other three actions — see that function for the tri-state.
-    ``tags`` reaches only ``sync.push_to_container`` (the ``"plain"``
-    action) — the merge/rebase/force transports have no tag parameter yet.
+    ``tags`` is forwarded to whichever transport the action dispatches to
+    (``sync.push_and_merge`` / ``push_and_rebase`` / ``push_and_reset`` /
+    ``push_to_container``) — all four take it and forward it on to
+    ``push_to_container`` themselves.
     """
     from jailbee import sync
     from jailbee.lifecycle import resolve_container_name
@@ -4801,6 +4803,7 @@ def _do_single_push(
             source_ref=source_ref,
             no_ff=no_ff,
             confirm=confirm,
+            tags=tags,
         )
         _print_bridge_direction(
             merge_result.push.source, "host", merge_result.container_branch, "container"
@@ -4825,6 +4828,7 @@ def _do_single_push(
             prefer_ref=prefer_ref,
             fetch=fetch,
             source_ref=source_ref,
+            tags=tags,
         )
         _print_bridge_direction(
             rebase_result.push.source, "host", rebase_result.container_branch, "container"
@@ -4848,6 +4852,7 @@ def _do_single_push(
             prefer_ref=prefer_ref,
             fetch=fetch,
             source_ref=source_ref,
+            tags=tags,
         )
         _print_bridge_direction(
             reset_result.push.source, "host", reset_result.container_branch, "container"

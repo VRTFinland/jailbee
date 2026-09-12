@@ -2558,6 +2558,7 @@ def push_and_merge(
     source_ref: str | None = None,
     no_ff: bool | None = None,
     confirm: ConfirmFn | None = None,
+    tags: TagPolicy = "none",
 ) -> MergeInContainerResult:
     """Push host's `source` into container and merge it into the current branch.
 
@@ -2589,7 +2590,8 @@ def push_and_merge(
     detached background worker) — it must never block on stdin, so it is an
     error rather than a prompt.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
     from jailbee.tui import warn_plain
@@ -2618,6 +2620,7 @@ def push_and_merge(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     if no_ff is not None:
@@ -2768,6 +2771,7 @@ def merge_container_into_container(
         source=fetch_result.branch,
         source_ref=f"refs/jailbee/{source_short}/{fetch_result.branch}",
         namespace=f"from/{source_short}",
+        tags="none",
     )
 
     if plain:
@@ -2822,6 +2826,7 @@ def push_and_rebase(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    tags: TagPolicy = "none",
 ) -> RebaseInContainerResult:
     """Push host's `source` into container and rebase the current branch onto it.
 
@@ -2830,7 +2835,8 @@ def push_and_rebase(
     in rebase state for manual resolution. Same-branch is not treated
     specially — `git rebase` itself handles the no-op case.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
@@ -2859,6 +2865,7 @@ def push_and_rebase(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     rebase_cmd = ["git", "-C", repo_dir, "rebase", push_result.container_ref]
@@ -2908,6 +2915,7 @@ def push_and_reset(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    tags: TagPolicy = "none",
 ) -> ResetInContainerResult:
     """Push host's `source` into container and hard-reset the current branch to it.
 
@@ -2918,7 +2926,8 @@ def push_and_reset(
     refused; instead the result reports how many container-only commits
     were discarded.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
@@ -2947,6 +2956,7 @@ def push_and_reset(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     if container_branch != push_result.source:
