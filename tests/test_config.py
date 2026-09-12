@@ -4736,3 +4736,28 @@ def test_load_config_from_repo_raw_reads_the_global_file(tmp_path, monkeypatch, 
 
     cfg = _load_config_from_repo_raw({}, tmp_path / "repo" / ".jailbee" / "config.yaml", origin="x")
     assert cfg.defaults.memory == "1GB"
+
+
+def test_tag_and_ff_policy_defaults(make_cfg, tmp_path):
+    """Defaults preserve today's behaviour, except pull.ff (see the spec)."""
+    cfg = make_cfg(tmp_path)
+    assert cfg.pull.tags == "reachable"
+    assert cfg.push.tags == "none"
+    assert cfg.pull.ff == "auto"
+    assert cfg.push.ff == "auto"
+
+
+def test_tag_policy_rejects_unknown_value(make_cfg, tmp_path):
+    import pydantic
+    import pytest
+
+    with pytest.raises(pydantic.ValidationError):
+        make_cfg(tmp_path, pull={"tags": "sometimes"})
+
+
+def test_ff_policy_rejects_unknown_value(make_cfg, tmp_path):
+    import pydantic
+    import pytest
+
+    with pytest.raises(pydantic.ValidationError):
+        make_cfg(tmp_path, push={"ff": "maybe"})
