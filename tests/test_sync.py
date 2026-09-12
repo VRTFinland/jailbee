@@ -7766,54 +7766,80 @@ def test_fetch_from_container_defaults_to_reachable(mocker, tmp_path, make_cfg):
     assert fetch_url.call_args.kwargs["tags"] == "reachable"
 
 
-def test_container_to_container_relay_carries_no_tags(mocker, make_cfg, tmp_path):
-    """Decision 7: the host's tag set must not leak into a relay target.
+def test_sync_refs_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`sync_refs_from_container` forwards `tags` to its own `fetch_from_container`
+    call unconditionally — a dropped `tags=tags` there would silently fall back
+    to the default and pass every other test, since the parameter has one.
 
-    Behavioural, not a source-text check: `test_merge_container_into_container_
-    same_branch_uses_ff_only` already builds the full mock surface needed to
-    reach `merge_container_into_container`'s own `fetch_from_container` call
-    (`tests/test_cli_git_merge.py` cannot — it mocks
-    `sync.merge_container_into_container` itself at the CLI boundary, so it
-    never reaches the code under test here). Reusing that surface lets this
-    assert directly on the `tags` kwarg the relay's fetch leg receives,
-    instead of grepping the source for a string literal.
+    Reuses `_sync_refs_setup`, the existing mock surface for this function's
+    happy path (`test_sync_refs_creates_the_host_branch_without_checking_it_out`
+    is built on the same wiring).
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value=None)  # branch absent
+    mocker.patch("jailbee.sync.git.update_ref", return_value=True)
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
+
+    sync.sync_refs_from_container(cfg, incus, "feat-foo", tags="all")
+
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "all"
+
+
+def test_merge_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`merge_from_container` forwards `tags` to its own `fetch_from_container`
+    call unconditionally — same rationale as the `sync_refs_from_container`
+    case above.
+
+    Reuses the mock surface from `test_merge_from_container_updates_host_
+    submodules`, the existing happy-path test for this function's in-place
+    merge branch.
     """
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-x"
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
     mocker.patch(
-        "jailbee.lifecycle.resolve_container_name",
-        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
-    )
-    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
-    incus.config_get.return_value = None
-    mocker.patch("jailbee.sync._container_is_running", return_value=True)
-    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
-    fetch = mocker.patch(
         "jailbee.sync.fetch_from_container",
         return_value=sync.FetchResult(
-            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=2
+            branch="feat/x", old_oid=None, new_oid="new", base_oid="old", commits_added=1
         ),
     )
-    mocker.patch("jailbee.submodules.transport_submodules_to_host")
-    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
-    mocker.patch("jailbee.submodules.transport_submodules_to_container")
-    mocker.patch(
-        "jailbee.sync.push_to_container",
-        return_value=sync.PushResult(
-            source="feat/a",
-            source_ref="refs/jailbee/c1/feat/a",
-            container_ref="refs/jailbee/from/c1/feat/a",
-            old_oid=None,
-            new_oid="asha",
-        ),
-    )
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", side_effect=["pre", "head"])
+    mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    sync.merge_from_container(cfg, incus, "feat-x", tags="all")
+
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "all"
+
+
+def test_container_to_container_relay_carries_no_tags(mocker, make_cfg, tmp_path):
+    """Decision 7: the host's tag set must not leak into a relay target.
+
+    Behavioural, not a source-text check: `_merge_relay_wiring` already builds
+    the full mock surface needed to reach `merge_container_into_container`'s
+    own `fetch_from_container` call (`tests/test_cli_git_merge.py` cannot — it
+    mocks `sync.merge_container_into_container` itself at the CLI boundary, so
+    it never reaches the code under test here). Reusing that helper — instead
+    of copying its body — means a future dependency `merge_container_into_
+    container` picks up is covered here too, with no drift to keep in sync.
+    """
+    from jailbee import sync
+
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
     mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
 
     sync.merge_container_into_container(cfg, incus, "c1", "c2")
 
-    assert fetch.call_args.kwargs["tags"] == "none"
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "none"
 
 
 def test_publish_to_origin_pushes_only_the_branch_refspec(mocker, make_cfg, tmp_path):
