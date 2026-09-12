@@ -1716,6 +1716,17 @@ def test_tags_reachable_from_returns_empty_on_failure(mocker, tmp_path):
     assert git.tags_reachable_from(tmp_path, "refs/heads/nope") == []
 
 
+def test_tags_reachable_from_no_git_binary(mocker, tmp_path):
+    from jailbee import git
+
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        side_effect=FileNotFoundError("git not found"),
+    )
+
+    assert git.tags_reachable_from(tmp_path, "refs/heads/main") == []
+
+
 @pytest.mark.parametrize(
     ("policy", "expected_flag"),
     [("none", "--no-tags"), ("all", "--tags")],
