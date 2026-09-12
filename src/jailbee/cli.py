@@ -100,6 +100,30 @@ ReviewContainerArg = Annotated[
 ]
 """The container positional shared by the `review` subcommands."""
 
+TagsFlag = Annotated[
+    bool,
+    typer.Option("--tags", help="Transfer every tag (git's `--tags`). Overrides the config key."),
+]
+"""`--tags`: every tag, git's own meaning. Shared by the four git-bridge commands."""
+
+FollowTagsFlag = Annotated[
+    bool,
+    typer.Option(
+        "--follow-tags",
+        help=(
+            "Transfer only the tags reachable from what is being transferred, "
+            "lightweight and annotated alike. Overrides the config key."
+        ),
+    ),
+]
+"""`--follow-tags`: tags reachable from what is being transferred. Shared trio member."""
+
+NoTagsFlag = Annotated[
+    bool,
+    typer.Option("--no-tags", help="Transfer no tags at all. Overrides the config key."),
+]
+"""`--no-tags`: no tags at all. Shared trio member."""
+
 
 def _resolve_config_path(path: Path | None) -> Path:
     """The repo config file to load, raising when there is none.
@@ -2446,6 +2470,7 @@ if TYPE_CHECKING:
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Config, LooseAutoRevert
+    from jailbee.config.models_behaviour import TagPolicy
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
@@ -3493,6 +3518,9 @@ def fetch(
             "Refused for the branch that is currently checked out.",
         ),
     ] = False,
+    tags: TagsFlag = False,
+    follow_tags: FollowTagsFlag = False,
+    no_tags: NoTagsFlag = False,
     config: ConfigOption = None,
 ) -> None:
     """Bring a container's state onto the host as refs, without switching branches.
@@ -3520,10 +3548,13 @@ def fetch(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
+    tag_policy = _resolve_tag_policy(
+        cfg.pull.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
+    )
 
     try:
         result = sync.sync_refs_from_container(
-            cfg, incus, short, branch=branch, as_name=as_name, force=force
+            cfg, incus, short, branch=branch, as_name=as_name, force=force, tags=tag_policy
         )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
@@ -3573,6 +3604,9 @@ def checkout(
             "Defaults to confirm.auto_target.",
         ),
     ] = None,
+    tags: TagsFlag = False,
+    follow_tags: FollowTagsFlag = False,
+    no_tags: NoTagsFlag = False,
     config: ConfigOption = None,
 ) -> None:
     """Fetch + check out the container's branch on the host (ff-only).
@@ -3604,6 +3638,9 @@ def checkout(
     incus, resolved = _resolve_existing_detailed(cfg, name)
     full = resolved.name
     short = short_name(cfg, full)
+    tag_policy = _resolve_tag_policy(
+        cfg.pull.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
+    )
 
     if _should_show_plan(
         cfg, auto_selected=resolved.auto_selected, flag=confirm
@@ -3613,7 +3650,9 @@ def checkout(
         )
 
     try:
-        result = sync.checkout_from_container(cfg, incus, short, branch=branch, as_name=as_name)
+        result = sync.checkout_from_container(
+            cfg, incus, short, branch=branch, as_name=as_name, tags=tag_policy
+        )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
@@ -3648,6 +3687,7 @@ def _do_single_pull(
     allow_checkout: bool,
     destroy_policy: Literal["prompt", "always", "never"],
     branch_policy: Literal["prompt", "always", "never"],
+    tags: "TagPolicy",
 ) -> None:
     """Run one container's pull + summary + cleanup.
 
@@ -3658,7 +3698,14 @@ def _do_single_pull(
     from jailbee import sync
 
     result = sync.merge_from_container(
-        cfg, incus, short, branch=branch, ff_only=ff_only, into=into, allow_checkout=allow_checkout
+        cfg,
+        incus,
+        short,
+        branch=branch,
+        ff_only=ff_only,
+        into=into,
+        allow_checkout=allow_checkout,
+        tags=tags,
     )
 
     _print_bridge_direction(
@@ -3794,6 +3841,9 @@ def pull(
             "Defaults to confirm.auto_target.",
         ),
     ] = None,
+    tags: TagsFlag = False,
+    follow_tags: FollowTagsFlag = False,
+    no_tags: NoTagsFlag = False,
     config: ConfigOption = None,
 ) -> None:
     """Fetch + merge the container's branch into its base branch.
@@ -3848,6 +3898,9 @@ def pull(
     from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
+    tag_policy = _resolve_tag_policy(
+        cfg.pull.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
+    )
 
     if cleanup and no_cleanup:
         error("--cleanup and --no-cleanup are mutually exclusive.")
@@ -3935,6 +3988,7 @@ def pull(
                         allow_checkout=checkout,
                         destroy_policy=destroy_policy,
                         branch_policy=branch_policy,
+                        tags=tag_policy,
                     )
                 except (sync.SyncError, git_helpers.GitError) as exc:
                     error(str(exc))
@@ -3968,6 +4022,7 @@ def pull(
             allow_checkout=checkout,
             destroy_policy=destroy_policy,
             branch_policy=branch_policy,
+            tags=tag_policy,
         )
     except sync.SyncError as exc:
         error(str(exc))
@@ -4327,6 +4382,27 @@ def _resolve_push_source(
     return None  # configured == 'ask'
 
 
+def _resolve_tag_policy(
+    cfg_value: "TagPolicy", *, all_flag: bool, follow_flag: bool, no_flag: bool
+) -> "TagPolicy":
+    """Pick the tag policy for one run: a flag always beats the config key.
+
+    The three flags carry git's own meanings — `--tags` is every tag,
+    `--follow-tags` the ones reachable from what is being transferred,
+    `--no-tags` none — so a user's muscle memory from git transfers intact.
+    """
+    if sum([all_flag, follow_flag, no_flag]) > 1:
+        error("--tags, --follow-tags and --no-tags are mutually exclusive.")
+        raise typer.Exit(2)
+    if all_flag:
+        return "all"
+    if follow_flag:
+        return "reachable"
+    if no_flag:
+        return "none"
+    return cfg_value
+
+
 def _resolve_push_ref_pref(
     cfg: "Config",
     *,
@@ -4683,6 +4759,7 @@ def _do_single_push(
     source_ref: str | None = None,
     no_ff: bool | None = None,
     confirm: "ConfirmFn | None" = None,
+    tags: "TagPolicy" = "none",
 ) -> str:
     """Run one container's push + immediate per-container output.
 
@@ -4697,6 +4774,8 @@ def _do_single_push(
 
     ``no_ff`` / ``confirm`` reach ``sync.push_and_merge`` and are meaningless
     for the other three actions — see that function for the tri-state.
+    ``tags`` reaches only ``sync.push_to_container`` (the ``"plain"``
+    action) — the merge/rebase/force transports have no tag parameter yet.
     """
     from jailbee import sync
     from jailbee.lifecycle import resolve_container_name
@@ -4803,6 +4882,7 @@ def _do_single_push(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
     _print_bridge_direction(push_result.source, "host", push_result.container_ref, "container")
     _print_push_summary(short, push_result)
@@ -4938,6 +5018,9 @@ def push(
             "Defaults to confirm.auto_target.",
         ),
     ] = None,
+    tags: TagsFlag = False,
+    follow_tags: FollowTagsFlag = False,
+    no_tags: NoTagsFlag = False,
     config: ConfigOption = None,
 ) -> None:
     """Send a host branch into a container's clone (host -> container).
@@ -5057,6 +5140,9 @@ def push(
         local_flag=from_local,
         source_flag=source,
         current_flag=current,
+    )
+    tag_policy = _resolve_tag_policy(
+        cfg.push.tags, all_flag=tags, follow_flag=follow_tags, no_flag=no_tags
     )
     # `--ff` means "fast-forward only", so it is the *negation* of the
     # `no_ff` tri-state `sync.push_and_merge` takes. `None` stays `None`:
@@ -5226,6 +5312,7 @@ def push(
                     source_ref=pr_source_ref,
                     no_ff=merge_no_ff,
                     confirm=merge_confirm,
+                    tags=tag_policy,
                 )
                 outcomes.append(_PushOutcome(short=short, ok=True, summary=summary))
             except (sync.SyncError, git_helpers.GitError) as exc:
@@ -5305,6 +5392,7 @@ def push(
             source_ref=single_source_ref,
             no_ff=merge_no_ff,
             confirm=merge_confirm,
+            tags=tag_policy,
         )
     except (sync.SyncError, git_helpers.GitError) as exc:
         error(str(exc))

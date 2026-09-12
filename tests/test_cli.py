@@ -8501,6 +8501,7 @@ def test_do_single_pull_prints_direction(mocker, capsys):
         allow_checkout=False,
         destroy_policy="never",
         branch_policy="never",
+        tags="reachable",
     )
     out = capsys.readouterr().out
     assert "feat/foo (container) ──▶ dev (host)" in out

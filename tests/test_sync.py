@@ -5929,6 +5929,7 @@ def test_do_single_pull_prints_submodule_report(mocker, make_cfg, tmp_path):
         allow_checkout=False,
         destroy_policy="never",
         branch_policy="never",
+        tags="reachable",
     )
 
     out = recording.export_text()
