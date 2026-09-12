@@ -43,14 +43,20 @@ side is a separate flag per command: `jailbee git fetch --as <name>`,
 naming a branch the container doesn't have is rejected up front, with the
 container's actual branch names listed.
 
-`jailbee git pull` defaults to a `--no-ff` merge commit into the recorded base branch
-(not the host's current HEAD). `--into <branch>` retargets it, `--current` merges
-into whichever branch the host currently has checked out instead (mirrors
-`jailbee git push --current`; mutually exclusive with `--into`), `--ff` fast-forwards
-only, `--checkout` checks the base out (staying on it) if it isn't current, and
-`--cleanup`/`--no-cleanup` force or skip the post-merge destroy + branch-delete
-(otherwise driven by the `pull:` config block). With no name on a TTY it opens a
-multi-select picker and stops at the first failure.
+`jailbee git pull` merges the container's branch into the recorded base branch
+(not the host's current HEAD). By default (`pull.ff: auto`) it fast-forwards
+when the host branch is strictly behind the container's tip and writes a merge
+commit otherwise — the same rule `git merge` itself uses; `--into <branch>`
+retargets the merge, `--current` merges into whichever branch the host
+currently has checked out instead (mirrors `jailbee git push --current`;
+mutually exclusive with `--into`), `--ff` demands a fast-forward and fails on
+divergence, `--no-ff` always writes a merge commit (the behaviour before
+1.4.0 — set `pull.ff: never` to keep it permanently), `--checkout` checks the
+base out (staying on it) if it isn't current, and `--cleanup`/`--no-cleanup`
+force or skip the post-merge destroy + branch-delete (otherwise driven by the
+`pull:` config block). See [Tags](#tags) and [Fast-forward
+policy](#fast-forward-policy) below for the full picture. With no name on a
+TTY it opens a multi-select picker and stops at the first failure.
 
 **Host → container:**
 
@@ -204,6 +210,78 @@ inferred, so the old `jailbee merge <name>` shape asks which container to merge
 into rather than quietly merging into the host. All bridge commands
 refuse on mount-mode containers (they share the host tree — use git on the
 host directly).
+
+## Tags
+
+Tag transport is governed by `pull.tags` (container → host) and `push.tags`
+(host → container) — see [config.md](config.md#pull) and
+[config.md](config.md#push) for the config keys. `--tags` / `--follow-tags` /
+`--no-tags` override the config key for one run on `jailbee git fetch`,
+`checkout`, `pull` and `push` (including its `--merge`/`--rebase`/`--force`
+modes); the three are mutually exclusive, and a flag always beats the
+configured default.
+
+| policy | container → host (`fetch`, `checkout`, `pull`) | host → container (`push`) |
+|---|---|---|
+| `none` | no tags cross | no tags cross |
+| `reachable` | tags reachable from the fetched branch, lightweight and annotated alike — this is what git's automatic tag-following has always done here, flag or no flag | tags reachable from the pushed branch, computed with `git tag --merged` rather than `git push --follow-tags` (which sends annotated tags only and would silently drop lightweight ones) |
+| `all` | every tag the container has | every tag the host has |
+
+`pull.tags` defaults to `reachable`, `push.tags` to `none`: tags have always
+flowed container → host implicitly (git's own tag-following) and never the
+other way, and these keys make that existing behaviour explicit and
+configurable rather than changing it.
+
+**No policy ever re-points an existing tag.** No refspec carries `+`, so a tag
+that already exists at the destination keeps pointing where it does; moving
+one stays a deliberate manual `git push --force`.
+
+`jailbee git merge` (container → container) transports no tags on either
+leg, regardless of `pull.tags`/`push.tags` or the CLI flags: the relay runs
+source → host → target through the same two transports above, and inheriting
+the host's tag set would push it into a target container that asked for none
+of it.
+
+`jailbee pr` / `jailbee git push --pr` never send tags to the GitHub origin,
+and there is no flag to make them — pushing a tag to a shared remote is an
+outward-facing, effectively irreversible act.
+
+`jailbee git retarget <name> <base> --merge` does **not** honour `push.tags`:
+the merge it performs always behaves as `none`, and there is no flag to
+change that.
+
+## Fast-forward policy
+
+`ff` (`pull.ff` / `push.ff`, or the `--ff`/`--no-ff` flags) decides whether a
+merge fast-forwards or always writes a merge commit. `auto`, the default for
+both keys, means something different in each direction:
+
+| operation | `never` | `auto` (default) | `always` |
+|---|---|---|---|
+| `jailbee git pull`, merging into the currently checked-out branch | always a merge commit | fast-forward when the host branch is strictly behind, merge commit otherwise — git's own default | demand a fast-forward; error on divergence |
+| `jailbee git pull --into <other>` / `--checkout`, target **not** checked out and fast-forwardable | fast-forwarded at ref level | fast-forwarded at ref level | fast-forwarded at ref level |
+| `jailbee git pull --checkout`, target diverged | merge commit | merge commit (a fast-forward isn't possible here, so `auto` behaves like `never`) | error — refuses to merge |
+| `jailbee git push --merge` | always a merge commit | fast-forward when the container is already on the pushed branch (true of every `--pr` push), merge commit otherwise — asks (TTY) or errors (no TTY) if that fast-forward turns out impossible | demand a fast-forward; error on divergence |
+
+A target branch that is **not checked out** is fast-forwarded at ref level
+under every value of `ff` — that is a ref move (`git.fast_forward_branch`),
+not a merge, so `never` cannot force a merge commit there without checking
+out a branch nobody asked to check out. `--checkout` adds a courtesy checkout
+onto that branch afterwards; it does not change which of the two paths ran.
+
+`jailbee git checkout` stays fast-forward-only regardless of `pull.ff` — its
+contract is "fast-forward, or tell me to `jailbee git pull`" — and divergence
+there already points at `jailbee git pull`.
+
+`jailbee git fetch` always uses a forced refspec (`+`) into its own
+`refs/jailbee/<short>/*` namespace; `ff` does not apply to it. Container-local
+branch placement and submodule placement are always fast-forward-only and
+never rewind a branch.
+
+**`push`'s `auto` is not `pull`'s `auto`.** `push`'s is the pre-existing
+branch-condition rule (unchanged by tag/ff support); `pull`'s fast-forward-
+when-possible behaviour is new — see the CHANGELOG for what that changes
+against the previous release.
 
 ## Merging one container into another — `jailbee git merge`
 
