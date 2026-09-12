@@ -306,7 +306,12 @@ container to merge into instead of quietly merging into the host.
     so lightweight tags survive), or none. Applies with `--merge`/`--rebase`/
     `--force` too. Never re-points a tag that already exists in the container,
     and never reaches the GitHub origin — `jailbee pr` sends no tags, with no
-    flag to change that.
+    flag to change that. A tag that already exists in the container pointing
+    elsewhere is not skipped — git rejects it, and that failure aborts the
+    whole push (the merge/rebase included) before it runs; container → host
+    `reachable` skips such a tag silently instead, since that leg is git's own
+    automatic tag-following rather than an explicit per-tag refspec. Move a
+    re-pointed tag with `git push --force` first if this happens.
   - **No name + a TTY** → multi-select picker; source/action chosen once, applied to
     all, failures don't stop the batch (summary at the end).
 
@@ -397,8 +402,9 @@ scripting.
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). The stacked-PR tool: when a parent PR merges to `main`, retarget
   its dependent container from the parent branch onto `main`. `--merge` does
-  **not** honour `push.tags` — the merge it runs always behaves as `none`,
-  and there is no flag to change that.
+  **not** honour `push.tags` or `push.ff` — the merge it runs always behaves
+  as `none` for tags and always writes a merge commit for `ff`, and there is
+  no flag to change either.
 - `jailbee branch [<branch>] [--container <name>] [--submodules-only]` — put the
   tree on one branch, superproject and submodules, when they land on a detached
   HEAD after clone/push/pull. No `--container` → the host repo; `--container

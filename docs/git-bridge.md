@@ -236,6 +236,18 @@ configurable rather than changing it.
 that already exists at the destination keeps pointing where it does; moving
 one stays a deliberate manual `git push --force`.
 
+**A tag that already exists at the destination pointing elsewhere is not
+merely skipped — git rejects the ref, and that failure aborts the whole
+transfer.** The two directions differ under `reachable`: container → host
+skips the conflicting tag silently (exit 0) because that is git's own
+automatic tag-following; host → container raises (a `GitError`), because
+each tag there is an explicit per-tag refspec that git can reject on its own.
+Under `all`, both directions raise. A raised push aborts before anything
+else runs, so `jailbee git push --merge --tags` never reaches the merge, and
+`jailbee git pull --tags` fails the whole pull after the branch has already
+moved. If a tag was deliberately moved on one side, re-point it with
+`git push --force` first rather than letting the transfer collide with it.
+
 `jailbee git merge` (container → container) transports no tags on either
 leg, regardless of `pull.tags`/`push.tags` or the CLI flags: the relay runs
 source → host → target through the same two transports above, and inheriting
@@ -246,9 +258,12 @@ of it.
 and there is no flag to make them — pushing a tag to a shared remote is an
 outward-facing, effectively irreversible act.
 
-`jailbee git retarget <name> <base> --merge` does **not** honour `push.tags`:
-the merge it performs always behaves as `none`, and there is no flag to
-change that.
+`jailbee git retarget <name> <base> --merge` does **not** honour `push.tags`
+or `push.ff`: the merge it performs always behaves as `none` for tags, and
+for `ff` it always writes a merge commit — retarget merges the new base into
+the container's own branch, which the container is never already checked
+out on, so the automatic ff-only case can't apply — and there is no flag to
+change either.
 
 ## Fast-forward policy
 

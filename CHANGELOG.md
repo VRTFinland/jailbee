@@ -40,8 +40,8 @@ before editing `## Unreleased`.
   `--follow-tags`/`--no-tags` flags, mutually exclusive and always beating the
   config key. No policy ever re-points an existing tag — moving one is still a
   deliberate manual `git push --force`. `jailbee git merge` (container →
-  container) and `jailbee pr`/`jailbee git push --pr` transport no tags, with
-  no flag to change either.
+  container) transports no tags on either leg, and `jailbee pr` never sends
+  tags to the GitHub origin, with no flag to change either.
 - **`jailbee git pull` gains `--ff`/`--no-ff`**, the same tri-state shape
   `jailbee git push --merge` already had, backed by a new `pull.ff` config key
   (`never`/`auto`/`always`, default `auto`). See the behaviour change below.

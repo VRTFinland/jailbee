@@ -1765,8 +1765,10 @@ def merge_from_container(
        policy; git ignores ``-m`` when the merge actually fast-forwards.
 
     2. **Different target, fast-forwardable**: the target ref is moved at
-       ref level by ``git.fast_forward_branch``, with no checkout and no
-       merge commit. This path is **policy-independent by design** — a
+       ref level by ``git.fast_forward_branch`` — no merge commit, and no
+       checkout unless ``allow_checkout`` is set, in which case a courtesy
+       ``git.checkout_branch`` follows the ref move. This path is
+       **policy-independent by design** — a
        non-checked-out target that is strictly behind is fast-forwarded
        under every value of ``ff``. Honouring ``never`` here would mean
        checking out a branch the user did not ask to check out, purely to
