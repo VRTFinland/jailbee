@@ -1534,9 +1534,13 @@ merge target for a single invocation with `--into <branch>`.
 |---|---|---|---|
 | `destroy_container` | `"prompt"` \| `"always"` \| `"never"` | `"prompt"` | Whether to destroy the container after a successful merge. |
 | `delete_branch` | `"prompt"` \| `"always"` \| `"never"` | `"prompt"` | Whether to delete the merged local host branch. |
+| `tags` | `"none"` \| `"reachable"` \| `"all"` | `"reachable"` | Which tags travel from a container to the host — governs `jailbee git fetch`, `checkout` and `pull` alike, not just `pull`. `"reachable"` is what git's automatic tag-following has always done here (lightweight and annotated tags both); `"all"` mirrors every tag the container has; `"none"` leaves the host's `refs/tags/*` untouched. No setting ever re-points a tag that already exists on the host. See [Tags](git-bridge.md#tags). |
+| `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git pull` merges the container's branch. `"auto"` fast-forwards when the host branch is strictly behind and writes a merge commit otherwise (the behaviour before 1.4.0 was always a merge commit — set `"never"` to keep it); `"always"` demands a fast-forward and fails on divergence. A target branch that isn't checked out is fast-forwarded at ref level regardless of this key. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
 
-`--cleanup` on the CLI forces both keys to `always`; `--no-cleanup`
-forces both to `never`. Cleanup failures are warnings, not errors.
+`--cleanup` on the CLI forces both cleanup keys to `always`; `--no-cleanup`
+forces both to `never`. Cleanup failures are warnings, not errors. `--ff`/
+`--no-ff` override `ff` for one run; `--tags`/`--follow-tags`/`--no-tags`
+override `tags` for one run (mutually exclusive within each pair).
 
 Example (`~/.config/jailbee/global.yaml`):
 
@@ -1544,6 +1548,8 @@ Example (`~/.config/jailbee/global.yaml`):
 pull:
   destroy_container: prompt
   delete_branch: prompt
+  tags: reachable
+  ff: auto
 ```
 
 > Migration note: this block was previously called `merge:`. A config
@@ -1564,12 +1570,15 @@ defaults to `"base"`.
 | `default_source` | `"default-branch"` \| `"current"` \| `"base"` \| `"ask"` | `"base"` | Which branch to push. `"base"` resolves to each container's recorded base branch (`user.jailbee.base_branch`), so the host pushes exactly what the container was branched from. `"default-branch"` always uses the repo's default branch, regardless of the container's base. `"current"` uses `git symbolic-ref --short HEAD`. `"ask"` opens an interactive picker every time. |
 | `push_from` | `"origin"` \| `"local"` | `"origin"` | Which *copy* of that branch to push. `"origin"` sends `refs/remotes/origin/<source>` and falls back to `refs/heads/<source>` when the branch has no upstream copy; `"local"` reverses the order. |
 | `autofetch` | bool | `true` | Run `git fetch origin <source>` on the host before resolving the ref, so the remote-tracking copy is current. Only applies in `push_from: origin` mode. Best-effort — the push proceeds with the refs already present; a failure is reported only when the origin ref is what ended up travelling (and may therefore be stale), not when resolution fell back to the local branch because the source simply isn't on origin. |
+| `tags` | `"none"` \| `"reachable"` \| `"all"` | `"none"` | Which tags travel from the host into a container. `"none"` sends none; `"reachable"` sends the tags reachable from the pushed branch (computed with `git tag --merged`, not `--follow-tags`, so lightweight tags survive); `"all"` mirrors every tag the host has. Never re-points a tag that already exists in the container, and never reaches the GitHub origin — `jailbee pr` is unaffected. See [Tags](git-bridge.md#tags). |
+| `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git push --merge` merges inside the container. `"auto"` fast-forwards when the container is already on the pushed branch and writes a merge commit otherwise, asking first (TTY) or erroring (no TTY) if that fast-forward turns out to be impossible; `"always"` demands a fast-forward and fails on divergence; `"never"` always writes a merge commit. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
 
 CLI flags (`--merge`, `--rebase`, `--plain`, `--from`, `--current`,
-`--from-origin`, `--from-local`, `--fetch`/`--no-fetch`) always win over
-the configured defaults. With `"ask"`, the command opens a `questionary`
-prompt; in a non-TTY environment, the command errors and points at the
-relevant config key.
+`--from-origin`, `--from-local`, `--fetch`/`--no-fetch`, `--ff`/`--no-ff`,
+`--tags`/`--follow-tags`/`--no-tags`) always win over the configured
+defaults. With `"ask"`, the command opens a `questionary` prompt; in a
+non-TTY environment, the command errors and points at the relevant config
+key.
 
 The dashboards follow the same rule from the other side. `jailbee dashboard`
 hands over the real terminal, so the `questionary` prompt appears exactly as it

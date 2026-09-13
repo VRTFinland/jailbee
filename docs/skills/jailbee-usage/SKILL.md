@@ -234,26 +234,41 @@ container to merge into instead of quietly merging into the host.
   with a warning.
   - `--force` — overwrite a diverged host branch anyway; always refused for the
     branch currently checked out.
+  - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` (default
+    `reachable`) for this run: `all` tags, tags reachable from the fetched
+    branch (lightweight and annotated alike), or none. Same three flags on
+    `checkout`/`pull`/`push` below.
   - Switch the tree onto what was just fetched with `jailbee branch <branch>`.
 - `jailbee git checkout <name>` — fetch, then fast-forward (or create) the matching
   host branch **and switch onto it**. Refuses on divergence and points you at `jailbee git pull`.
+  Always fast-forward-only — `pull.ff` does not reach this command.
   - `--as <branch>` — land it on a differently named host branch (the default is
     the container's branch, or its PR head when the container has one).
   - `-b <branch>` — read a different branch **from the container**; it never
     renames the host branch. Same meaning on `fetch`/`pull`/`push`.
+  - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` for this run.
 - `jailbee git pull <name>` — fetch, then **merge the container's branch into its base
-  branch** (`user.jailbee.base_branch`, e.g. `main`), creating a merge commit. This is
-  the usual "I'm done, integrate it" command.
+  branch** (`user.jailbee.base_branch`, e.g. `main`). This is the usual "I'm
+  done, integrate it" command. By default (`pull.ff: auto`) it fast-forwards
+  when the host branch is strictly behind and writes a merge commit
+  otherwise — the "Merge branch 'X' from container Y" line only appears in
+  the latter case, since git skips `-m` on a fast-forward.
   - `--into <branch>` — merge into a different host branch instead of the base.
   - `--current` — merge into the host's currently checked-out branch instead of the
     base (mirror of `jailbee git push --current`); mutually exclusive with `--into`, and
     errors if the host is in detached HEAD.
-  - `--ff` — fast-forward only; refuse if histories diverged.
-  - `--checkout` — if the base branch isn't currently checked out, check it out,
-    merge, then restore the original branch (refuses on a dirty host tree).
+  - `--ff` — fast-forward only; refuse if histories diverged. `--no-ff` — always
+    write a merge commit (the pre-1.4.0 default; set `pull.ff: never` to keep
+    it permanently). Neither flag reads `pull.ff` (`never`/`auto`/`always`).
+  - `--checkout` — if the target branch isn't currently checked out, check it out,
+    merge, then stay on it (refuses on a dirty host tree). A target that is
+    **not** checked out and fast-forwardable is always fast-forwarded at ref
+    level, regardless of `--ff`/`--no-ff`/`pull.ff` — that's a ref move, not a
+    merge.
   - `--cleanup` / `--no-cleanup` — force or skip the post-merge destroy-container +
     delete-branch steps (otherwise governed by the `pull:` config block, which can
     `prompt`/`always`/`never` each step).
+  - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` for this run.
   - **No name + a TTY** → multi-select picker; pulls each selected container in
     order and stops at the first failure.
 
@@ -285,6 +300,18 @@ container to merge into instead of quietly merging into the host.
     `--pr` bypasses the choice entirely (it pushes `refs/jailbee/pr/<N>/head`, so
     `--from-local`/`--from-origin` are rejected with it).
     Configured by `push.push_from` / `push.autofetch`.
+  - `--tags` / `--follow-tags` / `--no-tags` — override `push.tags` (default
+    `none`) for this run: `all` tags, tags reachable from the pushed branch
+    (computed with `git tag --merged`, not `--follow-tags`'s own git meaning,
+    so lightweight tags survive), or none. Applies with `--merge`/`--rebase`/
+    `--force` too. Never re-points a tag that already exists in the container,
+    and never reaches the GitHub origin — `jailbee pr` sends no tags, with no
+    flag to change that. A tag that already exists in the container pointing
+    elsewhere is not skipped — git rejects it, and that failure aborts the
+    whole push (the merge/rebase included) before it runs; container → host
+    `reachable` skips such a tag silently instead, since that leg is git's own
+    automatic tag-following rather than an explicit per-tag refspec. Move a
+    re-pointed tag with `git push --force` first if this happens.
   - **No name + a TTY** → multi-select picker; source/action chosen once, applied to
     all, failures don't stop the batch (summary at the end).
 
@@ -374,7 +401,10 @@ scripting.
 - `jailbee git retarget <name> <new-base> [--merge]` — re-point a container at a
   different base branch (rewrites `user.jailbee.base_branch`; `pull`/`push`/`ls`
   follow it). The stacked-PR tool: when a parent PR merges to `main`, retarget
-  its dependent container from the parent branch onto `main`.
+  its dependent container from the parent branch onto `main`. `--merge` does
+  **not** honour `push.tags` or `push.ff` — the merge it runs always behaves
+  as `none` for tags and always writes a merge commit for `ff`, and there is
+  no flag to change either.
 - `jailbee branch [<branch>] [--container <name>] [--submodules-only]` — put the
   tree on one branch, superproject and submodules, when they land on a detached
   HEAD after clone/push/pull. No `--container` → the host repo; `--container

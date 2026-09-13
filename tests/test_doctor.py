@@ -1704,7 +1704,9 @@ def test_doctor_skips_host_skills_when_claude_is_disabled(tmp_path: Path, mocker
 
     results = _check_user_setup(cfg)
 
-    assert [r.name for r in results] == ["shell completions"]
+    names = [r.name for r in results]
+    assert "shell completions" in names
+    assert "claude skills (host)" not in names
     skills.assert_not_called()
 
 
@@ -2878,3 +2880,20 @@ def test_the_running_row_renders_its_spinner_and_progress(tmp_path):
 
     assert "1200/1352" in out
     assert "11.2" in out
+
+
+def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mocker) -> None:
+    """`jailbee setup` cannot install it — that would mean reinstalling the
+    tool jailbee is running from — so doctor reports it and never fails on it."""
+    from jailbee.doctor import _check_user_setup
+
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "ok"))
+    mocker.patch("jailbee.setup_command.qt_dashboard_status", return_value=(False, "not installed"))
+
+    results = _check_user_setup(_cfg(tmp_path))
+
+    check = next(r for r in results if r.name == "qt dashboard (optional)")
+    assert check.ok is True, "an optional extra must not fail doctor"
+    assert "not installed" in check.detail

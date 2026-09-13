@@ -5767,7 +5767,9 @@ def test_cli_push_current_resolves_host_branch(mocker, tmp_path):
     from jailbee.cli import app
     from jailbee.sync import PushResult
 
-    mocker.patch("jailbee.cli._load_or_exit", return_value=mocker.MagicMock())
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.push.ff = "auto"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch(
         "jailbee.cli._resolve_existing",
         return_value=(mocker.MagicMock(), "full-name"),
@@ -5818,7 +5820,9 @@ def test_cli_push_current_detached_head_errors(mocker):
 
     from jailbee.cli import app
 
-    mocker.patch("jailbee.cli._load_or_exit", return_value=mocker.MagicMock())
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.push.ff = "auto"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch(
         "jailbee.cli._resolve_existing",
         return_value=(mocker.MagicMock(), "full-name"),
@@ -8496,11 +8500,12 @@ def test_do_single_pull_prints_direction(mocker, capsys):
         incus,
         "feat-foo",
         branch=None,
-        ff_only=False,
+        ff="never",
         into="dev",
         allow_checkout=False,
         destroy_policy="never",
         branch_policy="never",
+        tags="reachable",
     )
     out = capsys.readouterr().out
     assert "feat/foo (container) ──▶ dev (host)" in out

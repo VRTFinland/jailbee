@@ -359,6 +359,33 @@ def test_create_pr_branch_override_forwarded(mocker, tmp_path):
     assert publish.call_args.kwargs["branch"] == "feat/x"
 
 
+def test_create_pr_forwards_pull_tags_config(mocker, tmp_path):
+    """`jailbee pr`'s container fetch must honour `pull.tags`.
+
+    `publish_branch_from_container` fetches the container's branch to the
+    host before pushing to origin, and that fetch is the same container-to-host
+    leg `pull.tags` governs everywhere else. Before this fix the call site
+    passed no `tags=` at all, silently falling back to the function's own
+    `"reachable"` default regardless of what `pull.tags` was configured to.
+    Setting it to `"all"` here — a value that differs from the default —
+    means this test would fail if the config key stopped reaching the call,
+    not just if the parameter were dropped entirely.
+    """
+    cfg_mock, _ = _setup(mocker, tmp_path)
+    cfg_mock.pull.tags = "all"
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        return_value=_publish_result(),
+    )
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert publish.call_args.kwargs["tags"] == "all"
+
+
 def test_create_pr_fresh_success_includes_branch(mocker, tmp_path):
     """Finding 4: fresh-create success line includes the branch name."""
     _setup(mocker, tmp_path)

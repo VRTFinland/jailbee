@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from jailbee.config import Config
+    from jailbee.config.models_behaviour import FfPolicy, TagPolicy
     from jailbee.incus import Incus
     from jailbee.submodules import GitRun
     from jailbee.tui import ConfirmFn
@@ -1023,7 +1024,7 @@ def plan_pull(
     *,
     branch: str | None,
     into: str | None,
-    ff_only: bool,
+    ff: FfPolicy,
 ) -> BridgePlan:
     """Describe a pending `jailbee git pull` without mutating anything.
 
@@ -1070,7 +1071,7 @@ def plan_pull(
         container_state=state,
         source=source_summary,
         target=target_summary,
-        action="ff-only" if ff_only else "merge",
+        action={"always": "ff-only", "never": "merge", "auto": "ff-or-merge"}[ff],
         incoming=ahead,
         notes=tuple(notes),
     )
@@ -1258,12 +1259,17 @@ def fetch_from_container(
     short: str,
     *,
     branch: str | None = None,
+    tags: TagPolicy = "reachable",
 ) -> FetchResult:
     """Fetch commits from container `short` into `refs/jailbee/<short>/<branch>`.
 
     Raises `SyncError` for user-visible problems (stopped container, no
     clone, unresolvable branch, a branch the container doesn't have). git
     failures bubble up as `GitError`.
+
+    ``tags`` is the container-to-host tag policy (``cfg.pull.tags``, or the
+    caller's flag). It reaches `git.fetch_url` unchanged; this function is the
+    single choke point for that direction.
     """
     from jailbee.lifecycle import container_repo_dir
 
@@ -1290,7 +1296,7 @@ def fetch_from_container(
     refspec = f"+refs/heads/{resolved}:{ref}"
 
     old_oid = git.rev_parse(cfg.repo_root, ref)
-    git.fetch_url(cfg.repo_root, url, refspec)
+    git.fetch_url(cfg.repo_root, url, refspec, tags=tags)
     new_oid = git.rev_parse(cfg.repo_root, ref)
     if new_oid is None:
         raise SyncError(f"fetch succeeded but {ref} did not resolve")
@@ -1334,6 +1340,7 @@ def sync_refs_from_container(
     branch: str | None = None,
     as_name: str | None = None,
     force: bool = False,
+    tags: TagPolicy = "reachable",
 ) -> SyncRefsResult:
     """Bring container `short`'s state onto the host as refs, without a checkout.
 
@@ -1365,7 +1372,7 @@ def sync_refs_from_container(
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
 
     full_name = resolve_container_name(cfg, incus, short)
     repo_dir = container_repo_dir(cfg, incus, full_name)
@@ -1468,6 +1475,7 @@ def publish_branch_from_container(
     publish_name: str | None = None,
     force: bool = False,
     on_before_push: Callable[[PublishResult], None] | None = None,
+    tags: TagPolicy = "reachable",
 ) -> PublishResult:
     """Fetch container `short`'s branch and push it to the GitHub origin.
 
@@ -1488,7 +1496,7 @@ def publish_branch_from_container(
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
-    fetch = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
 
     full_name = resolve_container_name(cfg, incus, short)
     repo_dir = container_repo_dir(cfg, incus, full_name)
@@ -1541,6 +1549,7 @@ def checkout_from_container(
     *,
     branch: str | None = None,
     as_name: str | None = None,
+    tags: TagPolicy = "reachable",
 ) -> CheckoutResult:
     """Fetch + check out the container's branch on the host (ff-only).
 
@@ -1561,7 +1570,7 @@ def checkout_from_container(
     """
     # force is deliberately left at its default: a checkout must never
     # overwrite host history the way `jailbee git pull --force` can.
-    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name)
+    refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name, tags=tags)
     target = refs.target
     status = refs.superproject.status
 
@@ -1736,26 +1745,48 @@ def merge_from_container(
     short: str,
     *,
     branch: str | None = None,
-    ff_only: bool = False,
+    ff: FfPolicy = "auto",
     into: str | None = None,
     allow_checkout: bool = False,
+    tags: TagPolicy = "reachable",
 ) -> MergeResult:
     """Fetch + merge the container's branch into its base branch.
 
     The merge target defaults to the container's base branch
-    (``user.jailbee.base_branch``), overridable with ``into``. When the target
-    is the host's current HEAD the merge runs in place (a ``--no-ff`` merge
-    commit, or ``--ff-only`` when ``ff_only``). When the target is a
-    different branch, the target ref is fast-forwarded without a checkout;
-    on a non-fast-forward this raises ``SyncError`` unless ``allow_checkout``
-    is set, in which case the target is checked out and merged, leaving host
-    HEAD on the target.
+    (``user.jailbee.base_branch``), overridable with ``into``. There are
+    three merge paths, and ``ff`` governs the first and third differently
+    from the second:
+
+    1. **In place** (``target == current`` HEAD): ``ff="never"`` writes a
+       ``--no-ff`` merge commit, ``ff="always"`` requires ``--ff-only``, and
+       ``ff="auto"`` passes neither flag — git's own default, which
+       fast-forwards when the target is strictly behind and writes a merge
+       commit otherwise. The provenance message is passed under every
+       policy; git ignores ``-m`` when the merge actually fast-forwards.
+
+    2. **Different target, fast-forwardable**: the target ref is moved at
+       ref level by ``git.fast_forward_branch`` — no merge commit, and no
+       checkout unless ``allow_checkout`` is set, in which case a courtesy
+       ``git.checkout_branch`` follows the ref move. This path is
+       **policy-independent by design** — a
+       non-checked-out target that is strictly behind is fast-forwarded
+       under every value of ``ff``. Honouring ``never`` here would mean
+       checking out a branch the user did not ask to check out, purely to
+       manufacture a merge commit; it is a ref move, not a merge.
+
+    3. **Different target, diverged**: refused with ``SyncError`` unless
+       ``allow_checkout`` is set. With ``allow_checkout``, ``ff="always"``
+       still refuses (reaching this path at all means the branches have
+       diverged, which a fast-forward-only policy cannot satisfy); otherwise
+       the target is checked out and merged via ``_merge_via_checkout``
+       (``ff="never"`` forces a merge commit, ``ff="auto"`` lets git decide),
+       leaving host HEAD on the target.
 
     Cleanup is handled separately by ``run_post_merge_cleanup``.
     """
     from jailbee.lifecycle import resolve_container_name
 
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch)
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
     container_branch = fetch_result.branch
     fetched_ref = f"refs/jailbee/{short}/{container_branch}"
 
@@ -1775,15 +1806,18 @@ def merge_from_container(
     if target == current:
         # In-place path: HEAD IS the target branch.
         pre_merge_head = git.rev_parse(cfg.repo_root, "HEAD")
-        if ff_only:
+        if ff == "always":
             git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
         else:
+            # `auto` passes neither flag, which is git's own default: fast-forward
+            # when the target is strictly behind, merge commit otherwise. The
+            # message is passed either way — git ignores `-m` on a fast-forward.
             try:
                 git.merge_ref(
                     cfg.repo_root,
                     fetched_ref,
                     message=f"Merge branch '{container_branch}' from container {short}",
-                    no_ff=True,
+                    no_ff=(ff == "never"),
                     ff_only=False,
                 )
             except git.GitError:
@@ -1834,15 +1868,29 @@ def merge_from_container(
         return result
 
     if not allow_checkout:
+        also_ff_always = (
+            " Note: with --ff (or pull.ff: always), --checkout will refuse this "
+            "same divergence too — drop --ff, or set pull.ff to 'auto'/'never', "
+            "before retrying."
+            if ff == "always"
+            else ""
+        )
         raise SyncError(
             f"Base branch '{target}' has diverged from container '{short}' and "
             f"is not the checked-out branch, so it can't be fast-forwarded in "
             f"place. Re-run with --checkout to check it out and merge, or "
-            f"check it out yourself and run 'jailbee git pull {short}'."
+            f"check it out yourself and run 'jailbee git pull {short}'.{also_ff_always}"
+        )
+
+    if ff == "always":
+        raise SyncError(
+            f"Target branch '{target}' has diverged from container '{short}', and "
+            f"--ff (or pull.ff: always) asks for a fast-forward only. Re-run "
+            f"without --ff to merge, or resolve the divergence first."
         )
 
     result = _merge_via_checkout(
-        cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head
+        cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head, ff
     )
     _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
     return result
@@ -1856,10 +1904,13 @@ def _merge_via_checkout(
     fetched_ref: str,
     target: str,
     pre_merge_head: str | None,
+    ff: FfPolicy,
 ) -> MergeResult:
     """Check out ``target``, merge ``fetched_ref``, and stay on ``target``.
 
-    The caller has already verified the working tree is clean. On a merge
+    The caller has already verified the working tree is clean and refused
+    ``ff == "always"`` (reaching this function at all means the branches have
+    diverged, which a fast-forward-only policy cannot satisfy). On a merge
     conflict the host is left on ``target`` in merge state so the user can
     resolve it; a ``SyncError`` carries the hint.
     """
@@ -1869,7 +1920,7 @@ def _merge_via_checkout(
             cfg.repo_root,
             fetched_ref,
             message=f"Merge branch '{container_branch}' from container {short}",
-            no_ff=True,
+            no_ff=(ff == "never"),
             ff_only=False,
         )
     except git.GitError:
@@ -2103,6 +2154,7 @@ def push_to_container(
     fetch: bool | None = None,
     source_ref: str | None = None,
     namespace: str = "host",
+    tags: TagPolicy = "none",
 ) -> PushResult:
     """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
@@ -2136,6 +2188,11 @@ def push_to_container(
     container is a different branch that happens to share a name with this
     container's base, and must not silently change what `jailbee ls`'s AHEAD
     column measures against.
+
+    ``tags`` is the host-to-container tag policy (``cfg.push.tags``, or the
+    caller's flag). ``reachable`` resolves the set with `git.tags_reachable_from`
+    rather than `git push --follow-tags`, which would drop lightweight tags. No
+    tag refspec is ever forced.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -2196,19 +2253,36 @@ def push_to_container(
 
     base_label = incus.config_get(full_name, "user.jailbee.base_branch")
     base_branch = base_label if isinstance(base_label, str) and base_label else None
+
+    refspecs = [host_refspec]
     if namespace == "host" and base_branch is not None and resolved_source == base_branch:
         # Pushing the container's base branch — also advance the jailbee-managed
         # base ref so `jailbee ls` reflects the fresh base. Restricted to a real
         # host push: a same-named branch relayed from another container
         # (namespace != "host") is a different branch that happens to share a
         # name, and must not re-anchor the base.
-        git.push_url_multi(
-            cfg.repo_root,
-            url,
-            [host_refspec, f"+{host_ref}:refs/jailbee/base/{base_branch}"],
+        refspecs.append(f"+{host_ref}:refs/jailbee/base/{base_branch}")
+
+    # Tag refspecs are never forced: a tag that already exists in the container
+    # keeps pointing where it does. Re-pointing one stays a deliberate manual
+    # `git push --force`, which is what stops a routine push from rewriting a
+    # release tag.
+    if tags == "all":
+        refspecs.append("refs/tags/*:refs/tags/*")
+    elif tags == "reachable":
+        refspecs.extend(
+            f"refs/tags/{name}:refs/tags/{name}"
+            for name in git.tags_reachable_from(cfg.repo_root, host_ref)
         )
+    elif tags == "none":
+        pass
     else:
-        git.push_url(cfg.repo_root, url, host_refspec)
+        assert_never(tags)
+
+    if len(refspecs) == 1:
+        git.push_url(cfg.repo_root, url, refspecs[0])
+    else:
+        git.push_url_multi(cfg.repo_root, url, refspecs)
 
     return PushResult(
         source=resolved_source,
@@ -2529,6 +2603,7 @@ def push_and_merge(
     source_ref: str | None = None,
     no_ff: bool | None = None,
     confirm: ConfirmFn | None = None,
+    tags: TagPolicy = "none",
 ) -> MergeInContainerResult:
     """Push host's `source` into container and merge it into the current branch.
 
@@ -2560,7 +2635,8 @@ def push_and_merge(
     detached background worker) — it must never block on stdin, so it is an
     error rather than a prompt.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
     from jailbee.tui import warn_plain
@@ -2589,6 +2665,7 @@ def push_and_merge(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     if no_ff is not None:
@@ -2711,7 +2788,11 @@ def merge_container_into_container(
     uid = cfg.container_user.uid
     target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
 
-    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch)
+    # Decision 7 (design doc): the relay runs source container -> host ->
+    # target container through the same two transports. Inheriting the host's
+    # tag policy would push the HOST's tag set into a target container that
+    # asked for none of it, so both legs are pinned to "none".
+    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch, tags="none")
     source_full = resolve_container_name(cfg, incus, source_short)
     source_repo_dir = container_repo_dir(cfg, incus, source_full)
     submodules.transport_submodules_to_host(
@@ -2735,6 +2816,7 @@ def merge_container_into_container(
         source=fetch_result.branch,
         source_ref=f"refs/jailbee/{source_short}/{fetch_result.branch}",
         namespace=f"from/{source_short}",
+        tags="none",
     )
 
     if plain:
@@ -2789,6 +2871,7 @@ def push_and_rebase(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    tags: TagPolicy = "none",
 ) -> RebaseInContainerResult:
     """Push host's `source` into container and rebase the current branch onto it.
 
@@ -2797,7 +2880,8 @@ def push_and_rebase(
     in rebase state for manual resolution. Same-branch is not treated
     specially — `git rebase` itself handles the no-op case.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
@@ -2826,6 +2910,7 @@ def push_and_rebase(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     rebase_cmd = ["git", "-C", repo_dir, "rebase", push_result.container_ref]
@@ -2875,6 +2960,7 @@ def push_and_reset(
     prefer_ref: SourcePref | None = None,
     fetch: bool | None = None,
     source_ref: str | None = None,
+    tags: TagPolicy = "none",
 ) -> ResetInContainerResult:
     """Push host's `source` into container and hard-reset the current branch to it.
 
@@ -2885,7 +2971,8 @@ def push_and_reset(
     refused; instead the result reports how many container-only commits
     were discarded.
 
-    `prefer_ref` / `fetch` / `source_ref` are forwarded to `push_to_container`.
+    `prefer_ref` / `fetch` / `source_ref` / `tags` are forwarded to
+    `push_to_container`.
     """
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
@@ -2914,6 +3001,7 @@ def push_and_reset(
         prefer_ref=prefer_ref,
         fetch=fetch,
         source_ref=source_ref,
+        tags=tags,
     )
 
     if container_branch != push_result.source:

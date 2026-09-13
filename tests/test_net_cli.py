@@ -102,6 +102,21 @@ def test_net_install_calls_install_systemd_units(mocker: MockerFixture) -> None:
     install_mock.assert_called_once()
 
 
+def test_net_install_says_it_is_deprecated(mocker: MockerFixture) -> None:
+    """It predates `jailbee setup`, which now owns the timer step and is what
+    `make install` runs. Nothing is left that only this command can do."""
+    from jailbee.constants import LEGACY_REMOVAL_VERSION
+
+    mocker.patch("jailbee.init_command.install_systemd_units")
+
+    result = runner.invoke(app, ["net", "install"])
+
+    combined = (result.output or "") + (result.stderr or "")
+    assert "deprecated" in combined
+    assert "jailbee setup --yes --only timer" in combined
+    assert LEGACY_REMOVAL_VERSION in combined
+
+
 def test_net_unregister_removes_row(
     mocker: MockerFixture,
     tmp_path: Path,

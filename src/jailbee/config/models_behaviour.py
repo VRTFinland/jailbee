@@ -10,6 +10,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jailbee.config.models_net import _reject_offline
 
+TagPolicy = Literal["none", "reachable", "all"]
+"""Which tags a git-bridge transfer carries.
+
+``none`` — no tags cross. ``reachable`` — tags reachable from the transferred
+branch tip, lightweight and annotated alike. ``all`` — every tag in the source
+repository. No policy ever re-points an existing tag: no refspec is forced.
+"""
+
+FfPolicy = Literal["never", "auto", "always"]
+"""How a git-bridge merge treats a possible fast-forward.
+
+``never`` — always write a merge commit. ``auto`` — direction-specific, see
+each field's description. ``always`` — demand a fast-forward, fail on
+divergence.
+"""
+
 
 class ConfirmConfig(BaseModel):
     """Policy for confirming a bridge operation whose target jailbee chose itself.
@@ -56,6 +72,29 @@ class PullConfig(BaseModel):
         description=(
             "Whether to delete the merged local host branch after a successful merge. "
             "`prompt` asks each time; `always`/`never` decide without asking."
+        ),
+    )
+    tags: TagPolicy = Field(
+        default="reachable",
+        description=(
+            "Which tags travel from a container to the host. Governs the whole "
+            "container-to-host direction — `jailbee git fetch`, `git checkout` and "
+            "`git pull` alike, not just `pull`. `reachable` (default) is what git "
+            "has always done here implicitly; `all` mirrors every tag the "
+            "container has; `none` keeps the host's `refs/tags/*` untouched. No "
+            "setting ever re-points a tag that already exists on the host."
+        ),
+    )
+    ff: FfPolicy = Field(
+        default="auto",
+        description=(
+            "How `jailbee git pull` merges the container's branch. `auto` (default) "
+            "fast-forwards when the host branch is strictly behind and writes a "
+            "merge commit otherwise; `never` always writes a merge commit (the "
+            "behaviour before 1.4.0); `always` demands a fast-forward and fails "
+            "on divergence. `--ff`/`--no-ff` override it for one run. A target "
+            "branch that is not checked out is fast-forwarded at ref level under "
+            "every setting — that is a ref move, not a merge."
         ),
     )
 
@@ -105,6 +144,27 @@ class PushConfig(BaseModel):
             "Run `git fetch origin <source>` on the host before resolving the ref, so "
             "the remote-tracking copy is current. Only applies in `push_from: origin` "
             "mode; best-effort, so a failed fetch does not block the push."
+        ),
+    )
+    tags: TagPolicy = Field(
+        default="none",
+        description=(
+            "Which tags travel from the host into a container on `jailbee git push`. "
+            "`none` (default) sends none; `reachable` sends the tags reachable "
+            "from the pushed branch; `all` mirrors every tag the host has. Never "
+            "re-points a tag that already exists in the container, and never "
+            "sends tags to the GitHub origin — `jailbee pr` is unaffected."
+        ),
+    )
+    ff: FfPolicy = Field(
+        default="auto",
+        description=(
+            "How `jailbee git push --merge` merges inside the container. `auto` "
+            "(default) fast-forwards when the container is already on the pushed "
+            "branch and writes a merge commit otherwise, asking before merging "
+            "if that fast-forward turns out to be impossible; `never` always "
+            "writes a merge commit; `always` demands a fast-forward and fails on "
+            "divergence. `--ff`/`--no-ff` override it for one run."
         ),
     )
 

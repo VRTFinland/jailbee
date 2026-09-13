@@ -1021,7 +1021,11 @@ def test_checkout_forwards_branch_and_as_name_without_forcing(mocker, make_cfg, 
         cfg, incus, "feat-foo", branch="other/branch", as_name="mine"
     )
 
-    sync_refs.assert_called_once_with(cfg, incus, "feat-foo", branch="other/branch", as_name="mine")
+    # tags="reachable" is checkout_from_container's own default, forwarded
+    # unconditionally now that it threads the tag policy through.
+    sync_refs.assert_called_once_with(
+        cfg, incus, "feat-foo", branch="other/branch", as_name="mine", tags="reachable"
+    )
     assert result.branch == "mine"
     checkout.assert_called_once_with(cfg.repo_root, "mine")
     update_subs.assert_called_once_with(cfg.repo_root, branch="mine")
@@ -1843,6 +1847,99 @@ def test_cleanup_branch_delete_skipped_when_into_branch_is_none(mocker, make_cfg
     assert result.deleted_branch is False
 
 
+def _drive_merge_in_place(mocker, tmp_path, make_cfg, *, ff):
+    """Drive `merge_from_container` down the in-place path (target == current
+    HEAD).
+
+    Mirrors the mock surface of `test_merge_runs_no_ff_with_message` /
+    `test_merge_ff_only_passes_through`: no base_branch label, so the target
+    falls back to the current branch and the merge runs in place. Callers
+    patch `jailbee.git.merge_ref` themselves before calling this.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    _stub_fetch(mocker)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    return sync.merge_from_container(cfg, incus, "feat-foo", ff=ff)
+
+
+def _drive_merge_via_checkout(mocker, tmp_path, make_cfg, *, ff):
+    """Drive `merge_from_container` down the checkout path: target (the
+    container's base branch) differs from current, `fast_forward_branch`
+    reports divergence, and `allow_checkout=True`.
+
+    Mirrors the mock surface of `test_merge_checkout_path_merges_and_stays`.
+    Callers patch `jailbee.git.merge_ref` themselves before calling this.
+    """
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="ccc")
+    mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=False)
+    mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.refresh_container_base")
+
+    return sync.merge_from_container(cfg, incus, "feat-x", ff=ff, allow_checkout=True)
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        ("never", {"no_ff": True, "ff_only": False}),
+        ("auto", {"no_ff": False, "ff_only": False}),
+        ("always", {"no_ff": False, "ff_only": True}),
+    ],
+)
+def test_merge_in_place_honours_the_ff_policy(mocker, tmp_path, make_cfg, policy, expected):
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_in_place(mocker, tmp_path, make_cfg, ff=policy)  # target == current
+
+    assert merge_ref.call_args.kwargs["no_ff"] is expected["no_ff"]
+    assert merge_ref.call_args.kwargs["ff_only"] is expected["ff_only"]
+
+
+def test_auto_keeps_the_provenance_message(mocker, tmp_path, make_cfg):
+    """`-m` is ignored by git on a fast-forward, so `auto` still passes it."""
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
+
+    assert "from container" in (merge_ref.call_args.kwargs["message"] or "")
+
+
+def test_checkout_path_honours_the_ff_policy(mocker, tmp_path, make_cfg):
+    """Pre-existing defect: _merge_via_checkout used to force no_ff regardless."""
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="auto")
+
+    assert merge_ref.call_args.kwargs["no_ff"] is False
+
+
+def test_checkout_path_honours_ff_never(mocker, tmp_path, make_cfg):
+    """`pull.ff: never` is the documented way back to the pre-1.4.0 always-merge-
+    commit behaviour, and path 3 (`_merge_via_checkout`) is exactly where that
+    behaviour was hardcoded before `ff` existed — `test_checkout_path_honours_the_ff_policy`
+    above only exercises `auto`, so this is the only test asserting `no_ff=True`
+    actually reaches `git.merge_ref` on this path.
+    """
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+    _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="never")
+
+    assert merge_ref.call_args.kwargs["no_ff"] is True
+
+
+def test_checkout_path_refuses_under_always(mocker, tmp_path, make_cfg):
+    """`always` means 'fail on divergence' — reaching the checkout merge is divergence."""
+    with pytest.raises(sync.SyncError, match="diverged"):
+        _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="always")
+
+
 def test_merge_returns_merge_result(mocker, make_cfg, tmp_path):
     from jailbee.sync import MergeResult, merge_from_container
 
@@ -1901,7 +1998,9 @@ def test_merge_runs_no_ff_with_message(mocker, make_cfg, tmp_path):
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo")
+    # Explicit "never": the new default is "auto", which no longer forces
+    # no_ff=True — see test_merge_in_place_honours_the_ff_policy for that.
+    merge_from_container(cfg, incus, "feat-foo", ff="never")
 
     mock_merge.assert_called_once_with(
         cfg.repo_root,
@@ -1922,7 +2021,7 @@ def test_merge_ff_only_passes_through(mocker, make_cfg, tmp_path):
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
 
     mock_merge.assert_called_once_with(
         cfg.repo_root,
@@ -1947,7 +2046,7 @@ def test_merge_ff_only_propagates_git_error(mocker, make_cfg, tmp_path):
     )
 
     with pytest.raises(GitError):
-        merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+        merge_from_container(cfg, incus, "feat-foo", ff="always")
 
 
 def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_path):
@@ -1980,7 +2079,7 @@ def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
     mock_merge.assert_called_once()
     mock_input.assert_not_called()
 
@@ -3427,6 +3526,41 @@ def test_push_and_merge_transports_an_explicit_source_ref(mocker, make_cfg, tmp_
     )
 
 
+def test_push_and_merge_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--merge`'s `tags` must reach the same `push_to_container` refspec-building
+    Task 4 gave the `--plain` path — not just be accepted and dropped."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_merge
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/foo\n",
+            "rev_parse_gie": "",
+            "merge": "",
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+
+    push_and_merge(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
+
+
 def test_push_and_rebase_transports_an_explicit_source_ref(mocker, make_cfg, tmp_path):
     from jailbee.incus import IncusError
     from jailbee.sync import push_and_rebase
@@ -3468,6 +3602,41 @@ def test_push_and_rebase_transports_an_explicit_source_ref(mocker, make_cfg, tmp
     assert push_url.call_args.args[2] == (
         "+refs/jailbee/pr/1234/head:refs/jailbee/host/feat/pr-branch"
     )
+
+
+def test_push_and_rebase_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--rebase`'s `tags` must reach `push_to_container`'s refspec building."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_rebase
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "feat/other\n",
+            "rev_parse_gie": "",
+            "rev_list_count": "2\n",
+            "rebase": "",
+            "rev_parse_head": "container-head-oid\n",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+
+    push_and_rebase(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
 
 
 def test_push_and_merge_dirty_tree_raises(mocker, make_cfg, tmp_path):
@@ -3976,6 +4145,41 @@ def test_push_and_reset_happy_path(mocker, make_cfg, tmp_path):
     reset_cmd = reset_calls[0].args[1]
     assert "--hard" in reset_cmd
     assert "refs/jailbee/host/main" in reset_cmd
+
+
+def test_push_and_reset_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`--force`'s `tags` must reach `push_to_container`'s refspec building."""
+    from jailbee.incus import IncusError
+    from jailbee.sync import push_and_reset
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+
+    incus.exec.side_effect = _exec_dispatcher(
+        {
+            "status": "",
+            "merge_head": IncusError("not found"),
+            "rebase_merge": IncusError("not found"),
+            "rebase_apply": IncusError("not found"),
+            "head_branch": "main\n",
+            "rev_parse_gie": "",
+            "rev_parse_head": "old-branch-oid\n",
+            "rev_list_count": "0\n",
+            "reset": "",
+        }
+    )
+
+    _common_push_patches(mocker, cfg, full)
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+
+    push_and_reset(cfg, incus, "feat-foo", tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args.args[2]
 
 
 def test_push_and_reset_different_branch_refuses(mocker, make_cfg, tmp_path):
@@ -5054,7 +5258,7 @@ def test_ff_only_pull_never_invokes_resolver(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
     resolve = mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
 
-    merge_from_container(cfg, incus, "feat-foo", ff_only=True)
+    merge_from_container(cfg, incus, "feat-foo", ff="always")
 
     resolve.assert_not_called()
 
@@ -5920,11 +6124,12 @@ def test_do_single_pull_prints_submodule_report(mocker, make_cfg, tmp_path):
         incus,
         "feat-x",
         branch=None,
-        ff_only=False,
+        ff="never",
         into=None,
         allow_checkout=False,
         destroy_policy="never",
         branch_policy="never",
+        tags="reachable",
     )
 
     out = recording.export_text()
@@ -6515,7 +6720,7 @@ def test_plan_pull_targets_the_base_branch_label(mocker, make_cfg, tmp_path):
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff="never")
 
     assert plan.direction == "pull"
     assert plan.source.label == "feat/foo"
@@ -6542,7 +6747,7 @@ def test_plan_pull_into_overrides_the_label_and_notes_a_branch_switch(mocker, ma
         "feat/foo\n" if args[3] == "symbolic-ref" else ""
     )
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into="develop", ff_only=True)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into="develop", ff="always")
 
     assert plan.target.label == "develop"
     assert plan.target.oid is None
@@ -6685,7 +6890,7 @@ def test_plan_pull_explicit_branch_reads_that_refs_tip_not_head(mocker, make_cfg
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch="other", into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch="other", into=None, ff="never")
 
     assert plan.source.label == "other"
     assert plan.source.oid == "d" * 40
@@ -6765,7 +6970,7 @@ def test_plan_pull_detached_head_with_branch_label_still_notes_detached(mocker, 
 
     incus.exec.side_effect = _exec
 
-    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff_only=False)
+    plan = sync.plan_pull(cfg, incus, "feat-foo", branch=None, into=None, ff="never")
 
     assert plan.source.label == "feat/foo"
     assert plan.source.oid == "1" * 40
@@ -7720,3 +7925,259 @@ def test_an_unreadable_divergence_keeps_the_fast_forward(mocker, make_cfg, tmp_p
 
     assert "--ff-only" in _merge_cmd(incus)
     assert result.fast_forward_only is True
+
+
+# ---------------------------------------------------------------------------
+# tag policy threading (container -> host)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_stub(mocker, tmp_path, make_cfg):
+    """Wire enough mocks for fetch_from_container to reach git.fetch_url."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync.assert_container_publishable", return_value="c-feat-foo")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/x")
+    mocker.patch("jailbee.sync._resolve_branch", return_value="feat/foo")
+    mocker.patch("jailbee.sync._assert_container_has_branch")
+    mocker.patch("jailbee.sync._build_ext_url", return_value="ext::x")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc1234")
+    return cfg, incus
+
+
+def test_fetch_from_container_forwards_the_tag_policy(mocker, tmp_path, make_cfg):
+    from jailbee import sync
+
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    fetch_url = mocker.patch("jailbee.git.fetch_url")
+
+    sync.fetch_from_container(cfg, incus, "feat-foo", tags="all")
+
+    assert fetch_url.call_args.kwargs["tags"] == "all"
+
+
+def test_fetch_from_container_defaults_to_reachable(mocker, tmp_path, make_cfg):
+    from jailbee import sync
+
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    fetch_url = mocker.patch("jailbee.git.fetch_url")
+
+    sync.fetch_from_container(cfg, incus, "feat-foo")
+
+    assert fetch_url.call_args.kwargs["tags"] == "reachable"
+
+
+def test_sync_refs_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`sync_refs_from_container` forwards `tags` to its own `fetch_from_container`
+    call unconditionally — a dropped `tags=tags` there would silently fall back
+    to the default and pass every other test, since the parameter has one.
+
+    Reuses `_sync_refs_setup`, the existing mock surface for this function's
+    happy path (`test_sync_refs_creates_the_host_branch_without_checking_it_out`
+    is built on the same wiring).
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value=None)  # branch absent
+    mocker.patch("jailbee.sync.git.update_ref", return_value=True)
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
+
+    sync.sync_refs_from_container(cfg, incus, "feat-foo", tags="all")
+
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "all"
+
+
+def test_merge_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
+    """`merge_from_container` forwards `tags` to its own `fetch_from_container`
+    call unconditionally — same rationale as the `sync_refs_from_container`
+    case above.
+
+    Reuses the mock surface from `test_merge_from_container_updates_host_
+    submodules`, the existing happy-path test for this function's in-place
+    merge branch.
+    """
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-x"
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/x", old_oid=None, new_oid="new", base_oid="old", commits_added=1
+        ),
+    )
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", side_effect=["pre", "head"])
+    mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    sync.merge_from_container(cfg, incus, "feat-x", tags="all")
+
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "all"
+
+
+def test_container_to_container_relay_carries_no_tags(mocker, make_cfg, tmp_path):
+    """Decision 7: the host's tag set must not leak into a relay target.
+
+    Behavioural, not a source-text check: `_merge_relay_wiring` already builds
+    the full mock surface needed to reach `merge_container_into_container`'s
+    own `fetch_from_container` call (`tests/test_cli_git_merge.py` cannot — it
+    mocks `sync.merge_container_into_container` itself at the CLI boundary, so
+    it never reaches the code under test here). Reusing that helper — instead
+    of copying its body — means a future dependency `merge_container_into_
+    container` picks up is covered here too, with no drift to keep in sync.
+    """
+    from jailbee import sync
+
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert sync.fetch_from_container.call_args.kwargs["tags"] == "none"
+
+
+def test_container_to_container_relay_push_leg_is_pinned_to_none(mocker, make_cfg, tmp_path):
+    """Decision 7's other half: the push into the target is pinned too.
+
+    `test_container_to_container_relay_carries_no_tags` above covers the fetch
+    leg; `push_to_container`'s own default is also `"none"`, so an explicit
+    pin here was previously unverified — this closes that gap and makes the
+    "both legs are pinned" claim in `merge_container_into_container`'s
+    Decision 7 comment literally checked, not just asserted in prose.
+    """
+    from jailbee import sync
+
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2")
+
+    assert sync.push_to_container.call_args.kwargs["tags"] == "none"
+
+
+def test_publish_to_origin_pushes_only_the_branch_refspec(mocker, make_cfg, tmp_path):
+    """Decision 8: tags reach the host, never the GitHub origin.
+
+    Behavioural, not a source-text check: `_stub_publish_fetch` (above) already
+    builds the mock surface `publish_branch_from_container` needs to reach
+    `git.push_to_remote` (`tests/test_cli_pr.py` cannot — it mocks
+    `sync.publish_branch_from_container` itself at the CLI boundary). Passing
+    `tags="all"` here proves the tag policy that reached the container-to-host
+    fetch does not also reach the push to origin: `push_to_remote` takes no
+    `tags` parameter at all, and `assert_called_once_with` fails on any extra
+    argument, including one smuggled through as a second refspec.
+    """
+    from jailbee.sync import publish_branch_from_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""  # status --porcelain -> clean
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        return_value=f"{cfg.container_prefix}-feat-foo",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    _stub_publish_fetch(mocker)
+    push = mocker.patch("jailbee.sync.git.push_to_remote")
+
+    publish_branch_from_container(cfg, incus, "feat-foo", tags="all")
+
+    push.assert_called_once_with(
+        cfg.repo_root, "origin", "refs/jailbee/feat-foo/feat/foo", "feat/foo", force_with_lease=None
+    )
+
+
+def _drive_push(mocker, tmp_path, make_cfg, *, tags="none"):
+    """Call push_to_container with an explicit source_ref, which is the branch
+    that skips origin/local resolution entirely — fewer mocks, same refspecs."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    # mode label -> not "mount"; base_branch label -> None, so the base-advance
+    # refspec stays out of the way of the tag assertions.
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/x")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    mocker.patch("jailbee.sync._build_receive_url", return_value="ext::x")
+    mocker.patch("jailbee.git.rev_parse", return_value="abc1234")
+    return sync.push_to_container(
+        cfg, incus, "feat-a", source="feat/a", source_ref="refs/heads/feat/a", tags=tags
+    )
+
+
+def test_push_to_container_sends_no_tag_refspec_by_default(mocker, tmp_path, make_cfg):
+
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    push_one = mocker.patch("jailbee.git.push_url")
+    _drive_push(mocker, tmp_path, make_cfg)
+
+    assert not push_multi.called or all(
+        "refs/tags/" not in spec for spec in push_multi.call_args[0][2]
+    )
+    if push_one.called:
+        assert "refs/tags/" not in push_one.call_args[0][2]
+
+
+def test_push_to_container_all_appends_the_wildcard_refspec(mocker, tmp_path, make_cfg):
+
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="all")
+
+    assert "refs/tags/*:refs/tags/*" in push_multi.call_args[0][2]
+
+
+def test_push_to_container_reachable_appends_one_refspec_per_tag(mocker, tmp_path, make_cfg):
+
+    mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0", "v1.1"])
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="reachable")
+
+    specs = push_multi.call_args[0][2]
+    assert "refs/tags/v1.0:refs/tags/v1.0" in specs
+    assert "refs/tags/v1.1:refs/tags/v1.1" in specs
+
+
+def test_push_to_container_never_forces_a_tag_refspec(mocker, tmp_path, make_cfg):
+    """Decision 4: no tag refspec carries '+', in any policy."""
+
+    mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0"])
+    push_multi = mocker.patch("jailbee.git.push_url_multi")
+    _drive_push(mocker, tmp_path, make_cfg, tags="reachable")
+
+    for spec in push_multi.call_args[0][2]:
+        if "refs/tags/" in spec:
+            assert not spec.startswith("+"), f"tag refspec must not be forced: {spec}"
+
+
+def test_every_tag_policy_value_is_handled_in_both_transports(mocker, tmp_path, make_cfg):
+    """A fourth TagPolicy value must not fall through either transport."""
+    from typing import get_args
+
+    from jailbee import sync
+    from jailbee.config.models_behaviour import TagPolicy
+
+    for policy in get_args(TagPolicy):
+        fetch_url = mocker.patch("jailbee.git.fetch_url")
+        cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+        sync.fetch_from_container(cfg, incus, "feat-foo", tags=policy)
+        assert fetch_url.call_args.kwargs["tags"] == policy
+
+        mocker.patch("jailbee.git.tags_reachable_from", return_value=["v1.0"])
+        push_multi = mocker.patch("jailbee.git.push_url_multi")
+        push_one = mocker.patch("jailbee.git.push_url")
+        _drive_push(mocker, tmp_path, make_cfg, tags=policy)
+        specs = push_multi.call_args[0][2] if push_multi.called else [push_one.call_args[0][2]]
+        has_tag_spec = any("refs/tags/" in spec for spec in specs)
+        assert has_tag_spec is (policy != "none"), (
+            f"policy {policy!r} produced tag refspecs={has_tag_spec}"
+        )

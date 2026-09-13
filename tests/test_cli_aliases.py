@@ -164,7 +164,7 @@ def test_top_level_pull_calls_same_function(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     do_pull.assert_called_once()
     kwargs = do_pull.call_args.kwargs
-    assert kwargs["ff_only"] is True
+    assert kwargs["ff"] == "always"
 
 
 def test_top_level_push_calls_same_function(mocker, tmp_path):
@@ -176,6 +176,7 @@ def test_top_level_push_calls_same_function(mocker, tmp_path):
     cfg_mock.container_prefix = "sampleapp"
     cfg_mock.push.default_action = "ask"
     cfg_mock.push.default_source = "default-branch"
+    cfg_mock.push.ff = "auto"
     cfg_mock.default_branch = "main"
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     mocker.patch(

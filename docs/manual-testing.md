@@ -511,8 +511,9 @@ rm -rf .local
 
 ```bash
 # First time: jailbee init installs the timer and registers the repo.
-# `make install` also runs `jailbee net install`, which re-installs the
-# timer without touching profiles/networks — safe to re-run any time.
+# `make install` also runs `jailbee setup --yes`, whose `timer` step
+# re-installs the timer without touching profiles/networks — safe to
+# re-run any time, as is `jailbee setup --yes --only timer` on its own.
 jailbee init
 systemctl --user is-active jailbee-net-refresh.timer    # → active
 jailbee net status                                       # shows this repo

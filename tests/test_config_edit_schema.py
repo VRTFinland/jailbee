@@ -232,7 +232,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """87 leaves under Config, 15 under GlobalConfig, as measured.
+    """91 leaves under Config, 15 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -250,13 +250,15 @@ def test_build_specs_covers_every_config_leaf():
     leaf rather than being recursed into: 78 - 6 + 13 + 1 = 86. The shared
     `browsers.url` then added one more: 86 + 1 = 87 — and that increment is
     the proof the field is editable at all, since nothing was added to the
-    curated list or to `schema.py` for it.
+    curated list or to `schema.py` for it. The git-bridge-tags plan Task 1
+    then added `pull.tags`, `pull.ff`, `push.tags`, `push.ff`, four fields
+    to support tag and fast-forward policies: 87 + 4 = 91.
     `GlobalConfig`'s 15 includes the `config_edit.write_policy` added in
     Task 1.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 87
+    assert len(build_specs(Config)) == 91
     assert len(build_specs(GlobalConfig)) == 15
 
 

@@ -30,6 +30,41 @@ before editing `## Unreleased`.
   `docs/`. There is one source: the site is generated from those files on every
   release, and a link or heading anchor that no longer resolves fails CI rather
   than shipping.
+- **Tags now travel the git bridge under an explicit, configurable policy.**
+  `pull.tags` (default `reachable`) governs `jailbee git fetch`/`checkout`/`pull`
+  (container → host); `push.tags` (default `none`) governs `jailbee git push`,
+  including its `--merge`/`--rebase`/`--force` modes (host → container). Each
+  is `none` (nothing crosses), `reachable` (tags reachable from the branch
+  being transferred, lightweight and annotated alike), or `all` (every tag on
+  the source side). Override per-invocation with the new `--tags`/
+  `--follow-tags`/`--no-tags` flags, mutually exclusive and always beating the
+  config key. No policy ever re-points an existing tag — moving one is still a
+  deliberate manual `git push --force`. `jailbee git merge` (container →
+  container) transports no tags on either leg, and `jailbee pr` never sends
+  tags to the GitHub origin, with no flag to change either.
+- **`jailbee git pull` gains `--ff`/`--no-ff`**, the same tri-state shape
+  `jailbee git push --merge` already had, backed by a new `pull.ff` config key
+  (`never`/`auto`/`always`, default `auto`). See the behaviour change below.
+
+### Changed
+
+- **Every CLI flag and positional argument now carries help text.** A long
+  tail of them had none, so `--help` listed the flag and said nothing about
+  it: `jailbee new`'s `--from-base`, `--name`, `--net`, `--memory`, `--cpu`,
+  `--no-clone` and `--no-autostart`, the `--force` on `destroy` and `stop`,
+  `--yes-to-all` on both prune commands, the snapshot and mount positionals,
+  the egress entry, and the container positional on some thirty-five
+  commands. The container positional is now one shared definition, so the
+  commands whose omitted-argument behaviour actually differs — `git pull` /
+  `git push` / `destroy` open a picker, `submodule checkout` falls back to
+  the host repo, `net egress ls|export` and `port ls` deliberately never
+  prompt — say so individually instead of all claiming the same thing. A test
+  fails when a parameter is added without `help=`.
+- **`jailbee git pull` now fast-forwards when it can.** It used to write a merge
+  commit unconditionally; it now behaves like `git merge` itself, writing one
+  only when the histories have actually diverged. The `Merge branch 'X' from
+  container Y` line is therefore absent when the host branch was simply behind.
+  Set `pull.ff: never` to keep the old behaviour, or pass `--no-ff` for one run.
 
 ### Fixed
 
@@ -49,6 +84,10 @@ before editing `## Unreleased`.
   immediately. A Chromium-based app under `apps:` at a path Ubuntu ships no
   profile for needs one on both the host and in the image; `docs/config.md`
   shows how.
+- **`jailbee git pull --ff --checkout` silently ignored `--ff` when the target
+  branch had diverged.** That path always wrote a merge commit regardless of
+  the flag; it now raises the same divergence error the non-`--checkout` path
+  already gave, instead of merging against the fast-forward-only request.
 
 ## 1.3.1 - 2026-09-10
 
