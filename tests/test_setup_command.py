@@ -481,3 +481,160 @@ def test_linger_tip_survives_a_missing_loginctl(home: Path, capsys, mocker: Mock
     linger_tip()
 
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------------------------------
+# the pending split behind the hint, and the interactive offer
+# --------------------------------------------------------------------------
+
+
+def test_hint_pending_returns_the_missing_steps_once(home: Path) -> None:
+    """The gate both the printed hint and the offer sit behind."""
+    _ = home
+    from jailbee.setup_command import hint_pending
+
+    with _session() as session:
+        first = hint_pending(session, shells=["bash"], now=_NOW)
+        assert [s.key for s in first] == ["completions", "timer", "skills"]
+        assert hint_pending(session, shells=["bash"], now=_NOW) == []
+
+
+def test_hint_pending_is_silent_after_setup_ran(home: Path) -> None:
+    _ = home
+    from jailbee.setup_command import hint_pending, record_setup
+
+    with _session() as session:
+        record_setup(session, "1.3.1", now=_NOW)
+        assert hint_pending(session, shells=["bash"], now=_NOW) == []
+
+
+def test_offer_lines_leave_the_call_to_action_to_the_prompt(home: Path) -> None:
+    """The question that follows is the call to action, so the block must not
+    also tell the user to run `jb setup` — nor claim to be one-shot."""
+    _ = home
+    from jailbee.setup_command import DOCS_URL, offer_lines, pending_steps
+
+    text = "\n".join(offer_lines(pending_steps(["bash"])))
+
+    assert "Post-install steps that have not been done on this machine:" in text
+    assert DOCS_URL in text
+    assert "Run `jb setup`" not in text
+    assert "(shown once)" not in text
+
+
+def test_pending_steps_shrinks_as_steps_are_installed(home: Path, mocker: MockerFixture) -> None:
+    _ = home
+    from jailbee.setup_command import install_completions, pending_steps
+
+    mocker.patch("jailbee.setup_command.timer_status", return_value=_installed("timer"))
+    mocker.patch("jailbee.setup_command.skills_status", return_value=_installed("skills"))
+    assert [s.key for s in pending_steps(["bash"])] == ["completions"]
+
+    install_completions(["bash"])
+    assert pending_steps(["bash"]) == []
+
+
+def _installed(key: str):
+    from jailbee.setup_command import STEP_TITLES, StepStatus
+
+    return StepStatus(key=key, title=STEP_TITLES[key], installed=True, detail="ok")
+
+
+# --------------------------------------------------------------------------
+# the read-only listing
+# --------------------------------------------------------------------------
+
+
+def test_report_status_names_every_step_and_installs_nothing(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = home
+    from jailbee.setup_command import STEP_KEYS, STEP_TITLES, report_status, timer_status
+
+    report_status(STEP_KEYS, ["bash"])
+
+    out = capsys.readouterr().out
+    for title in STEP_TITLES.values():
+        assert title in out
+    assert not timer_status().installed, "--status must not install anything"
+
+
+def test_report_status_honours_the_keys_it_is_given(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = home
+    from jailbee.setup_command import STEP_TITLES, report_status
+
+    report_status(["skills"], ["bash"])
+
+    out = capsys.readouterr().out
+    assert STEP_TITLES["skills"] in out
+    assert STEP_TITLES["timer"] not in out
+
+
+# --------------------------------------------------------------------------
+# the optional Qt extra — reported, never installed
+# --------------------------------------------------------------------------
+
+
+def test_qt_dashboard_status_names_the_install_command_when_missing(
+    home: Path, mocker: MockerFixture
+) -> None:
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", return_value=None)
+
+    installed, detail = qt_dashboard_status()
+
+    assert installed is False
+    assert "jailbee[gui]" in detail
+
+
+def test_qt_dashboard_status_is_content_when_pyside_is_importable(
+    home: Path, mocker: MockerFixture
+) -> None:
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", return_value=object())
+
+    installed, detail = qt_dashboard_status()
+
+    assert installed is True
+    assert "PySide6" in detail
+
+
+def test_qt_dashboard_status_survives_a_broken_import_system(
+    home: Path, mocker: MockerFixture
+) -> None:
+    """`find_spec` raises on a package whose parent cannot be imported."""
+    _ = home
+    from jailbee.setup_command import qt_dashboard_status
+
+    mocker.patch("jailbee.setup_command.find_spec", side_effect=ValueError("__spec__ is None"))
+
+    assert qt_dashboard_status()[0] is False
+
+
+def test_report_status_mentions_the_optional_qt_extra(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = home
+    from jailbee.setup_command import STEP_KEYS, report_status
+
+    report_status(STEP_KEYS, ["bash"])
+
+    assert "Qt dashboard (optional)" in capsys.readouterr().out
+
+
+def test_report_status_leaves_the_extra_out_of_a_filtered_listing(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--only timer` asked about one step; an unrelated extra is noise there."""
+    _ = home
+    from jailbee.setup_command import report_status
+
+    report_status(["timer"], ["bash"])
+
+    assert "Qt dashboard (optional)" not in capsys.readouterr().out

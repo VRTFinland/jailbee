@@ -1330,7 +1330,13 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
     reports it, and it can say more (whether it is *running*, and whether its
     `ExecStart` still points at this `jailbee`) than a file check could.
     """
-    from jailbee.setup_command import completions_status, detect_shell, skills_status
+    from jailbee.setup_command import (
+        QT_EXTRA_TITLE,
+        completions_status,
+        detect_shell,
+        qt_dashboard_status,
+        skills_status,
+    )
 
     results: list[CheckResult] = []
 
@@ -1364,6 +1370,13 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
                 detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
             )
         )
+
+    # `ok` regardless: the Qt dashboard is an extra nobody has to want, and
+    # `jailbee setup` cannot install it anyway (it would have to reinstall
+    # the tool jailbee is running from). Reported so its absence is not a
+    # mystery when `jb gui` refuses to start.
+    _, qt_detail = qt_dashboard_status()
+    results.append(CheckResult(name=QT_EXTRA_TITLE.lower(), ok=True, detail=qt_detail))
     return results
 
 
