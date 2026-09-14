@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 MIRROR_DNS_NAME = "jailbee-registry-mirror.incus"
 _MIRROR_CONTAINER_NAME = "jailbee-registry-mirror"
 
+# Printed by the provisioning script on the one path that disturbs running
+# workloads, so `apply_docker_proxy` can tell its caller a restart happened.
+RESTARTED_MARKER = "jailbee:dockerd-restarted"
+
 
 def compute_mirror_endpoint(incus: Incus, gcfg: GlobalConfig) -> tuple[str, int]:
     """Resolve the mirror container's IPv4 + port for the per-repo ACL rule.
@@ -71,59 +75,95 @@ def apply_docker_proxy(
     name: str,
     ca_cert_pem: str,
     port: int,
-) -> None:
+) -> bool:
     """Install the mirror CA + dockerd HTTPS_PROXY in container `name`.
 
-    Idempotent: re-running with the same inputs is a no-op other than the
-    dockerd restart. Atomic writes (mktemp + mv) so a half-written conf
-    file never gets read by systemd on reload.
+    Returns whether dockerd was restarted — a caller sweeping the whole fleet
+    (`apply.run_apply`) reports only the containers it actually disturbed.
+
+    Idempotent, restart included: every file is compared against what is
+    already installed and the restart runs only when one of them really
+    changed. It has to be that way, because `jailbee apply` calls this for
+    every running container: an unconditional restart killed the user's
+    entire docker-compose stack in every container on the host, on an apply
+    that changed nothing. Only a restart makes dockerd pick up either input
+    (Go caches the system cert pool per process, and systemd only re-reads
+    the drop-in's `Environment=` on unit start), so a genuine change still
+    pays for one.
+
+    Atomic writes (mktemp + mv) so a half-written conf file never gets read
+    by systemd on reload.
     """
     proxy_conf = render_proxy_conf(MIRROR_DNS_NAME, port)
     script = f"""\
 set -euo pipefail
 
+# Set by any step that changes dockerd's configuration; nothing else may
+# reach the restart at the bottom.
+changed=0
+
 # 1. CA cert into OS trust bundle.
 mkdir -p /usr/local/share/ca-certificates
+ca_dest=/usr/local/share/ca-certificates/jailbee-registry-mirror.crt
 ca_tmp=$(mktemp)
 cat > "$ca_tmp" <<'JAILBEE_CA_EOF'
 {ca_cert_pem.rstrip()}
 JAILBEE_CA_EOF
-mv "$ca_tmp" /usr/local/share/ca-certificates/jailbee-registry-mirror.crt
+if cmp -s "$ca_tmp" "$ca_dest"; then
+  rm -f "$ca_tmp"
+else
+  mv "$ca_tmp" "$ca_dest"
+  changed=1
+fi
+# Unconditional: the compare above proves the source cert is current, not
+# that the generated bundle still contains it. Cheap, and restarts nothing.
 update-ca-certificates >/dev/null
 
 # 2. Java keystore — best effort. Container may not have a JDK installed
 # (or keytool may live elsewhere); silently skip in that case so dockerd
-# still gets its OS-level CA.
+# still gets its OS-level CA. Unconditional for the same reason as
+# update-ca-certificates, and equally harmless to running workloads.
 if command -v keytool >/dev/null 2>&1; then
   keytool -delete -noprompt -alias jailbee-registry-mirror \\
     -cacerts -storepass changeit 2>/dev/null || true
   keytool -importcert -noprompt -alias jailbee-registry-mirror \\
-    -file /usr/local/share/ca-certificates/jailbee-registry-mirror.crt \\
+    -file "$ca_dest" \\
     -cacerts -storepass changeit || true
 fi
 
 # 3. dockerd HTTPS_PROXY systemd drop-in (atomic).
 mkdir -p /etc/systemd/system/docker.service.d
+proxy_dest=/etc/systemd/system/docker.service.d/http-proxy.conf
 proxy_tmp=$(mktemp)
 cat > "$proxy_tmp" <<'JAILBEE_PROXY_EOF'
 {proxy_conf.rstrip()}
 JAILBEE_PROXY_EOF
-mv "$proxy_tmp" /etc/systemd/system/docker.service.d/http-proxy.conf
+if cmp -s "$proxy_tmp" "$proxy_dest"; then
+  rm -f "$proxy_tmp"
+else
+  mv "$proxy_tmp" "$proxy_dest"
+  changed=1
+fi
 
 # 4. Remove stale registry-mirrors daemon.json (left by pre-rpardini installs).
-rm -f /etc/docker/daemon.json
+if [ -e /etc/docker/daemon.json ]; then
+  rm -f /etc/docker/daemon.json
+  changed=1
+fi
 
-# 5. Restart dockerd — best effort. A container without Docker installed has
-# no `docker.service`, so an unconditional restart would fail (exit 5) and
-# abort the whole exec under `set -e`. The CA + proxy drop-in above stay
-# installed harmlessly; only the restart is Docker-specific. Mirrors the
-# keytool guard above.
-if command -v docker >/dev/null 2>&1; then
+# 5. Restart dockerd, but only for a real change — see the docstring. Also
+# best effort: a container without Docker installed has no `docker.service`,
+# so an unguarded restart would fail (exit 5) and abort the whole exec under
+# `set -e`. The CA + proxy drop-in above stay installed harmlessly; only the
+# restart is Docker-specific. Mirrors the keytool guard above.
+if [ "$changed" = 1 ] && command -v docker >/dev/null 2>&1; then
   systemctl daemon-reload
   systemctl restart docker
+  echo '{RESTARTED_MARKER}'
 fi
 """
-    incus.exec(name, ["bash", "-c", script], timeout=120)
+    out = incus.exec(name, ["bash", "-c", script], timeout=120)
+    return RESTARTED_MARKER in out.splitlines()
 
 
 def _auto_mirror_wanted(cfg: Config) -> bool:

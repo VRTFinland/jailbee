@@ -668,14 +668,101 @@ def test_run_apply_reapplies_docker_proxy_when_mirror_enabled(
         ],
     )
     mocker.patch("jailbee.hosts.apply_hosts")
-    apply_proxy = mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
+    apply_proxy = mocker.patch("jailbee.docker_daemon.apply_docker_proxy", return_value=True)
 
     result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
     # Every running container gets the proxy: strict needs it to reach
     # upstreams under its ACL, loose gets it for caching.
-    assert result.docker_proxy_reapplied == ["a", "b"]
+    assert result.docker_restarted == ["a", "b"]
     assert apply_proxy.call_count == 2
+
+
+def _mirror_fleet(make_cfg, tmp_path: Path, mocker: MockerFixture, *, proxy_results):
+    """Two running containers, `a` and `b`, with the registry mirror wired up.
+
+    `proxy_results` is what `apply_docker_proxy` reports for each in turn —
+    i.e. whether it had to restart that container's dockerd.
+    """
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    gcfg = GlobalConfig()
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    # Override the autouse `_no_mirror_lookup` fixture: mirror IS enabled.
+    mocker.patch("jailbee.apply._mirror_endpoint_or_warn", return_value=("10.0.0.99", 3128))
+    mocker.patch("jailbee.apply._read_mirror_ca_or_warn", return_value="CA")
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{tmp_path.name}-a",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name=f"{tmp_path.name}-b",
+                state="Running",
+                network="loose",
+                ip="10.0.0.2",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+        ],
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    apply_proxy = mocker.patch(
+        "jailbee.docker_daemon.apply_docker_proxy", side_effect=list(proxy_results)
+    )
+    return cfg, incus, gcfg, apply_proxy
+
+
+def test_run_apply_records_only_the_containers_whose_dockerd_restarted(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The proxy is pushed to every running container, but the push is a
+    no-op when nothing changed. Counting those as work is what made an apply
+    that disturbed nothing report itself as one that did — and the restart it
+    implies is the fleet-wide docker outage this guards against."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, apply_proxy = _mirror_fleet(
+        make_cfg, tmp_path, mocker, proxy_results=[False, True]
+    )
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert apply_proxy.call_count == 2
+    assert result.docker_restarted == [f"{tmp_path.name}-b"]
+
+
+def test_run_apply_warns_that_a_dockerd_restart_stopped_running_workloads(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, capsys
+) -> None:
+    """The restart takes the container's whole docker-compose stack down and
+    nothing brings it back. A user who is not told reads the silence as
+    "apply changed nothing" and spends days hunting the wrong cause."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[False, True])
+
+    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    out = capsys.readouterr().out
+    assert "b" in out and "dockerd" in out
+    assert "stopped" in out
+    # The container that needed no restart is not named as disturbed.
+    assert "Restarted dockerd on a" not in out
 
 
 def test_run_apply_skips_docker_proxy_when_mirror_disabled(
@@ -712,7 +799,7 @@ def test_run_apply_skips_docker_proxy_when_mirror_disabled(
 
     result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
 
-    assert result.docker_proxy_reapplied == []
+    assert result.docker_restarted == []
     assert apply_proxy.call_count == 0
 
 

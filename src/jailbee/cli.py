@@ -946,7 +946,7 @@ def apply(
             result.profiles_changed,
             result.acl_changed,
             result.hosts_repinned,
-            result.docker_proxy_reapplied,
+            result.docker_restarted,
             result.offline_migrated,
             result.ports_changed,
         ]

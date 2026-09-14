@@ -37,7 +37,10 @@ class ApplyResult:
     profiles_unchanged: list[str]
     acl_changed: bool
     hosts_repinned: list[str]
-    docker_proxy_reapplied: list[str]
+    # Containers whose dockerd this run actually restarted. The proxy is
+    # pushed to every running container, but the push only disturbs one
+    # whose CA or drop-in really changed — see `apply_docker_proxy`.
+    docker_restarted: list[str]
     restarted: list[str]
     restart_failures: list[tuple[str, str]]
     # Containers moved off the removed `<prefix>-net-offline` profile by
@@ -149,7 +152,7 @@ def run_apply(
     """Apply current config to profiles, ACL, and live container state."""
     from jailbee import egress_scope
     from jailbee.lifecycle import short_name
-    from jailbee.tui import info, warn
+    from jailbee.tui import info, warn, warn_plain
 
     info("Applying configuration...")
 
@@ -292,7 +295,7 @@ def run_apply(
 
     info("Listing running containers...")
     hosts_repinned: list[str] = []
-    docker_proxy_reapplied: list[str] = []
+    docker_restarted: list[str] = []
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
 
     containers = _list_containers(cfg, incus)
@@ -375,13 +378,23 @@ def run_apply(
             apply_hosts(cfg, incus, ci.name, mirror_endpoint=mirror_endpoint)
             hosts_repinned.append(ci.name)
         if mirror_endpoint is not None and mirror_ca_pem is not None and mirror_port is not None:
-            info(f"  Re-applying dockerd HTTPS_PROXY on {short}...")
             from jailbee.docker_daemon import apply_docker_proxy
 
             # apply_docker_proxy reads the mirror endpoint via MIRROR_DNS_NAME
-            # internally; we only need to pass CA + port.
-            apply_docker_proxy(incus, ci.name, mirror_ca_pem, mirror_port)
-            docker_proxy_reapplied.append(ci.name)
+            # internally; we only need to pass CA + port. It restarts dockerd
+            # only when the CA or the drop-in really changed, and says so —
+            # report that rather than the push, so an apply that changed
+            # nothing stays silent about a container it did not disturb.
+            if apply_docker_proxy(incus, ci.name, mirror_ca_pem, mirror_port):
+                # `warn`, not `info`: this is the one step of an apply that
+                # takes a user's own workloads down, and nothing brings them
+                # back. Unannounced, the silence reads as "apply changed
+                # nothing" while the container's whole compose stack is gone.
+                warn_plain(
+                    f"Restarted dockerd on {short} for a registry proxy change — "
+                    "its running docker containers were stopped"
+                )
+                docker_restarted.append(ci.name)
 
     orphans = _sweep_orphan_extra_acls(cfg, incus)
     if orphans:
@@ -431,7 +444,7 @@ def run_apply(
         profiles_unchanged=profiles_unchanged,
         acl_changed=acl_changed_flag,
         hosts_repinned=hosts_repinned,
-        docker_proxy_reapplied=docker_proxy_reapplied,
+        docker_restarted=docker_restarted,
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,

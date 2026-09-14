@@ -68,6 +68,20 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **`jailbee apply` stopped every Docker container in every running jailbee
+  container**, even when it changed nothing. Wiring dockerd to the registry
+  mirror ended in an unconditional `systemctl restart docker`, and `apply`
+  runs that step once per running container — so a single `jailbee apply`
+  took down each container's whole `docker compose` stack, with nothing to
+  bring it back and nothing in the output saying it had happened. The
+  mirror's proxy config is deliberately stable (it names the mirror by DNS,
+  not by its changing IP), so in practice the restart was never needed. The
+  CA certificate and the systemd drop-in are now compared against what is
+  already installed, and dockerd is restarted only when one of them really
+  changed — in which case `apply` says so, and says that the container's
+  running Docker containers were stopped. `apply`'s summary no longer counts
+  an unchanged proxy as work, so a run that changed nothing now reports
+  itself as one.
 - **Chrome aborted on launch in every container on an Ubuntu 24.04+ host**
   (`FATAL:sandbox/linux/services/credentials.cc … Permission denied`), and so
   did anything else the dev user ran that creates a user namespace — bwrap,

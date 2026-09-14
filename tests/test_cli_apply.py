@@ -21,7 +21,7 @@ def _fake_result(**overrides):
         profiles_unchanged=[],
         acl_changed=False,
         hosts_repinned=[],
-        docker_proxy_reapplied=[],
+        docker_restarted=[],
         restarted=[],
         restart_failures=[],
         offline_migrated=[],
@@ -104,6 +104,23 @@ def test_cli_apply_offline_migration_counts_as_a_change(mocker: MockerFixture) -
     mocker.patch(
         "jailbee.apply.run_apply",
         return_value=_fake_result(offline_migrated=["foo-feat-x"]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    assert "already up to date" not in result.output
+    assert "Apply complete" in result.output
+
+
+def test_cli_apply_dockerd_restart_counts_as_a_change(mocker: MockerFixture) -> None:
+    """A run that restarted a container's dockerd disturbed something real,
+    so it must not claim nothing happened. The converse is the point of the
+    field: a run that only *checked* the proxy config leaves it empty."""
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(docker_restarted=["foo-feat-x"]),
     )
     mocker.patch("jailbee.incus.Incus")
 
