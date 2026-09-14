@@ -42,6 +42,19 @@ before editing `## Unreleased`.
   deliberate manual `git push --force`. `jailbee git merge` (container →
   container) transports no tags on either leg, and `jailbee pr` never sends
   tags to the GitHub origin, with no flag to change either.
+- **A new container no longer asks for a login it already has.** Claude
+  Code's first-run wizard is gated on its own `hasCompletedOnboarding` flag
+  and never looks at the credential mounted from the repo's credential
+  group, so every fresh Claude config home walked the user through `/login`
+  for the account already sitting there. `jailbee init`/`jailbee apply` now
+  mark a never-used config home as onboarded, and accept the trust dialog
+  for the repo's in-container path, whenever that group already holds a
+  login — the new `claude.seed_onboarding` key (default `true`) turns it
+  off. A group holding no login still gets the wizard, which is what walks
+  the first login in; a config home Claude Code has already written is never
+  touched. Most visible in a directory with no `.jailbee/config.yaml`, which
+  has no repo state to inherit and paid this on every new scratch
+  environment.
 - **`jailbee git pull` gains `--ff`/`--no-ff`**, the same tri-state shape
   `jailbee git push --merge` already had, backed by a new `pull.ff` config key
   (`never`/`auto`/`always`, default `auto`). See the behaviour change below.
