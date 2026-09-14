@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 import shlex
 import time
-from enum import Enum
 
 from jailbee import tmux
+from jailbee.autostart_plan import AutostartTrigger as AutostartTrigger
 from jailbee.config import AutostartStage, AutostartStep, Config
 from jailbee.incus import Incus
 from jailbee.mounts import add_optional_mount, remove_optional_mount
@@ -28,11 +28,6 @@ _EXIT_HINTS: dict[int, str] = {
     137: "killed (SIGKILL / out of memory?)",
     143: "terminated (SIGTERM)",
 }
-
-
-class AutostartTrigger(Enum):
-    ON_CREATE = "on_create"
-    ON_START = "on_start"
 
 
 def _flat_steps_only(entries: list[AutostartStep] | list[AutostartStage]) -> list[AutostartStep]:
