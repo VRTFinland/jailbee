@@ -62,11 +62,49 @@ optional_mounts: {}
 # (everything reachable).
 # Daily dev only needs the Claude API and JetBrains licence hosts, and those
 # need no entry here: enabling `agents.claude` / `jetbrains` (in global.yaml)
-# appends them automatically. github.com and pypi/astral are left out on
-# purpose — switch to `jailbee net loose <name>` for `git push`/`git fetch`/
-# `gh`/dep installs, then back to strict. Being `[]`, this also drops any
-# `egress_allow` entries set in global.yaml for this repo's containers.
-egress_allow: []
+# appends them automatically. Note that `claude.plugins_enabled` also appends
+# CLAUDE_PLUGIN_HOSTS (github.com, raw/objects/codeload.githubusercontent.com,
+# registry.npmjs.org), so GitHub is already reachable in strict mode without
+# an entry here.
+#
+# The list below exists for one purpose: running a **nested Incus rig** inside
+# a dogfood container to host-verify jailbee against a real daemon (see
+# docs/manual-testing.md). Egress gates the rig's *setup* — pulling an image
+# and provisioning it — never a container *start*: once an image is in the
+# nested daemon's store, `incus start` needs no network at all. Without these
+# entries the alternative is `jailbee net loose <name>` for the whole setup.
+#
+# Two caveats:
+#   - Hostnames resolve to IPv4 at ACL-apply time, and the pool accumulates
+#     the IPs it sees over successive `jailbee-net-refresh.timer` ticks. The
+#     CDN-backed hosts here (archive.ubuntu.com, images.linuxcontainers.org)
+#     round-robin, so the FIRST run against a fresh entry can hit an IP the
+#     ACL has not pooled yet and fail; it settles as the pool fills.
+#   - A port-less entry allows every protocol and port, including UDP. Every
+#     entry below names its port for that reason.
+#
+# Being a non-empty list, this also REPLACES any `egress_allow` set in
+# global.yaml for this repo's containers.
+egress_allow:
+  # The `images:` remote — `golden.build_golden_image` pulls
+  # `images:ubuntu/<golden.ubuntu_version>` from it.
+  - images.linuxcontainers.org:443
+  # apt inside the nested build/containers. Ubuntu's sources.list is http,
+  # not https — port 80 is not a typo.
+  - archive.ubuntu.com:80
+  - security.ubuntu.com:80
+  # Golden-image provisioning: the hosts provision/install.sh and
+  # .jailbee/install.d/* actually fetch from.
+  - astral.sh:443            # uv
+  - download.docker.com:443
+  - deb.nodesource.com:443
+  - apt.corretto.aws:443     # Amazon Corretto JDK
+  - cli.github.com:443       # gh
+  - dl.google.com:443        # chrome
+  - packages.mozilla.org:443 # firefox
+  # `uv sync` (the sync-deps autostart step) inside a nested container.
+  - pypi.org:443
+  - files.pythonhosted.org:443
 
 
 # Container resource defaults applied at create time.
