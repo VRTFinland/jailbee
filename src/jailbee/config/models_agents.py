@@ -107,6 +107,121 @@ class AutostartStep(BaseModel):
         return _reject_offline(v)
 
 
+class AutostartChain(BaseModel):
+    """A serial sequence of steps inside one stage.
+
+    Chains within a stage run in parallel; steps within a chain run in
+    order. A dependency between two steps is expressed by putting them in
+    the same chain, or in two different stages.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(
+        default=...,
+        min_length=1,
+        description=(
+            "Identifier for this chain, unique within its stage. Chains in one stage run "
+            "in parallel, so the name is what `jailbee autostart status` reports progress "
+            "against."
+        ),
+    )
+    steps: list[AutostartStep] = Field(
+        default_factory=list,
+        description="Steps run in list order; a later step starts only after the previous "
+        "one exits.",
+    )
+
+
+class AutostartStage(BaseModel):
+    """A milestone in an autostart run.
+
+    A stage owns the container-scoped side effects — the network profile and
+    the optional mounts — for the whole time its chains run. Chains and
+    steps own only in-container work. That is what makes parallel chains
+    safe: nothing swaps the profile or detaches a mount underneath them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    stage: str = Field(
+        default=...,
+        min_length=1,
+        description=(
+            "Identifier for this stage, unique within its trigger. Stages run in list "
+            "order; a stage starts only when the previous one has finished."
+        ),
+    )
+    network: Literal["strict", "loose"] | None = Field(
+        default=None,
+        description=(
+            "Network profile for the whole stage: switched once on entry, restored once on "
+            "exit. Null keeps whatever mode the container is already in. Set it here rather "
+            "than on a step — a step-level swap is what this level replaces."
+        ),
+    )
+    mounts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "`optional_mounts` keys attached for the whole stage and detached when it ends. "
+            "Validated against `optional_mounts`."
+        ),
+    )
+    detach: bool = Field(
+        default=False,
+        description=(
+            "When true, this stage and every stage after it run in a detached supervisor "
+            "process while the CLI hands the session to the user. The first stage carrying "
+            "it wins; repeating it later is redundant but legal."
+        ),
+    )
+    chains: list[AutostartChain] = Field(
+        default_factory=list,
+        description="Chains run in parallel. Mutually exclusive with `steps`.",
+    )
+    steps: list[AutostartStep] = Field(
+        default_factory=list,
+        description=(
+            "Shorthand for a single chain named `main`, for the common serial stage. "
+            "Mutually exclusive with `chains`."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _one_shape_only(self) -> AutostartStage:
+        if self.chains and self.steps:
+            raise ValueError(f"stage '{self.stage}' must set `chains` or `steps`, not both")
+        return self
+
+    @model_validator(mode="after")
+    def _no_container_scope_on_steps(self) -> AutostartStage:
+        for chain in self.all_chains():
+            for step in chain.steps:
+                if step.network is not None:
+                    raise ValueError(
+                        f"autostart step '{step.name}' sets `network` inside stage "
+                        f"'{self.stage}' — move it to the stage: a stage owns the network "
+                        f"profile for all of its chains"
+                    )
+                if step.mounts:
+                    raise ValueError(
+                        f"autostart step '{step.name}' sets `mounts` inside stage "
+                        f"'{self.stage}' — move them to the stage: a stage owns its mounts "
+                        f"for all of its chains"
+                    )
+        return self
+
+    def all_chains(self) -> list[AutostartChain]:
+        """The stage's chains, with the `steps:` shorthand expanded.
+
+        Single accessor so no caller has to remember which of the two
+        shapes a given stage used.
+        """
+        if self.chains:
+            return list(self.chains)
+        if self.steps:
+            return [AutostartChain(name="main", steps=list(self.steps))]
+        return []
+
+
 class DockerRegistryMirrorRepoConfig(BaseModel):
     """Per-repo overrides for the host-global rpardini mirror."""
 
@@ -432,18 +547,41 @@ class Autostart(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    on_create: list[AutostartStep] = Field(
+    on_create: list[AutostartStep] | list[AutostartStage] = Field(
         default_factory=list,
-        description="Steps run once after `jailbee new` provisions the container.",
+        description=(
+            "Steps run once after `jailbee new` provisions the container. Either a flat list "
+            "of steps (one implicit stage) or a list of stages."
+        ),
     )
-    on_start: list[AutostartStep] = Field(
+    on_start: list[AutostartStep] | list[AutostartStage] = Field(
         default_factory=list,
         description=(
             "Steps run on every stopped-to-running transition: both `jailbee new` (after "
             "`on_create`) and `jailbee start`. Put one-shot setup in `on_create` and "
-            "recurring launches in `on_start` — don't duplicate between the two."
+            "recurring launches in `on_start` — don't duplicate between the two. Either a "
+            "flat list of steps (one implicit stage) or a list of stages."
         ),
     )
+
+    @field_validator("on_create", "on_start", mode="before")
+    @classmethod
+    def _no_mixed_shapes(cls, v: object) -> object:
+        """Reject a trigger that mixes flat steps and stages.
+
+        Pydantic's union would otherwise pick one member and report a
+        confusing per-field error on the entries that do not fit.
+        """
+        if not isinstance(v, list) or not v:
+            return v
+        shapes = {isinstance(e, dict) and "stage" in e for e in v}
+        if len(shapes) > 1:
+            raise ValueError(
+                "autostart trigger may not mix flat steps and stages — "
+                "convert the whole list to stages"
+            )
+        return v
+
     step_timeout: int = Field(
         default=600,
         description="Default per-step timeout in seconds, overridable per step via "

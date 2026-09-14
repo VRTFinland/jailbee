@@ -14,7 +14,7 @@ import time
 from enum import Enum
 
 from jailbee import tmux
-from jailbee.config import AutostartStep, Config
+from jailbee.config import AutostartStage, AutostartStep, Config
 from jailbee.incus import Incus
 from jailbee.mounts import add_optional_mount, remove_optional_mount
 from jailbee.tmux import TmuxStepError
@@ -33,6 +33,26 @@ _EXIT_HINTS: dict[int, str] = {
 class AutostartTrigger(Enum):
     ON_CREATE = "on_create"
     ON_START = "on_start"
+
+
+def _flat_steps_only(entries: list[AutostartStep] | list[AutostartStage]) -> list[AutostartStep]:
+    """Narrow a trigger's steps-or-stages list to plain steps.
+
+    ``Autostart.on_create``/``on_start`` now also accept the stage form
+    (see ``config/models_agents.py``), but this executor is still the flat
+    step-only runner — the stage-aware planner/executor is a follow-up
+    change. No shipped config produces the stage form yet, so this is a
+    type-narrowing no-op for every existing caller; a stage-form list
+    raises rather than being silently misinterpreted as steps.
+    """
+    steps: list[AutostartStep] = []
+    for entry in entries:
+        if not isinstance(entry, AutostartStep):
+            raise NotImplementedError(
+                "stage-form autostart triggers are not yet supported by run_autostart"
+            )
+        steps.append(entry)
+    return steps
 
 
 class AutostartStepError(RuntimeError):
@@ -215,7 +235,7 @@ def run_autostart(
     autostart-driven ``strict → loose → strict`` round-trip.
     """
     if trigger == AutostartTrigger.ON_CREATE:
-        steps: list[AutostartStep] = list(cfg.autostart.on_create)
+        steps: list[AutostartStep] = _flat_steps_only(cfg.autostart.on_create)
     else:
         # Append the synthetic per-agent steps (empty when no agent has
         # autostart on) — claude sorts last so its window is the
@@ -223,7 +243,7 @@ def run_autostart(
         # github-token step is NOT injected here: it's infrastructure, not a
         # user autostart command, so it's written by ``inject_github_token``
         # independently of --no-autostart.
-        steps = list(cfg.autostart.on_start)
+        steps = _flat_steps_only(cfg.autostart.on_start)
         steps.extend(agent_autostart_steps(cfg))
     if not steps:
         return
