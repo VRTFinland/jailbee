@@ -88,6 +88,17 @@ before editing `## Unreleased`.
   branch had diverged.** That path always wrote a merge commit regardless of
   the flag; it now raises the same divergence error the non-`--checkout` path
   already gave, instead of merging against the fast-forward-only request.
+- **Shell completion offered deprecation notices as if they were container
+  names.** A TAB press runs a fresh `jailbee` whose stdout *is* the completion
+  protocol, so any advisory the config loader printed on the way to producing
+  candidates — the pre-1.0 `.gie/` notice, the legacy `chrome:` notice — was
+  read back by bash as a candidate of its own, and anything on stderr was
+  painted over the half-typed command line. Completion callbacks now discard
+  both streams for the duration of the TAB press.
+- **`jailbee ls --format json` was unparseable in a repo still using the
+  pre-1.0 `.gie/` directory**: the deprecation notice for that directory went
+  to stdout, ahead of the JSON. It now goes to stderr, like every other
+  advisory and like the matching notice for a legacy `chrome:` block.
 
 ## 1.3.1 - 2026-09-10
 
