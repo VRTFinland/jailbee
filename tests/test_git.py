@@ -65,13 +65,96 @@ def test_detect_default_branch_strips_origin_prefix(mocker, tmp_path):
 
 
 def test_detect_default_branch_unexpected_output(mocker, tmp_path):
-    """If output doesn't start with 'origin/', fall back."""
-    mock_run = mocker.patch("jailbee.git.subprocess.run")
-    mock_run.return_value = CompletedProcess(
-        args=[], returncode=0, stdout="weird-output\n", stderr=""
-    )
+    """If output doesn't start with 'origin/', fall back — here all the way to
+    the literal, since the repo has no candidate ref and no current branch."""
+    _fake_branch_git(mocker, remote_head=(0, "weird-output\n"))
 
     assert detect_default_branch(tmp_path, "origin") == "main"
+
+
+def _fake_branch_git(mocker, *, remote_head=(1, ""), refs=(), current=(1, "")):
+    """Answer each `git` call `detect_default_branch` makes, by call.
+
+    The three layers are distinguishable by argv alone, which is what makes a
+    single `return_value` (the older tests' shape) too blunt now: both branch
+    probes are `symbolic-ref`, separated only by the ref they name.
+    """
+
+    def run(args, **_kwargs):
+        if args[1] == "for-each-ref":
+            return CompletedProcess(args=args, returncode=0, stdout="".join(f"{r}\n" for r in refs))
+        code, out = current if args[-1] == "HEAD" else remote_head
+        return CompletedProcess(args=args, returncode=code, stdout=out, stderr="")
+
+    return mocker.patch("jailbee.git.subprocess.run", side_effect=run)
+
+
+def test_detect_default_branch_uses_a_fetched_master_without_a_symref(mocker, tmp_path):
+    """`refs/remotes/<remote>/HEAD` is set by `git clone`, not by `git fetch`,
+    so a repo whose branches were fetched by hand has no symref to read — and
+    the old blind `main` named a branch that does not exist there."""
+    _fake_branch_git(mocker, refs=["refs/remotes/origin/master"])
+
+    assert detect_default_branch(tmp_path, "origin") == "master"
+
+
+def test_detect_default_branch_prefers_main_over_master(mocker, tmp_path):
+    _fake_branch_git(mocker, refs=["refs/remotes/origin/master", "refs/remotes/origin/main"])
+
+    assert detect_default_branch(tmp_path, "origin") == "main"
+
+
+def test_detect_default_branch_prefers_the_remote_tracking_ref(mocker, tmp_path):
+    """A remote-tracking branch outranks a local one of the *other* name: the
+    remote is what the project agrees on, the local branch only what this
+    checkout happens to hold."""
+    _fake_branch_git(mocker, refs=["refs/heads/main", "refs/remotes/origin/master"])
+
+    assert detect_default_branch(tmp_path, "origin") == "master"
+
+
+def test_detect_default_branch_uses_a_local_branch_with_no_remote(mocker, tmp_path):
+    """The reported case: `git init`, no remote, branch `master`. `jailbee new`
+    refused to create any container because the guessed `main` existed
+    nowhere."""
+    _fake_branch_git(mocker, refs=["refs/heads/master"])
+
+    assert detect_default_branch(tmp_path, "origin") == "master"
+
+
+def test_detect_default_branch_falls_back_to_the_current_branch(mocker, tmp_path):
+    """Neither convention exists: the branch actually checked out is the only
+    evidence left, and beats a name nothing in the repo answers to."""
+    _fake_branch_git(mocker, current=(0, "trunk\n"))
+
+    assert detect_default_branch(tmp_path, "origin") == "trunk"
+
+
+def test_detect_default_branch_is_the_literal_on_a_detached_head(mocker, tmp_path):
+    """Nothing to read at any layer — a detached HEAD, or an empty repo with no
+    commit yet. The historical literal is the last resort, not the first."""
+    _fake_branch_git(mocker, current=(1, ""))
+
+    assert detect_default_branch(tmp_path, "origin") == "main"
+
+
+def test_detect_default_branch_reads_every_candidate_in_one_call(mocker, tmp_path):
+    """Config load happens per registered repo on every dashboard refresh, so
+    the candidate probe is one `for-each-ref` over all four, not four calls."""
+    run = _fake_branch_git(mocker, refs=["refs/heads/main"])
+
+    assert detect_default_branch(tmp_path, "origin") == "main"
+
+    for_each_ref = [c for c in run.call_args_list if c.args[0][1] == "for-each-ref"]
+    assert len(for_each_ref) == 1
+    assert for_each_ref[0].args[0][-4:] == [
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
+    ]
+    # The current branch is never asked for once a candidate answered.
+    assert not [c for c in run.call_args_list if c.args[0][-1] == "HEAD"]
 
 
 def test_get_remote_url_returns_url(mocker, tmp_path):

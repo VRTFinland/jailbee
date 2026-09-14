@@ -81,6 +81,18 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **A repo whose trunk is not called `main` was told it was.** The default
+  branch was `git symbolic-ref refs/remotes/<remote>/HEAD` or, on any failure,
+  the hardcoded name `main` — never checked against the repo. A `master` repo,
+  or one fetched by hand so the symref was never written, got a default branch
+  that existed nowhere, which is what `jailbee new`, the ahead/behind columns,
+  the container diff and `jailbee pr`'s base all resolve against. jailbee now
+  reads a branch that exists: the symref, then `main`/`master` on the remote,
+  then `main`/`master` locally, then the currently checked-out branch, with the
+  literal `main` only for a detached HEAD or a repo with no commits. The
+  conventional names deliberately outrank the current branch, so working on a
+  feature branch never re-anchors the diff base.
+
 - **A repo with no remote could not get a container at all.** `new.clone_from`
   defaults to `origin`, and `upstream_remote` falls back to the literal name
   `origin` whether or not such a remote exists — so in a local-only repo

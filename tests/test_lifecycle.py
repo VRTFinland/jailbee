@@ -2525,6 +2525,25 @@ def test_resolve_clone_ref_keeps_the_fetch_advice_when_the_remote_exists(tmp_pat
         resolve_clone_ref(cfg, _new_opts(), autofetch=False)
 
 
+def test_resolve_clone_ref_names_the_local_branch_it_did_not_use(tmp_path, mocker):
+    """A declared-but-never-fetched remote with the branch checked out locally:
+    the fetch is what is missing, so the message must not deny the local branch
+    — and must name the key that would use it."""
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+    message = str(excinfo.value)
+    assert "though `refs/heads/dev` is" in message
+    assert "no local" not in message
+    assert "clone_from=local" in message
+
+
 def test_resolve_clone_ref_does_not_probe_remotes_on_the_happy_path(tmp_path, mocker):
     """The remote list is read only where the answer changes an outcome — the
     failure path. Origin mode resolving normally must cost no extra `git`."""

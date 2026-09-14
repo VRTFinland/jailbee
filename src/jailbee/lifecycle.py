@@ -724,6 +724,19 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
                         f"Or start from a branch this repo has: "
                         f"jailbee new {opts.container_branch} --base <branch>"
                     )
+            elif is_local:
+                # The remote is there and the branch is checked out here; what
+                # is missing is the *fetch*. Saying "no local branch either"
+                # (as this message once did unconditionally) is false, and it
+                # hides the one-word escape: this repo asked for the upstream
+                # tip, so the local branch is used only when told to.
+                raise ValueError(
+                    f"jailbee new: 'refs/remotes/{remote}/{source_branch}' not found "
+                    f"in {cfg.repo_root}, though `refs/heads/{source_branch}` is.\n"
+                    f"Fetch it first: git fetch {remote} {source_branch}\n"
+                    f"Or start from the local branch instead: "
+                    f"new.clone_from=local (see `jailbee config edit`)"
+                )
             else:
                 raise ValueError(
                     f"jailbee new: 'refs/remotes/{remote}/{source_branch}' not found "

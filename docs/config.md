@@ -1764,11 +1764,40 @@ YAML:
 - `upstream_remote` — which of the repo's git remotes jailbee treats as the
   upstream. See [Which remote is the upstream?](#which-remote-is-the-upstream)
   below. Fallback `origin`.
-- `default_branch` — auto-detected via
-  `git symbolic-ref refs/remotes/<upstream_remote>/HEAD`. Fallback `main`.
+- `default_branch` — auto-detected. See
+  [Which branch is the default?](#which-branch-is-the-default) below.
+  Fallback `main`.
 - `container_prefix` — defaults to `repo_root.name`, overridable via the
   optional `container_prefix:` YAML key. Used as the prefix for every
   jailbee-owned Incus resource (containers, profiles, ACL).
+
+### Which branch is the default?
+
+`default_branch` is more than `jailbee new`'s starting point when the
+requested branch does not exist yet: it is also the comparison base for
+`jailbee ls`'s ahead/behind columns, for the container diff, and for a
+`jailbee pr` that names no base. It therefore has to be stable — a value that
+followed whatever the host has checked out would silently re-anchor all of
+those — so jailbee reads something that exists rather than guessing a name,
+taking the first of:
+
+1. `refs/remotes/<upstream_remote>/HEAD` — the project's own answer, written
+   by `git clone` from what the server reports;
+2. `refs/remotes/<upstream_remote>/main`, then `.../master` — a repo whose
+   branches were fetched by hand has no symref to read;
+3. the local `refs/heads/main`, then `refs/heads/master`;
+4. the currently checked-out branch — the only evidence left in a repo that
+   follows neither convention;
+5. the literal `main`, for a detached HEAD, a repo with no commit yet, or no
+   `git` at all.
+
+Steps 2-4 are what make a local-only repo (`git init`, no remote) work:
+`upstream_remote` falls back to the *name* `origin` whether or not such a
+remote exists, so a guessed `main` used to name a branch that existed nowhere
+— and `jailbee new` then refused to create any container in that repo. The
+conventional names outrank the current branch deliberately: a checkout sitting
+on `feature/x` must not make `feature/x` the diff base for every container of
+the repo.
 
 ### Which remote is the upstream?
 
