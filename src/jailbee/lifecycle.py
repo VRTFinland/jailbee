@@ -23,6 +23,7 @@ from jailbee.git import (
     fetch_remote_ref,
     get_head_sha,
     has_commit,
+    list_remotes,
     rev_parse,
     rev_parse_remote,
 )
@@ -696,14 +697,42 @@ def resolve_clone_ref(cfg: Config, opts: NewContainerOptions, *, autofetch: bool
                 ) from e
         checkout_commit = rev_parse_remote(cfg.repo_root, remote, source_branch)
         if checkout_commit is None:
-            raise ValueError(
-                f"jailbee new: 'refs/remotes/{remote}/{source_branch}' not found "
-                f"in {cfg.repo_root}, and no local `refs/heads/{source_branch}` "
-                f"either.\n"
-                f"Fetch it first: git fetch {remote} {source_branch}\n"
-                f"Or create a local branch: git branch {source_branch} "
-                f"{remote}/{source_branch}"
-            )
+            # A repo with no such remote can never answer origin mode, and
+            # `cfg.upstream_remote` does not promise one exists: it falls back
+            # to the literal `origin` whenever `detect_upstream_remote` finds
+            # no remotes at all, or several with nothing to pick between them.
+            # So the preference for the upstream tip (`new.clone_from:
+            # origin`, the default) used to refuse a local-only repo outright
+            # — the ordinary shape of a `git init` scratch directory — even
+            # with the branch sitting in `refs/heads/`. There is no upstream
+            # to be stale against here, so the local branch is not second best;
+            # it is the only truth this repo has.
+            #
+            # Read here rather than beside `prefer_origin_default`: the answer
+            # only ever changes an outcome on this path, and probing every
+            # successful `jailbee new` for a remote it is about to use anyway
+            # would buy nothing.
+            if remote not in list_remotes(cfg.repo_root):
+                if is_local:
+                    use_origin_mode = False
+                else:
+                    raise ValueError(
+                        f"jailbee new: branch '{source_branch}' not found in "
+                        f"{cfg.repo_root} — no local `refs/heads/{source_branch}`, "
+                        f"and no remote named '{remote}' to fetch it from.\n"
+                        f"Create it: git branch {source_branch}\n"
+                        f"Or start from a branch this repo has: "
+                        f"jailbee new {opts.container_branch} --base <branch>"
+                    )
+            else:
+                raise ValueError(
+                    f"jailbee new: 'refs/remotes/{remote}/{source_branch}' not found "
+                    f"in {cfg.repo_root}, and no local `refs/heads/{source_branch}` "
+                    f"either.\n"
+                    f"Fetch it first: git fetch {remote} {source_branch}\n"
+                    f"Or create a local branch: git branch {source_branch} "
+                    f"{remote}/{source_branch}"
+                )
     return CloneRef(
         source_branch=source_branch,
         create_new_branch=create_new_branch,

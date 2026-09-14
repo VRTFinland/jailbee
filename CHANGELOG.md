@@ -81,6 +81,19 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **A repo with no remote could not get a container at all.** `new.clone_from`
+  defaults to `origin`, and `upstream_remote` falls back to the literal name
+  `origin` whether or not such a remote exists — so in a local-only repo
+  (`git init`, no remote) `jailbee new` insisted on
+  `refs/remotes/origin/<default branch>`, failed to find it, and aborted with
+  advice to `git fetch` from a remote that was not there. Its message also
+  claimed there was no local branch of that name, while the branch sat in
+  `refs/heads/`. `jailbee new` now starts from the local branch when the repo
+  has no such remote — there is no upstream tip to prefer — and when the
+  branch exists nowhere it says exactly that, pointing at `--base` instead of
+  at a fetch that cannot work. Most visible in a scratch directory, which is
+  usually exactly this shape.
+
 - **`jailbee apply` stopped every Docker container in every running jailbee
   container**, even when it changed nothing. Wiring dockerd to the registry
   mirror ended in an unconditional `systemctl restart docker`, and `apply`

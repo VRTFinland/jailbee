@@ -1482,6 +1482,13 @@ Errors:
 - If `clone_from='origin'` but `refs/remotes/origin/<default_branch>`
   does not exist in the host repo, `jailbee new` aborts. Fetch first, or
   set `clone_from: local`.
+- A repo with **no such remote at all** is not that case: `origin` is only
+  a fallback name (see [`upstream_remote`](#which-remote-is-the-upstream)), so a
+  local-only repo — `git init`, no remote, the ordinary shape of a scratch
+  directory — has no upstream tip to prefer. `jailbee new` uses
+  `refs/heads/<default_branch>` there without being told to, and aborts only
+  when the branch exists neither locally nor on a remote, naming `--base` as
+  the way to start from a branch the repo does have.
 
 ### `destroy`
 
