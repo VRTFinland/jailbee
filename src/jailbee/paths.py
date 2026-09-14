@@ -60,15 +60,24 @@ def _warn_legacy_config_dir(path: Path) -> None:
     "run `git mv .gie .jailbee` in this repo" — advice with no matching
     directory to run it in.
 
-    `warn_plain`, not `warn`: the repo root is data, and Rich would read a
+    `hint`, not `warn_plain`: this fires on *every* command run in an
+    unmigrated repo, whatever the user actually asked for, so on stdout it
+    lands in the middle of output meant for a parser —
+    `jailbee ls --format json | jq` in a `.gie/` repo read the warning as its
+    first token and died. `hint` puts it on stderr, where the sibling notice
+    for a legacy `chrome:` block (`config.loader._warn_legacy_chrome_block`)
+    already went. `hint` shares `warn_plain`'s other property too, which this
+    message needs: the repo root is data, and Rich markup would read a
     `[...]` in a directory name as a style tag and silently delete it.
     """
-    from jailbee.tui import warn_plain
+    from jailbee.tui import hint
 
-    warn_plain(
-        f"{path.parent.name}/config.yaml is deprecated and stops working in "
-        f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
-        f"in {display_path(path.parent.parent)}."
+    hint(
+        [
+            f"{path.parent.name}/config.yaml is deprecated and stops working in "
+            f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
+            f"in {display_path(path.parent.parent)}."
+        ]
     )
 
 

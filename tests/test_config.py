@@ -4438,7 +4438,7 @@ def test_load_repo_config_accepts_a_legacy_gie_dir_with_one_warning(tmp_path, mo
     from jailbee import paths
 
     paths._warn_legacy_config_dir.cache_clear()
-    warn = mocker.patch("jailbee.tui.warn_plain")
+    hint = mocker.patch("jailbee.tui.hint")
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "legacyrepo"
     (repo / ".git").mkdir(parents=True)
@@ -4450,11 +4450,11 @@ def test_load_repo_config_accepts_a_legacy_gie_dir_with_one_warning(tmp_path, mo
 
     assert cfg.is_synthetic() is False
     assert cfg.defaults.cpu == 3
-    warn.assert_called_once()
+    hint.assert_called_once()
 
     # A second load through either loader must not warn again — same cache.
     load_repo_config_unsanitized(repo)
-    warn.assert_called_once()
+    hint.assert_called_once()
 
 
 def test_load_repo_config_unsanitized_reads_a_real_file(tmp_path, mocker):

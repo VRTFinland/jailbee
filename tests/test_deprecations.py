@@ -49,15 +49,15 @@ def test_legacy_chrome_block_notice_names_the_removal_release(tmp_path, capsys):
 def test_legacy_gie_dir_notice_names_the_removal_release(tmp_path, mocker):
     from jailbee import paths
 
-    warn = mocker.patch("jailbee.tui.warn_plain")
+    hint = mocker.patch("jailbee.tui.hint")
     legacy = tmp_path / ".gie" / "config.yaml"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("defaults:\n  cpu: 3\n")
 
     paths.repo_config_path_warned(tmp_path)
 
-    assert warn.call_count == 1
-    assert LEGACY_REMOVAL_VERSION in warn.call_args[0][0]
+    assert hint.call_count == 1
+    assert LEGACY_REMOVAL_VERSION in hint.call_args[0][0][0]
 
 
 def test_chrome_pool_alias_notice_names_the_removal_release(mocker, tmp_path):
