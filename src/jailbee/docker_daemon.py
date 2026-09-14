@@ -27,9 +27,10 @@ if TYPE_CHECKING:
 MIRROR_DNS_NAME = "jailbee-registry-mirror.incus"
 _MIRROR_CONTAINER_NAME = "jailbee-registry-mirror"
 
-# Printed by the provisioning script on the one path that disturbs running
-# workloads, so `apply_docker_proxy` can tell its caller a restart happened.
-RESTARTED_MARKER = "jailbee:dockerd-restarted"
+# Printed by the provisioning script when the running dockerd no longer
+# matches what is installed, so `apply_docker_proxy` can tell its caller a
+# restart is due without taking one.
+RESTART_NEEDED_MARKER = "jailbee:dockerd-restart-needed"
 
 
 def compute_mirror_endpoint(incus: Incus, gcfg: GlobalConfig) -> tuple[str, int]:
@@ -78,18 +79,20 @@ def apply_docker_proxy(
 ) -> bool:
     """Install the mirror CA + dockerd HTTPS_PROXY in container `name`.
 
-    Returns whether dockerd was restarted — a caller sweeping the whole fleet
-    (`apply.run_apply`) reports only the containers it actually disturbed.
+    Returns whether the running dockerd needs a restart to pick the files up;
+    it never takes one. That is the caller's call, because a dockerd restart
+    stops every Docker container the user has running inside `name` and
+    nothing brings them back — `apply.run_apply` asks first, `new_container`
+    just does it (there is nothing there yet to lose).
 
-    Idempotent, restart included: every file is compared against what is
-    already installed and the restart runs only when one of them really
-    changed. It has to be that way, because `jailbee apply` calls this for
-    every running container: an unconditional restart killed the user's
-    entire docker-compose stack in every container on the host, on an apply
-    that changed nothing. Only a restart makes dockerd pick up either input
-    (Go caches the system cert pool per process, and systemd only re-reads
-    the drop-in's `Environment=` on unit start), so a genuine change still
-    pays for one.
+    Idempotent: both files are compared against what is already installed and
+    rewritten only when they differ. The restart question is asked of the
+    *running dockerd*, not of this run's writes: a user who declines the
+    restart must be asked again on the next apply, and by then the files on
+    disk are already correct. So it compares their mtimes against the time
+    docker.service entered its current run — plus the removal of a stale
+    `daemon.json`, the one change no file timestamp records. A stopped
+    dockerd needs nothing; it reads both when it next starts.
 
     Atomic writes (mktemp + mv) so a half-written conf file never gets read
     by systemd on reload.
@@ -98,8 +101,7 @@ def apply_docker_proxy(
     script = f"""\
 set -euo pipefail
 
-# Set by any step that changes dockerd's configuration; nothing else may
-# reach the restart at the bottom.
+# Set by a change that a file timestamp does not record. See step 5.
 changed=0
 
 # 1. CA cert into OS trust bundle.
@@ -113,7 +115,6 @@ if cmp -s "$ca_tmp" "$ca_dest"; then
   rm -f "$ca_tmp"
 else
   mv "$ca_tmp" "$ca_dest"
-  changed=1
 fi
 # Unconditional: the compare above proves the source cert is current, not
 # that the generated bundle still contains it. Cheap, and restarts nothing.
@@ -142,7 +143,6 @@ if cmp -s "$proxy_tmp" "$proxy_dest"; then
   rm -f "$proxy_tmp"
 else
   mv "$proxy_tmp" "$proxy_dest"
-  changed=1
 fi
 
 # 4. Remove stale registry-mirrors daemon.json (left by pre-rpardini installs).
@@ -151,19 +151,51 @@ if [ -e /etc/docker/daemon.json ]; then
   changed=1
 fi
 
-# 5. Restart dockerd, but only for a real change — see the docstring. Also
-# best effort: a container without Docker installed has no `docker.service`,
-# so an unguarded restart would fail (exit 5) and abort the whole exec under
-# `set -e`. The CA + proxy drop-in above stay installed harmlessly; only the
-# restart is Docker-specific. Mirrors the keytool guard above.
-if [ "$changed" = 1 ] && command -v docker >/dev/null 2>&1; then
-  systemctl daemon-reload
-  systemctl restart docker
-  echo '{RESTARTED_MARKER}'
+# 5. Is the running dockerd still what the files above describe? Report
+# only — the restart itself stops every container dockerd is running, so
+# the caller decides (see the docstring). A dockerd that entered its
+# current run *after* both files were last written already has them.
+if command -v docker >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+  since=$(systemctl show docker --property=ActiveEnterTimestamp --value)
+  started=$(date -d "$since" +%s 2>/dev/null || echo 0)
+  newest=0
+  for f in "$ca_dest" "$proxy_dest"; do
+    mtime=$(date -r "$f" +%s)
+    if [ "$mtime" -gt "$newest" ]; then
+      newest=$mtime
+    fi
+  done
+  if [ "$changed" = 1 ] || [ "$newest" -gt "$started" ]; then
+    echo '{RESTART_NEEDED_MARKER}'
+  fi
 fi
 """
     out = incus.exec(name, ["bash", "-c", script], timeout=120)
-    return RESTARTED_MARKER in out.splitlines()
+    return RESTART_NEEDED_MARKER in out.splitlines()
+
+
+def restart_dockerd(incus: Incus, name: str) -> None:
+    """Restart dockerd in container `name` so it picks up CA + proxy changes.
+
+    Separate from `apply_docker_proxy` because it is destructive: it stops
+    every Docker container running inside `name`, and a `docker compose`
+    stack without a restart policy stays down. Only call it for a restart
+    the user has agreed to, or on a container that is not running anything
+    yet.
+
+    Best effort: a container without Docker installed has no
+    `docker.service`, and an unguarded restart would fail (exit 5) and abort
+    the exec under `set -e`.
+    """
+    script = """\
+set -euo pipefail
+
+if command -v docker >/dev/null 2>&1; then
+  systemctl daemon-reload
+  systemctl restart docker
+fi
+"""
+    incus.exec(name, ["bash", "-c", script], timeout=120)
 
 
 def _auto_mirror_wanted(cfg: Config) -> bool:

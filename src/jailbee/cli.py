@@ -909,7 +909,7 @@ def apply(
         bool,
         typer.Option(
             "--no-restart",
-            help="Update profiles/ACL/hosts/proxy but never restart containers",
+            help="Update profiles/ACL/hosts/proxy but never restart a container or its dockerd",
         ),
     ] = False,
 ) -> None:
@@ -947,6 +947,7 @@ def apply(
             result.acl_changed,
             result.hosts_repinned,
             result.docker_restarted,
+            result.docker_restart_pending,
             result.offline_migrated,
             result.ports_changed,
         ]

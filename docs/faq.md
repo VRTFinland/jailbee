@@ -119,8 +119,11 @@ the old image until they are recreated. Old dated archives are cleaned up with
 `init` is first-time setup — it creates the Incus profiles, the ACL and the
 shared directories. `apply` re-applies the current config to what already
 exists (profiles, ACL, `/etc/hosts`, dockerd proxy) and offers to restart
-containers when profiles changed. Run `apply` after editing config;
-`apply --no-restart` pushes an egress change live without a restart.
+containers when profiles changed. It never restarts anything without asking:
+if the registry-mirror CA or proxy drop-in changed, it offers a dockerd
+restart separately, because that stops the Docker containers running inside.
+Run `apply` after editing config; `apply --no-restart` pushes an egress
+change live without a restart.
 
 → [Commands](commands.md)
 

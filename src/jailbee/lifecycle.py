@@ -1164,7 +1164,12 @@ def new_container(
 
         _, port = opts.mirror_endpoint
         ca_pem = opts.mirror_ca_path.read_text()
-        apply_docker_proxy(incus, name, ca_cert_pem=ca_pem, port=port)
+        if apply_docker_proxy(incus, name, ca_cert_pem=ca_pem, port=port):
+            # Unlike `jailbee apply`, no need to ask: the container was just
+            # created, so the restart cannot stop a workload anyone has.
+            from jailbee.docker_daemon import restart_dockerd
+
+            restart_dockerd(incus, name)
 
     if opts.clone:
         assert source_branch is not None

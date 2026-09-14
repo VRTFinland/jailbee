@@ -674,8 +674,9 @@ def test_run_apply_reapplies_docker_proxy_when_mirror_enabled(
 
     # Every running container gets the proxy: strict needs it to reach
     # upstreams under its ACL, loose gets it for caching.
-    assert result.docker_restarted == ["a", "b"]
-    assert apply_proxy.call_count == 2
+    assert [c.args[1] for c in apply_proxy.call_args_list] == ["a", "b"]
+    # Pushing it is not restarting it — that was declined here.
+    assert result.docker_restarted == []
 
 
 def _mirror_fleet(make_cfg, tmp_path: Path, mocker: MockerFixture, *, proxy_results):
@@ -727,42 +728,124 @@ def _mirror_fleet(make_cfg, tmp_path: Path, mocker: MockerFixture, *, proxy_resu
     return cfg, incus, gcfg, apply_proxy
 
 
-def test_run_apply_records_only_the_containers_whose_dockerd_restarted(
+def test_run_apply_asks_before_restarting_dockerd(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """The proxy is pushed to every running container, but the push is a
-    no-op when nothing changed. Counting those as work is what made an apply
-    that disturbed nothing report itself as one that did — and the restart it
-    implies is the fleet-wide docker outage this guards against."""
-    from jailbee.apply import run_apply
-
-    cfg, incus, gcfg, apply_proxy = _mirror_fleet(
-        make_cfg, tmp_path, mocker, proxy_results=[False, True]
-    )
-
-    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
-
-    assert apply_proxy.call_count == 2
-    assert result.docker_restarted == [f"{tmp_path.name}-b"]
-
-
-def test_run_apply_warns_that_a_dockerd_restart_stopped_running_workloads(
-    make_cfg, tmp_path: Path, mocker: MockerFixture, capsys
-) -> None:
-    """The restart takes the container's whole docker-compose stack down and
-    nothing brings it back. A user who is not told reads the silence as
-    "apply changed nothing" and spends days hunting the wrong cause."""
+    """The restart stops every Docker container running inside the jailbee
+    container and nothing brings them back, so it is offered, never taken."""
     from jailbee.apply import run_apply
 
     cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[False, True])
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+    prompts: list[str] = []
 
-    run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+    def _confirm(msg: str) -> bool:
+        prompts.append(msg)
+        return True
 
-    out = capsys.readouterr().out
-    assert "b" in out and "dockerd" in out
-    assert "stopped" in out
-    # The container that needed no restart is not named as disturbed.
-    assert "Restarted dockerd on a" not in out
+    result = run_apply(cfg, incus, gcfg, confirm_fn=_confirm)
+
+    assert [c.args[1] for c in restart.call_args_list] == [f"{tmp_path.name}-b"]
+    assert result.docker_restarted == [f"{tmp_path.name}-b"]
+    assert result.docker_restart_pending == []
+    assert any("dockerd" in m for m in prompts)
+
+
+def test_run_apply_leaves_dockerd_alone_when_the_restart_is_declined(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, capsys
+) -> None:
+    """Declining must leave the container running exactly as it was — and
+    must not be silent, because dockerd is then knowingly out of date."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[False, True])
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda _m: False)
+
+    assert restart.call_count == 0
+    assert result.docker_restarted == []
+    assert result.docker_restart_pending == [f"{tmp_path.name}-b"]
+    assert "dockerd" in capsys.readouterr().out
+
+
+def test_run_apply_never_mentions_dockerd_when_it_is_already_current(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, capsys
+) -> None:
+    """The whole point of the fix: an apply that changed nothing asks
+    nothing, restarts nothing and says nothing about dockerd."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, apply_proxy = _mirror_fleet(
+        make_cfg, tmp_path, mocker, proxy_results=[False, False]
+    )
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+    prompts: list[str] = []
+
+    result = run_apply(cfg, incus, gcfg, confirm_fn=lambda m: prompts.append(m) or True)
+
+    assert apply_proxy.call_count == 2  # the proxy is still pushed everywhere
+    assert restart.call_count == 0
+    assert result.docker_restarted == []
+    assert result.docker_restart_pending == []
+    assert prompts == []
+    assert "dockerd" not in capsys.readouterr().out
+
+
+def test_run_apply_yes_flag_accepts_the_dockerd_restart_without_asking(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[True, True])
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+
+    def _confirm(msg: str) -> bool:
+        raise AssertionError(f"--yes must not prompt: {msg}")
+
+    result = run_apply(cfg, incus, gcfg, assume_yes=True, confirm_fn=_confirm)
+
+    assert restart.call_count == 2
+    assert result.docker_restarted == [f"{tmp_path.name}-a", f"{tmp_path.name}-b"]
+
+
+def test_run_apply_no_restart_flag_covers_the_dockerd_restart_too(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`--no-restart` is the flag for "push config, disturb nothing"; a
+    dockerd restart is exactly the disturbance it promises to avoid."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[False, True])
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+
+    def _confirm(msg: str) -> bool:
+        raise AssertionError(f"--no-restart must not prompt: {msg}")
+
+    result = run_apply(cfg, incus, gcfg, no_restart=True, confirm_fn=_confirm)
+
+    assert restart.call_count == 0
+    assert result.docker_restart_pending == [f"{tmp_path.name}-b"]
+
+
+def test_run_apply_does_not_restart_dockerd_in_a_container_it_just_restarted(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A full container restart brings dockerd up on the new files already.
+    Restarting it again would stop the workloads the boot just started."""
+    from jailbee.apply import run_apply
+
+    cfg, incus, gcfg, _ = _mirror_fleet(make_cfg, tmp_path, mocker, proxy_results=[True, True])
+    mocker.patch("jailbee.apply._profile_differs", return_value=True)
+    mocker.patch("jailbee.apply._restart_one")
+    restart = mocker.patch("jailbee.docker_daemon.restart_dockerd")
+
+    result = run_apply(cfg, incus, gcfg, assume_yes=True)
+
+    assert sorted(result.restarted) == [f"{tmp_path.name}-a", f"{tmp_path.name}-b"]
+    assert restart.call_count == 0
+    assert result.docker_restarted == []
+    assert result.docker_restart_pending == []
 
 
 def test_run_apply_skips_docker_proxy_when_mirror_disabled(

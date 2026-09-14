@@ -22,6 +22,7 @@ def _fake_result(**overrides):
         acl_changed=False,
         hosts_repinned=[],
         docker_restarted=[],
+        docker_restart_pending=[],
         restarted=[],
         restart_failures=[],
         offline_migrated=[],
@@ -129,6 +130,23 @@ def test_cli_apply_dockerd_restart_counts_as_a_change(mocker: MockerFixture) -> 
     assert result.exit_code == 0, result.output
     assert "already up to date" not in result.output
     assert "Apply complete" in result.output
+
+
+def test_cli_apply_a_declined_dockerd_restart_counts_as_a_change(
+    mocker: MockerFixture,
+) -> None:
+    """The proxy files were rewritten even though dockerd was left alone, so
+    the run did change something and must not claim otherwise."""
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(docker_restart_pending=["foo-feat-x"]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+
+    assert result.exit_code == 0, result.output
+    assert "already up to date" not in result.output
 
 
 def test_cli_apply_ports_changed_counts_as_a_change(mocker: MockerFixture) -> None:

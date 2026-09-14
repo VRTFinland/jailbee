@@ -8,6 +8,7 @@ proves that a shell conditional actually took the other branch. Nothing
 here touches Incus, Docker or the network.
 """
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -15,12 +16,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.docker_daemon import (
-    RESTARTED_MARKER,
+    RESTART_NEEDED_MARKER,
     apply_docker_proxy,
     compute_mirror_endpoint,
     mirror_skip_reason,
     mirror_wanted,
     render_proxy_conf,
+    restart_dockerd,
 )
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from tests.conftest import make_cfg
@@ -31,9 +33,24 @@ DAEMON_JSON = "/etc/docker/daemon.json"
 
 # Every external binary the script may reach for. Replaced by loggers so a
 # test can assert on what the script decided to run.
-_FAKE_TOOLS = ("update-ca-certificates", "systemctl", "keytool", "docker")
+_FAKE_TOOLS = ("update-ca-certificates", "keytool", "docker")
 
 _FAKE_TOOL = '#!/bin/sh\nprintf \'%s %s\\n\' "${0##*/}" "$*" >> "$JB_CALL_LOG"\n'
+
+# systemctl also has to answer, not just record: the script asks it whether
+# dockerd is running and when it started. `JB_DOCKER_STARTED` empty means the
+# service is not active.
+_FAKE_SYSTEMCTL = """\
+#!/bin/sh
+printf '%s %s\\n' "${0##*/}" "$*" >> "$JB_CALL_LOG"
+case "$1" in
+  is-active) [ -n "$JB_DOCKER_STARTED" ] ;;
+  show) printf '%s\\n' "$JB_DOCKER_STARTED" ;;
+esac
+"""
+
+# dockerd entered its current run long before anything a test writes.
+LONG_AGO = "2000-01-01 00:00:00 UTC"
 
 
 def _script(ca_cert_pem: str = "mirror-ca-v1", port: int = 3128) -> str:
@@ -60,7 +77,7 @@ def _sandboxed(script: str, root: Path) -> str:
 
 
 class _Run:
-    """One execution of the provisioning script against a fake root."""
+    """One execution of a generated script against a fake root."""
 
     def __init__(self, calls: list[str], stdout: str) -> None:
         self.calls = calls
@@ -70,15 +87,19 @@ class _Run:
     def restarted(self) -> bool:
         return "systemctl restart docker" in self.calls
 
+    @property
+    def restart_needed(self) -> bool:
+        return RESTART_NEEDED_MARKER in self.stdout.splitlines()
 
-def _run_script(
+
+def _bash(
+    script: str,
     root: Path,
     *,
-    ca_cert_pem: str = "mirror-ca-v1",
-    port: int = 3128,
     docker_installed: bool = True,
+    docker_started: str | None = LONG_AGO,
 ) -> _Run:
-    """Execute the generated script with real bash; report what it ran."""
+    """Execute a generated script with real bash; report what it ran."""
     bin_dir = root / "fakebin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = root / "tmp"
@@ -89,15 +110,19 @@ def _run_script(
         exe = bin_dir / tool
         exe.write_text(_FAKE_TOOL)
         exe.chmod(0o755)
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(_FAKE_SYSTEMCTL)
+    systemctl.chmod(0o755)
     log = root / "calls.log"
     log.write_text("")
 
     proc = subprocess.run(
-        ["bash", "-c", _sandboxed(_script(ca_cert_pem, port), root)],
+        ["bash", "-c", _sandboxed(script, root)],
         env={
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "TMPDIR": str(tmp_dir),
             "JB_CALL_LOG": str(log),
+            "JB_DOCKER_STARTED": docker_started or "",
         },
         capture_output=True,
         text=True,
@@ -106,6 +131,48 @@ def _run_script(
     assert proc.returncode == 0, proc.stderr
 
     return _Run(log.read_text().splitlines(), proc.stdout)
+
+
+def _run_script(
+    root: Path,
+    *,
+    ca_cert_pem: str = "mirror-ca-v1",
+    port: int = 3128,
+    docker_installed: bool = True,
+    docker_started: str | None = LONG_AGO,
+) -> _Run:
+    """Run what `apply_docker_proxy` sends for these inputs."""
+    return _bash(
+        _script(ca_cert_pem, port),
+        root,
+        docker_installed=docker_installed,
+        docker_started=docker_started,
+    )
+
+
+def _run_restart_script(root: Path, *, docker_installed: bool = True) -> _Run:
+    """Run what `restart_dockerd` sends."""
+    incus = MagicMock()
+    restart_dockerd(incus, "myrepo-feat-x")
+    script = str(incus.exec.call_args.args[1][2])
+    return _bash(script, root, docker_installed=docker_installed)
+
+
+def _dockerd_restarted(root: Path) -> str:
+    """Backdate the installed files and report a dockerd start just after them.
+
+    Both timestamps have second resolution, so a file written in the same
+    second as the simulated restart is indistinguishable from one written
+    before it. Backdating what is already installed keeps the two apart
+    without making the test wait a second.
+    """
+    past = 1_000_000_000  # 2001-09-09, comfortably before any later write
+    for f in (
+        root / CA_DIR.lstrip("/") / "jailbee-registry-mirror.crt",
+        root / DROPIN_DIR.lstrip("/") / "http-proxy.conf",
+    ):
+        os.utime(f, (past, past))
+    return f"@{past + 1}"
 
 
 def _installed_conf(root: Path) -> str:
@@ -304,37 +371,56 @@ def test_apply_docker_proxy_writes_systemd_dropin_atomically():
     assert "mv " in script
 
 
-def test_first_apply_installs_the_files_and_restarts_dockerd(tmp_path: Path):
-    """A container that has never seen the mirror: everything is new, so the
-    restart is what makes dockerd read the CA and the proxy env."""
+def test_first_apply_installs_the_files_and_asks_for_a_restart(tmp_path: Path):
+    """A container that has never seen the mirror: both files are new, and
+    only a restart makes the running dockerd read them."""
     run = _run_script(tmp_path)
 
     assert _installed_ca(tmp_path).startswith("mirror-ca-v1")
     assert "HTTPS_PROXY=http://jailbee-registry-mirror.incus:3128" in _installed_conf(tmp_path)
-    assert "systemctl daemon-reload" in run.calls
-    assert run.restarted
+    assert run.restart_needed
 
 
-def test_repeated_apply_with_identical_inputs_does_not_restart_dockerd(tmp_path: Path):
+def test_installing_the_proxy_never_restarts_dockerd_by_itself(tmp_path: Path):
+    """The restart stops every Docker container the user is running, so it is
+    the caller's call to make (and `jailbee apply` asks first) — this script
+    only reports that one is due."""
+    run = _run_script(tmp_path)
+
+    assert not run.restarted
+    assert "systemctl daemon-reload" not in run.calls
+
+
+def test_repeated_apply_with_identical_inputs_needs_no_restart(tmp_path: Path):
     """The bug: `jailbee apply` runs this for every running container, so an
-    unconditional restart killed every docker container in the repo's whole
+    unconditional restart killed every Docker container in the repo's whole
     fleet on an apply that changed nothing."""
     first = _run_script(tmp_path)
-    second = _run_script(tmp_path)
+    # dockerd has since restarted, so it is running what is on disk.
+    second = _run_script(tmp_path, docker_started=_dockerd_restarted(tmp_path))
 
-    assert first.restarted
-    assert not second.restarted
-    assert "systemctl daemon-reload" not in second.calls
+    assert first.restart_needed
+    assert not second.restart_needed
 
 
-def test_an_apply_that_restarts_says_so_on_stdout(tmp_path: Path):
-    """`apply_docker_proxy`'s return value is parsed out of this marker, so
-    the two halves have to agree on it."""
+def test_a_declined_restart_is_still_due_on_the_next_apply(tmp_path: Path):
+    """The user can say no. Deciding on file contents alone would then leave
+    dockerd on the old config forever, because the next apply finds both
+    files already correct — so the question is whether the *running* dockerd
+    predates them, not whether this run rewrote them."""
     first = _run_script(tmp_path)
     second = _run_script(tmp_path)
 
-    assert RESTARTED_MARKER in first.stdout.splitlines()
-    assert RESTARTED_MARKER not in second.stdout.splitlines()
+    assert first.restart_needed
+    assert second.restart_needed
+
+
+def test_a_stopped_dockerd_needs_no_restart(tmp_path: Path):
+    """Nothing to disturb, and it reads both files when it next starts."""
+    run = _run_script(tmp_path, docker_started=None)
+
+    assert not run.restart_needed
+    assert _installed_ca(tmp_path).startswith("mirror-ca-v1")
 
 
 def test_unchanged_apply_still_refreshes_the_ca_bundle(tmp_path: Path):
@@ -342,10 +428,10 @@ def test_unchanged_apply_still_refreshes_the_ca_bundle(tmp_path: Path):
     not that the generated bundle still contains it. `update-ca-certificates`
     is the cheap self-heal for that and restarts nothing."""
     _run_script(tmp_path)
-    second = _run_script(tmp_path)
+    second = _run_script(tmp_path, docker_started=_dockerd_restarted(tmp_path))
 
     assert any(c.startswith("update-ca-certificates") for c in second.calls)
-    assert not second.restarted
+    assert not second.restart_needed
 
 
 def test_unchanged_apply_leaves_the_installed_files_in_place(tmp_path: Path):
@@ -353,124 +439,86 @@ def test_unchanged_apply_leaves_the_installed_files_in_place(tmp_path: Path):
     _run_script(tmp_path)
     conf_before, ca_before = _installed_conf(tmp_path), _installed_ca(tmp_path)
 
-    _run_script(tmp_path)
+    _run_script(tmp_path, docker_started=_dockerd_restarted(tmp_path))
 
     assert _installed_conf(tmp_path) == conf_before
     assert _installed_ca(tmp_path) == ca_before
 
 
-def test_apply_restarts_dockerd_when_the_proxy_port_changes(tmp_path: Path):
-    """A real change still has to reach dockerd — the env only takes effect
-    on restart."""
+def test_a_changed_proxy_port_makes_a_restart_due_again(tmp_path: Path):
+    """A real change still has to reach dockerd — systemd re-reads the
+    drop-in's `Environment=` only on unit start."""
     _run_script(tmp_path, port=3128)
-    second = _run_script(tmp_path, port=4000)
+    started = _dockerd_restarted(tmp_path)
+    second = _run_script(tmp_path, port=4000, docker_started=started)
 
-    assert second.restarted
+    assert second.restart_needed
     assert "jailbee-registry-mirror.incus:4000" in _installed_conf(tmp_path)
 
 
-def test_apply_restarts_dockerd_when_the_ca_cert_changes(tmp_path: Path):
-    """Go caches the system cert pool per process, so a regenerated mirror CA
-    is invisible to a dockerd that keeps running."""
+def test_a_regenerated_ca_makes_a_restart_due_again(tmp_path: Path):
+    """Go caches the system cert pool per process, so a new mirror CA is
+    invisible to a dockerd that keeps running."""
     _run_script(tmp_path, ca_cert_pem="mirror-ca-v1")
-    second = _run_script(tmp_path, ca_cert_pem="mirror-ca-v2")
+    started = _dockerd_restarted(tmp_path)
+    second = _run_script(tmp_path, ca_cert_pem="mirror-ca-v2", docker_started=started)
 
-    assert second.restarted
+    assert second.restart_needed
     assert _installed_ca(tmp_path).startswith("mirror-ca-v2")
 
 
-def test_apply_restarts_dockerd_after_removing_a_stale_daemon_json(tmp_path: Path):
+def test_removing_a_stale_daemon_json_makes_a_restart_due(tmp_path: Path):
     """Removing the pre-rpardini daemon.json changes dockerd's configuration,
-    so that removal alone justifies the restart."""
+    and it is the one change no file timestamp records."""
     _run_script(tmp_path)
+    started = _dockerd_restarted(tmp_path)
     daemon_json = tmp_path / DAEMON_JSON.lstrip("/")
     daemon_json.parent.mkdir(parents=True, exist_ok=True)
     daemon_json.write_text('{"registry-mirrors": ["http://old:5000"]}')
 
-    second = _run_script(tmp_path)
+    second = _run_script(tmp_path, docker_started=started)
 
     assert not daemon_json.exists()
-    assert second.restarted
+    assert second.restart_needed
 
 
-def test_apply_does_not_restart_a_container_without_docker(tmp_path: Path):
+def test_a_container_without_docker_is_never_asked_to_restart(tmp_path: Path):
     """No docker.service to restart: the CA and drop-in still install, and
     the exec must not fail under `set -e`."""
     run = _run_script(tmp_path, docker_installed=False)
 
-    assert not run.restarted
-    assert "systemctl daemon-reload" not in run.calls
+    assert not run.restart_needed
     assert _installed_ca(tmp_path).startswith("mirror-ca-v1")
 
 
-def test_apply_docker_proxy_reports_a_restart_to_its_caller():
-    """`run_apply` reports (and counts) only the containers it disturbed."""
+def test_apply_docker_proxy_reports_a_due_restart_to_its_caller(tmp_path: Path):
     incus = MagicMock()
-    incus.exec.return_value = f"some other output\n{RESTARTED_MARKER}\n"
+    incus.exec.return_value = f"some other output\n{RESTART_NEEDED_MARKER}\n"
 
     assert apply_docker_proxy(incus, "myrepo-feat-x", ca_cert_pem="cert", port=3128) is True
 
 
-def test_apply_docker_proxy_reports_no_restart_when_nothing_changed():
+def test_apply_docker_proxy_reports_nothing_due_when_dockerd_is_current():
     incus = MagicMock()
     incus.exec.return_value = "Certificate was added to keystore\n"
 
     assert apply_docker_proxy(incus, "myrepo-feat-x", ca_cert_pem="cert", port=3128) is False
 
 
-def test_apply_docker_proxy_restart_is_guarded_for_non_docker_containers():
-    """A container without Docker installed has no `docker.service`, so an
-    unconditional `systemctl restart docker` fails (exit 5) and aborts the
-    whole `incus exec` under `set -e`. The restart must be guarded so the CA
-    + proxy drop-in still get installed harmlessly and the exec succeeds."""
-    incus = MagicMock()
-    apply_docker_proxy(
-        incus,
-        "myrepo-feat-x",
-        ca_cert_pem="cert",
-        port=3128,
-    )
+def test_restart_dockerd_reloads_the_unit_before_restarting_it(tmp_path: Path):
+    """The drop-in is a unit file: without `daemon-reload` systemd restarts
+    docker.service from the definition it already had."""
+    run = _run_restart_script(tmp_path)
 
-    script = incus.exec.call_args.args[1][2]
-    # The restart must sit behind a `command -v docker` guard, mirroring the
-    # keytool best-effort guard above it.
-    assert "command -v docker" in script
-    guard_pos = script.index("command -v docker")
-    restart_pos = script.index("systemctl restart docker")
-    assert guard_pos < restart_pos, "restart must be inside the docker guard"
+    assert run.calls == ["systemctl daemon-reload", "systemctl restart docker"]
 
 
-def test_apply_docker_proxy_keytool_is_best_effort():
-    """keytool failure (e.g. no JDK installed in the container) must NOT
-    abort the proxy setup — dockerd's OS-level CA bundle is the primary
-    consumer."""
-    incus = MagicMock()
-    apply_docker_proxy(
-        incus,
-        "myrepo-feat-x",
-        ca_cert_pem="cert",
-        port=3128,
-    )
+def test_restart_dockerd_is_a_no_op_without_docker(tmp_path: Path):
+    """`systemctl restart docker` on a container with no docker.service fails
+    with exit 5 and would abort the exec under `set -e`."""
+    run = _run_restart_script(tmp_path, docker_installed=False)
 
-    script = incus.exec.call_args.args[1][2]
-    # keytool line must be guarded so its failure doesn't kill `set -e`
-    assert "keytool" in script
-    assert "|| true" in script or "if command -v keytool" in script
-
-
-def test_apply_docker_proxy_uses_dns_name_not_ip():
-    """http-proxy.conf must point at the DNS name so it stays valid across
-    mirror restarts (the mirror's DHCP-assigned IP can change)."""
-    incus = MagicMock()
-    apply_docker_proxy(
-        incus,
-        "myrepo-feat-x",
-        ca_cert_pem="cert",
-        port=3128,
-    )
-
-    script = incus.exec.call_args.args[1][2]
-    assert "jailbee-registry-mirror.incus:3128" in script
+    assert run.calls == []
 
 
 def _gcfg(enabled, tmp_path):

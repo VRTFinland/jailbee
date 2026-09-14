@@ -73,15 +73,17 @@ before editing `## Unreleased`.
   mirror ended in an unconditional `systemctl restart docker`, and `apply`
   runs that step once per running container — so a single `jailbee apply`
   took down each container's whole `docker compose` stack, with nothing to
-  bring it back and nothing in the output saying it had happened. The
-  mirror's proxy config is deliberately stable (it names the mirror by DNS,
-  not by its changing IP), so in practice the restart was never needed. The
-  CA certificate and the systemd drop-in are now compared against what is
-  already installed, and dockerd is restarted only when one of them really
-  changed — in which case `apply` says so, and says that the container's
-  running Docker containers were stopped. `apply`'s summary no longer counts
-  an unchanged proxy as work, so a run that changed nothing now reports
-  itself as one.
+  bring it back and nothing in the output saying it had happened. `apply` now
+  restarts nothing without asking: it installs the mirror CA and the proxy
+  drop-in as before, then, only if the *running* dockerd predates them, offers
+  the restart in its own prompt that says what it will stop. `--yes` accepts
+  it, `--no-restart` skips it, and declining is safe — the offer returns on
+  every apply until dockerd actually picks the change up, so no container is
+  left silently serving the old config. In practice the question rarely comes
+  up at all: the proxy drop-in names the mirror by DNS, not by its changing
+  IP, so it stays byte-identical across mirror restarts. A run that changed
+  nothing now also reports itself as one, instead of counting the per-
+  container push as work.
 - **Chrome aborted on launch in every container on an Ubuntu 24.04+ host**
   (`FATAL:sandbox/linux/services/credentials.cc … Permission denied`), and so
   did anything else the dev user ran that creates a user namespace — bwrap,

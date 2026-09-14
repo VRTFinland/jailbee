@@ -37,10 +37,15 @@ class ApplyResult:
     profiles_unchanged: list[str]
     acl_changed: bool
     hosts_repinned: list[str]
-    # Containers whose dockerd this run actually restarted. The proxy is
-    # pushed to every running container, but the push only disturbs one
-    # whose CA or drop-in really changed — see `apply_docker_proxy`.
+    # Containers whose dockerd this run restarted, after asking. The proxy is
+    # pushed to every running container, but the push disturbs nothing — only
+    # a restart makes dockerd read it, and only a container whose CA or
+    # drop-in really changed needs one. See `apply_docker_proxy`.
     docker_restarted: list[str]
+    # Containers whose dockerd needs that restart and did not get one, because
+    # the user declined it or passed `--no-restart`. They keep serving the old
+    # registry proxy config until restarted; the next apply offers again.
+    docker_restart_pending: list[str]
     restarted: list[str]
     restart_failures: list[tuple[str, str]]
     # Containers moved off the removed `<prefix>-net-offline` profile by
@@ -295,7 +300,7 @@ def run_apply(
 
     info("Listing running containers...")
     hosts_repinned: list[str] = []
-    docker_restarted: list[str] = []
+    docker_stale: list[str] = []
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
 
     containers = _list_containers(cfg, incus)
@@ -381,20 +386,12 @@ def run_apply(
             from jailbee.docker_daemon import apply_docker_proxy
 
             # apply_docker_proxy reads the mirror endpoint via MIRROR_DNS_NAME
-            # internally; we only need to pass CA + port. It restarts dockerd
-            # only when the CA or the drop-in really changed, and says so —
-            # report that rather than the push, so an apply that changed
-            # nothing stays silent about a container it did not disturb.
+            # internally; we only need to pass CA + port. Installing the files
+            # disturbs nothing; it only reports whether the running dockerd
+            # needs a restart to read them. That restart is offered once,
+            # below, after the container restarts have had their chance.
             if apply_docker_proxy(incus, ci.name, mirror_ca_pem, mirror_port):
-                # `warn`, not `info`: this is the one step of an apply that
-                # takes a user's own workloads down, and nothing brings them
-                # back. Unannounced, the silence reads as "apply changed
-                # nothing" while the container's whole compose stack is gone.
-                warn_plain(
-                    f"Restarted dockerd on {short} for a registry proxy change — "
-                    "its running docker containers were stopped"
-                )
-                docker_restarted.append(ci.name)
+                docker_stale.append(ci.name)
 
     orphans = _sweep_orphan_extra_acls(cfg, incus)
     if orphans:
@@ -439,12 +436,45 @@ def run_apply(
             except Exception as e:
                 restart_failures.append((name, str(e)))
 
+    # A dockerd restart stops every Docker container running inside the
+    # jailbee container, and a compose stack without a restart policy stays
+    # down — so it is offered, never taken. Containers restarted wholesale
+    # just above are already running dockerd on the new files.
+    docker_pending = [n for n in docker_stale if n not in restarted]
+    docker_restarted: list[str] = []
+    if docker_pending and not no_restart:
+        ok = assume_yes
+        if not ok:
+            fn = confirm_fn or default_confirm
+            ok = fn(
+                f"\n{len(docker_pending)} container(s) need a dockerd restart to pick "
+                f"up the registry proxy change:\n  "
+                f"{', '.join(short_name(cfg, n) for n in docker_pending)}\n"
+                f"This stops every Docker container they are running. Restart dockerd now?"
+            )
+        if ok:
+            from jailbee.docker_daemon import restart_dockerd
+
+            for name in docker_pending:
+                info(f"  Restarting dockerd on {short_name(cfg, name)}...")
+                restart_dockerd(incus, name)
+            docker_restarted = docker_pending
+            docker_pending = []
+    if docker_pending:
+        warn_plain(
+            f"dockerd still serves the old registry proxy config on: "
+            f"{', '.join(short_name(cfg, n) for n in docker_pending)}. "
+            f"Restart it (or the container) to pick the change up; "
+            f"`jailbee apply` offers again until then."
+        )
+
     return ApplyResult(
         profiles_changed=profiles_changed,
         profiles_unchanged=profiles_unchanged,
         acl_changed=acl_changed_flag,
         hosts_repinned=hosts_repinned,
         docker_restarted=docker_restarted,
+        docker_restart_pending=docker_pending,
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,
