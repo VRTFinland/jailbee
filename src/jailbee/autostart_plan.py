@@ -136,21 +136,54 @@ def plan_autostart(
     the user is attached. An explicitly written ``stage: agents`` is filled
     in place instead, wherever the repo put it.
 
+    The reserved ``agents`` slot only exists in the stage form. A legacy
+    flat trigger has no such slot — even a step literally named ``agents``
+    is just an ordinary step, and the generated agent steps still get their
+    own stage — because a flat config's step names are user data, not a
+    namespace jailbee reserves.
+
     ``override`` is the CLI's ``--wait`` / ``--no-wait``.
     ``already_detached`` is how ``ON_START`` learns that ``ON_CREATE``
     already crossed the boundary: once detached, everything after it is.
     """
-    stages = normalize_stages(getattr(autostart, trigger.value))
+    entries = getattr(autostart, trigger.value)
+    stages = normalize_stages(entries)
     steps = list(agent_steps)
+    is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
 
-    explicit = [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE]
+    explicit = (
+        [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE] if is_stage_form else []
+    )
     if explicit:
         i = explicit[0]
         if steps:
-            stages[i] = _agents_stage(steps)
+            # `model_copy` (not `_agents_stage`) so the repo's own stage —
+            # its `network`, `mounts`, `detach` — survives filling; only the
+            # chains are replaced.
+            stages[i] = stages[i].model_copy(
+                update={
+                    "chains": [AutostartChain(name="main", steps=list(steps))],
+                    "steps": [],
+                }
+            )
+            boundary = _boundary(stages, override=override, already_detached=already_detached)
+            # The agents stage is the hand-off point: launching it must stay
+            # blocking. When its own `detach: true` is what the natural scan
+            # found (boundary landed exactly on it), the boundary is *after*
+            # it, not on it — unlike an ordinary stage, which starts the
+            # detached region it flags.
+            if override is None and not already_detached and boundary == i:
+                boundary = i + 1
         else:
+            dropped = stages[i]
             del stages[i]
-        boundary = _boundary(stages, override=override, already_detached=already_detached)
+            if dropped.detach and i < len(stages):
+                # No agent to launch, so the slot disappears — but the user
+                # marked it as where detachment begins. Hand that flag to
+                # whatever now occupies its position so the boundary they
+                # drew doesn't silently vanish.
+                stages[i] = stages[i].model_copy(update={"detach": True})
+            boundary = _boundary(stages, override=override, already_detached=already_detached)
     else:
         boundary = _boundary(stages, override=override, already_detached=already_detached)
         if steps:

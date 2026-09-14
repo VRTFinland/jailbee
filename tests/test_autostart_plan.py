@@ -140,3 +140,76 @@ def test_empty_trigger_plans_nothing():
     plan = plan_autostart(Autostart(), AutostartTrigger.ON_CREATE)
     assert plan.blocking == []
     assert plan.detached == []
+
+
+def test_flat_step_named_agents_is_not_the_reserved_slot():
+    """The reserved `agents` slot only exists in the stage form — a flat
+    step happening to be named `agents` is just an ordinary step, and the
+    generated agent steps still get their own separate stage."""
+    block = _flat({"name": "agents", "run": "true"})
+    block = Autostart.model_validate({"on_start": block.on_create})
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent])
+    assert [s.stage for s in plan.blocking] == ["agents", "agents"]
+    assert plan.blocking[0].all_chains()[0].steps[0].run == "true"
+    assert [st.name for st in plan.blocking[1].all_chains()[0].steps] == ["claude"]
+
+
+def test_explicit_agents_stage_with_detach_splits_after_itself():
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "agents", "detach": True},
+                {"stage": "deps", "steps": [{"name": "d", "run": "true"}]},
+            ]
+        }
+    )
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent])
+    assert [s.stage for s in plan.blocking] == ["agents"]
+    assert [s.stage for s in plan.detached] == ["deps"]
+    assert plan.blocking[0].detach is True
+
+
+def test_explicit_agents_stage_keeps_its_network_and_mounts_after_filling():
+    block = Autostart.model_validate(
+        {"on_start": [{"stage": "agents", "network": "loose", "mounts": ["aws"]}]}
+    )
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent])
+    assert plan.blocking[0].network == "loose"
+    assert plan.blocking[0].mounts == ["aws"]
+    assert [st.name for st in plan.blocking[0].all_chains()[0].steps] == ["claude"]
+
+
+def test_dropped_agents_stage_detach_flag_moves_to_the_next_stage():
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "agents", "detach": True},
+                {"stage": "deps", "steps": [{"name": "d", "run": "true"}]},
+            ]
+        }
+    )
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[])
+    assert plan.blocking == []
+    assert [s.stage for s in plan.detached] == ["deps"]
+    assert plan.detached[0].detach is True
+
+
+def test_explicit_agents_stage_with_already_detached_goes_entirely_to_detached():
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "agents"},
+                {"stage": "deps", "steps": [{"name": "d", "run": "true"}]},
+            ]
+        }
+    )
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    plan = plan_autostart(
+        block, AutostartTrigger.ON_START, agent_steps=[agent], already_detached=True
+    )
+    assert plan.blocking == []
+    assert [s.stage for s in plan.detached] == ["agents", "deps"]
+    assert [st.name for st in plan.detached[0].all_chains()[0].steps] == ["claude"]
