@@ -794,15 +794,37 @@ class Config(BaseModel):
         for name, opt_mount in self.optional_mounts.items():
             if not opt_mount.host.exists():
                 issues.append(f"optional_mounts[{name}].host does not exist: {opt_mount.host}")
+        from jailbee.autostart_plan import normalize_stages
+
         known_mounts = set(self.optional_mounts)
         for trigger_name in ("on_create", "on_start"):
-            for step in getattr(self.autostart, trigger_name):
-                for m in step.mounts:
+            for stage in normalize_stages(getattr(self.autostart, trigger_name)):
+                for m in stage.mounts:
                     if m not in known_mounts:
                         issues.append(
-                            f"autostart.{trigger_name}[{step.name}].mounts "
+                            f"autostart.{trigger_name}[{stage.stage}].mounts "
                             f"references unknown optional_mount: '{m}'"
                         )
+                for chain in stage.all_chains():
+                    for step in chain.steps:
+                        for m in step.mounts:
+                            if m not in known_mounts:
+                                issues.append(
+                                    f"autostart.{trigger_name}[{step.name}].mounts "
+                                    f"references unknown optional_mount: '{m}'"
+                                )
+                        if step.network is not None:
+                            issues.append(
+                                f"autostart.{trigger_name}[{step.name}].network is "
+                                f"deprecated and will be removed in 2.0.0 — move it to the "
+                                f"enclosing stage's `network:`"
+                            )
+                        if step.mounts:
+                            issues.append(
+                                f"autostart.{trigger_name}[{step.name}].mounts is "
+                                f"deprecated and will be removed in 2.0.0 — move them to "
+                                f"the enclosing stage's `mounts:`"
+                            )
         if self.loose_auto_revert.enabled:
             # The schema types `after` as `str | int` and stops there, so an
             # unparseable value (or one over the 24h cap) loads cleanly and
