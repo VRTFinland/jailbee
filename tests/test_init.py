@@ -1170,6 +1170,128 @@ def test_seed_claude_json_does_not_touch_an_existing_file(tmp_path):
     assert (shared / "claude" / ".claude.json").read_text() == '{"existing": true}'
 
 
+def _seeded_cfg(tmp_path, *, login: bool, **claude_fields):
+    """A cfg whose Claude config home is empty and whose holder may hold a login.
+
+    The holder is a credential *group* directory, so these exercise the same
+    path a scratch directory takes: `claude_credentials_dir` is resolved from
+    `global.yaml` for a repo with no config file exactly as for one with.
+    """
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    holder = tmp_path / "creds" / "work"
+    holder.mkdir(parents=True)
+    if login:
+        (holder / ".credentials.json").write_text('{"claudeAiOauth": {}}')
+    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
+    cfg = with_agent(cfg, "claude", **claude_fields) if claude_fields else cfg
+    return cfg.model_copy(update={"claude_credentials_dir": holder})
+
+
+def _seeded_json(cfg):
+    import json
+
+    return json.loads((cfg.shared_dir / "claude" / ".claude.json").read_text())
+
+
+def test_seed_claude_json_skips_onboarding_when_the_holder_holds_a_login(tmp_path):
+    """The friction this exists to remove: Claude Code's first-run wizard asks
+    for a login even when a valid shared credential is mounted, because the
+    wizard is gated on `hasCompletedOnboarding`, not on the credential."""
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=True)
+
+    _seed_claude_json(cfg)
+
+    assert _seeded_json(cfg)["hasCompletedOnboarding"] is True
+
+
+def test_seed_claude_json_accepts_trust_for_the_container_repo_path(tmp_path):
+    """Keyed by the *container's* repo path, which is where Claude Code runs —
+    the host path would leave the dialog to answer anyway."""
+    from jailbee.init_command import _seed_claude_json
+    from jailbee.profiles import container_repo_dir_for
+
+    cfg = _seeded_cfg(tmp_path, login=True)
+
+    _seed_claude_json(cfg)
+
+    projects = _seeded_json(cfg)["projects"]
+    assert projects[container_repo_dir_for(cfg)]["hasTrustDialogAccepted"] is True
+
+
+def test_seed_claude_json_stays_empty_without_a_shared_login(tmp_path):
+    """No credential to adopt means the wizard is the *right* answer: it walks
+    the user through the login that has to happen. Skipping it would drop them
+    into the REPL to discover the missing login on their first prompt."""
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=False)
+
+    _seed_claude_json(cfg)
+
+    assert _seeded_json(cfg) == {}
+
+
+def test_seed_claude_json_stays_empty_when_seed_onboarding_is_false(tmp_path):
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=True, seed_onboarding=False)
+
+    _seed_claude_json(cfg)
+
+    assert _seeded_json(cfg) == {}
+
+
+def test_seed_claude_json_repairs_an_untouched_file(tmp_path):
+    """A config home seeded `{}` before this existed — every scratch directory
+    created so far — is repaired on the next `jailbee apply`, and whatever the
+    file already held is kept."""
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=True)
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    target.write_text('{"cachedGrowthBookFeatures": {"x": true}}')
+
+    _seed_claude_json(cfg)
+
+    data = _seeded_json(cfg)
+    assert data["hasCompletedOnboarding"] is True
+    assert data["cachedGrowthBookFeatures"] == {"x": True}
+
+
+def test_seed_claude_json_leaves_a_file_claude_code_has_written(tmp_path):
+    """`hasCompletedOnboarding` present means Claude Code has run here and the
+    file is the user's, not a seed — including when they answered *no* to the
+    trust dialog, which this must never flip back."""
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=True)
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    written = '{"hasCompletedOnboarding": false, "projects": {}}'
+    target.write_text(written)
+
+    _seed_claude_json(cfg)
+
+    assert target.read_text() == written
+
+
+def test_seed_claude_json_leaves_a_file_carrying_an_account(tmp_path):
+    """The other half of "Claude Code has run here": a config home that names
+    an account is live state even if the onboarding flag is somehow absent."""
+    from jailbee.init_command import _seed_claude_json
+
+    cfg = _seeded_cfg(tmp_path, login=True)
+    target = cfg.shared_dir / "claude" / ".claude.json"
+    written = '{"oauthAccount": {"emailAddress": "me@corp.com"}}'
+    target.write_text(written)
+
+    _seed_claude_json(cfg)
+
+    assert target.read_text() == written
+
+
 def test_legacy_claude_json_survives_seeding(tmp_path):
     """Relocation must run before the seed. If the seed wins, `{}` lands at
     the destination, the relocation no-ops on a now-existing target, and the

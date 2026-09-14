@@ -285,13 +285,13 @@ class ClaudeAgentConfig(AgentConfig):
     egress auto-add, the `<shared_dir>/claude` subdir creation on `jailbee
     init`, and the claude-subdir presence check in `jailbee doctor`. When
     enabled, jailbee creates an empty `<shared_dir>/claude` directory as a
-    bind-mount source and seeds `<shared_dir>/claude/.claude.json` with `{}`
-    — the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude
-    Code reads its global config from inside that directory mount, and Claude
-    Code inside the first container runs its onboarding flow from a clean
-    state. No host `~/.claude` / `~/.claude.json` is read. `autostart`,
-    `command` and `auto_update` are otherwise identical in meaning to any
-    other agent's.
+    bind-mount source and seeds `<shared_dir>/claude/.claude.json` — the
+    golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, so Claude Code
+    reads its global config from inside that directory mount. The seed is `{}`
+    (a clean first run) unless `seed_onboarding` adopts a login the repo's
+    credential group already holds. No host `~/.claude` / `~/.claude.json` is
+    read. `autostart`, `command` and `auto_update` are otherwise identical in
+    meaning to any other agent's.
     """
 
     plugins_enabled: bool = Field(
@@ -310,6 +310,20 @@ class ClaudeAgentConfig(AgentConfig):
             "Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into the shared "
             "`<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. "
             "Host-side file copy only, no network. Has no effect when `enabled` is false."
+        ),
+    )
+    seed_onboarding: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee init`/`jailbee apply` mark a *fresh* "
+            "`<shared_dir>/claude/.claude.json` as already onboarded, and accept the "
+            "trust dialog for the repo's in-container path, whenever this repo's "
+            "credential group already holds a login. Claude Code's first-run wizard is "
+            "gated on that flag alone and never looks at the mounted credential, so "
+            "without this a new container asks for a `/login` the credential has "
+            "already answered. With no shared login there is nothing to adopt and the "
+            "wizard runs as before. A config home Claude Code has already written is "
+            "never touched. Has no effect when `enabled` is false."
         ),
     )
     ai_pr_description: bool = Field(

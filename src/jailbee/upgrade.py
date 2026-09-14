@@ -157,6 +157,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "needing an unprivileged user namespace aborts in the container"
         ),
     ),
+    UpgradeNote(
+        version=(1, 3, 2),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` seeds a never-used Claude config home as already "
+            "onboarded, so a container stops asking for a `/login` its credential "
+            "group already holds"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

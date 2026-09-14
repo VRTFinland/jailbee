@@ -1055,6 +1055,71 @@ def test_invalidate_identity_is_true_when_there_is_nothing_to_clear(tmp_path: Pa
     assert claude_pool.invalidate_identity(home) is True
 
 
+def test_mark_onboarded_creates_the_config_it_writes(tmp_path: Path) -> None:
+    home = tmp_path / "claude"
+    home.mkdir()
+
+    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+
+    data = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert data["hasCompletedOnboarding"] is True
+    assert data["projects"]["/home/dev/pds"]["hasTrustDialogAccepted"] is True
+
+
+def test_mark_onboarded_keeps_other_projects(tmp_path: Path) -> None:
+    """The seed is one key in one project entry, never a `projects` rewrite:
+    a config home is shared by every container of the repo, and a second repo
+    path can already be in there from a mount the user added."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".claude.json").write_text(
+        json.dumps({"projects": {"/home/dev/other": {"allowedTools": ["Read"]}}}),
+        encoding="utf-8",
+    )
+
+    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+
+    projects = json.loads((home / ".claude.json").read_text(encoding="utf-8"))["projects"]
+    assert projects["/home/dev/other"] == {"allowedTools": ["Read"]}
+    assert projects["/home/dev/pds"] == {"hasTrustDialogAccepted": True}
+
+
+def test_mark_onboarded_refuses_a_config_claude_code_has_written(tmp_path: Path) -> None:
+    """Either key in `ONBOARDING_KEYS` is enough, and a `false` onboarding flag
+    counts: the user declining the wizard is a decision, not an empty seed."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    for written in ('{"hasCompletedOnboarding": false}', '{"oauthAccount": {}}'):
+        (home / ".claude.json").write_text(written, encoding="utf-8")
+
+        assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is False
+        assert (home / ".claude.json").read_text() == written
+
+
+def test_mark_onboarded_reports_a_config_it_cannot_read(tmp_path: Path) -> None:
+    """Same contract as `invalidate_identity`: never overwrite what cannot be
+    parsed — the caller falls back to leaving the file alone."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
+
+    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is False
+    assert (home / ".claude.json").read_text() == '["not", "an", "object"]'
+
+
+def test_mark_onboarded_writes_the_legacy_config_when_it_is_the_live_one(tmp_path: Path) -> None:
+    """`identity_file` resolves `.config.json` first, mirroring Claude Code:
+    writing `.claude.json` instead would seed a file nothing reads."""
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / ".config.json").write_text("{}", encoding="utf-8")
+
+    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+
+    assert json.loads((home / ".config.json").read_text())["hasCompletedOnboarding"] is True
+    assert not (home / ".claude.json").exists()
+
+
 def test_switch_leaves_no_staging_file_behind(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)

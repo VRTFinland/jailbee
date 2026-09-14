@@ -16,6 +16,7 @@ from jailbee.lifecycle import (
     destroy_container,
     list_containers,
     new_container,
+    resolve_clone_ref,
     resolve_container_for_interactive,
     resolve_container_for_interactive_detailed,
     resolve_container_name,
@@ -2457,6 +2458,108 @@ def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
     reported.assert_called_once_with("Fetching origin/dev failed: fatal: connection refused")
 
 
+def _new_opts(branch="feat/new", **overrides):
+    return NewContainerOptions(
+        container_branch=branch,
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+        **overrides,
+    )
+
+
+def test_resolve_clone_ref_uses_the_local_branch_when_there_is_no_remote(tmp_path, mocker):
+    """`clone_from: origin` is the default, and `upstream_remote` falls back to
+    the literal `origin` whether or not such a remote exists — so a local-only
+    repo (`git init`, no remote; the common shape of a scratch directory)
+    preferred a remote-tracking ref that can never exist, and `jailbee new`
+    refused to create any container at all. The local branch is right there.
+    """
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=[])
+
+    ref = resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+    assert ref.use_origin_mode is False
+    assert ref.source_branch == "dev"
+    assert ref.checkout_commit is None
+    assert ref.create_new_branch is True
+
+
+def test_resolve_clone_ref_without_a_remote_does_not_advise_fetching(tmp_path, mocker):
+    """Nothing named the branch, and no remote to fetch it from: the error has
+    to say so. `git fetch origin dev` is not advice in a repo with no `origin`.
+    """
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=[])
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+    message = str(excinfo.value)
+    assert "no remote named 'origin'" in message
+    assert "git fetch" not in message
+    assert "--base" in message
+
+
+def test_resolve_clone_ref_keeps_the_fetch_advice_when_the_remote_exists(tmp_path, mocker):
+    """The unchanged case: a real remote that simply has not been fetched. The
+    branch is reachable, so `git fetch` is exactly the right advice."""
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
+
+    with pytest.raises(ValueError, match="git fetch origin dev"):
+        resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+
+def test_resolve_clone_ref_names_the_local_branch_it_did_not_use(tmp_path, mocker):
+    """A declared-but-never-fetched remote with the branch checked out locally:
+    the fetch is what is missing, so the message must not deny the local branch
+    — and must name the key that would use it."""
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+    message = str(excinfo.value)
+    assert "though `refs/heads/dev` is" in message
+    assert "no local" not in message
+    assert "clone_from=local" in message
+
+
+def test_resolve_clone_ref_does_not_probe_remotes_on_the_happy_path(tmp_path, mocker):
+    """The remote list is read only where the answer changes an outcome — the
+    failure path. Origin mode resolving normally must cost no extra `git`."""
+    cfg = _cfg_for_new(tmp_path, clone_from="origin")
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="a4ebc3ed1234")
+    remotes = mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
+
+    ref = resolve_clone_ref(cfg, _new_opts(), autofetch=False)
+
+    assert ref.use_origin_mode is True
+    assert ref.checkout_commit == "a4ebc3ed1234"
+    remotes.assert_not_called()
+
+
 def test_new_container_autofetch_retry_is_not_offered_off_tty(tmp_path, mocker):
     from jailbee.git import GitFetchError
 
@@ -2504,6 +2607,11 @@ def test_new_container_origin_mode_errors_when_origin_ref_missing(tmp_path, mock
         "jailbee.lifecycle.rev_parse_remote",
         return_value=None,
     )
+    # The premise, now that it decides the message: this repo *has* the remote,
+    # it just has not fetched the ref. `_cfg_for_new`'s repo is a bare `.git`
+    # directory, so an unstubbed read would answer "no remotes" and take the
+    # local-only branch instead (see the resolve_clone_ref tests above).
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
 
     opts = NewContainerOptions(
         container_branch="feat/new",

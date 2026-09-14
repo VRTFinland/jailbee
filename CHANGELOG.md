@@ -42,6 +42,19 @@ before editing `## Unreleased`.
   deliberate manual `git push --force`. `jailbee git merge` (container →
   container) transports no tags on either leg, and `jailbee pr` never sends
   tags to the GitHub origin, with no flag to change either.
+- **A new container no longer asks for a login it already has.** Claude
+  Code's first-run wizard is gated on its own `hasCompletedOnboarding` flag
+  and never looks at the credential mounted from the repo's credential
+  group, so every fresh Claude config home walked the user through `/login`
+  for the account already sitting there. `jailbee init`/`jailbee apply` now
+  mark a never-used config home as onboarded, and accept the trust dialog
+  for the repo's in-container path, whenever that group already holds a
+  login — the new `claude.seed_onboarding` key (default `true`) turns it
+  off. A group holding no login still gets the wizard, which is what walks
+  the first login in; a config home Claude Code has already written is never
+  touched. Most visible in a directory with no `.jailbee/config.yaml`, which
+  has no repo state to inherit and paid this on every new scratch
+  environment.
 - **`jailbee git pull` gains `--ff`/`--no-ff`**, the same tri-state shape
   `jailbee git push --merge` already had, backed by a new `pull.ff` config key
   (`never`/`auto`/`always`, default `auto`). See the behaviour change below.
@@ -67,6 +80,31 @@ before editing `## Unreleased`.
   Set `pull.ff: never` to keep the old behaviour, or pass `--no-ff` for one run.
 
 ### Fixed
+
+- **A repo whose trunk is not called `main` was told it was.** The default
+  branch was `git symbolic-ref refs/remotes/<remote>/HEAD` or, on any failure,
+  the hardcoded name `main` — never checked against the repo. A `master` repo,
+  or one fetched by hand so the symref was never written, got a default branch
+  that existed nowhere, which is what `jailbee new`, the ahead/behind columns,
+  the container diff and `jailbee pr`'s base all resolve against. jailbee now
+  reads a branch that exists: the symref, then `main`/`master` on the remote,
+  then `main`/`master` locally, then the currently checked-out branch, with the
+  literal `main` only for a detached HEAD or a repo with no commits. The
+  conventional names deliberately outrank the current branch, so working on a
+  feature branch never re-anchors the diff base.
+
+- **A repo with no remote could not get a container at all.** `new.clone_from`
+  defaults to `origin`, and `upstream_remote` falls back to the literal name
+  `origin` whether or not such a remote exists — so in a local-only repo
+  (`git init`, no remote) `jailbee new` insisted on
+  `refs/remotes/origin/<default branch>`, failed to find it, and aborted with
+  advice to `git fetch` from a remote that was not there. Its message also
+  claimed there was no local branch of that name, while the branch sat in
+  `refs/heads/`. `jailbee new` now starts from the local branch when the repo
+  has no such remote — there is no upstream tip to prefer — and when the
+  branch exists nowhere it says exactly that, pointing at `--base` instead of
+  at a fetch that cannot work. Most visible in a scratch directory, which is
+  usually exactly this shape.
 
 - **`jailbee apply` stopped every Docker container in every running jailbee
   container**, even when it changed nothing. Wiring dockerd to the registry

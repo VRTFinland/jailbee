@@ -1188,12 +1188,13 @@ out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` adopts a login the repo's credential group already holds), and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; `jailbee tmux <c>` lands in that window. `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
+| `claude.seed_onboarding` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded (`hasCompletedOnboarding`) and accept the trust dialog for the repo's in-container path, but only when this repo's credential group (see [`claude_credentials`](#claude_credentials)) already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this every new container — and every scratch directory, which has no repo config to inherit state from — asks for a `/login` the shared credential has already answered. With no shared login there is nothing to adopt and the wizard runs as before, which is what walks the user through the login that does have to happen. A config home Claude Code has already written is never touched. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` when generating the PR text. Writing a description is a bounded job, and pinning it means the generation does not compete for the same budget as the coding work that just happened in the container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` omits the flag so the container's own default model applies. `haiku` works but has a smaller context window, so a large cumulative diff may not fit. Rejected at load if it is not a single whitespace-free token. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
@@ -1481,6 +1482,13 @@ Errors:
 - If `clone_from='origin'` but `refs/remotes/origin/<default_branch>`
   does not exist in the host repo, `jailbee new` aborts. Fetch first, or
   set `clone_from: local`.
+- A repo with **no such remote at all** is not that case: `origin` is only
+  a fallback name (see [`upstream_remote`](#which-remote-is-the-upstream)), so a
+  local-only repo — `git init`, no remote, the ordinary shape of a scratch
+  directory — has no upstream tip to prefer. `jailbee new` uses
+  `refs/heads/<default_branch>` there without being told to, and aborts only
+  when the branch exists neither locally nor on a remote, naming `--base` as
+  the way to start from a branch the repo does have.
 
 ### `destroy`
 
@@ -1756,11 +1764,40 @@ YAML:
 - `upstream_remote` — which of the repo's git remotes jailbee treats as the
   upstream. See [Which remote is the upstream?](#which-remote-is-the-upstream)
   below. Fallback `origin`.
-- `default_branch` — auto-detected via
-  `git symbolic-ref refs/remotes/<upstream_remote>/HEAD`. Fallback `main`.
+- `default_branch` — auto-detected. See
+  [Which branch is the default?](#which-branch-is-the-default) below.
+  Fallback `main`.
 - `container_prefix` — defaults to `repo_root.name`, overridable via the
   optional `container_prefix:` YAML key. Used as the prefix for every
   jailbee-owned Incus resource (containers, profiles, ACL).
+
+### Which branch is the default?
+
+`default_branch` is more than `jailbee new`'s starting point when the
+requested branch does not exist yet: it is also the comparison base for
+`jailbee ls`'s ahead/behind columns, for the container diff, and for a
+`jailbee pr` that names no base. It therefore has to be stable — a value that
+followed whatever the host has checked out would silently re-anchor all of
+those — so jailbee reads something that exists rather than guessing a name,
+taking the first of:
+
+1. `refs/remotes/<upstream_remote>/HEAD` — the project's own answer, written
+   by `git clone` from what the server reports;
+2. `refs/remotes/<upstream_remote>/main`, then `.../master` — a repo whose
+   branches were fetched by hand has no symref to read;
+3. the local `refs/heads/main`, then `refs/heads/master`;
+4. the currently checked-out branch — the only evidence left in a repo that
+   follows neither convention;
+5. the literal `main`, for a detached HEAD, a repo with no commit yet, or no
+   `git` at all.
+
+Steps 2-4 are what make a local-only repo (`git init`, no remote) work:
+`upstream_remote` falls back to the *name* `origin` whether or not such a
+remote exists, so a guessed `main` used to name a branch that existed nowhere
+— and `jailbee new` then refused to create any container in that repo. The
+conventional names outrank the current branch deliberately: a checkout sitting
+on `feature/x` must not make `feature/x` the diff base for every container of
+the repo.
 
 ### Which remote is the upstream?
 

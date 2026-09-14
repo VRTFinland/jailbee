@@ -324,19 +324,46 @@ def ensure_claude_credentials_env(cfg: Config, incus: Incus) -> None:
 
 
 def _seed_claude_json(cfg: Config) -> None:
-    """Write `<shared_dir>/claude/.claude.json` as `{}` when absent.
+    """Write `<shared_dir>/claude/.claude.json` so Claude Code starts usable.
 
     Incus no longer requires this file to exist (there is no file-level disk
     device to give a source path to), but the seed is kept deliberately: an
     *empty* file fails Claude Code's parse with `Unexpected EOF`, and a valid
     `{}` is the known-good pre-first-run state this repo has always shipped.
-    Claude Code rewrites it on first run.
+
+    `{}` is not the end of it when the repo's holder already holds a login.
+    Claude Code's first-run wizard is gated on `hasCompletedOnboarding` and
+    never looks at the credential, so a clean config home walks the user
+    through `/login` for the account the mounted credential already carries —
+    the friction every new container in a shared group used to pay, and every
+    scratch directory pays twice over because it has no repo config to
+    inherit. `claude_pool.mark_onboarded` writes that state; the decision to
+    write it lives here, where both halves are known.
+
+    The credential check is the gate, not a detail: with nothing to adopt, the
+    wizard is the *right* answer — it walks the user through the login that
+    has to happen, instead of dropping them into the REPL to discover the
+    missing one on their first prompt. An ungrouped repo passes the same test,
+    its holder being its own config home.
+
+    Never an overwrite: `mark_onboarded` refuses a config home Claude Code has
+    already written (`claude_pool.ONBOARDING_KEYS`), and this falls back to the
+    `{}` seed — which in turn only ever writes an absent file.
     """
+    from jailbee.claude_pool import live_credential_path, mark_onboarded
+    from jailbee.profiles import container_repo_dir_for
+
     assert cfg.shared_dir is not None  # set by load_config
     target = cfg.shared_dir / "claude" / ".claude.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        cfg.claude.seed_onboarding
+        and live_credential_path(cfg).exists()
+        and mark_onboarded(target.parent, repo_dir=container_repo_dir_for(cfg))
+    ):
+        return
     if target.exists():
         return
-    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{}\n")
 
 

@@ -1245,6 +1245,64 @@ def invalidate_identity(home: Path) -> bool:
     return True
 
 
+ONBOARDING_KEYS = ("hasCompletedOnboarding", "oauthAccount")
+"""The keys whose presence means Claude Code has already run in a config home.
+
+Either one is enough. `hasCompletedOnboarding` is what Claude Code's own
+first-run wizard is gated on, and `oauthAccount` is written the moment a login
+lands — a config home carrying either is the user's state, never a seed, and
+`mark_onboarded` refuses to touch it.
+"""
+
+
+def mark_onboarded(home: Path, *, repo_dir: str) -> bool:
+    """Record in `home` that the first-run wizard need not run, and why it can.
+
+    Claude Code's wizard is gated on `hasCompletedOnboarding` alone: it asks
+    for a login even when a valid credential is mounted at
+    `CLAUDE_SECURESTORAGE_CONFIG_DIR`, because it never looks. A fresh config
+    home therefore sends the user through `/login` for an account they are
+    already logged into — the whole cost of a new container in a repo whose
+    credential group holds a login. Deciding *whether* that credential exists
+    is the caller's job (`init_command._seed_claude_json`); this function only
+    writes.
+
+    `repo_dir` is the repo's path **inside the container**, where Claude Code
+    resolves it; keyed by the host path the trust dialog would still be there
+    to answer. Trust is seeded with the same flag as the onboarding skip
+    because the two are one decision: the container is the isolation boundary
+    the dialog asks about, and one config home is shared by every container of
+    the repo, so the first manual accept already covers the rest.
+
+    Returns whether the config home now carries the state. False means the
+    file was there but is not a seed — Claude Code has run here, and the
+    contract of `invalidate_identity` applies: a file holding the user's
+    projects and MCP servers is **never** overwritten. False also covers an
+    unreadable file, a lost lock, and a torn one; the caller falls back to the
+    `{}` seed it has always written.
+    """
+    path = identity_file(home)
+    try:
+        with config_lock(home):
+            data: dict[str, Any] = {}
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    return False
+                if any(key in data for key in ONBOARDING_KEYS):
+                    return False
+            projects = data.get("projects")
+            projects = projects if isinstance(projects, dict) else {}
+            entry = projects.get(repo_dir)
+            entry = entry if isinstance(entry, dict) else {}
+            data["projects"] = {**projects, repo_dir: {**entry, "hasTrustDialogAccepted": True}}
+            data["hasCompletedOnboarding"] = True
+            _atomic_write(path, json.dumps(data, indent=2))
+    except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return True
+
+
 def restore_identity(home: Path, record: dict[str, Any]) -> bool:
     """Write `record` back as this config home's `oauthAccount`.
 

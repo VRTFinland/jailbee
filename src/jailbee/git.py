@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from jailbee.config.models_behaviour import TagPolicy
 
 _FALLBACK_BRANCH = "main"
@@ -21,14 +23,22 @@ _FALLBACK_BRANCH = "main"
 DEFAULT_REMOTE = "origin"
 
 
-def detect_default_branch(repo_root: Path, remote: str) -> str:
-    """Return `remote`'s default branch name.
+_CONVENTIONAL_BRANCHES = ("main", "master")
+"""The names a project's trunk is called when nothing in the repo says.
 
-    Runs `git symbolic-ref --short refs/remotes/<remote>/HEAD` in repo_root.
-    Output looks like `<remote>/main`; we strip the `<remote>/` prefix.
+Ordered: `main` wins a repo that somehow has both. Only ever consulted for
+refs that **exist** — the point of the list is to stop guessing a name and
+start reading one.
+"""
 
-    On any failure (no such remote, command non-zero, missing git binary,
-    unexpected output), returns "main".
+
+def _remote_head_branch(repo_root: Path, remote: str) -> str | None:
+    """`refs/remotes/<remote>/HEAD`'s branch, or None when it says nothing.
+
+    The authoritative answer, and the only one that is the *project's* opinion
+    rather than an inference: `git clone` writes this symref from what the
+    server reports. `git fetch` into a hand-made repo does not, which is why
+    the callers below exist.
     """
     try:
         result = subprocess.run(
@@ -39,18 +49,81 @@ def detect_default_branch(repo_root: Path, remote: str) -> str:
             check=False,
         )
     except (FileNotFoundError, OSError):
-        return _FALLBACK_BRANCH
-
+        return None
     if result.returncode != 0:
-        return _FALLBACK_BRANCH
-
+        return None
     out = result.stdout.strip()
     prefix = f"{remote}/"
     if not out.startswith(prefix):
-        return _FALLBACK_BRANCH
+        return None
+    return out[len(prefix) :] or None
 
-    branch = out[len(prefix) :]
-    return branch or _FALLBACK_BRANCH
+
+def _existing_refs(repo_root: Path, refs: Sequence[str]) -> set[str]:
+    """Which of `refs` exist, in one `git for-each-ref`.
+
+    One call rather than one per candidate: `load_config` runs this on every
+    config load, and the dashboard loads every registered repo's config on
+    every refresh tick.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname)", *refs],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def detect_default_branch(repo_root: Path, remote: str) -> str:
+    """Return the branch jailbee treats as this repo's trunk.
+
+    It is not only `jailbee new`'s starting point when the requested branch
+    does not exist yet: it is also the comparison base for `jailbee ls`'s
+    ahead/behind columns, for the container diff, and for a `jailbee pr` that
+    names no base. So it has to be *stable* — a value that changed with
+    whatever the host has checked out would silently re-anchor all of those.
+
+    Resolution order, first hit wins, and every step but the last reads
+    something that exists:
+
+    1. `refs/remotes/<remote>/HEAD` — the project's own answer (see
+       `_remote_head_branch`)
+    2. `refs/remotes/<remote>/main`, then `/master` — a repo fetched by hand
+       has the branches but no symref
+    3. local `refs/heads/main`, then `refs/heads/master`
+    4. the current branch — the only evidence left in a repo that follows
+       neither convention
+    5. the literal `main`, for a detached HEAD, a repo with no commit yet, or
+       no git at all
+
+    Steps 2-4 are why a local-only repo works at all: `remote` is a name
+    `detect_upstream_remote` falls back to, not a promise that such a remote
+    exists, and a repo with no remote used to be handed a `main` that existed
+    nowhere — `jailbee new` then refused to create any container in it.
+
+    The conventional names outrank the current branch deliberately (step 3
+    before step 4): a checkout sitting on `feature/x` must not make `feature/x`
+    the diff base for every container of the repo.
+    """
+    from_symref = _remote_head_branch(repo_root, remote)
+    if from_symref is not None:
+        return from_symref
+
+    candidates = [f"refs/remotes/{remote}/{name}" for name in _CONVENTIONAL_BRANCHES]
+    candidates += [f"refs/heads/{name}" for name in _CONVENTIONAL_BRANCHES]
+    existing = _existing_refs(repo_root, candidates)
+    for ref in candidates:
+        if ref in existing:
+            return ref.rsplit("/", 1)[-1]
+
+    return get_current_branch(repo_root) or _FALLBACK_BRANCH
 
 
 def list_remotes(repo_root: Path) -> list[str]:

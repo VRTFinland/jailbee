@@ -8210,6 +8210,10 @@ def test_new_background_reports_an_unresolvable_ref_in_the_terminal(
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=False)
     mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    # Unresolvable *against a remote that exists* — and stubbed for the second
+    # reason this fixture stubs every git helper: `subprocess.Popen` is patched
+    # process-wide, so a real `git remote` here dies inside `subprocess.run`.
+    mocker.patch("jailbee.lifecycle.list_remotes", return_value=["origin"])
 
     result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
 
