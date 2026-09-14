@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee import tmux
 from jailbee.incus import IncusError
 from jailbee.tmux import SENTINEL_DIR, SESSION_NAME, ensure_session
 
@@ -438,3 +439,70 @@ def _extract_sentinel(call) -> str:
     m = re.search(r"step_[A-Za-z0-9_-]+_\d+_\d+\.exit", joined)
     assert m is not None, joined
     return m.group(0)
+
+
+def test_launch_step_creates_window_and_returns_handle(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    handle = tmux.launch_step(
+        incus,
+        "c1",
+        name="uv-sync",
+        command="uv sync",
+        env={"A": "b"},
+        cwd="/home/dev/repo",
+        background=False,
+        timeout=300,
+    )
+    assert handle.name == "uv-sync"
+    assert handle.window == "uv-sync"
+    assert handle.sentinel.startswith(tmux.SENTINEL_DIR)
+    assert handle.background is False
+    joined = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list)
+    assert "tmux new-window" in joined
+    # No blocking wait: launching must return immediately.
+    assert "tmux wait-for" not in joined.replace("wait-for -S", "")
+
+
+def test_poll_steps_returns_finished_exit_codes_and_clears_sentinels(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    h1 = tmux.launch_step(
+        incus, "c1", name="a", command="true", env={}, cwd="/r", background=False, timeout=300
+    )
+    h2 = tmux.launch_step(
+        incus, "c1", name="b", command="true", env={}, cwd="/r", background=False, timeout=300
+    )
+    incus.exec.reset_mock()
+    incus.exec.return_value = f"{h1.sentinel} 0\n"
+
+    done = tmux.poll_steps(incus, "c1", [h1, h2])
+
+    assert done == {"a": 0}
+    joined = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list)
+    assert "rm -f" in joined
+
+
+def test_poll_steps_ignores_background_handles(mocker):
+    incus = mocker.Mock()
+    # kill-window OK, new-window OK, probe wait-for times out (= still alive)
+    incus.exec.side_effect = ["", "", IncusError("exit 124: timeout")]
+    h = tmux.launch_step(
+        incus, "c1", name="srv", command="sleep 9", env={}, cwd="/r", background=True, timeout=300
+    )
+    incus.exec.reset_mock()
+    assert tmux.poll_steps(incus, "c1", [h]) == {}
+    incus.exec.assert_not_called()
+
+
+def test_launch_step_background_raises_when_the_step_dies_immediately(mocker):
+    """Same early-death probe `run_step` has — a background step that exits
+    inside the probe window is a config error, not a running service."""
+    incus = mocker.Mock()
+    incus.exec.return_value = ""  # probe wait-for returns → signal received → died
+    with pytest.raises(tmux.TmuxStepError) as e:
+        tmux.launch_step(
+            incus, "c1", name="srv", command="false", env={}, cwd="/r",
+            background=True, timeout=300,
+        )
+    assert e.value.reason == "died_early"

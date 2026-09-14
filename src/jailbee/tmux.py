@@ -11,6 +11,9 @@ import itertools
 import os
 import re
 import shlex
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.incus import Incus, IncusError
@@ -249,3 +252,139 @@ def run_step(
             reason="exit",
             exit_code=rc,
         )
+
+
+@dataclass(frozen=True)
+class StepHandle:
+    """A step that has been started in a window and not yet reaped.
+
+    ``deadline`` is a ``time.monotonic()`` stamp: timeouts are tracked on
+    the host because a stage runs several steps at once and the
+    ``timeout N tmux wait-for`` trick only serves one channel at a time.
+    """
+
+    name: str
+    window: str
+    sentinel: str
+    background: bool
+    deadline: float
+
+
+def launch_step(
+    incus: Incus,
+    container: str,
+    *,
+    name: str,
+    command: str,
+    env: dict[str, str],
+    cwd: str,
+    background: bool,
+    timeout: int,
+) -> StepHandle:
+    """Start a step in its own window and return without waiting.
+
+    The non-blocking half of :func:`run_step`, for stages that run several
+    chains at once. ``background=True`` keeps the early-death probe, so a
+    step that exits inside ``BACKGROUND_PROBE_SEC`` still raises rather
+    than being silently reported as a running service.
+    """
+    command = command.strip()
+    window = _sanitize_window_name(name)
+    kill_window(incus, container, window)
+    env_flags = _env_flags(env)
+
+    if background:
+        probe_sig = f"bg_{window}_{os.getpid()}_{next(_sig_counter)}"
+        shell_cmd = (
+            f"trap 'tmux wait-for -S {shlex.quote(probe_sig)}' EXIT; "
+            f"cd {shlex.quote(cwd)} && {command}"
+        )
+        _new_window(incus, container, window, shell_cmd, env_flags)
+        try:
+            incus.exec(
+                container,
+                _runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
+            )
+        except IncusError:
+            return StepHandle(
+                name=name, window=window, sentinel="", background=True, deadline=0.0
+            )
+        raise TmuxStepError(
+            f"background step '{name}' died within "
+            f"{BACKGROUND_PROBE_SEC}s — check `jailbee tmux <container>`",
+            step_name=name,
+            reason="died_early",
+        )
+
+    sig = f"step_{window}_{os.getpid()}_{next(_sig_counter)}"
+    sentinel = f"{SENTINEL_DIR}/{sig}.exit"
+    shell_cmd = (
+        f"cd {shlex.quote(cwd)} && {command}; "
+        f"rc=$?; echo $rc > {shlex.quote(sentinel)}; "
+        f"tmux wait-for -S {shlex.quote(sig)}; exit $rc"
+    )
+    _new_window(incus, container, window, shell_cmd, env_flags)
+    return StepHandle(
+        name=name,
+        window=window,
+        sentinel=sentinel,
+        background=False,
+        deadline=time.monotonic() + timeout,
+    )
+
+
+def _new_window(
+    incus: Incus, container: str, window: str, shell_cmd: str, env_flags: str
+) -> None:
+    """Create one tmux window running ``shell_cmd`` in a login shell."""
+    inner = f"bash -lc {shlex.quote(shell_cmd)}"
+    incus.exec(
+        container,
+        _runuser(
+            f"tmux new-window -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
+        ),
+    )
+
+
+def poll_steps(incus: Incus, container: str, handles: Sequence[StepHandle]) -> dict[str, int]:
+    """Reap whichever of ``handles`` have finished, as {step name: exit code}.
+
+    One ``incus exec`` covers every pending step, so a stage's poll cost
+    does not grow with its chain count. Background handles are skipped —
+    they are fire-and-forget by definition.
+    """
+    pending = [h for h in handles if not h.background and h.sentinel]
+    if not pending:
+        return {}
+    quoted = " ".join(shlex.quote(h.sentinel) for h in pending)
+    script = (
+        f"for f in {quoted}; do "
+        f'if [ -f "$f" ]; then echo "$f $(cat "$f")"; rm -f "$f"; fi; '
+        f"done"
+    )
+    out = incus.exec(container, _runuser(script))
+
+    by_sentinel = {h.sentinel: h for h in pending}
+    done: dict[str, int] = {}
+    for line in out.splitlines():
+        path, _, code = line.strip().partition(" ")
+        handle = by_sentinel.get(path)
+        if handle is None:
+            continue
+        try:
+            done[handle.name] = int(code)
+        except ValueError:
+            # Sentinel present but unreadable — tmux crashed mid-write.
+            done[handle.name] = -1
+    return done
+
+
+def interrupt_step(incus: Incus, container: str, handle: StepHandle) -> None:
+    """Send C-c to a step's window. Best-effort, used on timeout."""
+    try:
+        incus.exec(
+            container,
+            _runuser(f"tmux send-keys -t {SESSION_NAME}:{handle.window} C-c"),
+        )
+    except IncusError:
+        pass
