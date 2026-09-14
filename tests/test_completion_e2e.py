@@ -109,3 +109,35 @@ def test_format_option_completes_in_declaration_order():
 def test_user_option_completes_in_declaration_order():
     """`--user` values are `("dev", "root")`, likewise order-sensitive."""
     assert _complete(["shell", "--user"], "") == ["dev", "root"]
+
+
+def test_a_completion_run_writes_nothing_but_candidates(tmp_path, monkeypatch, mocker, capsys):
+    """A TAB press must leave stdout carrying completion values and nothing else.
+
+    Stdout *is* the completion protocol — bash reads it inside
+    ``COMPREPLY=( $(...) )`` — so any advisory a completer's own work happens
+    to print becomes a bogus candidate, and anything on stderr is painted
+    straight over the half-typed command line. This drives the cheapest real
+    trigger: a repo still on the pre-1.0 ``.gie/`` directory, whose
+    ``paths._warn_legacy_config_dir`` fires inside ``completion._load()``.
+
+    Deliberately end-to-end rather than a direct call: the point is that the
+    process a shell actually spawns stays quiet, not that one function does.
+    """
+    from jailbee import paths
+
+    repo = tmp_path / "legacy"
+    (repo / ".gie").mkdir(parents=True)
+    (repo / ".gie" / "config.yaml").write_text("{}\n")
+    monkeypatch.chdir(repo)
+    paths._warn_legacy_config_dir.cache_clear()
+
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "legacy-feat-foo", "profiles": ["legacy-base", "legacy-net-strict"]}
+    ]
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    capsys.readouterr()
+
+    assert _complete(["shell"], "") == ["feat-foo"]
+    assert capsys.readouterr() == ("", "")

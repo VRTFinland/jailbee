@@ -296,7 +296,7 @@ def test_complete_claude_account_needs_no_repo_config(mocker):
 
 
 def test_complete_claude_account_survives_an_unreadable_store(mocker):
-    """`_never_raises` is the contract for every completer: a TAB press must
+    """`_completion_guard` is the contract for every completer: a TAB press must
     never traceback."""
     mocker.patch("jailbee.claude_pool.parked_slots", side_effect=OSError("boom"))
     assert completion.complete_claude_account(_ctx(), "") == []
@@ -368,7 +368,7 @@ def test_complete_snapshot_ignores_malformed_entries(completion_repo):
 # `[s.get("name") for s in snaps]` sits outside complete_snapshot's own
 # `except (IncusError, ValueError, OSError)`, so any of these three shapes
 # (each one `json.loads` happily produces from a malformed `incus` payload)
-# raised straight through to the user's prompt before `_never_raises` existed.
+# raised straight through to the user's prompt before `_completion_guard` existed.
 
 
 def test_complete_snapshot_empty_for_list_of_str_payload(completion_repo):
@@ -519,6 +519,48 @@ def test_complete_choices_filters_by_prefix():
 def test_complete_choices_offers_everything_when_nothing_typed():
     complete = completion.complete_choices("shell", "tmux", "none")
     assert complete("") == ["shell", "tmux", "none"]
+
+
+# ---- the silence contract -------------------------------------------------
+
+
+def test_the_guard_swallows_everything_a_completer_prints(capsys):
+    """Stdout is the completion protocol; stderr lands on the prompt line.
+
+    Completers call into config loading, `lifecycle` and `pool`, all of which
+    are free to print advisories (`tui.warn_plain` for the pre-1.0 `.gie/`
+    directory, `tui.hint` for a legacy `chrome:` block). In a normal command
+    that is the point; in a completion process it corrupts the channel. The
+    guard is the one place that can make every completer quiet at once, so it
+    does, and tests/test_completion_e2e.py checks the same contract end to end.
+    """
+
+    @completion._completion_guard
+    def noisy(incomplete: str) -> list[str]:
+        import sys
+
+        print("on stdout")
+        print("on stderr", file=sys.stderr)
+        return ["value"]
+
+    capsys.readouterr()
+    assert noisy("") == ["value"]
+    assert capsys.readouterr() == ("", "")
+
+
+def test_the_guard_swallows_output_printed_before_a_raise(capsys):
+    """The two duties compose: a completer that prints *and then* blows up
+    still yields `[]` and a clean channel, rather than leaking the half-written
+    advisory it managed to emit first."""
+
+    @completion._completion_guard
+    def noisy_and_broken(incomplete: str) -> list[str]:
+        print("on stdout")
+        raise RuntimeError("boom")
+
+    capsys.readouterr()
+    assert noisy_and_broken("") == []
+    assert capsys.readouterr() == ("", "")
 
 
 # A prior version of this module asserted that Typer binds completion

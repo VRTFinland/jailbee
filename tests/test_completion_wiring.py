@@ -114,7 +114,7 @@ def _underlying_completer(param: TyperArgument | TyperOption) -> object | None:
     accessor for a parameter's underlying completer.
 
     `completion.py`'s public completers are themselves wrapped by
-    `completion._never_raises` (a `functools.wraps`-preserving decorator), so
+    `completion._completion_guard` (a `functools.wraps`-preserving decorator), so
     the object `cli.py` actually passes as `autocompletion=` — and the object
     `from jailbee.completion import complete_container` yields here —
     is the *decorated* function, not the bare one underneath. That does not
@@ -122,7 +122,7 @@ def _underlying_completer(param: TyperArgument | TyperOption) -> object | None:
     `functools.update_wrapper(wrapper, callback)`, where `callback` is
     whatever was passed as `autocompletion=` — i.e. the decorated function —
     so it already lands on the same object this module imports and compares
-    against. Reverified after `_never_raises` was introduced: this helper was
+    against. Reverified after `_completion_guard` was introduced: this helper was
     not changed, and `test_the_completion_callback_is_the_container_completer`
     still fails when a `name` argument is deliberately wired to the wrong
     completer (checked by temporarily wiring `shell`'s `name` to

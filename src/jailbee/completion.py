@@ -1,28 +1,48 @@
 """Shell-completion callbacks for jailbee's CLI arguments.
 
 Typer/Click runs these inside a fresh `jailbee` process on every TAB press
-(`_JAILBEE_COMPLETE=bash_complete`; each installed console script — `jailbee`
+(`_JAILBEE_COMPLETE=complete_bash`; each installed console script — `jailbee`
 and `jb` — gets its own variable derived from its invoked name, e.g.
-`_JB_COMPLETE`, per Click's convention, not something this code chooses),
-which dictates two rules:
+`_JB_COMPLETE`, per Click's convention, not something this code chooses, and
+the *value* is Typer's own `complete_bash`, not vendored Click's
+`bash_complete` — Typer installs its own drivers and rejects Click's spelling
+with "Shell complete not supported."), which dictates three rules:
 
 * **Never raise.** An exception escaping a completion callback prints a
   traceback into the middle of the user's command line. An empty list is the
   honest answer to "what could this be?" when we cannot tell, so every
   completer must return `[]` on any failure rather than propagate one.
 
-  This is enforced structurally, not just by convention: `_never_raises`
+  This is enforced structurally, not just by convention: `_completion_guard`
   wraps each public completer and turns any escaping exception into `[]`.
   The narrower `except` clauses inside `_load`, `_container_names` and
   `complete_snapshot` stay — they catch the *expected* failure modes
   (`ConfigError`, `IncusError`, a malformed JSON payload) at the point of
   failure, which keeps that reasoning visible in the code and in the tests
-  that assert on it. `_never_raises` is the backstop for everything else —
+  that assert on it. `_completion_guard` is the backstop for everything else —
   e.g. a payload shape `json.loads` accepts but a completer's own
   comprehension does not (`AttributeError`, `KeyError`, `TypeError`) — so a
   shape nobody has imagined yet still degrades to `[]` instead of a
   traceback. A whole-branch review found three such shapes escaping through
   `complete_snapshot` alone; see `tests/test_completion.py`.
+* **Never print.** Stdout *is* the completion protocol — bash evaluates the
+  process's stdout inside `COMPREPLY=( $(...) )` — so a line a completer
+  happens to print becomes a bogus candidate offered alongside the real ones,
+  and stderr is painted straight over the half-typed command line. Neither is
+  hypothetical: every completer that calls `_load` runs the full config
+  loader, which emits `tui.warn_plain` for a repo still on the pre-1.0
+  `.gie/` directory and `tui.hint` for a legacy `chrome:` block, and the
+  modules behind the other completers (`lifecycle`, `pool`) print advisories
+  of their own. Silencing them one call site at a time would be a standing
+  invitation to regress, so `_completion_guard` discards both streams for the
+  duration of the callback instead — the second half of the same contract.
+
+  Python-level redirection (`contextlib.redirect_stdout`) rather than an
+  fd-level `dup2`: Rich resolves `sys.stdout`/`sys.stderr` lazily at print
+  time, so the module-level `tui` consoles follow it, and every subprocess
+  reachable from a completer (`incus.py`, `git.py`) already captures its
+  child's output. An `incus`/`git` call that ever inherits fd 1 would escape
+  this, which is one more reason completion sticks to the capturing wrappers.
 * **Bounded per query.** Each Incus query carries a timeout (`QUERY_TIMEOUT`
   below), so a wedged daemon costs a bounded pause rather than an indefinite
   stuck shell — not "never blocks" overall: `complete_snapshot` issues two
@@ -63,6 +83,8 @@ which are comparatively heavy.
 
 from __future__ import annotations
 
+import contextlib
+import io
 from functools import wraps
 from typing import TYPE_CHECKING
 
@@ -81,17 +103,29 @@ if TYPE_CHECKING:
 QUERY_TIMEOUT = 2
 
 
-def _never_raises[**P](fn: Callable[P, list[str]]) -> Callable[P, list[str]]:
-    """Make the "never raise" contract structural instead of hand-maintained.
+def _completion_guard[**P](fn: Callable[P, list[str]]) -> Callable[P, list[str]]:
+    """Make both completion contracts structural instead of hand-maintained.
 
-    Wraps a completer so that *any* exception escaping it — not just the ones
-    an `except` clause happened to anticipate — becomes `[]`. This is a
-    backstop, not a replacement for the narrower `except` clauses already in
-    this module: those still catch the expected failure modes and return `[]`
-    at the point of failure, documenting *why* that failure is expected. This
-    decorator exists for the failure nobody wrote down: a JSON payload shape
-    that parses fine but breaks a completer's own comprehension or attribute
-    access (`AttributeError`, `KeyError`, `TypeError`, ...).
+    Wraps a completer so that (a) *any* exception escaping it — not just the
+    ones an `except` clause happened to anticipate — becomes `[]`, and (b)
+    anything it writes to stdout or stderr is discarded.
+
+    The never-raise half is a backstop, not a replacement for the narrower
+    `except` clauses already in this module: those still catch the expected
+    failure modes and return `[]` at the point of failure, documenting *why*
+    that failure is expected. This decorator exists for the failure nobody
+    wrote down: a JSON payload shape that parses fine but breaks a completer's
+    own comprehension or attribute access (`AttributeError`, `KeyError`,
+    `TypeError`, ...).
+
+    The never-print half exists because a completer is a thin shell over code
+    written for interactive use, which prints advisories whenever it feels
+    like it (see the module docstring for the two deprecation notices that
+    reach here through `_load` alone). The sink is a single `StringIO` for
+    both streams — nothing reads it back, and interleaving is irrelevant to
+    something being thrown away. Restoring both streams is the context
+    managers' job, so an exception raised mid-print still leaves them intact
+    before the `except` below turns it into `[]`.
 
     `functools.wraps` is not just style here: Typer introspects a completer's
     *real* signature via `inspect.signature(fn, eval_str=True)` to bind
@@ -109,8 +143,10 @@ def _never_raises[**P](fn: Callable[P, list[str]]) -> Callable[P, list[str]]:
 
     @wraps(fn)
     def guard(*args: P.args, **kwargs: P.kwargs) -> list[str]:
+        sink = io.StringIO()
         try:
-            return fn(*args, **kwargs)
+            with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                return fn(*args, **kwargs)
         except Exception:
             return []
 
@@ -161,7 +197,7 @@ def _container_names(cfg: Config, incus: Incus) -> list[str]:
     return [c.name for c in infos]
 
 
-@_never_raises
+@_completion_guard
 def complete_container(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a container name from this repo's existing containers.
 
@@ -185,7 +221,7 @@ def complete_container(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted({n for n in (*short, *full) if n.startswith(incomplete)})
 
 
-@_never_raises
+@_completion_guard
 def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a branch name from the host repo's local branches.
 
@@ -201,7 +237,7 @@ def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(b for b in list_branches(cfg.repo_root) if b.startswith(incomplete))
 
 
-@_never_raises
+@_completion_guard
 def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a pool name from this repo's configured cache pools.
 
@@ -216,7 +252,7 @@ def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
     return [p.name for p in pool_mod.pools_for(cfg) if p.name.startswith(incomplete)]
 
 
-@_never_raises
+@_completion_guard
 def complete_app_name(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete an app name from this repo's GUI application registry.
 
@@ -231,7 +267,7 @@ def complete_app_name(ctx: typer.Context, incomplete: str) -> list[str]:
     return [s.name for s in resolve_apps(cfg) if s.name.startswith(incomplete)]
 
 
-@_never_raises
+@_completion_guard
 def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a stored Claude login for `jailbee claude use`/`rm`.
 
@@ -248,7 +284,7 @@ def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
     return [s.name for s in parked_slots() if s.name.startswith(incomplete)]
 
 
-@_never_raises
+@_completion_guard
 def complete_claude_group(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a credential group name from the ones present on this host."""
     from jailbee.claude_groups import group_dir
@@ -283,7 +319,7 @@ def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | Non
     return prefixed if prefixed in names else None
 
 
-@_never_raises
+@_completion_guard
 def complete_snapshot(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a snapshot tag for the container already on the command line.
 
@@ -316,7 +352,7 @@ def complete_snapshot(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(t for t in tags if isinstance(t, str) and t.startswith(incomplete))
 
 
-@_never_raises
+@_completion_guard
 def complete_submodule_path(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a submodule path from the container already on the command line.
 
@@ -354,7 +390,7 @@ def complete_submodule_path(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(p for p in paths if p.startswith(incomplete))
 
 
-@_never_raises
+@_completion_guard
 def complete_port_handle(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a `jailbee port rm` handle from one container's forwards.
 
@@ -406,7 +442,7 @@ def complete_choices(*values: str) -> Callable[[str], list[str]]:
     not because it happens to be named ``incomplete``.
     """
 
-    @_never_raises
+    @_completion_guard
     def _complete(incomplete: str) -> list[str]:
         return [v for v in values if v.startswith(incomplete)]
 
