@@ -317,13 +317,17 @@ def run_detached(
     """
     from jailbee.autostart_plan import TRIGGER_ORDER
 
-    # The foreground ran this trigger's blocking stages and stopped at the
-    # boundary; everything from here, in this trigger and every later one, is
-    # ours. `already_detached=True` is what makes the planner return the whole
-    # remaining list rather than re-splitting it.
-    start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
     incus.config_set(spec.container_name, "user.jailbee.autostart_in_progress", str(os.getpid()))
     try:
+        # Inside the `try`, deliberately: a job file carrying a `from_trigger`
+        # this build does not know raises here, and that run must still reach
+        # the `finally` rather than exit with the flag left stamped.
+        #
+        # The foreground ran this trigger's blocking stages and stopped at the
+        # boundary; everything from here, in this trigger and every later one,
+        # is ours. `already_detached=True` is what makes the planner return the
+        # whole remaining list rather than re-splitting it.
+        start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
         for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
             agent_steps = (
                 agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []

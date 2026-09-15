@@ -2291,12 +2291,13 @@ def _spawn_autostart_worker(
     file as stdout/stderr and runs in its own session so it outlives the
     terminal that started it.
 
-    ``incus`` is here only to re-stamp the in-progress flag with the child's
-    pid. `run_autostart` leaves the literal ``"1"`` behind when stages
-    remain detached, and ``"1"`` reads as "held forever" to `loose_revert`.
-    The worker stamps its own pid too, but not until it has started: a
-    worker that dies before that point would otherwise pin the container
-    loose for good.
+    ``incus`` is here only for the in-progress flag, which `run_autostart`
+    leaves set to the literal ``"1"`` when stages remain detached — and
+    ``"1"`` reads as "held forever" to `loose_revert`. On the spawn path it
+    becomes the child's pid; on the refuse path below it is cleared. The
+    worker stamps its own pid too, but not until it has started: a worker
+    that dies before that point would otherwise pin the container loose for
+    good.
 
     Refuses while another job for this container is still live, the same
     guard `_spawn_boot_worker` carries and for a sharper reason: the job
@@ -2324,6 +2325,12 @@ def _spawn_autostart_worker(
             f"the deferred autostart stages were not started."
         )
         info("  Follow that job with `jailbee ls`, or read it with `jailbee job log`.")
+        # Nobody owns the deferred stages now, so "autostart in progress" is
+        # simply false and the flag must go: `run_autostart` left the literal
+        # `"1"` behind for a supervisor that is not going to exist, and
+        # `loose_revert` reads `"1"` as held *unconditionally* — this
+        # container's loose network would never revert again.
+        incus.config_unset(full_name, "user.jailbee.autostart_in_progress")
         return
 
     log_dir = state_dir() / "logs"

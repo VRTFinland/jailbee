@@ -22,8 +22,6 @@ from sqlmodel import Session
 from jailbee import background as bg
 from jailbee.config import Autostart
 
-DEAD_PID = 2**22 - 1  # above /proc/sys/kernel/pid_max: never a live process
-
 FLAG = "user.jailbee.autostart_in_progress"
 
 
@@ -194,6 +192,25 @@ def test_run_detached_clears_the_flag_when_a_stage_raises(tmp_path, mocker, make
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), incus, _spec(tmp_path, block)
         )
+
+    incus.config_unset.assert_called_once_with("c1", FLAG)
+
+
+def test_run_detached_clears_the_flag_on_an_unknown_trigger(tmp_path, mocker, make_cfg):
+    """A job file naming a trigger this build does not know must still leave
+    through the `finally` — the pid stamp is already written by then."""
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.autostart.run_stages")
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    spec = _spec(tmp_path, block)
+    spec = type(spec)(**{**spec.__dict__, "from_trigger": "on_moonrise"})
+
+    with pytest.raises(ValueError):
+        autostart_mod.run_detached(_cfg_with(make_cfg, tmp_path, block), incus, spec)
 
     incus.config_unset.assert_called_once_with("c1", FLAG)
 
@@ -551,6 +568,24 @@ def test_spawn_refuses_while_another_job_is_live(tmp_path, mocker, make_cfg):
     assert row.pid == os.getpid()
 
 
+def test_spawn_clears_the_flag_when_it_refuses(tmp_path, mocker, make_cfg):
+    """Refusing means nobody owns the deferred stages, so the literal "1" that
+    `run_autostart` left behind is now a lie — and `loose_revert` reads "1" as
+    held unconditionally, so leaving it pins the container loose for good."""
+    from jailbee import cli
+    from jailbee.db.models import JOB_CREATE
+
+    cfg = make_cfg(tmp_path)
+    object.__setattr__(cfg, "container_prefix", "myrepo")
+    _insert_job("myrepo-c1", "myrepo", os.getpid(), bg.PHASE_AUTOSTART, JOB_CREATE)
+    incus = mocker.MagicMock()
+
+    popen = _spawn(cli, cfg, mocker, incus)
+
+    popen.assert_not_called()
+    incus.config_unset.assert_called_once_with("myrepo-c1", FLAG)
+
+
 def test_spawn_proceeds_over_a_dead_job_row(tmp_path, mocker, make_cfg):
     """A row whose worker is gone is not a live job — it must not block the
     deferred stages of the run that just handed over."""
@@ -559,7 +594,11 @@ def test_spawn_proceeds_over_a_dead_job_row(tmp_path, mocker, make_cfg):
 
     cfg = make_cfg(tmp_path)
     object.__setattr__(cfg, "container_prefix", "myrepo")
-    _insert_job("myrepo-c1", "myrepo", DEAD_PID, bg.PHASE_AUTOSTART, JOB_BOOT)
+    # `worker_alive` rather than an improbably high pid: what makes the row
+    # dead is that its process is gone, and the guard must consult that and
+    # not the pid's value.
+    _insert_job("myrepo-c1", "myrepo", os.getpid(), bg.PHASE_AUTOSTART, JOB_BOOT)
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
 
     popen = _spawn(cli, cfg, mocker, mocker.MagicMock())
 
