@@ -604,3 +604,228 @@ def test_spawn_proceeds_over_a_dead_job_row(tmp_path, mocker, make_cfg):
 
     popen.assert_called_once()
     assert _jobs()["myrepo-c1"].op_kind == JOB_AUTOSTART
+
+
+# ---- the background workers, which continue past the boundary in-process
+
+
+def _bg_worker_env(tmp_path, mocker, make_cfg, block: Autostart):
+    """A detached worker's world: autostart real, everything around it stubbed.
+
+    `run_stages` is the only executor mock, so the *planner* decides what
+    runs — which is the whole point of these tests: they pin which stages a
+    worker runs, not that it called something.
+    """
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo).model_copy(update={"autostart": block})
+    object.__setattr__(cfg, "container_prefix", "myrepo")
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.cli._post_create_gui_launches")
+    mocker.patch("jailbee.cli._finalize_new")
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    ran: list[str] = []
+    mocker.patch(
+        "jailbee.autostart.run_stages",
+        side_effect=lambda c, i, n, stages, r, **kw: ran.extend(s.stage for s in stages),
+    )
+    return cfg, incus, ran
+
+
+def _flag_writes(incus) -> list[str]:
+    return [c.args[2] for c in incus.config_set.call_args_list if c.args[1] == FLAG]
+
+
+def test_boot_worker_does_not_spawn_a_second_supervisor(tmp_path, mocker, make_cfg):
+    """The boot worker is already the detached process; handing off to
+    another one would create a second job row for the same container and
+    race the row this worker still owns."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
+    )
+    _cfg, _incus, ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    result = CliRunner().invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert spawn.call_count == 0
+    assert ran == ["schema", "deps"]
+
+
+def test_boot_worker_runs_every_stage_a_no_wait_deferred(tmp_path, mocker, make_cfg):
+    """`--wait` / `--no-wait` stay meaningful with `--background`: they move
+    the boundary the *worker* observes. Lost anywhere along
+    spawn → argv → worker, no stage past the first ever runs, and the flag
+    keeps the literal "1" that `loose_revert` honours forever."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("alpha"), _stage("beta"), _stage("gamma")]}
+    )
+    _cfg, incus, ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    result = CliRunner().invoke(app, ["_boot-worker", "--name", "myrepo-feat-a", "--no-wait"])
+
+    assert result.exit_code == 0, result.output
+    assert spawn.call_count == 0
+    assert ran == ["alpha", "beta", "gamma"]
+    # The worker's own pid replaces the foreground's literal "1", and the
+    # flag is cleared once its last stage is done.
+    assert _flag_writes(incus) == ["1", str(os.getpid())]
+    incus.config_unset.assert_called_with("myrepo-feat-a", FLAG)
+
+
+def test_boot_worker_keeps_its_own_job_row_and_phases_it_per_stage(tmp_path, mocker, make_cfg):
+    """One row, one worker: the phase advances to each detached stage on the
+    boot row this worker already owns, and no second row appears."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.db.models import JOB_BOOT
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("schema"), _stage("deps", detach=True), _stage("agents-ish")]}
+    )
+    _bg_worker_env(tmp_path, mocker, make_cfg, block)
+    seen: list[tuple[str, str, int]] = []
+
+    def record(cfg, incus, name, stages, repo_dir, **kw):
+        rows = _jobs()
+        assert set(rows) == {"myrepo-feat-a"}, rows
+        row = rows["myrepo-feat-a"]
+        seen.append((stages[0].stage, row.phase, row.pid))
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=record)
+    _insert_job("myrepo-feat-a", "myrepo", os.getpid(), bg.PHASE_STARTING, JOB_BOOT)
+
+    result = CliRunner().invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [
+        ("schema", bg.PHASE_AUTOSTART, os.getpid()),
+        ("deps", "deps", os.getpid()),
+        ("agents-ish", "agents-ish", os.getpid()),
+    ]
+    assert _jobs() == {}
+
+
+def test_new_worker_continues_past_the_boundary_in_process(tmp_path, mocker, make_cfg):
+    """`jailbee new --background --no-wait` defers every stage after the
+    first — to a supervisor a worker must not spawn. The worker runs them
+    itself, resuming at the trigger that detached and taking every later
+    trigger in full."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.lifecycle import NewContainerOptions
+
+    block = Autostart.model_validate(
+        {
+            "on_create": [_stage("clone"), _stage("schema")],
+            # Not `agents`: that name is the planner's reserved slot, which
+            # is *dropped* when no agent has autostart on.
+            "on_start": [_stage("launch")],
+        }
+    )
+    cfg, incus, ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    def fake_new(cfg_, incus_, opts, *, on_phase=None, confirm_fn=None, on_detach=None):
+        # What `new_container` does once `--no-wait` has made `on_create`
+        # defer: its blocking half already ran, the rest is the caller's.
+        assert on_detach is not None
+        on_detach(cfg_.autostart, "on_create", "/r")
+        return "myrepo-feat-a"
+
+    mocker.patch("jailbee.lifecycle.new_container", side_effect=fake_new)
+
+    opts = NewContainerOptions(
+        container_branch="",
+        name="myrepo-feat-a",
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base=cfg.golden.alias,
+        clone=False,
+        mount=True,
+        autostart_override="no_wait",
+    )
+    job = tmp_path / "job.json"
+    job.write_text(
+        json.dumps(
+            bg.op_to_job(
+                opts, container_name="myrepo-feat-a", log_path=str(tmp_path / "w.log")
+            )
+        )
+    )
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job)])
+
+    assert result.exit_code == 0, result.output
+    assert spawn.call_count == 0
+    assert ran == ["schema", "launch"]
+    assert _flag_writes(incus) == [str(os.getpid())]
+    incus.config_unset.assert_called_with("myrepo-feat-a", FLAG)
+
+
+def test_new_worker_writes_progress_beside_its_own_log(tmp_path, mocker, make_cfg):
+    """`jailbee autostart status` finds a run's progress next to its log —
+    a worker's continuation must land there too, not nowhere."""
+    from typer.testing import CliRunner
+
+    from jailbee import autostart_progress
+    from jailbee.cli import app
+    from jailbee.lifecycle import NewContainerOptions
+
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    cfg, _incus, _ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+
+    def record(cfg_, incus_, name, stages, repo_dir, **kw):
+        kw["on_progress"]("deps", "s-deps", "start")
+        kw["on_progress"]("deps", "s-deps", "ok")
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=record)
+
+    def fake_new(cfg_, incus_, opts, *, on_phase=None, confirm_fn=None, on_detach=None):
+        assert on_detach is not None
+        on_detach(cfg_.autostart, "on_start", "/r")
+        return "myrepo-feat-a"
+
+    mocker.patch("jailbee.lifecycle.new_container", side_effect=fake_new)
+
+    opts = NewContainerOptions(
+        container_branch="",
+        name="myrepo-feat-a",
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base=cfg.golden.alias,
+        clone=False,
+        mount=True,
+    )
+    log_path = tmp_path / "myrepo-feat-a-20260101-000000.log"
+    job = tmp_path / "job.json"
+    job.write_text(
+        json.dumps(bg.op_to_job(opts, container_name="myrepo-feat-a", log_path=str(log_path)))
+    )
+
+    result = CliRunner().invoke(app, ["_new-worker", "--job", str(job)])
+
+    assert result.exit_code == 0, result.output
+    entries = autostart_progress.read(log_path.with_suffix(".progress.json"))
+    assert [(e.stage, e.state) for e in entries] == [("deps", "start"), ("deps", "ok")]

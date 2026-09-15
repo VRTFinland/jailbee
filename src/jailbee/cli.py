@@ -2083,7 +2083,7 @@ def _new_worker(
     incus = Incus()
 
     data = json.loads(job.read_text())
-    opts, container_name, _log_path = background.job_to_opts(data)
+    opts, container_name, log_path = background.job_to_opts(data)
 
     engine = _job_engine()
 
@@ -2107,6 +2107,20 @@ def _new_worker(
             # Reaching it means the branch moved between the two, and the
             # failure names that.
             confirm_fn=lambda _msg: False,
+            # Already the detached process: the stages past the boundary run
+            # here rather than in a supervisor this worker would have to
+            # spawn — see `_inline_autostart_handler`. `opts.mirror_endpoint`
+            # is the one the blocking stages ran with, which is also the one
+            # `new_container` hands `run_autostart`.
+            on_detach=_inline_autostart_handler(
+                cfg,
+                incus,
+                engine=engine,
+                full_name=container_name,
+                log_path=log_path,
+                mirror_endpoint=opts.mirror_endpoint,
+                override=opts.autostart_override,
+            ),
         )
         _finalize_new(cfg, incus, created, launch_gui=opts.autostart)
     except Exception as e:
@@ -2203,12 +2217,18 @@ def _boot_worker(
             ),
         ),
     ] = False,
+    wait: WaitOption = False,
+    no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
     """Internal: boot a container detached, tracking phase in SQLite.
 
     Spawned by `start` / `restart` when background mode is active. Not for
     direct use.
+
+    `--wait` / `--no-wait` are the spawning command's own, forwarded because
+    with `--background` they move the boundary *this* worker observes — which
+    decides when the container becomes attachable, not when the CLI returns.
     """
     import traceback
 
@@ -2217,6 +2237,7 @@ def _boot_worker(
     from jailbee.lifecycle import boot_container
 
     cfg = _load_or_exit(config)
+    autostart_override = _resolve_autostart_override(wait=wait, no_wait=no_wait)
     incus = Incus()
     engine = _job_engine()
 
@@ -2231,7 +2252,26 @@ def _boot_worker(
                 lambda s: background.set_phase(s, name, background.PHASE_AUTOSTART, now=_now()),
                 f"record phase '{background.PHASE_AUTOSTART}'",
             )
-        _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+        _post_start_actions(
+            cfg,
+            incus,
+            name,
+            no_autostart=no_autostart,
+            override=autostart_override,
+            # Already the detached process: no second worker, no second job
+            # row — see `_inline_autostart_handler`.
+            on_detach=_inline_autostart_handler(
+                cfg,
+                incus,
+                engine=engine,
+                full_name=name,
+                log_path=_worker_log_path(engine, name),
+                # `_post_start_actions` derives its own from the same call, so
+                # the blocking and deferred stages see the same endpoint.
+                mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+                override=autostart_override,
+            ),
+        )
     except typer.Exit:
         # `_post_start_actions` reports an autostart failure itself and exits.
         # Its `str()` is the exit code, which would leave the row saying "1",
@@ -2259,6 +2299,126 @@ def _boot_worker(
     )
 
 
+def _autostart_reporters(
+    engine: "Engine | None",
+    name: str,
+    progress_path: Path,
+) -> "tuple[Callable[[str], None], Callable[[str, str, str], None]]":
+    """The `on_phase` / `on_progress` pair a detached autostart run reports through.
+
+    Shared by the `_autostart-worker` supervisor and by the background
+    workers that finish their own deferred stages, so both report a run the
+    same way: the job row's phase is the stage being run — what `job_label`
+    renders as ``autostart:<stage>`` in `jailbee ls` — and every step's
+    start/end is appended to the progress file `jailbee autostart status`
+    reads.
+    """
+    from jailbee import autostart_progress, background
+
+    def on_phase(stage_name: str) -> None:
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, name, stage_name, now=_now()),
+            f"record stage '{stage_name}'",
+        )
+
+    def on_progress(stage: str, step: str, state: str) -> None:
+        autostart_progress.append(
+            progress_path,
+            autostart_progress.ProgressEntry(
+                stage=stage, step=step, state=state, at=_now().isoformat()
+            ),
+        )
+
+    return on_phase, on_progress
+
+
+def _inline_autostart_handler(
+    cfg: "Config",
+    incus: "IncusType",
+    *,
+    engine: "Engine | None",
+    full_name: str,
+    log_path: str,
+    mirror_endpoint: tuple[str, int] | None,
+    override: Literal["wait", "no_wait"] | None,
+) -> "Callable[[Autostart, str, str], None]":
+    """The `on_detach` a *background worker* hands down.
+
+    Counterpart to `_autostart_detach_handler`, which spawns a supervisor.
+    `_new-worker` and `_boot-worker` are already the detached process, and
+    the job table is keyed on the container name: a second worker's
+    `start_job` would replace the row this one still owns and finally
+    deletes. `_spawn_autostart_worker` refuses exactly that — this is the
+    invariant it backstops, so the stages run here instead.
+
+    Not a second implementation of the supervisor: the same
+    `autostart.run_detached` runs, with this process's pid landing in the
+    in-progress flag (which is what a worker's own continuation should put
+    there) and this worker's row taking the per-stage phases.
+    """
+    from jailbee import autostart as autostart_mod
+    from jailbee import autostart_progress, background
+
+    progress_path = autostart_progress.path_for_log(log_path)
+    on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
+
+    def on_detach(block: "Autostart", trigger: str, repo_dir: str) -> None:
+        autostart_mod.run_detached(
+            # The *effective* block, the same graft `_autostart-worker` does
+            # from its job file: on the create path it is the target
+            # branch's, while `cfg` here still carries the host checkout's.
+            cfg.model_copy(update={"autostart": block}),
+            incus,
+            background.AutostartJob(
+                container_name=full_name,
+                autostart=block,
+                from_trigger=trigger,
+                repo_dir=repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                # Travels for the same reason it travels in a job file: the
+                # resumed trigger is re-planned, and `_boundary` branches on
+                # the override. Handed `None` after a `--no-wait` split, the
+                # recompute defers nothing and every deferred stage is lost.
+                override=override,
+                log_path=log_path,
+                progress_path=str(progress_path),
+            ),
+            on_phase=on_phase,
+            on_progress=on_progress,
+        )
+
+    return on_detach
+
+
+def _worker_log_path(engine: "Engine | None", name: str) -> str:
+    """The log file a `_boot-worker`'s own output is going to.
+
+    Read off the job row the worker already owns — unlike `_new-worker`,
+    which is handed its log path in the job file. It is only needed as the
+    stem for the run's progress file, so that a worker's deferred stages
+    report beside its log exactly as a supervisor's do. A row that is gone
+    (job tracking unavailable) costs the pairing, not the progress: a stem
+    is synthesized in the same directory.
+    """
+    from datetime import datetime as _dt
+
+    from jailbee import background
+    from jailbee.db import state_dir
+
+    found: list[str] = []
+
+    def work(session: "Session") -> None:
+        row = background.get_job(session, name)
+        if row is not None and row.log_path:
+            found.append(row.log_path)
+
+    _track_job(engine, work, "read the job's log path")
+    if found:
+        return found[0]
+    return str(state_dir() / "logs" / f"{name}-{_dt.now().strftime('%Y%m%d-%H%M%S')}.log")
+
+
 @app.command("_autostart-worker", hidden=True)
 def _autostart_worker(
     job: Annotated[Path, typer.Option("--job", help="Path to the job JSON file.")],
@@ -2272,7 +2432,7 @@ def _autostart_worker(
     import traceback
 
     from jailbee import autostart as autostart_mod
-    from jailbee import autostart_progress, background
+    from jailbee import background
     from jailbee.incus import Incus
 
     spec = background.dict_to_autostart_job(json.loads(job.read_text()))
@@ -2284,24 +2444,7 @@ def _autostart_worker(
     incus = Incus()
     engine = _job_engine()
     name = spec.container_name
-    progress_path = Path(spec.progress_path)
-
-    def on_progress(stage: str, step: str, state: str) -> None:
-        autostart_progress.append(
-            progress_path,
-            autostart_progress.ProgressEntry(
-                stage=stage, step=step, state=state, at=_now().isoformat()
-            ),
-        )
-
-    def on_phase(stage_name: str) -> None:
-        """The job row's phase is the stage the supervisor is on — that is
-        what `job_label` renders as ``autostart:<stage>`` in `jailbee ls`."""
-        _track_job(
-            engine,
-            lambda s: background.set_phase(s, name, stage_name, now=_now()),
-            f"record stage '{stage_name}'",
-        )
+    on_phase, on_progress = _autostart_reporters(engine, name, Path(spec.progress_path))
 
     try:
         autostart_mod.run_detached(
@@ -2358,6 +2501,7 @@ def _spawn_autostart_worker(
     """
     from datetime import datetime as _dt
 
+    from jailbee import autostart_progress
     from jailbee import background as bg
     from jailbee.db import state_dir
     from jailbee.db.models import JOB_AUTOSTART
@@ -2384,7 +2528,10 @@ def _spawn_autostart_worker(
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
     log_path = log_dir / f"{full_name}-autostart-{stamp}.log"
-    progress_path = log_dir / f"{full_name}-autostart-{stamp}.progress.json"
+    # Derived, not spelled a second time: a background worker running its own
+    # deferred stages pairs its progress file with its log the same way, and
+    # `jailbee autostart status` looks for one rule, not two.
+    progress_path = autostart_progress.path_for_log(log_path)
     job_file = log_dir / f"{full_name}-autostart-{stamp}.job.json"
     job_file.write_text(
         json.dumps(
@@ -3084,8 +3231,8 @@ def _post_start_actions(
     ``override`` is the caller's `--wait` / `--no-wait`. ``on_detach`` is
     invoked when a stage deferred the rest of the run — the foreground
     commands pass `_autostart_detach_handler`, which spawns the supervisor;
-    `_boot_worker` deliberately does not, because it is already a background
-    worker and continues past the boundary in its own process.
+    `_boot_worker` passes `_inline_autostart_handler`, which runs the same
+    algorithm in its own process, because it is already the detached one.
     """
     from jailbee.autostart import (
         AutostartStepError,
@@ -3258,6 +3405,7 @@ def _spawn_boot_worker(
     *,
     restart: bool,
     no_autostart: bool,
+    override: Literal["wait", "no_wait"] | None = None,
 ) -> None:
     """Spawn a detached `_boot-worker` for one container and record its job row.
 
@@ -3274,6 +3422,11 @@ def _spawn_boot_worker(
     create or a destroy, a boot is not the last thing to happen to the
     container: two workers would race the same reboot and interleave their
     autostart steps.
+
+    ``override`` is the caller's `--wait` / `--no-wait`, forwarded as the
+    same flag. It is not about when this command returns — that is
+    `--background`'s job — but about where the worker's own autostart run
+    splits, which is when the container becomes attachable.
     """
     from datetime import datetime as _dt
 
@@ -3310,6 +3463,8 @@ def _spawn_boot_worker(
         worker_argv.append("--restart")
     if no_autostart:
         worker_argv.append("--no-autostart")
+    if override is not None:
+        worker_argv.append("--wait" if override == "wait" else "--no-wait")
 
     # Deliberately not closed here: the handle is inherited by the
     # detached child as its stdout/stderr; the parent returns immediately
@@ -3402,6 +3557,7 @@ def start(
             name,
             restart=False,
             no_autostart=no_autostart,
+            override=autostart_override,
         )
         return
     # boot_container also re-attaches the /run/user/<uid>/* GUI sockets,
@@ -3513,6 +3669,7 @@ def restart(
             name,
             restart=True,
             no_autostart=no_autostart,
+            override=autostart_override,
         )
         return
     boot_container(cfg, incus, name, restart=True)

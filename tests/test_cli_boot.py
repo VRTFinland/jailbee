@@ -124,6 +124,44 @@ def test_background_forwards_no_autostart_to_the_worker(tmp_path, mocker):
     assert "--no-autostart" in popen.call_args.args[0]
 
 
+def test_background_forwards_no_wait_to_the_worker(tmp_path, mocker):
+    """With `--background` the wait flags stay meaningful: they move the
+    boundary the *worker* observes, so they have to reach its argv. Dropped
+    here, `--no-wait` is silently a no-op and every stage it deferred runs
+    blocking inside the worker."""
+    _setup(tmp_path, mocker)
+    popen = _patch_popen(mocker)
+
+    result = runner.invoke(app, ["start", "feat-a", "--background", "--no-wait"])
+
+    assert result.exit_code == 0, result.output
+    assert "--no-wait" in popen.call_args.args[0]
+
+
+def test_background_forwards_wait_to_the_worker(tmp_path, mocker):
+    _setup(tmp_path, mocker)
+    popen = _patch_popen(mocker)
+
+    result = runner.invoke(app, ["restart", "feat-a", "--background", "--wait"])
+
+    assert result.exit_code == 0, result.output
+    assert "--wait" in popen.call_args.args[0]
+
+
+def test_background_without_the_flags_forwards_neither(tmp_path, mocker):
+    """No flag means "whatever the config's `detach:` says" — not an
+    implicit `--wait`, which would make every stage blocking again."""
+    _setup(tmp_path, mocker)
+    popen = _patch_popen(mocker)
+
+    result = runner.invoke(app, ["restart", "feat-a", "--background"])
+
+    assert result.exit_code == 0, result.output
+    argv = popen.call_args.args[0]
+    assert "--wait" not in argv
+    assert "--no-wait" not in argv
+
+
 def test_restart_defaults_to_foreground(tmp_path, mocker):
     _cfg, boot = _setup(tmp_path, mocker)
     popen = _patch_popen(mocker)
@@ -312,6 +350,32 @@ def test_boot_worker_without_restart_starts_the_container(tmp_path, mocker):
 
     assert result.exit_code == 0, result.output
     assert boot.call_args.kwargs["restart"] is False
+
+
+def test_boot_worker_passes_the_override_to_post_start_actions(tmp_path, mocker):
+    """The last leg of the `--no-wait` hand-off: the worker's own autostart
+    run has to split where the operator asked, not where the config says."""
+    _worker_setup(tmp_path, mocker)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    _insert_job(os.getpid(), "starting")
+
+    result = runner.invoke(app, ["_boot-worker", "--name", "myrepo-feat-a", "--no-wait"])
+
+    assert result.exit_code == 0, result.output
+    assert post.call_args.kwargs["override"] == "no_wait"
+
+
+def test_boot_worker_without_the_flags_leaves_the_override_unset(tmp_path, mocker):
+    _worker_setup(tmp_path, mocker)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    _insert_job(os.getpid(), "starting")
+
+    result = runner.invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert post.call_args.kwargs["override"] is None
 
 
 def test_boot_worker_records_the_autostart_phase(tmp_path, mocker):

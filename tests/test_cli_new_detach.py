@@ -199,7 +199,13 @@ def test_new_worker_does_not_spawn_a_supervisor(tmp_path, mocker):
 
     assert result.exit_code == 0, result.output
     assert spawn.call_count == 0
-    assert new_container.call_args.kwargs.get("on_detach") is None
+    # It *does* hand `new_container` a handler — one that runs the deferred
+    # stages here rather than spawning a second process for them.
+    handler = new_container.call_args.kwargs["on_detach"]
+    run_detached = mocker.patch("jailbee.autostart.run_detached")
+    handler(cfg.autostart, "on_start", "/r")
+    assert spawn.call_count == 0
+    assert run_detached.call_count == 1
 
 
 # ---- `jailbee start` / `jailbee restart`
@@ -312,9 +318,16 @@ def test_background_boot_worker_does_not_spawn_a_supervisor(tmp_path, mocker):
     the boundary in-process rather than handing to a second process."""
     _setup_boot(tmp_path, mocker, detached=True)
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    run_detached = mocker.patch("jailbee.autostart.run_detached")
     mocker.patch("jailbee.cli._track_job")
 
     result = runner.invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
 
     assert result.exit_code == 0, result.output
     assert spawn.call_count == 0
+    # The supervisor's algorithm still runs — in this process.
+    assert run_detached.call_count == 1
+    spec = run_detached.call_args.args[2]
+    assert spec.container_name == "myrepo-feat-a"
+    assert spec.from_trigger == "on_start"
+    assert spec.repo_dir == "/home/dev/myrepo"

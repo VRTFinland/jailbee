@@ -20,6 +20,18 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
+def path_for_log(log_path: str | Path) -> Path:
+    """The progress file belonging beside a detached run's log.
+
+    One derivation, two producers: `_spawn_autostart_worker` names the pair
+    when it hands the stages to a supervisor, and a background worker that
+    finishes them in its own process derives the same pair from the log it
+    is already writing to. `jailbee autostart status` then finds the file
+    the same way whichever process ran the stages.
+    """
+    return Path(log_path).with_suffix(".progress.json")
+
+
 @dataclass(frozen=True)
 class ProgressEntry:
     stage: str

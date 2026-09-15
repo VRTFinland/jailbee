@@ -7847,7 +7847,7 @@ def test_new_worker_survives_a_reset_job_table(make_cfg, tmp_path, monkeypatch, 
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
     name = f"{cfg.container_prefix}-feat-foo"
 
-    def _create(_cfg, _incus, _opts, *, on_phase=None, confirm_fn=None):
+    def _create(_cfg, _incus, _opts, *, on_phase=None, confirm_fn=None, on_detach=None):
         assert on_phase is not None
         on_phase("creating")
         on_phase("cloning")
