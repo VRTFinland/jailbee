@@ -498,6 +498,7 @@ def _run_chains_in_parallel(
         step_by_name[step.name] = step
         chain_by_step[step.name] = chain.name
         started[step.name] = time.monotonic()
+        info(f"    → step: {step.name}")
         if on_progress is not None:
             on_progress(stage.stage, step.name, "start")
         # Per-step mounts are legacy (flat form only) but still honoured.
@@ -532,38 +533,58 @@ def _run_chains_in_parallel(
             return
         in_flight[step.name] = handle
 
-    for chain in chains:
-        launch_next(chain)
+    try:
+        for chain in chains:
+            launch_next(chain)
 
-    while in_flight:
-        done = tmux.poll_steps(incus, container, list(in_flight.values()))
-        for name, rc in done.items():
-            in_flight.pop(name)
-            step = step_by_name[name]
-            _finish_step(cfg, incus, container, step, rc, stage, on_progress, started)
-            if rc != 0 and not step.continue_on_error:
-                record_failure(name, reason="exit", exit_code=rc)
-                continue
-            if rc != 0:
-                warn(f"Step '{name}' failed (continue_on_error): exit {rc}")
-            if failure is None:
-                launch_next(by_name[chain_by_step[name]])
+        while in_flight:
+            done = tmux.poll_steps(incus, container, list(in_flight.values()))
+            for name, rc in done.items():
+                if in_flight.pop(name, None) is None:
+                    # A sentinel for a step this driver is not tracking. The
+                    # loader guarantees unique step names per trigger, but
+                    # `run_stage` is also callable on stages built in code
+                    # (the detached supervisor's), which never went through
+                    # it — so skip the stray name instead of raising and
+                    # abandoning the steps that *are* in flight.
+                    continue
+                step = step_by_name[name]
+                _finish_step(cfg, incus, container, step, rc, stage, on_progress, started)
+                if rc != 0 and not step.continue_on_error:
+                    record_failure(name, reason="exit", exit_code=rc)
+                    continue
+                if rc != 0:
+                    warn(f"Step '{name}' failed (continue_on_error): exit {rc}")
+                if failure is None:
+                    launch_next(by_name[chain_by_step[name]])
 
-        now = time.monotonic()
-        for name, handle in list(in_flight.items()):
-            # Every handle here carries a real deadline: a background step
-            # never enters `in_flight` (it is fire-and-forget above), and
-            # a zero deadline is exactly the "already expired" case.
-            if now >= handle.deadline:
+            now = time.monotonic()
+            for name, handle in list(in_flight.items()):
+                # Every handle here carries a real deadline: a background step
+                # never enters `in_flight` (it is fire-and-forget above), and
+                # a zero deadline is exactly the "already expired" case.
+                if now >= handle.deadline:
+                    tmux.interrupt_step(incus, container, handle)
+                    in_flight.pop(name)
+                    _finish_step(
+                        cfg, incus, container, step_by_name[name], -1, stage, on_progress, started
+                    )
+                    record_failure(name, reason="timeout")
+
+            if in_flight:
+                time.sleep(_POLL_INTERVAL_SEC)
+    except BaseException:
+        # Anything unexpected — a mount that won't attach, a non-tmux error
+        # out of `launch_step`, a raising `on_progress`, or a Ctrl-C — must
+        # not leave steps running: `run_stage`'s `finally` is about to
+        # unmount and flip the network profile, and doing that underneath a
+        # live step is the one thing the stage design promises not to do.
+        for handle in list(in_flight.values()):
+            try:
                 tmux.interrupt_step(incus, container, handle)
-                in_flight.pop(name)
-                _finish_step(
-                    cfg, incus, container, step_by_name[name], -1, stage, on_progress, started
-                )
-                record_failure(name, reason="timeout")
-
-        if in_flight:
-            time.sleep(_POLL_INTERVAL_SEC)
+            except Exception as e:  # best-effort: never mask the real error
+                warn(f"Failed to interrupt '{handle.name}' in {container}: {e}")
+        raise
 
     if failure is not None:
         raise failure
@@ -632,6 +653,11 @@ def _apply_step(
             prev_network = current
             switch_network(cfg, incus, container, step.network, mirror_endpoint=mirror_endpoint)
 
+    # Announced before the step, not only after it: a stage built from four
+    # flat steps would otherwise print nothing between its header and each
+    # step's completion, so a long `npm install` reads as a hang. The
+    # profile is not named here — it belongs to the stage, which prints it.
+    info(f"    → step: {step.name}")
     t0 = time.monotonic()
     try:
         for m in step.mounts:

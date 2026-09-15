@@ -52,6 +52,15 @@ def _recording_launch(launched: list[str]):
     return fake_launch
 
 
+def _record(events: list[tuple[str, str, str]]):
+    """An `on_progress` callback that appends every (stage, step, state)."""
+
+    def on_progress(stage: str, step: str, state: str) -> None:
+        events.append((stage, step, state))
+
+    return on_progress
+
+
 def _scripted_poll(polls: list[dict[str, int]]):
     def fake_poll(incus_, container, handles):
         return polls.pop(0) if polls else {}
@@ -112,11 +121,17 @@ def test_parallel_chains_start_before_either_finishes(tmp_path, make_cfg, mocker
 def test_failing_chain_does_not_launch_more_steps_but_lets_siblings_finish(
     tmp_path, make_cfg, mocker, incus
 ):
+    """The sibling must be *reaped*, not merely launched: both chains' first
+    steps are in flight before the first poll, so asserting that `b1` was
+    launched would survive a driver that raised the moment `a1` failed."""
     launched: list[str] = []
+    events: list[tuple[str, str, str]] = []
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.tmux.launch_step", side_effect=_recording_launch(launched))
-    mocker.patch("jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"a1": 1}, {"b1": 0}]))
+    poll = mocker.patch(
+        "jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"a1": 1}, {"b1": 0}])
+    )
 
     cfg = make_cfg(tmp_path)
     stage = _stage(
@@ -127,10 +142,15 @@ def test_failing_chain_does_not_launch_more_steps_but_lets_siblings_finish(
         ],
     )
     with pytest.raises(autostart.AutostartStepError):
-        autostart.run_stage(cfg, incus, "c1", stage, "/home/dev/repo")
+        autostart.run_stage(
+            cfg, incus, "c1", stage, "/home/dev/repo", on_progress=_record(events)
+        )
 
     assert "a2" not in launched  # failed chain does not advance
-    assert "b1" in launched  # sibling was already running and was awaited
+    assert ("deps", "a1", "fail") in events
+    # The sibling ran to completion before the stage gave up on it.
+    assert ("deps", "b1", "ok") in events
+    assert poll.call_count == 2
 
 
 def test_step_timeout_interrupts_only_that_step(tmp_path, make_cfg, mocker, incus):
@@ -365,3 +385,252 @@ def test_a_standalone_step_still_manages_its_own_network(tmp_path, make_cfg, moc
     autostart._apply_step(cfg, incus, "c1", step, "/r", manage_network=True)
 
     assert [c.args[3] for c in switch.call_args_list] == ["loose", "strict"]
+
+
+def test_the_agent_install_step_asks_to_manage_its_own_network(tmp_path, make_cfg, mocker):
+    """`agents._ensure_one` is the one caller that opts in, and the opt-in is
+    a defaulted keyword: dropping it leaves the profile alone and a `loose`
+    install silently runs under `strict`. Pin the kwarg at the call site."""
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"grok": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")  # install_check fails: not installed
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    apply_step.assert_called_once()
+    assert apply_step.call_args.kwargs["manage_network"] is True
+
+
+# --- the on_progress contract (Task 7's progress file is built on it) ----
+
+
+def test_on_progress_reports_start_then_ok_serially(tmp_path, make_cfg, mocker, incus):
+    events: list[tuple[str, str, str]] = []
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.run_step")
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(stage="deps", steps=[{"name": "s1", "run": "true"}])
+    autostart.run_stage(cfg, incus, "c1", stage, "/r", on_progress=_record(events))
+
+    assert events == [("deps", "s1", "start"), ("deps", "s1", "ok")]
+
+
+def test_on_progress_reports_fail_before_reraising_serially(tmp_path, make_cfg, mocker, incus):
+    events: list[tuple[str, str, str]] = []
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch(
+        "jailbee.tmux.run_step",
+        side_effect=TmuxStepError("boom", step_name="s1", reason="exit", exit_code=1),
+    )
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        steps=[{"name": "s1", "run": "false"}, {"name": "s2", "run": "true"}],
+    )
+    with pytest.raises(autostart.AutostartStepError):
+        autostart.run_stage(cfg, incus, "c1", stage, "/r", on_progress=_record(events))
+
+    assert events == [("deps", "s1", "start"), ("deps", "s1", "fail")]
+
+
+def test_on_progress_reports_fail_and_the_chain_continues_serially(
+    tmp_path, make_cfg, mocker, incus
+):
+    events: list[tuple[str, str, str]] = []
+    calls = {"n": 0}
+
+    def fake_run_step(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TmuxStepError("boom", step_name="s1", reason="exit", exit_code=1)
+
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.run_step", side_effect=fake_run_step)
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        steps=[
+            {"name": "s1", "run": "false", "continue_on_error": True},
+            {"name": "s2", "run": "true"},
+        ],
+    )
+    autostart.run_stage(cfg, incus, "c1", stage, "/r", on_progress=_record(events))
+
+    assert events == [
+        ("deps", "s1", "start"),
+        ("deps", "s1", "fail"),
+        ("deps", "s2", "start"),
+        ("deps", "s2", "ok"),
+    ]
+
+
+def test_on_progress_reports_terminal_states_in_parallel(tmp_path, make_cfg, mocker, incus):
+    """Both terminal states come out of `_finish_step`, so a swapped or
+    dropped report shows up only here."""
+    events: list[tuple[str, str, str]] = []
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=_fake_launch)
+    mocker.patch(
+        "jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"a1": 0, "b1": 1}])
+    )
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        chains=[
+            {"name": "a", "steps": [{"name": "a1", "run": "true"}]},
+            {"name": "b", "steps": [{"name": "b1", "run": "false", "continue_on_error": True}]},
+        ],
+    )
+    autostart.run_stage(cfg, incus, "c1", stage, "/r", on_progress=_record(events))
+
+    assert ("deps", "a1", "start") in events
+    assert ("deps", "b1", "start") in events
+    assert ("deps", "a1", "ok") in events
+    assert ("deps", "b1", "fail") in events
+
+
+# --- the per-step start announcement -------------------------------------
+
+
+def test_each_step_is_announced_before_it_runs_serially(tmp_path, make_cfg, mocker, incus, capsys):
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.run_step")
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        steps=[{"name": "s1", "run": "true"}, {"name": "s2", "run": "true"}],
+    )
+    autostart.run_stage(cfg, incus, "c1", stage, "/r")
+
+    out = capsys.readouterr().out
+    assert "→ step: s1" in out
+    assert "→ step: s2" in out
+    # The announcement precedes the step's own completion line.
+    assert out.index("→ step: s1") < out.index("↳ s1:")
+
+
+def test_each_step_is_announced_before_it_runs_in_parallel(
+    tmp_path, make_cfg, mocker, incus, capsys
+):
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=_fake_launch)
+    mocker.patch("jailbee.tmux.poll_steps", side_effect=_fake_poll_all_ok)
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        chains=[
+            {"name": "a", "steps": [{"name": "a1", "run": "true"}]},
+            {"name": "b", "steps": [{"name": "b1", "run": "true"}]},
+        ],
+    )
+    autostart.run_stage(cfg, incus, "c1", stage, "/r")
+
+    out = capsys.readouterr().out
+    assert "→ step: a1" in out
+    assert "→ step: b1" in out
+
+
+# --- the driver's own failure modes --------------------------------------
+
+
+def test_an_unexpected_error_interrupts_the_steps_left_in_flight(
+    tmp_path, make_cfg, mocker, incus
+):
+    """`run_stage`'s `finally` unmounts and flips the profile next. Anything
+    still running in tmux at that moment would have the ground moved under
+    it, so the driver interrupts what it launched before propagating."""
+
+    def fake_launch(incus_, container, *, name, **kw):
+        if name == "b1":
+            raise RuntimeError("incus fell over")
+        return StepHandle(
+            name=name, window=name, sentinel=f"/tmp/{name}", background=False, deadline=1e9
+        )
+
+    interrupt = mocker.patch("jailbee.tmux.interrupt_step")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=fake_launch)
+    mocker.patch("jailbee.tmux.poll_steps", return_value={})
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        chains=[
+            {"name": "a", "steps": [{"name": "a1", "run": "true"}]},
+            {"name": "b", "steps": [{"name": "b1", "run": "true"}]},
+        ],
+    )
+    with pytest.raises(RuntimeError, match="incus fell over"):
+        autostart.run_stage(cfg, incus, "c1", stage, "/r")
+
+    assert [c.args[2].name for c in interrupt.call_args_list] == ["a1"]
+
+
+def test_a_poll_result_for_an_untracked_step_is_ignored(tmp_path, make_cfg, mocker, incus):
+    """The loader enforces unique step names per trigger, but the detached
+    supervisor builds stages in code that never went through it. A stray
+    sentinel must not crash the driver and abandon the live steps."""
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=_fake_launch)
+    mocker.patch(
+        "jailbee.tmux.poll_steps",
+        side_effect=_scripted_poll([{"ghost": 0, "a1": 0}, {"b1": 0}]),
+    )
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        chains=[
+            {"name": "a", "steps": [{"name": "a1", "run": "true"}]},
+            {"name": "b", "steps": [{"name": "b1", "run": "true"}]},
+        ],
+    )
+    autostart.run_stage(cfg, incus, "c1", stage, "/r")
+
+
+# --- run_autostart's planner hand-off ------------------------------------
+
+
+def test_run_autostart_forwards_the_cli_overrides_to_the_planner(
+    tmp_path, make_cfg, mocker, incus
+):
+    """`--wait` / `--no-wait` and the on_create->on_start detach hand-off are
+    the planner's inputs; dropping either keyword here is invisible until a
+    container silently blocks (or silently doesn't)."""
+    from jailbee.autostart_plan import AutostartPlan
+
+    planner = mocker.patch(
+        "jailbee.autostart.plan_autostart",
+        return_value=AutostartPlan(blocking=[], detached=[]),
+    )
+
+    cfg = make_cfg(tmp_path, autostart={"on_create": [{"name": "a", "run": "true"}]})
+    autostart.run_autostart(
+        cfg,
+        incus,
+        "c1",
+        AutostartTrigger.ON_CREATE,
+        "/r",
+        override="no_wait",
+        already_detached=True,
+    )
+
+    assert planner.call_args.kwargs["override"] == "no_wait"
+    assert planner.call_args.kwargs["already_detached"] is True
