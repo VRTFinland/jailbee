@@ -12,6 +12,7 @@ import typer
 import yaml
 
 from jailbee import __version__, completion, table_format
+from jailbee.autostart_plan import AutostartTrigger
 from jailbee.config import ConfigError, load_config, load_config_unsanitized
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.global_config import (
@@ -51,6 +52,13 @@ ConfigOption = Annotated[
     Path | None,
     typer.Option("--config", "-c", help="Path to config.yaml"),
 ]
+
+# The triggers in the order a container meets them. Spelled out rather than
+# derived: sorting the enum's *values* would only work by the accident that
+# "on_create" < "on_start", and would silently mis-order the day a third
+# trigger lands. The detached supervisor resumes at the trigger it was
+# spawned from and runs every later one in full.
+_TRIGGER_ORDER = (AutostartTrigger.ON_CREATE, AutostartTrigger.ON_START)
 
 _CONTAINER_ARG_HELP = (
     "Container to act on, named either in full or by its short name (the "
@@ -2212,6 +2220,206 @@ def _boot_worker(
     )
 
 
+@app.command("_autostart-worker", hidden=True)
+def _autostart_worker(
+    job: Annotated[Path, typer.Option("--job", help="Path to the job JSON file.")],
+    config: ConfigOption = None,
+) -> None:
+    """Internal: finish a container's detached autostart stages.
+
+    Spawned by `new` / `start` / `restart` once their blocking stages are
+    done. Not for direct use.
+    """
+    import os
+    import traceback
+
+    from jailbee import autostart as autostart_mod
+    from jailbee import autostart_progress, background
+    from jailbee.autostart_plan import plan_autostart
+    from jailbee.incus import Incus
+
+    spec = background.dict_to_autostart_job(json.loads(job.read_text()))
+    # The job file's block, not the one on disk: on the create path the
+    # effective autostart is the *target branch's*, grafted on by
+    # `branch_config.load_branch_autostart`. Re-loading it here would run the
+    # host checkout's stages and bypass the branch-autostart privilege gate.
+    cfg = _load_or_exit(config).model_copy(update={"autostart": spec.autostart})
+    incus = Incus()
+    engine = _job_engine()
+    name = spec.container_name
+    progress_path = Path(spec.progress_path)
+
+    def on_progress(stage: str, step: str, state: str) -> None:
+        autostart_progress.append(
+            progress_path,
+            autostart_progress.ProgressEntry(
+                stage=stage, step=step, state=state, at=_now().isoformat()
+            ),
+        )
+
+    def record_stage(stage_name: str) -> None:
+        """The job row's phase is the stage the supervisor is on — that is
+        what `job_label` renders as ``autostart:<stage>`` in `jailbee ls`."""
+        _track_job(
+            engine,
+            lambda s: background.set_phase(s, name, stage_name, now=_now()),
+            f"record stage '{stage_name}'",
+        )
+
+    # Take ownership of the flag the foreground left set, so `loose_revert`
+    # keeps skipping this container and a crash here is still detectable
+    # (the pid stops existing). `_spawn_autostart_worker` already wrote this
+    # same pid; re-stamping it is what makes the worker self-sufficient if
+    # the spawner's write failed.
+    incus.config_set(name, "user.jailbee.autostart_in_progress", str(os.getpid()))
+    try:
+        # The foreground ran this trigger's blocking stages and stopped at the
+        # boundary; everything from here, in this trigger and every later one,
+        # is ours. `already_detached=True` is what makes the planner return the
+        # whole remaining list rather than re-splitting it.
+        start_at = _TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
+        for i, trigger in enumerate(_TRIGGER_ORDER[start_at:]):
+            agent_steps = (
+                autostart_mod.agent_autostart_steps(cfg)
+                if trigger == AutostartTrigger.ON_START
+                else []
+            )
+            plan = plan_autostart(
+                cfg.autostart,
+                trigger,
+                agent_steps=agent_steps,
+                # The trigger we resumed into keeps its own split (its
+                # blocking half already ran); every later trigger is
+                # detached in full.
+                already_detached=i > 0,
+            )
+            stages = plan.blocking + plan.detached if i > 0 else plan.detached
+            for stage in stages:
+                record_stage(stage.stage)
+                autostart_mod.run_stages(
+                    cfg,
+                    incus,
+                    name,
+                    [stage],
+                    spec.repo_dir,
+                    mirror_endpoint=spec.mirror_endpoint,
+                    on_progress=on_progress,
+                    # Compare-and-swap, unlike the foreground path: a detached
+                    # stage can finish long after the user ran `jailbee net` by
+                    # hand, and a blind restore would undo their choice.
+                    cas_restore=True,
+                )
+    except Exception as e:
+        traceback.print_exc()
+        msg = str(e)  # see `_new_worker`: `e` is unbound after the block
+        _track_job(
+            engine,
+            lambda s: background.fail_job(s, name, msg, now=_now()),
+            "mark the job failed",
+        )
+        raise typer.Exit(1) from e
+    finally:
+        # Every exit path — success, failure, and the crash that leaves this
+        # unreached — must stop pinning the container: on success and failure
+        # by clearing the key here, on a crash by the pid in it going away.
+        incus.config_unset(name, "user.jailbee.autostart_in_progress")
+
+    _track_job(engine, lambda s: background.delete_job(s, name), "clear the finished job row")
+
+
+def _spawn_autostart_worker(
+    cfg: "Config",
+    config_path: Path | None,
+    full_name: str,
+    *,
+    incus: "IncusType",
+    autostart: "Autostart",
+    from_trigger: str,
+    repo_dir: str,
+    mirror_endpoint: tuple[str, int] | None,
+) -> None:
+    """Hand the detached stages to a `_autostart-worker` and record its row.
+
+    Same spawn shape as `_spawn_boot_worker`: the worker inherits a log
+    file as stdout/stderr and runs in its own session so it outlives the
+    terminal that started it.
+
+    ``incus`` is here only to re-stamp the in-progress flag with the child's
+    pid. `run_autostart` leaves the literal ``"1"`` behind when stages
+    remain detached, and ``"1"`` reads as "held forever" to `loose_revert`.
+    The worker stamps its own pid too, but not until it has started: a
+    worker that dies before that point would otherwise pin the container
+    loose for good.
+    """
+    from datetime import datetime as _dt
+
+    from jailbee import background as bg
+    from jailbee.db import state_dir
+    from jailbee.db.models import JOB_AUTOSTART
+    from jailbee.lifecycle import short_name
+
+    log_dir = state_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"{full_name}-autostart-{stamp}.log"
+    progress_path = log_dir / f"{full_name}-autostart-{stamp}.progress.json"
+    job_file = log_dir / f"{full_name}-autostart-{stamp}.job.json"
+    job_file.write_text(
+        json.dumps(
+            bg.autostart_job_to_dict(
+                container_name=full_name,
+                autostart=autostart,
+                from_trigger=from_trigger,
+                repo_dir=repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                log_path=str(log_path),
+                progress_path=str(progress_path),
+            )
+        )
+    )
+
+    worker_argv = [
+        sys.executable,
+        "-m",
+        "jailbee",
+        "_autostart-worker",
+        "--job",
+        str(job_file),
+        *(["--config", str(config_path)] if config_path is not None else []),
+    ]
+    # Deliberately not closed here: the handle is inherited by the detached
+    # child as its stdout/stderr, and the parent returns immediately.
+    log_fh = open(log_path, "w")
+    proc = subprocess.Popen(
+        worker_argv,
+        stdin=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        cwd=str(cfg.repo_root),
+    )
+    incus.config_set(full_name, "user.jailbee.autostart_in_progress", str(proc.pid))
+    _track_job(
+        _job_engine(),
+        lambda s: bg.start_job(
+            s,
+            container_name=full_name,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=proc.pid,
+            log_path=str(log_path),
+            now=_dt.now().astimezone(),
+            op_kind=JOB_AUTOSTART,
+        ),
+        "record the autostart job row",
+    )
+    info(
+        f"Autostart continues in the background for "
+        f"'{short_name(cfg, full_name)}' (pid {proc.pid}) — "
+        f"`jailbee autostart status` to follow, `jailbee job log` for output."
+    )
+
+
 def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev") -> int:
     """Open an interactive shell as ``user`` in the running container.
 
@@ -2535,7 +2743,7 @@ if TYPE_CHECKING:
     from jailbee import claude_overview, claude_pool
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
-    from jailbee.config import Config, LooseAutoRevert
+    from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult

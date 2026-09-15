@@ -283,6 +283,52 @@ def test_job_label_create_job_in_starting_is_unaffected_by_kind(mocker) -> None:
     assert background.job_label(background.PHASE_STARTING, 1234, kind=JOB_CREATE) == "starting"
 
 
+def test_job_label_dead_autostart_job_keeps_the_worker_gone_suffix(mocker) -> None:
+    """Same rule as `destroying`: the friendlier form is only for a live
+    worker, so an orphaned supervisor still says where it stopped."""
+    from jailbee import background
+    from jailbee.db.models import JOB_AUTOSTART
+
+    mocker.patch.object(background, "worker_alive", return_value=False)
+    assert background.job_label("deps", 1234, kind=JOB_AUTOSTART) == "deps (worker gone)"
+
+
+def test_job_label_failed_autostart_job_is_the_bare_phase(mocker) -> None:
+    from jailbee import background
+    from jailbee.db.models import JOB_AUTOSTART
+
+    mocker.patch.object(background, "worker_alive", return_value=True)
+    assert background.job_label(background.PHASE_FAILED, 1234, kind=JOB_AUTOSTART) == "failed"
+
+
+def test_attachable_create_and_boot_only_from_the_autostart_phase() -> None:
+    """`attachable` replaced two inlined set memberships — a create or a boot
+    must still be unattachable before its container is up."""
+    from jailbee import background
+    from jailbee.db.models import JOB_BOOT, JOB_CREATE
+
+    for kind in (JOB_CREATE, JOB_BOOT):
+        assert background.attachable(kind, background.PHASE_AUTOSTART) is True
+        assert background.attachable(kind, background.PHASE_STARTING) is False
+        assert background.attachable(kind, background.PHASE_CLONING) is False
+
+
+def test_attachable_is_false_for_a_destroy_in_any_phase() -> None:
+    """Waiting a destroy out is all a caller can do."""
+    from jailbee import background
+    from jailbee.db.models import JOB_DESTROY
+
+    assert background.attachable(JOB_DESTROY, background.PHASE_AUTOSTART) is False
+    assert background.attachable(JOB_DESTROY, background.PHASE_DELETING) is False
+
+
+def test_attachable_is_false_for_an_unknown_kind() -> None:
+    """A row written by a newer jailbee must not unlock an attach by accident."""
+    from jailbee import background
+
+    assert background.attachable("something-new", background.PHASE_AUTOSTART) is False
+
+
 def test_job_label_or_empty_is_empty_for_no_job() -> None:
     from jailbee import background
 

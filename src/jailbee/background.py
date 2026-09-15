@@ -3,7 +3,14 @@
 State lives in the `background_op` SQLite table (see db/models.py), whose
 rows this module calls *jobs*. This is the only place outside db/ that
 touches that schema. It also (de)serialises `NewContainerOptions` for the
-worker's job file.
+worker's job file, and `AutostartJob` for the detached autostart
+supervisor's.
+
+**Both ends of every codec, always.** A field added to `op_to_job` but not
+`job_to_opts` — or to `autostart_job_to_dict` but not
+`dict_to_autostart_job` — is dropped in silence: the worker simply runs
+with the default, and nothing fails. Whenever `NewContainerOptions` or
+`AutostartJob` grows a field, change both functions in the same edit.
 """
 
 from __future__ import annotations
@@ -15,12 +22,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from sqlmodel import Session, select
 
+from jailbee.db.models import JOB_AUTOSTART as JOB_AUTOSTART
 from jailbee.db.models import JOB_BOOT as JOB_BOOT
 from jailbee.db.models import JOB_CREATE as JOB_CREATE
 from jailbee.db.models import JOB_DESTROY as JOB_DESTROY
 from jailbee.db.models import BackgroundJob
 
 if TYPE_CHECKING:
+    from jailbee.config import Autostart
     from jailbee.lifecycle import NewContainerOptions
 
 PHASE_STARTING = "starting"
@@ -44,7 +53,22 @@ ATTACHABLE_CREATE_PHASES = frozenset({PHASE_AUTOSTART})
 # Op kinds whose container survives the op, so the phases above mean
 # "attachable". A destroy is the exception: waiting it out is all a caller can
 # do.
-ATTACHABLE_OP_KINDS = frozenset({JOB_CREATE, JOB_BOOT})
+ATTACHABLE_OP_KINDS = frozenset({JOB_CREATE, JOB_BOOT, JOB_AUTOSTART})
+
+
+def attachable(kind: str, phase: str) -> bool:
+    """Whether a container carrying this job may be attached to.
+
+    Single source of truth for the attach guards. A create or a boot is
+    attachable only from the autostart phase onward; an autostart job is
+    attachable always — the container is up by construction, since the
+    supervisor only exists once the blocking stages handed the session over.
+    """
+    if kind == JOB_AUTOSTART:
+        return True
+    if kind not in ATTACHABLE_OP_KINDS:
+        return False
+    return phase in ATTACHABLE_CREATE_PHASES
 
 
 @dataclass(frozen=True)
@@ -85,11 +109,18 @@ def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
     only — callers must use :func:`clearable` (not a comparison against this
     label) to decide whether a job is dead, since a live destroy job's label
     now legitimately differs from its bare phase.
+
+    An `autostart`-kind row renders as ``autostart:<stage>``: its phase is
+    the stage name the supervisor is on, which means nothing on its own.
+    Same ordering rule as ``destroying`` — only a live worker gets the
+    friendlier form, so ``deps (worker gone)`` still surfaces a dead one.
     """
     if phase in TERMINAL_PHASES:
         return phase
     if not worker_alive(pid):
         return f"{phase} (worker gone)"
+    if kind == JOB_AUTOSTART:
+        return f"autostart:{phase}"
     if kind == JOB_DESTROY and phase == PHASE_STARTING:
         return "destroying"
     return phase
@@ -318,3 +349,64 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         claude_group=o.get("claude_group"),
     )
     return opts, job["container_name"], job["log_path"]
+
+
+@dataclass(frozen=True)
+class AutostartJob:
+    """One detached autostart run, as handed to `_autostart-worker`."""
+
+    container_name: str
+    autostart: "Autostart"
+    from_trigger: str
+    repo_dir: str
+    mirror_endpoint: tuple[str, int] | None
+    log_path: str
+    progress_path: str
+
+
+def autostart_job_to_dict(
+    *,
+    container_name: str,
+    autostart: "Autostart",
+    from_trigger: str,
+    repo_dir: str,
+    mirror_endpoint: tuple[str, int] | None,
+    log_path: str,
+    progress_path: str,
+) -> dict[str, Any]:
+    """Serialize a detached autostart run to the worker's job file.
+
+    ``autostart`` is the **effective** block — on the create path that is
+    the target branch's, grafted by `branch_config.load_branch_autostart`,
+    not the host checkout's. Re-loading config in the worker instead would
+    run the wrong stages and bypass the branch-autostart privilege gate,
+    so this field is the whole reason the job file exists.
+
+    Every field of :class:`AutostartJob` must appear here *and* in
+    :func:`dict_to_autostart_job` — see the module docstring.
+    """
+    return {
+        "container_name": container_name,
+        "autostart": autostart.model_dump(mode="json"),
+        "from_trigger": from_trigger,
+        "repo_dir": repo_dir,
+        "mirror_endpoint": list(mirror_endpoint) if mirror_endpoint else None,
+        "log_path": log_path,
+        "progress_path": progress_path,
+    }
+
+
+def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
+    """Inverse of :func:`autostart_job_to_dict`."""
+    from jailbee.config import Autostart
+
+    endpoint = raw.get("mirror_endpoint")
+    return AutostartJob(
+        container_name=raw["container_name"],
+        autostart=Autostart.model_validate(raw["autostart"]),
+        from_trigger=raw["from_trigger"],
+        repo_dir=raw["repo_dir"],
+        mirror_endpoint=(endpoint[0], int(endpoint[1])) if endpoint else None,
+        log_path=raw["log_path"],
+        progress_path=raw["progress_path"],
+    )

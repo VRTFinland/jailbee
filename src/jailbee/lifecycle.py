@@ -421,9 +421,10 @@ def wait_for_background_ready(
     table:
 
     * row gone          -> ready; return (returns instantly when already done)
-    * create + autostart -> ready; return (container is already started, so
-      shell/tmux can attach while autostart steps still run — see
-      :data:`background.ATTACHABLE_CREATE_PHASES`)
+    * attachable        -> ready; return (a create or boot that reached the
+      autostart phase, or any detached autostart supervisor: the container is
+      already started, so shell/tmux can attach while its steps still run —
+      see :func:`background.attachable`)
     * phase == failed   -> raise ValueError carrying the recorded error
     * worker pid dead   -> raise ValueError (stale op, worker crashed)
 
@@ -461,10 +462,7 @@ def wait_for_background_ready(
         if on_phase is not None and row.phase != last_phase:
             on_phase(row.phase)
             last_phase = row.phase
-        if (
-            row.op_kind in background.ATTACHABLE_OP_KINDS
-            and row.phase in background.ATTACHABLE_CREATE_PHASES
-        ):
+        if background.attachable(row.op_kind, row.phase):
             return
         sleep(POLL_INTERVAL_SEC)
 
