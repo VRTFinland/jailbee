@@ -484,14 +484,21 @@ def test_poll_steps_returns_finished_exit_codes_and_clears_sentinels(mocker):
 
 
 def test_poll_steps_ignores_background_handles(mocker):
+    """A background handle is skipped by the ``not h.background`` guard on
+    its own — even when it carries a (hypothetically) non-empty sentinel,
+    which would otherwise make it look pending. Built directly rather than
+    via `launch_step` (which always hands back `sentinel=""` for background
+    steps) so this guard, not the empty-sentinel guard, is what's under
+    test."""
     incus = mocker.Mock()
-    # kill-window OK, new-window OK, probe wait-for times out (= still alive)
-    incus.exec.side_effect = ["", "", IncusError("exit 124: timeout")]
-    h = tmux.launch_step(
-        incus, "c1", name="srv", command="sleep 9", env={}, cwd="/r", background=True, timeout=300
+    handle = tmux.StepHandle(
+        name="srv",
+        window="srv",
+        sentinel=f"{SENTINEL_DIR}/srv.exit",
+        background=True,
+        deadline=0.0,
     )
-    incus.exec.reset_mock()
-    assert tmux.poll_steps(incus, "c1", [h]) == {}
+    assert tmux.poll_steps(incus, "c1", [handle]) == {}
     incus.exec.assert_not_called()
 
 
