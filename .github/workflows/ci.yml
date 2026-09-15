@@ -1,7 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    # dev collects merged work between releases and is pushed directly, not
+    # through a pull request — without it here, nothing on dev is ever tested.
+    branches: [main, dev]
   pull_request:
 # Lint/type-check/test only — the workflow never needs to write to the repo.
 permissions:
