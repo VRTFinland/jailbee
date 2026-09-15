@@ -21,6 +21,29 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _autostart_holds(incus: Incus, name: str) -> bool:
+    """True while an autostart run still owns this container's network.
+
+    The flag carries the owning process's pid, so a supervisor that died
+    does not pin a loose container to loose for good. A bare ``"1"`` is
+    what older jailbee versions wrote and is honoured as "held" — a
+    container stamped by the previous release must not suddenly revert
+    mid-run just because this one upgraded.
+    """
+    from jailbee.background import worker_alive
+
+    raw = incus.config_get(name, "user.jailbee.autostart_in_progress")
+    if not raw:
+        return False
+    try:
+        pid = int(raw)
+    except ValueError:
+        return True  # unparseable — treat as held rather than guess
+    if pid <= 1:
+        return True
+    return worker_alive(pid)
+
+
 @dataclass(frozen=True)
 class RevertResult:
     """Outcome of a single container's TTL check.
@@ -69,7 +92,7 @@ def check_and_revert_loose(
             continue
 
         try:
-            if incus.config_get(name, "user.jailbee.autostart_in_progress"):
+            if _autostart_holds(incus, name):
                 continue
 
             loose_until = incus.config_get(name, "user.jailbee.loose_until")

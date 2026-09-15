@@ -312,3 +312,54 @@ def test_stale_offline_label_reverts_to_strict(tmp_path, mocker, now):
         "strict",
         mirror_endpoint=None,
     )
+
+
+def test_dead_autostart_pid_does_not_block_the_revert(tmp_path, mocker):
+    """A supervisor that died must not leave a loose container pinned loose
+    forever — that is a security hole in the unsafe direction."""
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
+    values = {
+        "user.jailbee.autostart_in_progress": "424242",
+        "user.jailbee.loose_until": "2020-01-01T00:00:00+00:00",
+        "user.jailbee.loose_revert_to": "strict",
+    }
+    incus.config_get.side_effect = lambda name, key: values.get(key, "")
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    mocker.patch("jailbee.loose_revert.current_network_mode", return_value="loose")
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    check_and_revert_loose(cfg, incus, now=datetime.now(UTC))
+
+    assert switch.call_count == 1
+
+
+def test_live_autostart_pid_still_blocks_the_revert(tmp_path, mocker):
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
+    incus.config_get.side_effect = lambda name, key: (
+        "424242" if key == "user.jailbee.autostart_in_progress" else ""
+    )
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    check_and_revert_loose(cfg, incus, now=datetime.now(UTC))
+
+    assert switch.call_count == 0
+
+
+def test_legacy_flag_value_one_still_blocks_the_revert(tmp_path, mocker):
+    """A container stamped by an older jailbee carries "1", not a pid."""
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
+    incus.config_get.side_effect = lambda name, key: (
+        "1" if key == "user.jailbee.autostart_in_progress" else ""
+    )
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    check_and_revert_loose(cfg, incus, now=datetime.now(UTC))
+
+    assert switch.call_count == 0
