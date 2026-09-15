@@ -5985,6 +5985,92 @@ def test_wait_for_background_ready_raises_when_worker_dead(make_cfg, tmp_path, m
     sleep.assert_not_called()
 
 
+def _autostart_row(cfg, full: str, *, pid: int, failed: bool = False) -> None:
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_AUTOSTART
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=pid,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_AUTOSTART,
+        )
+        if failed:
+            background.fail_job(s, full, "a deferred stage blew up", now=datetime.now(UTC))
+        else:
+            background.set_phase(s, full, "deps", now=datetime.now(UTC))
+
+
+def _never_sleep(_s: float) -> None:
+    """A poll loop that reaches here would spin forever: the supervisor rows
+    below never change, so "not attachable" means "never returns". Raising
+    turns that hang into a failure."""
+    raise AssertionError("waited on a supervisor instead of attaching")
+
+
+def test_wait_for_background_ready_attaches_over_a_failed_supervisor(
+    make_cfg, tmp_path, monkeypatch
+):
+    """A failed *deferred* stage must not cost the user a shell: the container
+    is up and usable — that is the whole reason the autostart kind exists."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-s"
+
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242, failed=True)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
+
+
+def test_wait_for_background_ready_attaches_over_a_dead_supervisor(
+    make_cfg, tmp_path, monkeypatch
+):
+    """Same for a killed supervisor: its container is still running."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-k"
+
+    from jailbee import background
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242)
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: False)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
+
+
+def test_wait_for_background_ready_attaches_over_a_live_supervisor(
+    make_cfg, tmp_path, monkeypatch
+):
+    """And it never waits one out — the deferred stages run behind the shell."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-l"
+
+    from jailbee import background
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242)
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: True)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
+
+
 def test_wait_for_background_ready_returns_instantly_when_no_row(make_cfg, tmp_path, monkeypatch):
     """A name with no job row is already ready; sleep is never called."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))

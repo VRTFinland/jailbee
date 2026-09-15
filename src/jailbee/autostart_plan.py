@@ -23,6 +23,16 @@ class AutostartTrigger(Enum):
     ON_START = "on_start"
 
 
+TRIGGER_ORDER = (AutostartTrigger.ON_CREATE, AutostartTrigger.ON_START)
+"""The triggers in the order a container meets them.
+
+Spelled out rather than derived: sorting the enum's *values* would only
+work by the accident that ``"on_create" < "on_start"``, and would silently
+mis-order the day a third trigger lands. The detached supervisor resumes at
+the trigger it was spawned from and runs every later one in full.
+"""
+
+
 @dataclass(frozen=True)
 class AutostartPlan:
     """One trigger's stages, split at the attach boundary.

@@ -360,6 +360,7 @@ class AutostartJob:
     from_trigger: str
     repo_dir: str
     mirror_endpoint: tuple[str, int] | None
+    override: Literal["wait", "no_wait"] | None
     log_path: str
     progress_path: str
 
@@ -371,6 +372,7 @@ def autostart_job_to_dict(
     from_trigger: str,
     repo_dir: str,
     mirror_endpoint: tuple[str, int] | None,
+    override: Literal["wait", "no_wait"] | None,
     log_path: str,
     progress_path: str,
 ) -> dict[str, Any]:
@@ -382,6 +384,13 @@ def autostart_job_to_dict(
     run the wrong stages and bypass the branch-autostart privilege gate,
     so this field is the whole reason the job file exists.
 
+    ``override`` is the CLI's ``--wait`` / ``--no-wait``, and travels for the
+    same reason: the worker re-plans the trigger it resumed into, and
+    ``_boundary`` branches on the override. Without it, ``--no-wait`` over a
+    config where no stage sets ``detach: true`` makes the foreground defer
+    ``stages[1:]`` while the worker recomputes ``plan.detached == []``, runs
+    nothing and exits 0 — every deferred stage silently lost.
+
     Every field of :class:`AutostartJob` must appear here *and* in
     :func:`dict_to_autostart_job` — see the module docstring.
     """
@@ -391,6 +400,7 @@ def autostart_job_to_dict(
         "from_trigger": from_trigger,
         "repo_dir": repo_dir,
         "mirror_endpoint": list(mirror_endpoint) if mirror_endpoint else None,
+        "override": override,
         "log_path": log_path,
         "progress_path": progress_path,
     }
@@ -407,6 +417,7 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
         from_trigger=raw["from_trigger"],
         repo_dir=raw["repo_dir"],
         mirror_endpoint=(endpoint[0], int(endpoint[1])) if endpoint else None,
+        override=raw["override"],
         log_path=raw["log_path"],
         progress_path=raw["progress_path"],
     )

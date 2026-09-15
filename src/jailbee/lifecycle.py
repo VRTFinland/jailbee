@@ -428,6 +428,9 @@ def wait_for_background_ready(
     * phase == failed   -> raise ValueError carrying the recorded error
     * worker pid dead   -> raise ValueError (stale op, worker crashed)
 
+    The last two do not apply to an `autostart`-kind row: a failed or killed
+    supervisor still leaves a container that is up and attachable.
+
     On each phase change, ``on_phase(phase)`` is invoked so the caller can
     update a spinner. ``sleep`` is injectable for deterministic testing.
     """
@@ -447,17 +450,29 @@ def wait_for_background_ready(
             return
         if row.op_kind == background.JOB_DESTROY and background.worker_alive(row.pid):
             raise ValueError(f"'{short}' is being destroyed")
-        if row.phase in background.TERMINAL_PHASES:
+        # A detached autostart supervisor never gates an attach — not when it
+        # failed a stage, and not when its worker was killed. The container is
+        # up, running and usable by construction: the supervisor only exists
+        # because the blocking stages finished and handed the session over.
+        # Refusing a shell over a failed deferred stage would be the exact
+        # behaviour this job kind was added to prevent; `jailbee ls` reports
+        # the failed row, and `jailbee job log` has the detail.
+        supervising = row.op_kind == background.JOB_AUTOSTART
+        if row.phase in background.TERMINAL_PHASES and not supervising:
             # An unknown kind (a row written by a newer jailbee) falls back to
-            # "creation", the kind that predates the column.
+            # "creation", the kind that predates the column. `autostart` is
+            # listed for completeness — the guard above returns before a failed
+            # supervisor can reach this — so a future non-attach caller of this
+            # function gets the right noun rather than "creation".
             verb = {
                 background.JOB_DESTROY: "destroy",
                 background.JOB_BOOT: "boot",
+                background.JOB_AUTOSTART: "autostart",
             }.get(row.op_kind, "creation")
             raise ValueError(
                 f"background {verb} of '{short}' failed: {row.error_msg or 'unknown error'}"
             )
-        if not background.worker_alive(row.pid):
+        if not background.worker_alive(row.pid) and not supervising:
             raise ValueError(f"background worker for '{short}' is gone (last phase: {row.phase})")
         if on_phase is not None and row.phase != last_phase:
             on_phase(row.phase)

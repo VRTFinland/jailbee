@@ -34,6 +34,8 @@ from jailbee.tui import info, success, warn
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jailbee.background import AutostartJob
+
 # How long the multi-chain driver waits between sentinel sweeps. One
 # `incus exec` covers every in-flight step, so this is the whole polling
 # cost of a stage, however many chains it runs.
@@ -285,6 +287,82 @@ def run_autostart(
 
     success("Autostart complete" if not plan.detached else "Autostart: handing off to background")
     return plan
+
+
+def run_detached(
+    cfg: Config,
+    incus: Incus,
+    spec: AutostartJob,
+    *,
+    on_phase: Callable[[str], None] | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
+) -> None:
+    """Run every stage the foreground deferred, in this (detached) process.
+
+    The supervisor's whole algorithm, kept out of `cli._autostart_worker` so
+    it is reachable without a `CliRunner`. ``cfg`` must already carry the
+    *effective* autostart block from ``spec`` — the caller grafts it, because
+    on the create path that block is the target branch's, not the host
+    checkout's.
+
+    ``on_phase(stage_name)`` is called before each stage, so the caller can
+    record it on the job row; ``on_progress`` is forwarded to the executor.
+    Neither is required.
+
+    Owns the in-progress flag for the whole run: it re-stamps
+    ``user.jailbee.autostart_in_progress`` with *this* process's pid (the
+    foreground left the literal ``"1"``, which `loose_revert` reads as "held
+    forever") and clears it in ``finally``. A crash that skips the ``finally``
+    is still safe — the pid in the key stops existing.
+    """
+    from jailbee.autostart_plan import TRIGGER_ORDER
+
+    # The foreground ran this trigger's blocking stages and stopped at the
+    # boundary; everything from here, in this trigger and every later one, is
+    # ours. `already_detached=True` is what makes the planner return the whole
+    # remaining list rather than re-splitting it.
+    start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
+    incus.config_set(spec.container_name, "user.jailbee.autostart_in_progress", str(os.getpid()))
+    try:
+        for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
+            agent_steps = (
+                agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
+            )
+            plan = plan_autostart(
+                cfg.autostart,
+                trigger,
+                agent_steps=agent_steps,
+                # The override the foreground split on: `_boundary` branches
+                # on it, so recomputing without it can disagree with what was
+                # actually deferred. Inert for a later trigger, where
+                # `already_detached` short-circuits the boundary to 0.
+                override=spec.override,
+                # The trigger we resumed into keeps its own split (its blocking
+                # half already ran); every later trigger is detached in full.
+                already_detached=i > 0,
+            )
+            # `plan.detached` alone, deliberately: under `already_detached`
+            # the planner's boundary is 0 on every branch, so `plan.blocking`
+            # is provably empty. Adding it "for safety" would silently absorb
+            # a future planner change instead of failing loudly on it.
+            for stage in plan.detached:
+                if on_phase is not None:
+                    on_phase(stage.stage)
+                run_stages(
+                    cfg,
+                    incus,
+                    spec.container_name,
+                    [stage],
+                    spec.repo_dir,
+                    mirror_endpoint=spec.mirror_endpoint,
+                    on_progress=on_progress,
+                    # Compare-and-swap, unlike the foreground path: a detached
+                    # stage can finish long after the user ran `jailbee net` by
+                    # hand, and a blind restore would undo their choice.
+                    cas_restore=True,
+                )
+    finally:
+        incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
 
 
 def run_stages(
