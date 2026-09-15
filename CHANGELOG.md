@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.4.0 - 2026-09-15
+
 ### Added
 
 - **PR review outbox.** A container's `gh` is read-only by design, so an

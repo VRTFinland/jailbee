@@ -78,7 +78,7 @@ homepage = "https://jailbee.gisgro.io/"
 # The release the header's source box names (partials/source.html).
 # `scripts/site_version.py set` rewrites it during `make release`, and
 # tests/test_docs_site.py pins it to pyproject.toml.
-version = "1.3.1"
+version = "1.4.0"
 
 [project.markdown_extensions]
 admonition = {}
