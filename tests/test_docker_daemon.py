@@ -9,6 +9,7 @@ here touches Incus, Docker or the network.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -36,6 +37,15 @@ DAEMON_JSON = "/etc/docker/daemon.json"
 _FAKE_TOOLS = ("update-ca-certificates", "keytool", "docker")
 
 _FAKE_TOOL = '#!/bin/sh\nprintf \'%s %s\\n\' "${0##*/}" "$*" >> "$JB_CALL_LOG"\n'
+
+# The real system tools the scripts use, linked into the fake bin dir, which
+# is then the script's whole PATH. With /usr/bin on PATH as well, a fake the
+# test leaves out (`docker_installed=False`) resolved to the developer's own
+# /usr/bin/docker, so "Docker is not installed" held only on machines without
+# Docker — CI and a container, never a host that has it. A tool the scripts
+# start using must be added here; until then they fail with "command not
+# found" under `set -e`, which `_bash` reports.
+_SYSTEM_TOOLS = ("cat", "cmp", "date", "mkdir", "mktemp", "mv", "rm")
 
 # systemctl also has to answer, not just record: the script asks it whether
 # dockerd is running and when it started. `JB_DOCKER_STARTED` empty means the
@@ -104,22 +114,34 @@ def _bash(
     bin_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = root / "tmp"
     tmp_dir.mkdir(exist_ok=True)
+    # Rebuilt on every call: a test runs several applies against one root, and
+    # a `docker` left by an earlier call would outlive `docker_installed=False`.
     for tool in _FAKE_TOOLS:
-        if tool == "docker" and not docker_installed:
-            continue
         exe = bin_dir / tool
+        if tool == "docker" and not docker_installed:
+            exe.unlink(missing_ok=True)
+            continue
         exe.write_text(_FAKE_TOOL)
         exe.chmod(0o755)
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(_FAKE_SYSTEMCTL)
     systemctl.chmod(0o755)
+    for tool in _SYSTEM_TOOLS:
+        real = shutil.which(tool)
+        assert real is not None, f"`{tool}` not found on this machine"
+        link = bin_dir / tool
+        link.unlink(missing_ok=True)
+        link.symlink_to(real)
     log = root / "calls.log"
     log.write_text("")
 
+    # Resolved here: subprocess looks the program up on the PATH in `env`.
+    bash = shutil.which("bash")
+    assert bash is not None
     proc = subprocess.run(
-        ["bash", "-c", _sandboxed(script, root)],
+        [bash, "-c", _sandboxed(script, root)],
         env={
-            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "PATH": str(bin_dir),
             "TMPDIR": str(tmp_dir),
             "JB_CALL_LOG": str(log),
             "JB_DOCKER_STARTED": docker_started or "",
