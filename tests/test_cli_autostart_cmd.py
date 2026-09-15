@@ -334,6 +334,46 @@ def test_stop_proceeds_with_a_live_job_of_another_kind(tmp_path, mocker) -> None
     incus.stop.assert_called_once()
 
 
+def _restart_env(mocker):
+    """Neutralise everything `restart` does past the guard."""
+    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.cli._post_start_actions")
+    mocker.patch("jailbee.cli._clear_superseded_boot_job")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    return mocker.patch("jailbee.lifecycle.boot_container")
+
+
+def test_restart_refuses_while_a_supervisor_is_live(tmp_path, mocker) -> None:
+    """A restart stops the container first, so it carries `stop`'s exposure.
+
+    Mutation: guard `stop` only and this fails — `boot_container` runs.
+    """
+    _setup(tmp_path, mocker)
+    boot = _restart_env(mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+
+    result = runner.invoke(app, ["restart", "feat-a", "--no-background"])
+
+    out = _out(result)
+    assert result.exit_code == 1
+    assert "jailbee autostart cancel" in out
+    boot.assert_not_called()
+
+
+def test_restart_proceeds_when_the_autostart_worker_is_gone(tmp_path, mocker) -> None:
+    """Mutation: guard on "an autostart row exists" and this fails."""
+    _setup(tmp_path, mocker)
+    boot = _restart_env(mocker)
+    _insert_job(DEAD_PID, "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+
+    result = runner.invoke(app, ["restart", "feat-a", "--no-background"])
+
+    out = _out(result)
+    assert result.exit_code == 0, out
+    boot.assert_called_once()
+
+
 def test_net_warns_but_proceeds_while_a_supervisor_is_live(tmp_path, mocker) -> None:
     """The detached stage's restore is compare-and-swap, so the user's choice
     survives it — warn, don't refuse.

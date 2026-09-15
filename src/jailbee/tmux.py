@@ -219,13 +219,7 @@ def run_step(
             _runuser(f"timeout {timeout} tmux wait-for {shlex.quote(sig)}"),
         )
     except IncusError:
-        try:
-            incus.exec(
-                container,
-                _runuser(f"tmux send-keys -t {SESSION_NAME}:{window} C-c"),
-            )
-        except IncusError:
-            pass
+        interrupt_window(incus, container, window)
         raise TmuxStepError(
             f"step '{name}' timed out after {timeout}s",
             step_name=name,
@@ -379,12 +373,30 @@ def poll_steps(incus: Incus, container: str, handles: Sequence[StepHandle]) -> d
     return done
 
 
-def interrupt_step(incus: Incus, container: str, handle: StepHandle) -> None:
-    """Send C-c to a step's window. Best-effort, used on timeout."""
+def window_for(step_name: str) -> str:
+    """The tmux window a step of this name runs in.
+
+    Public because a caller with no :class:`StepHandle` sometimes has to reach
+    the window anyway: the serial driver blocks inside :func:`run_step` and
+    holds nothing, yet a cancelled run must still interrupt what is running
+    before its stage unmounts. The name is derived, not stored, so deriving it
+    the same way here is exact rather than a guess.
+    """
+    return _sanitize_window_name(step_name)
+
+
+def interrupt_window(incus: Incus, container: str, window: str) -> None:
+    """Send C-c to a window. Best-effort: a container or window that is
+    already gone is not an error, and nothing waits for the command to die."""
     try:
         incus.exec(
             container,
-            _runuser(f"tmux send-keys -t {SESSION_NAME}:{handle.window} C-c"),
+            _runuser(f"tmux send-keys -t {SESSION_NAME}:{window} C-c"),
         )
     except IncusError:
         pass
+
+
+def interrupt_step(incus: Incus, container: str, handle: StepHandle) -> None:
+    """Send C-c to a step's window. Best-effort, used on timeout."""
+    interrupt_window(incus, container, handle.window)

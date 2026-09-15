@@ -397,6 +397,105 @@ def test_a_cancelled_run_unwinds_the_stage_it_was_on(tmp_path, mocker, make_cfg)
     incus.config_unset.assert_called_once_with("c1", FLAG)
 
 
+def test_a_cancelled_single_chain_stage_interrupts_its_step_first(tmp_path, mocker, make_cfg):
+    """The serial driver holds no step handle, but its window name is derived
+    from the step name — so the C-c still goes out *before* the stage unmounts
+    and flips the network back under a step that is still running."""
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    events: list[tuple[str, str]] = []
+    mocker.patch(
+        "jailbee.lifecycle.current_network_mode",
+        side_effect=["strict", "loose"],  # entry mode, then the CAS re-read
+    )
+    mocker.patch(
+        "jailbee.lifecycle.switch_network",
+        side_effect=lambda *a, **kw: events.append(("net", a[3])),
+    )
+    mocker.patch("jailbee.autostart.add_optional_mount")
+    mocker.patch(
+        "jailbee.autostart.remove_optional_mount",
+        side_effect=lambda *a: events.append(("unmount", a[3])),
+    )
+    mocker.patch(
+        "jailbee.tmux.interrupt_window",
+        side_effect=lambda _i, _c, window: events.append(("interrupt", window)),
+    )
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.ensure_session")
+
+    def cancel_while_the_step_runs(*_a, **_kw):
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)  # type: ignore[operator]  # the supervisor's own handler
+
+    mocker.patch("jailbee.tmux.run_step", side_effect=cancel_while_the_step_runs)
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "detach": True,
+                    "network": "loose",
+                    "mounts": ["cache"],
+                    # One chain: the serial driver. The step name is
+                    # deliberately tmux-unsafe, so the window it is sent to is
+                    # the sanitized one and not the raw name.
+                    "steps": [{"name": "npm ci", "run": "true"}],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        autostart_mod.run_detached(
+            _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
+        )
+
+    assert events == [
+        ("net", "loose"),
+        ("interrupt", "npm_ci"),
+        ("unmount", "cache"),
+        ("net", "strict"),
+    ]
+
+
+def test_the_cancel_handler_disarms_itself_on_the_first_signal(tmp_path, mocker, make_cfg):
+    """One-shot: the unwind a cancellation starts runs inside `finally`
+    blocks, so a second SIGTERM must not be able to raise through it and skip
+    the unmount, the network restore or the flag clear."""
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    after: list[object] = []
+    before = signal.getsignal(signal.SIGTERM)
+
+    def cancel_and_look(*_a, **_kw):
+        handler = signal.getsignal(signal.SIGTERM)
+        try:
+            handler(signal.SIGTERM, None)  # type: ignore[operator]  # the installed handler
+        finally:
+            after.append(signal.getsignal(signal.SIGTERM))
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=cancel_and_look)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        autostart_mod.run_detached(
+            _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
+        )
+
+    assert after == [before]
+
+
 def test_a_cancellation_is_not_swallowed_by_continue_on_error(tmp_path, mocker, make_cfg):
     """The serial driver turns a failing step into a warning when the step
     says `continue_on_error`. A cancellation is not a failing step, and must
@@ -575,6 +674,9 @@ def test_worker_marks_a_cancelled_run_failed_with_the_reason(tmp_path, mocker, m
     assert row.phase == bg.PHASE_FAILED
     assert row.error_msg is not None
     assert "cancelled" in row.error_msg
+    # ...and no stack trace in the worker log: a cancellation is a deliberate
+    # stop, and a traceback there reads as a bug in jailbee.
+    assert "Traceback" not in (result.stdout + (result.stderr or ""))
 
 
 def test_worker_runs_the_job_files_autostart_not_the_configs(tmp_path, mocker, make_cfg):

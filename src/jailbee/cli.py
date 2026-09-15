@@ -2464,7 +2464,12 @@ def _autostart_worker(
             cfg, incus, spec, on_phase=on_phase, on_progress=on_progress
         )
     except Exception as e:
-        traceback.print_exc()
+        # A cancellation is a deliberate stop, not a crash: its message already
+        # says what happened, and a stack trace in the worker log would read as
+        # a bug in jailbee. Every other failure still gets its traceback — the
+        # log is the only place a detached failure's origin is recorded.
+        if not isinstance(e, autostart_mod.AutostartCancelled):
+            traceback.print_exc()
         msg = str(e)  # see `_new_worker`: `e` is unbound after the block
         _track_job(
             engine,
@@ -3614,8 +3619,10 @@ def stop(
             "--force",
             help=(
                 "Pull the plug instead of asking the container to shut down "
-                "cleanly. Unsaved work inside it is lost; use it when a clean "
-                "stop hangs."
+                "cleanly, and skip the check for autostart stages still "
+                "running. Unsaved work inside it is lost and a detached "
+                "autostart run is cut off mid-step; use it when a clean stop "
+                "hangs."
             ),
         ),
     ] = False,
@@ -3685,6 +3692,11 @@ def restart(
         cfg, background=background, no_background=no_background
     )
     incus, name = _resolve_existing(cfg, name)
+    # A restart stops the container first, so it carries `stop`'s exposure:
+    # doing that under a live supervisor cuts its stages off mid-step. There is
+    # no `--force` here to exempt — a user who wants that reaches for
+    # `jailbee autostart cancel`, which the refusal names.
+    _refuse_while_autostart_runs(cfg, name)
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
@@ -9014,12 +9026,14 @@ def autostart_cancel_cmd(
     meanwhile stands — and `user.jailbee.autostart_in_progress` is cleared.
     Stages that had not started are skipped.
 
-    Two things survive it. Steps already in flight are interrupted only in a
-    stage running several chains at once; a single-chain stage's tmux window
-    has no handle to interrupt and keeps running inside the container
-    (`jailbee tmux` shows it). And the job row stays, marked failed with the
-    cancellation as its reason, so `jailbee autostart status` still shows
-    where the run stopped until `jailbee job clear` drops it.
+    The steps in flight are sent a C-c first, whichever driver ran them. That
+    is best-effort and does not wait: a command that ignores it keeps running
+    in its tmux window (`jailbee tmux` shows it), and the unmount follows
+    regardless.
+
+    The job row survives, marked failed with the cancellation as its reason,
+    so `jailbee autostart status` still shows where the run stopped until
+    `jailbee job clear` drops it.
     """
     from jailbee import autostart_status, background
     from jailbee.lifecycle import short_name

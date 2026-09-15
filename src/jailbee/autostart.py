@@ -131,28 +131,45 @@ def _cancel_on_sigterm(container: str) -> Iterator[None]:
     processes that ever run detached stages — the spawned supervisor and the
     background worker finishing its own continuation in-process.
 
-    The previous handler is restored on the way out, because on the in-process
-    path the worker has more to do afterwards (it marks its row and exits) and
-    must not keep a handler that raises into unrelated code.
+    **One-shot.** The handler puts the previous handling back before it
+    raises, so the unwind it starts cannot itself be cancelled: that unwind —
+    interrupting the step, unmounting, restoring the network, clearing the
+    flag — runs inside ``finally`` blocks, where a second raise would skip
+    exactly the cleanup the first signal exists to perform. A caller who
+    really wants the process gone signals again and gets SIGTERM's default.
+
+    The previous handler is also restored on the way out, because on the
+    in-process path the worker has more to do afterwards (it marks its row and
+    exits) and must not keep a handler that raises into unrelated code. Both
+    the install and the ``yield`` sit inside that ``finally``'s ``try``, so a
+    signal arriving in the instant between them cannot escape leaving a
+    raising handler behind.
 
     A handler can only be installed from the main thread. Nothing calls this
     off one today; should something start to, `signal.signal` raises
     ``ValueError`` and the run continues with SIGTERM's default handling —
     losing clean cancellation is not a reason to fail the run itself.
     """
+    # Read rather than taken from `signal.signal`'s return value: the handler
+    # closes over it, and it has to be bound before the handler can possibly
+    # run — which is the moment the install returns.
+    previous = signal.getsignal(signal.SIGTERM)
 
     def handler(signum: int, frame: FrameType | None) -> None:
+        signal.signal(signal.SIGTERM, previous)
         raise AutostartCancelled(container=container, signum=signum)
 
+    installed = False
     try:
-        previous = signal.signal(signal.SIGTERM, handler)
-    except ValueError:
-        yield
-        return
-    try:
+        try:
+            signal.signal(signal.SIGTERM, handler)
+            installed = True
+        except ValueError:
+            pass  # not the main thread — SIGTERM keeps its default handling
         yield
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        if installed:
+            signal.signal(signal.SIGTERM, previous)
 
 
 def has_graphical_session() -> bool:
@@ -844,6 +861,18 @@ def _apply_step(
                 exit_code=e.exit_code,
                 original=e,
             ) from e
+        except AutostartCancelled:
+            # The `finally` below is about to unmount this step's devices, and
+            # the stage's is about to flip the network back — under a step
+            # still running, which is the one thing the stage design promises
+            # not to do (see `_run_chains_in_parallel`'s abort path, which
+            # interrupts its handles for the same reason). The serial driver
+            # holds no handle, but the window name is derived from the step
+            # name, so the same C-c reaches it. Best-effort and non-blocking,
+            # exactly like the parallel path: it narrows the window in which
+            # cleanup races a live step, it does not close it.
+            tmux.interrupt_window(incus, container, tmux.window_for(step.name))
+            raise
     finally:
         for m in reversed(mounted):
             try:
