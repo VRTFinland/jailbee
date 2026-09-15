@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -44,6 +44,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
+    from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
 
 
@@ -564,6 +565,12 @@ class NewContainerOptions:
     # credential on its first run. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     claude_group: str | None = None
+    # `jailbee new --wait` / `--no-wait`: force every autostart stage into the
+    # foreground, or defer everything after the first stage to the detached
+    # supervisor, whatever `detach:` says. None leaves the decision to the
+    # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
+    # `assume_yes`.
+    autostart_override: Literal["wait", "no_wait"] | None = None
 
 
 @dataclass(frozen=True)
@@ -843,6 +850,7 @@ def new_container(
     *,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
+    on_detach: Callable[["Autostart", str, str], None] | None = None,
 ) -> str:
     """Create a new container from the golden image. Returns container name.
 
@@ -865,6 +873,13 @@ def new_container(
     target branch's autostart config widens privileges (network access, or a
     host mount it attaches). The detached background worker injects one that
     always declines, so it never blocks on stdin; tests inject their own.
+
+    ``on_detach(autostart_block, trigger, repo_dir)``, if given, is invoked
+    once when a stage deferred the rest of the run — the caller then decides
+    who finishes it (the CLI spawns `_autostart-worker`; a background worker
+    carries on in-process). ``lifecycle`` must not import ``cli``, which is
+    why this arrives as a callback rather than a direct call. Without it the
+    deferred stages are simply not run.
     """
 
     def _phase(label: str) -> None:
@@ -1311,24 +1326,36 @@ def new_container(
             f"→ Running autostart "
             f"[dim](tip: 'jailbee tmux {short}' in another terminal to follow live)[/dim]"
         )
-        run_autostart(
+        create_plan = run_autostart(
             effective_cfg,
             incus,
             name,
             AutostartTrigger.ON_CREATE,
             repo_dir=repo_dir,
             mirror_endpoint=opts.mirror_endpoint,
+            override=opts.autostart_override,
         )
-        # `incus.start` above transitioned the container into the running
-        # state, so on_start steps apply on this first launch too.
-        run_autostart(
-            effective_cfg,
-            incus,
-            name,
-            AutostartTrigger.ON_START,
-            repo_dir=repo_dir,
-            mirror_endpoint=opts.mirror_endpoint,
-        )
+        # A stage deferred in `on_create` moves the boundary for the whole
+        # run: everything after it — the entire `on_start` trigger included —
+        # belongs to whoever takes the hand-off, so this process must not run
+        # it as well. `run_detached` resumes from the trigger it is told.
+        detached_from: str | None = "on_create" if create_plan.detached else None
+        if detached_from is None:
+            # `incus.start` above transitioned the container into the running
+            # state, so on_start steps apply on this first launch too.
+            start_plan = run_autostart(
+                effective_cfg,
+                incus,
+                name,
+                AutostartTrigger.ON_START,
+                repo_dir=repo_dir,
+                mirror_endpoint=opts.mirror_endpoint,
+                override=opts.autostart_override,
+            )
+            if start_plan.detached:
+                detached_from = "on_start"
+        if detached_from is not None and on_detach is not None:
+            on_detach(effective_cfg.autostart, detached_from, repo_dir)
 
     return name
 

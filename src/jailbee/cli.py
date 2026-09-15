@@ -52,6 +52,31 @@ ConfigOption = Annotated[
     typer.Option("--config", "-c", help="Path to config.yaml"),
 ]
 
+# `--wait` / `--no-wait` are the two halves of one decision — who runs the
+# autostart stages — so they are spelled once and shared by `new`, `start`
+# and `restart`. `_resolve_autostart_override` turns them into the value
+# the planner takes.
+WaitOption = Annotated[
+    bool,
+    typer.Option(
+        "--wait",
+        help=(
+            "Run every autostart stage in the foreground, ignoring "
+            "`detach: true`. The pre-1.4 behaviour."
+        ),
+    ),
+]
+NoWaitOption = Annotated[
+    bool,
+    typer.Option(
+        "--no-wait",
+        help=(
+            "Hand every stage after the first to the background "
+            "supervisor, whatever the config says."
+        ),
+    ),
+]
+
 _CONTAINER_ARG_HELP = (
     "Container to act on, named either in full or by its short name (the "
     "slugified branch, which `jailbee ls` shows). Omit it and jailbee picks: "
@@ -1323,6 +1348,8 @@ def new_cmd(
             help="Force foreground creation, overriding `new.background`.",
         ),
     ] = False,
+    wait: WaitOption = False,
+    no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
     """Create a new container for a branch.
@@ -1343,7 +1370,12 @@ def new_cmd(
     from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
     from jailbee.incus import Incus
-    from jailbee.lifecycle import NewContainerOptions, new_container, short_name
+    from jailbee.lifecycle import (
+        NewContainerOptions,
+        derive_container_name,
+        new_container,
+        short_name,
+    )
 
     cfg = _load_or_exit(config)
 
@@ -1435,6 +1467,8 @@ def new_cmd(
     # An attach asked for on the command line beats a config-driven
     # `new.background`; the `after_new` config default yields to it instead.
     wants_attach = attach_flag is not None and attach_mode != "none"
+
+    autostart_override = _resolve_autostart_override(wait=wait, no_wait=no_wait)
 
     if background and no_background:
         error("--background and --no-background are mutually exclusive.")
@@ -1693,6 +1727,7 @@ def new_cmd(
             mount=True,
             assume_yes=yes,
             claude_group=resolved_claude_group,
+            autostart_override=autostart_override,
         )
     else:
         opts = NewContainerOptions(
@@ -1715,6 +1750,7 @@ def new_cmd(
             clone_commit=pr_clone_commit,
             assume_yes=yes,
             claude_group=resolved_claude_group,
+            autostart_override=autostart_override,
         )
 
     # The shared scratch base image is built once per host, not per directory.
@@ -1797,8 +1833,6 @@ def new_cmd(
     if run_in_background:
         from datetime import datetime as _dt
 
-        from jailbee.lifecycle import derive_container_name
-
         container_name = opts.name or derive_container_name(cfg, opts.container_branch)
         if incus.exists(container_name):
             error(f"Container '{short_name(cfg, container_name)}' already exists")
@@ -1869,7 +1903,18 @@ def new_cmd(
         return
 
     try:
-        created = new_container(cfg, incus, opts)
+        created = new_container(
+            cfg,
+            incus,
+            opts,
+            on_detach=_autostart_detach_handler(
+                cfg,
+                incus,
+                _resolve_config_path_or_none(config),
+                opts.name or derive_container_name(cfg, opts.container_branch),
+                autostart_override,
+            ),
+        )
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -3019,7 +3064,13 @@ def _print_publish_progress(cfg: "Config", short: str, publish: "PublishResult")
 
 
 def _post_start_actions(
-    cfg: "Config", incus: "IncusType", name: str, *, no_autostart: bool
+    cfg: "Config",
+    incus: "IncusType",
+    name: str,
+    *,
+    no_autostart: bool,
+    override: Literal["wait", "no_wait"] | None = None,
+    on_detach: "Callable[[Autostart, str, str], None] | None" = None,
 ) -> None:
     """Shared post-boot flow for `start` and `restart`.
 
@@ -3027,6 +3078,12 @@ def _post_start_actions(
     trigger, and launches every autostart GUI app if a graphical session is
     available. Caller is responsible for the actual container boot and
     for re-attaching /run/user/<uid> devices beforehand.
+
+    ``override`` is the caller's `--wait` / `--no-wait`. ``on_detach`` is
+    invoked when a stage deferred the rest of the run — the foreground
+    commands pass `_autostart_detach_handler`, which spawns the supervisor;
+    `_boot_worker` deliberately does not, because it is already a background
+    worker and continues past the boundary in its own process.
     """
     from jailbee.autostart import (
         AutostartStepError,
@@ -3053,17 +3110,21 @@ def _post_start_actions(
         return
 
     try:
-        run_autostart(
+        plan = run_autostart(
             cfg,
             incus,
             name,
             AutostartTrigger.ON_START,
             repo_dir=repo_dir,
             mirror_endpoint=mirror_endpoint,
+            override=override,
         )
     except AutostartStepError as e:
         error(str(e))
         raise typer.Exit(1) from e
+
+    if plan.detached and on_detach is not None:
+        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir)
 
     _post_create_gui_launches(cfg, incus, name)
 
@@ -3122,6 +3183,59 @@ def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: 
     if background:
         return True
     return cfg.boot.background
+
+
+def _resolve_autostart_override(
+    *, wait: bool, no_wait: bool
+) -> Literal["wait", "no_wait"] | None:
+    """Turn `--wait` / `--no-wait` into the planner's override.
+
+    ``None`` means "whatever the config's `detach:` says" — deliberately not
+    an implicit ``"wait"``, which would make every stage blocking again.
+    """
+    if wait and no_wait:
+        error("--wait and --no-wait are mutually exclusive.")
+        raise typer.Exit(2)
+    if wait:
+        return "wait"
+    if no_wait:
+        return "no_wait"
+    return None
+
+
+def _autostart_detach_handler(
+    cfg: "Config",
+    incus: "IncusType",
+    config_path: Path | None,
+    full_name: str,
+    override: Literal["wait", "no_wait"] | None,
+) -> "Callable[[Autostart, str, str], None]":
+    """The `on_detach` callback the foreground commands hand down.
+
+    `new_container` and `_post_start_actions` compute the deferred stages but
+    do not run them: `lifecycle` must not import `cli`, and only the CLI knows
+    where the config file is and how to spawn a worker. This closes over that
+    knowledge and is the one place any of it is spelled out.
+
+    ``override`` travels into the job file because the supervisor re-plans
+    from it: handed ``None`` after a ``--no-wait`` split, it would compute
+    zero detached stages and exit 0 with every deferred stage unrun.
+    """
+
+    def on_detach(block: "Autostart", trigger: str, repo_dir: str) -> None:
+        _spawn_autostart_worker(
+            cfg,
+            config_path,
+            full_name,
+            incus=incus,
+            autostart=block,
+            from_trigger=trigger,
+            repo_dir=repo_dir,
+            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+            override=override,
+        )
+
+    return on_detach
 
 
 def _spawn_boot_worker(
@@ -3254,12 +3368,15 @@ def start(
             help="Force a foreground start, overriding `boot.background`.",
         ),
     ] = False,
+    wait: WaitOption = False,
+    no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
     """Start a stopped container, then run autostart."""
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
+    autostart_override = _resolve_autostart_override(wait=wait, no_wait=no_wait)
     run_in_background = _resolve_boot_background(
         cfg, background=background, no_background=no_background
     )
@@ -3280,7 +3397,16 @@ def start(
     boot_container(cfg, incus, name, restart=False)
     success(f"Started: {short_name(cfg, name)}")
 
-    _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _post_start_actions(
+        cfg,
+        incus,
+        name,
+        no_autostart=no_autostart,
+        override=autostart_override,
+        on_detach=_autostart_detach_handler(
+            cfg, incus, _resolve_config_path_or_none(config), name, autostart_override
+        ),
+    )
     _clear_superseded_boot_job(cfg, name)
 
 
@@ -3346,12 +3472,15 @@ def restart(
             help="Force a foreground restart, overriding `boot.background`.",
         ),
     ] = False,
+    wait: WaitOption = False,
+    no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
+    autostart_override = _resolve_autostart_override(wait=wait, no_wait=no_wait)
     run_in_background = _resolve_boot_background(
         cfg, background=background, no_background=no_background
     )
@@ -3368,7 +3497,16 @@ def restart(
         return
     boot_container(cfg, incus, name, restart=True)
     success(f"Restarted: {short_name(cfg, name)}")
-    _post_start_actions(cfg, incus, name, no_autostart=no_autostart)
+    _post_start_actions(
+        cfg,
+        incus,
+        name,
+        no_autostart=no_autostart,
+        override=autostart_override,
+        on_detach=_autostart_detach_handler(
+            cfg, incus, _resolve_config_path_or_none(config), name, autostart_override
+        ),
+    )
     _clear_superseded_boot_job(cfg, name)
 
 

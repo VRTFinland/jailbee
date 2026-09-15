@@ -2353,3 +2353,37 @@ def test_run_apply_creates_only_the_missing_profile(
     assert result.profiles_changed == [names.net_loose]
     assert names.base in result.profiles_unchanged
     assert names.net_loose not in [c[0][1] for c in differs.call_args_list]
+
+
+def test_restart_one_runs_every_stage_in_the_foreground(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """`jailbee apply` opts out of detaching explicitly: its exit code has to
+    mean "every container is back up and its stages ran", which one supervisor
+    per container would make a lie."""
+    from jailbee.apply import _restart_one
+
+    cfg = make_cfg(
+        tmp_path,
+        autostart={
+            "on_start": [
+                {"stage": "schema", "steps": [{"name": "m", "run": "true"}]},
+                {"stage": "deps", "detach": True, "steps": [{"name": "d", "run": "true"}]},
+            ]
+        },
+    )
+    incus = MagicMock(spec=Incus)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    mocker.patch("jailbee.tmux.ensure_session")
+    ran: list[str] = []
+    mocker.patch(
+        "jailbee.autostart.run_stages",
+        side_effect=lambda c, i, n, stages, r, **kw: ran.extend(s.stage for s in stages),
+    )
+
+    _restart_one(cfg, incus, "a")
+
+    assert ran == ["schema", "deps"]

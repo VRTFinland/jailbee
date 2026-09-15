@@ -309,6 +309,7 @@ def op_to_job(
             "approved_autostart_ref": opts.approved_autostart_ref,
             "autofetch_done": opts.autofetch_done,
             "claude_group": opts.claude_group,
+            "autostart_override": opts.autostart_override,
         },
     }
 
@@ -347,6 +348,10 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         autofetch_done=o.get("autofetch_done", False),
         # `.get`: a job file written by an older jailbee predates this key.
         claude_group=o.get("claude_group"),
+        # `--wait` / `--no-wait`. Dropped here (or in `op_to_job`) the
+        # worker would re-plan with no override and silently lose every
+        # stage the operator asked to defer.
+        autostart_override=o.get("autostart_override"),
     )
     return opts, job["container_name"], job["log_path"]
 

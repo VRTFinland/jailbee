@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee.autostart_plan import AutostartPlan
 from jailbee.config import CONTAINER_USERNAME, NewConfig, PoolSpec, SharedCache, load_config
 from jailbee.incus import IncusError
 from jailbee.lifecycle import (
@@ -25,6 +26,11 @@ from jailbee.lifecycle import (
 from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# What `run_autostart` returns when nothing is deferred. Tests that stub it
+# out with a `side_effect` must still return a plan: `new_container` reads
+# `.detached` to decide whether to hand off to the supervisor.
+_EMPTY_PLAN = AutostartPlan(blocking=[], detached=[])
 
 
 def test_format_bytes():
@@ -3097,6 +3103,7 @@ def test_new_container_runs_both_on_create_and_on_start(tmp_path, mocker):
 
     def _record(_cfg, _incus, _name, trigger, **_kw):
         triggers.append(trigger)
+        return _EMPTY_PLAN
 
     mocker.patch(
         "jailbee.autostart.run_autostart",
@@ -3205,6 +3212,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
 
     def _record(*_a, **kw):
         captured_kwargs.append(kw)
+        return _EMPTY_PLAN
 
     mocker.patch(
         "jailbee.autostart.run_autostart",
@@ -3255,7 +3263,7 @@ def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, 
     )
     mocker.patch(
         "jailbee.autostart.run_autostart",
-        side_effect=lambda *a, **kw: events.append("autostart"),
+        side_effect=lambda *a, **kw: (events.append("autostart"), _EMPTY_PLAN)[1],
     )
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
@@ -5325,7 +5333,7 @@ def test_new_container_ensure_agents_runs_before_autostart(make_cfg, tmp_path, m
     )
     mocker.patch(
         "jailbee.autostart.run_autostart",
-        side_effect=lambda *a, **kw: calls.append("autostart"),
+        side_effect=lambda *a, **kw: (calls.append("autostart"), _EMPTY_PLAN)[1],
     )
 
     new_container(cfg, incus, _new_opts(autostart=True))
