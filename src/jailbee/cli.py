@@ -3627,6 +3627,7 @@ def stop(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    _refuse_while_autostart_runs(cfg, name)
     # No force fallback here: this container holds the user's work, so a
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
@@ -8203,6 +8204,7 @@ def _switch(
     )
 
     incus, resolved = _resolve_existing(cfg, name)
+    _warn_if_autostart_runs(cfg, resolved)
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
     if mode == "strict" and mirror_endpoint is None:
         # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
@@ -8873,6 +8875,165 @@ def job_clear(
         with Session(get_engine()) as session:
             outcome = background.clear_job(session, full_name)
         _report_clear(cfg, full_name, outcome)
+
+
+# ---- Detached autostart commands ----
+
+autostart_app = typer.Typer(
+    name="autostart",
+    help="Inspect and cancel a container's detached autostart stages.",
+    no_args_is_help=True,
+)
+app.add_typer(autostart_app)
+
+AutostartNameArg = Annotated[
+    str,
+    typer.Argument(
+        help=(
+            "Container whose detached autostart run to act on, named in full "
+            "or by its short name."
+        ),
+        autocompletion=completion.complete_container,
+    ),
+]
+
+
+def _autostart_progress_path(row: "BackgroundJob") -> Path:
+    """The progress file of the run ``row`` tracks.
+
+    The pair is named by whoever writes it — a spawned supervisor or a
+    background worker finishing its own stages — through
+    `autostart_progress.path_for_log`, so the reader derives it the same way
+    from the log path on the row. Its own function purely so a test can point
+    the commands at a file of its own instead of rebuilding the naming rule.
+    """
+    from jailbee import autostart_progress, background
+
+    log_path = row.log_path or background.synthesized_log_path(row.container_name)
+    return autostart_progress.path_for_log(log_path)
+
+
+def _refuse_while_autostart_runs(cfg: "Config", full_name: str) -> None:
+    """`stop`'s guard: exit rather than kill a container mid-stage.
+
+    Keyed on the job *kind*, not on "a row exists": a background `new` / boot
+    worker carries a `JOB_AUTOSTART` row too once its continuation begins
+    (`background.adopt_autostart`), and that is precisely the case where
+    stopping the container would cut off running steps.
+    """
+    from jailbee import autostart_status
+    from jailbee.lifecycle import short_name
+
+    row = autostart_status.live_run(cfg, full_name)
+    if row is None:
+        return
+    short = short_name(cfg, full_name)
+    error(
+        f"Container '{short}' still has autostart stages running "
+        f"({autostart_status.running_label(row)})."
+    )
+    info(f"  Stop them first:  jailbee autostart cancel {short}")
+    raise typer.Exit(1)
+
+
+def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
+    """`net`'s counterpart: say so, then let the switch happen.
+
+    Not a refusal, unlike `stop`'s: a detached stage puts the entry mode back
+    with a compare-and-swap (`autostart.run_stage(cas_restore=True)`), so a
+    stage finishing later cannot undo the mode the user just chose. What the
+    user does need to know is that a stage may still flip the network out from
+    under them while it runs.
+    """
+    from jailbee import autostart_status
+    from jailbee.lifecycle import short_name
+
+    row = autostart_status.live_run(cfg, full_name)
+    if row is None:
+        return
+    warn(
+        f"Container '{short_name(cfg, full_name)}' has autostart stages running "
+        f"({autostart_status.running_label(row)}) — a stage may switch the "
+        "network again while it runs. Your choice stands once it is done."
+    )
+
+
+@autostart_app.command("status")
+def autostart_status_cmd(
+    name: AutostartNameArg,
+    config: ConfigOption = None,
+) -> None:
+    """Show how far a container's detached autostart stages have got.
+
+    A step recorded as started but never finished is reported by liveness, not
+    by the log alone: an interrupted run leaves such a step dangling forever,
+    so it reads as ``running`` only while the worker is alive.
+    """
+    from jailbee import autostart_progress, autostart_status, background
+    from jailbee.lifecycle import short_name
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    row = autostart_status.autostart_row(cfg, name)
+    if row is None:
+        info(f"No autostart job for '{name}'.")
+        return
+
+    short = short_name(cfg, row.container_name)
+    live = background.worker_alive(row.pid)
+    views = autostart_status.step_views(
+        autostart_progress.read(_autostart_progress_path(row)), live=live
+    )
+    info(autostart_status.header(short, row))
+    table_format.emit(
+        views,
+        autostart_status.step_field_specs(),
+        fmt="table",
+        fields=None,
+        console=console,
+        empty_message="[dim](no steps recorded yet)[/dim]",
+    )
+    for line in autostart_status.notes(short, views, live=live):
+        info(line)
+
+
+@autostart_app.command("cancel")
+def autostart_cancel_cmd(
+    name: AutostartNameArg,
+    config: ConfigOption = None,
+) -> None:
+    """Stop the worker running a container's detached autostart stages.
+
+    SIGTERM to that worker, and no further promises: steps it already started
+    inside the container keep running, and a stage's own unmount / network
+    restore happens only if the worker reaches it. The loose-network hold does
+    lift by itself — `user.jailbee.autostart_in_progress` holds the worker's
+    pid, and `loose_revert` reads a pid that no longer exists as "not held".
+    The job row survives, so `jailbee autostart status` still shows where the
+    run stopped until `jailbee job clear` drops it.
+    """
+    from jailbee import autostart_status, background
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    row = autostart_status.autostart_row(cfg, name)
+    if row is None:
+        error(f"no autostart job for '{name}'")
+        raise typer.Exit(1)
+
+    short = short_name(cfg, row.container_name)
+    if background.clearable(row.phase, row.pid):
+        error(
+            f"the autostart worker for '{short}' is already gone "
+            f"(phase '{row.phase}', pid {row.pid}) — nothing to cancel."
+        )
+        info(f"  Drop the leftover record:  jailbee job clear {short}")
+        raise typer.Exit(1)
+
+    autostart_status.signal_worker(row.pid)
+    success(f"Asked the autostart worker for '{short}' to stop (SIGTERM to pid {row.pid}).")
+    info(f"  Where it stopped:  jailbee autostart status {short}")
+    info(f"  Drop the record:   jailbee job clear {short}")
 
 
 # ---- Base (golden image) commands ----
