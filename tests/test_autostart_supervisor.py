@@ -692,23 +692,26 @@ def test_boot_worker_runs_every_stage_a_no_wait_deferred(tmp_path, mocker, make_
 
 def test_boot_worker_keeps_its_own_job_row_and_phases_it_per_stage(tmp_path, mocker, make_cfg):
     """One row, one worker: the phase advances to each detached stage on the
-    boot row this worker already owns, and no second row appears."""
+    row this worker already owns — same pid, no second row — and the row is
+    re-kinded to `autostart` when the continuation begins, because that is
+    what it now tracks. The kind is not cosmetic: `attachable`, `job_label`
+    and `wait_for_background_ready`'s failure exemption all key on it."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
-    from jailbee.db.models import JOB_BOOT
+    from jailbee.db.models import JOB_AUTOSTART, JOB_BOOT
 
     block = Autostart.model_validate(
         {"on_start": [_stage("schema"), _stage("deps", detach=True), _stage("agents-ish")]}
     )
     _bg_worker_env(tmp_path, mocker, make_cfg, block)
-    seen: list[tuple[str, str, int]] = []
+    seen: list[tuple[str, str, str, int]] = []
 
     def record(cfg, incus, name, stages, repo_dir, **kw):
         rows = _jobs()
         assert set(rows) == {"myrepo-feat-a"}, rows
         row = rows["myrepo-feat-a"]
-        seen.append((stages[0].stage, row.phase, row.pid))
+        seen.append((stages[0].stage, row.op_kind, row.phase, row.pid))
 
     mocker.patch("jailbee.autostart.run_stages", side_effect=record)
     _insert_job("myrepo-feat-a", "myrepo", os.getpid(), bg.PHASE_STARTING, JOB_BOOT)
@@ -717,11 +720,88 @@ def test_boot_worker_keeps_its_own_job_row_and_phases_it_per_stage(tmp_path, moc
 
     assert result.exit_code == 0, result.output
     assert seen == [
-        ("schema", bg.PHASE_AUTOSTART, os.getpid()),
-        ("deps", "deps", os.getpid()),
-        ("agents-ish", "agents-ish", os.getpid()),
+        ("schema", JOB_BOOT, bg.PHASE_AUTOSTART, os.getpid()),
+        ("deps", JOB_AUTOSTART, "deps", os.getpid()),
+        ("agents-ish", JOB_AUTOSTART, "agents-ish", os.getpid()),
     ]
     assert _jobs() == {}
+
+
+def _no_sleep(_seconds: float) -> None:
+    """`wait_for_background_ready`'s sleep, as a test assertion: reaching it
+    means the gate would have blocked the attach."""
+    raise AssertionError("the attach would have blocked on this row")
+
+
+def test_the_container_is_attachable_during_the_continuation(tmp_path, mocker, make_cfg):
+    """`jb shell` / `tmux` / `ide` go through `wait_for_background_ready`,
+    which lets an attach in on `attachable(kind, phase)` — unconditional only
+    for an autostart row. A boot row carrying a stage name for a phase is not
+    in `ATTACHABLE_CREATE_PHASES`, so every attach would block until the last
+    deferred stage finished and `start --background --no-wait` would move
+    nothing the user can observe."""
+    from typer.testing import CliRunner
+
+    from jailbee import lifecycle
+    from jailbee.cli import app
+    from jailbee.db.models import JOB_BOOT
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
+    )
+    cfg, _incus, _ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+    attached: list[str] = []
+
+    def record(cfg_, incus_, name, stages, repo_dir, **kw):
+        if stages[0].stage != "deps":
+            return
+        # Mid-continuation: the deferred stage is running right now.
+        lifecycle.wait_for_background_ready(cfg, "myrepo-feat-a", sleep=_no_sleep)
+        attached.append(stages[0].stage)
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=record)
+    _insert_job("myrepo-feat-a", "myrepo", os.getpid(), bg.PHASE_STARTING, JOB_BOOT)
+
+    result = CliRunner().invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert attached == ["deps"]
+
+
+def test_a_failed_deferred_stage_leaves_a_row_that_never_gates_an_attach(
+    tmp_path, mocker, make_cfg
+):
+    """`wait_for_background_ready` exempts a failed *autostart* row from the
+    gate — refusing a shell over a failed deferred stage is the behaviour the
+    job kind exists to prevent. Left kinded as a boot, the same failure turns
+    every attach into a refusal."""
+    from typer.testing import CliRunner
+
+    from jailbee import lifecycle
+    from jailbee.cli import app
+    from jailbee.db.models import JOB_AUTOSTART, JOB_BOOT
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
+    )
+    cfg, _incus, _ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
+
+    def blow_up_past_the_boundary(cfg_, incus_, name, stages, repo_dir, **kw):
+        if stages[0].stage == "deps":
+            raise RuntimeError("deps blew up")
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=blow_up_past_the_boundary)
+    _insert_job("myrepo-feat-a", "myrepo", os.getpid(), bg.PHASE_STARTING, JOB_BOOT)
+
+    result = CliRunner().invoke(app, ["_boot-worker", "--name", "myrepo-feat-a"])
+
+    assert result.exit_code == 1
+    row = _jobs()["myrepo-feat-a"]
+    assert row.phase == bg.PHASE_FAILED
+    assert row.op_kind == JOB_AUTOSTART
+    assert row.error_msg == "deps blew up"
+    # The whole point of the kind: the failed row is not a gate.
+    lifecycle.wait_for_background_ready(cfg, "myrepo-feat-a", sleep=_no_sleep)
 
 
 def test_new_worker_continues_past_the_boundary_in_process(tmp_path, mocker, make_cfg):

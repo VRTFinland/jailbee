@@ -189,6 +189,55 @@ def start_job(
     session.commit()
 
 
+def adopt_autostart(session: Session, container_name: str, *, now: datetime) -> None:
+    """Re-kind a live worker's row as the autostart supervision it has become.
+
+    A background `new` / boot worker that crosses the detach boundary keeps
+    running the deferred stages itself (there is no second process to hand
+    them to — see `cli._inline_autostart_handler`), and from that moment its
+    row tracks exactly what a supervisor's does. The kind is what three
+    readers act on, so it has to say so:
+
+    * :func:`attachable` is unconditional for `autostart` and otherwise
+      demands a phase in `ATTACHABLE_CREATE_PHASES` — a row still kinded
+      `boot` with a *stage name* for a phase blocks every
+      `jailbee shell` / `tmux` / `ide` until the last deferred stage ends,
+      which is the whole thing deferring them was meant to avoid;
+    * `lifecycle.wait_for_background_ready` exempts a failed or
+      worker-gone `autostart` row from the attach gate, because the
+      container is up regardless of how a deferred stage ended;
+    * :func:`job_label` renders `autostart:<stage>`, without which
+      `jailbee ls` shows a bare stage name that means nothing on its own.
+
+    Phase, pid, log path and started_at are left alone: it is the same row,
+    the same process and the same run.
+    """
+    row = session.get(BackgroundJob, container_name)
+    if row is None:
+        return
+    row.op_kind = JOB_AUTOSTART
+    row.updated_at = now
+    session.add(row)
+    session.commit()
+
+
+def synthesized_log_path(container_name: str) -> str:
+    """A log-file name for a detached run whose job row is gone.
+
+    The row is where a worker's log path lives; when job tracking is
+    unavailable there is nothing to read it from, and the only thing that
+    still needs a name is the run's progress file, which sits beside the
+    log (`autostart_progress.path_for_log`). Stands in with the same shape
+    in the same directory, so progress is lost only when the disk refuses
+    it — not because the bookkeeping row went missing.
+    """
+    from jailbee.db import state_dir
+
+    return str(
+        state_dir() / "logs" / f"{container_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    )
+
+
 def set_phase(session: Session, container_name: str, phase: str, *, now: datetime) -> None:
     """Advance an existing op to a new phase. No-op if the row is gone."""
     row = session.get(BackgroundJob, container_name)

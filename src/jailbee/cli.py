@@ -71,8 +71,9 @@ NoWaitOption = Annotated[
     typer.Option(
         "--no-wait",
         help=(
-            "Hand every stage after the first to the background "
-            "supervisor, whatever the config says."
+            "Run only the first autostart stage before handing the session "
+            "over; the rest finish in the background, whatever the config "
+            "says."
         ),
     ),
 ]
@@ -2308,10 +2309,16 @@ def _autostart_reporters(
 
     Shared by the `_autostart-worker` supervisor and by the background
     workers that finish their own deferred stages, so both report a run the
-    same way: the job row's phase is the stage being run — what `job_label`
-    renders as ``autostart:<stage>`` in `jailbee ls` — and every step's
+    same way: the job row's phase is the stage being run, and every step's
     start/end is appended to the progress file `jailbee autostart status`
     reads.
+
+    A bare stage name means nothing as a phase — it reads as
+    ``autostart:<stage>`` in `jailbee ls`, and counts as attachable, only on
+    a row of the `autostart` kind. The supervisor's row is one by
+    construction; a worker's becomes one when its continuation starts (see
+    `background.adopt_autostart`), which is the moment this pair is first
+    called on that path.
     """
     from jailbee import autostart_progress, background
 
@@ -2364,6 +2371,17 @@ def _inline_autostart_handler(
     on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
 
     def on_detach(block: "Autostart", trigger: str, repo_dir: str) -> None:
+        # The row this worker owns now tracks an autostart supervision run,
+        # and its kind has to say so before the first stage phase lands on
+        # it: `attachable`, `job_label` and the attach gate's failure
+        # exemption all key on the kind, and a `boot`/`create` row carrying
+        # a stage name for a phase blocks every attach until the last
+        # deferred stage ends. See `background.adopt_autostart`.
+        _track_job(
+            engine,
+            lambda s: background.adopt_autostart(s, full_name, now=_now()),
+            "re-kind the job row as an autostart run",
+        )
         autostart_mod.run_detached(
             # The *effective* block, the same graft `_autostart-worker` does
             # from its job file: on the create path it is the target
@@ -2394,17 +2412,14 @@ def _inline_autostart_handler(
 def _worker_log_path(engine: "Engine | None", name: str) -> str:
     """The log file a `_boot-worker`'s own output is going to.
 
-    Read off the job row the worker already owns — unlike `_new-worker`,
-    which is handed its log path in the job file. It is only needed as the
-    stem for the run's progress file, so that a worker's deferred stages
-    report beside its log exactly as a supervisor's do. A row that is gone
-    (job tracking unavailable) costs the pairing, not the progress: a stem
-    is synthesized in the same directory.
+    Read (guarded, like every other job-row access here) off the row the
+    worker already owns — unlike `_new-worker`, which is handed its log path
+    in the job file. It is needed only as the stem for the run's progress
+    file, so a worker's deferred stages report beside its log exactly as a
+    supervisor's do. What a log path *is* when there is no row to read it
+    from belongs to `background`, which owns the row.
     """
-    from datetime import datetime as _dt
-
     from jailbee import background
-    from jailbee.db import state_dir
 
     found: list[str] = []
 
@@ -2414,9 +2429,7 @@ def _worker_log_path(engine: "Engine | None", name: str) -> str:
             found.append(row.log_path)
 
     _track_job(engine, work, "read the job's log path")
-    if found:
-        return found[0]
-    return str(state_dir() / "logs" / f"{name}-{_dt.now().strftime('%Y%m%d-%H%M%S')}.log")
+    return found[0] if found else background.synthesized_log_path(name)
 
 
 @app.command("_autostart-worker", hidden=True)
@@ -3272,10 +3285,16 @@ def _post_start_actions(
         error(str(e))
         raise typer.Exit(1) from e
 
+    # Before the hand-off, deliberately: the boundary is where the session
+    # becomes usable, so the GUI apps belong to the blocking half. On the
+    # foreground path this only reorders two calls (the supervisor runs
+    # detached either way), but `_boot_worker`'s `on_detach` runs the
+    # deferred stages *in this process* — after it, the apps would launch
+    # only once the last one finished, and not at all if one failed.
+    _post_create_gui_launches(cfg, incus, name)
+
     if plan.detached and on_detach is not None:
         on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir)
-
-    _post_create_gui_launches(cfg, incus, name)
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
