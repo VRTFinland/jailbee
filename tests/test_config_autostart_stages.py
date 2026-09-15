@@ -6,8 +6,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from jailbee.autostart import _flat_steps_only
-from jailbee.config import Autostart, AutostartChain, AutostartStage, AutostartStep, load_config
+from jailbee.config import Autostart, AutostartChain, AutostartStage, load_config
 
 
 def test_stage_with_chains_keeps_order():
@@ -95,24 +94,6 @@ def test_mixing_flat_steps_and_stages_in_one_trigger_is_rejected():
 def test_empty_chain_name_rejected():
     with pytest.raises(ValidationError):
         AutostartChain.model_validate({"name": "", "steps": []})
-
-
-# `jailbee.autostart._flat_steps_only` is the interim guard between the now
-# `AutostartStep | AutostartStage`-unioned `Autostart.on_create`/`on_start`
-# fields and the still-flat-only step executor in `jailbee.autostart`. It
-# stays here (not in tests/test_autostart.py, the compatibility canary) until
-# the stage executor — a later task in this plan — replaces it.
-
-
-def test_flat_steps_only_passes_a_flat_step_list_through_unchanged():
-    steps = [AutostartStep(name="a", run="true"), AutostartStep(name="b", run="true")]
-    assert _flat_steps_only(steps) == steps
-
-
-def test_flat_steps_only_rejects_stage_form():
-    stages = [AutostartStage(stage="deps", steps=[AutostartStep(name="a", run="true")])]
-    with pytest.raises(NotImplementedError, match="stage-form"):
-        _flat_steps_only(stages)
 
 
 # ---------- Loader-level validation: uniqueness, agent reservation, the

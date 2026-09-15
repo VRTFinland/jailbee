@@ -304,6 +304,17 @@ def _ensure_one(
             network="loose" if spec.install_network == "loose" else None,
             env=dict(spec.env),
         )
-        _apply_step(cfg, incus, container, step, repo_dir, mirror_endpoint=mirror_endpoint)
+        # `manage_network=True`: this step belongs to no stage — it runs
+        # before any autostart stage exists — so it is the one caller that
+        # still swaps the profile around a single step (see `_apply_step`).
+        _apply_step(
+            cfg,
+            incus,
+            container,
+            step,
+            repo_dir,
+            mirror_endpoint=mirror_endpoint,
+            manage_network=True,
+        )
     except Exception as e:  # non-fatal: never block container creation
         warn(f"{spec.name} install/update step failed (continuing): {e}")

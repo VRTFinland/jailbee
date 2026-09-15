@@ -1,9 +1,16 @@
-"""Autostart orchestration: run config-driven shell steps inside container.
+"""Autostart orchestration: run a trigger's stages inside a container.
 
-Each ``AutostartStep`` is iterated in order. Per-step ``mounts`` are attached
-before the step and detached after (best-effort cleanup runs even on failure).
-``background: True`` runs the step in a detached tmux window and returns
-immediately. Sync steps block via ``tmux wait-for`` until the step exits.
+A *stage* owns the container-scoped side effects — the network profile and
+the optional mounts — for as long as its chains run. Chains inside a stage
+run in parallel; steps inside a chain run in order. A legacy flat step list
+is normalized into single-chain stages by ``autostart_plan.normalize_stages``,
+so the old config shape keeps its exact ordering and its per-step ``mounts``.
+
+``background: True`` runs a step in a detached tmux window and returns
+immediately. A sync step blocks until it exits — a single-chain stage waits
+on ``tmux wait-for`` (``tmux.run_step``), a multi-chain stage polls its
+sentinels (``tmux.poll_steps``), because one wait-for channel cannot serve
+several steps at once.
 """
 
 from __future__ import annotations
@@ -11,14 +18,26 @@ from __future__ import annotations
 import os
 import shlex
 import time
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import tmux
+from jailbee.autostart_plan import AGENTS_STAGE as AGENTS_STAGE
+from jailbee.autostart_plan import AutostartPlan as AutostartPlan
 from jailbee.autostart_plan import AutostartTrigger as AutostartTrigger
-from jailbee.config import AutostartStage, AutostartStep, Config
+from jailbee.autostart_plan import plan_autostart as plan_autostart
+from jailbee.config import AutostartChain, AutostartStage, AutostartStep, Config
 from jailbee.incus import Incus
 from jailbee.mounts import add_optional_mount, remove_optional_mount
 from jailbee.tmux import TmuxStepError
 from jailbee.tui import info, success, warn
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# How long the multi-chain driver waits between sentinel sweeps. One
+# `incus exec` covers every in-flight step, so this is the whole polling
+# cost of a stage, however many chains it runs.
+_POLL_INTERVAL_SEC = 0.5
 
 # rc → short human-readable cause. Anything else falls back to "exit code N".
 _EXIT_HINTS: dict[int, str] = {
@@ -28,26 +47,6 @@ _EXIT_HINTS: dict[int, str] = {
     137: "killed (SIGKILL / out of memory?)",
     143: "terminated (SIGTERM)",
 }
-
-
-def _flat_steps_only(entries: list[AutostartStep] | list[AutostartStage]) -> list[AutostartStep]:
-    """Narrow a trigger's steps-or-stages list to plain steps.
-
-    ``Autostart.on_create``/``on_start`` now also accept the stage form
-    (see ``config/models_agents.py``), but this executor is still the flat
-    step-only runner — the stage-aware planner/executor is a follow-up
-    change. No shipped config produces the stage form yet, so this is a
-    type-narrowing no-op for every existing caller; a stage-form list
-    raises rather than being silently misinterpreted as steps.
-    """
-    steps: list[AutostartStep] = []
-    for entry in entries:
-        if not isinstance(entry, AutostartStep):
-            raise NotImplementedError(
-                "stage-form autostart triggers are not yet supported by run_autostart"
-            )
-        steps.append(entry)
-    return steps
 
 
 class AutostartStepError(RuntimeError):
@@ -161,13 +160,19 @@ def inject_github_token(
     Re-run on every boot path (`jailbee new`, `jailbee start`/`restart`, `jailbee apply`)
     so a rotated PAT in config is picked up. No-op when github.enabled is off
     or no token applies to this container's prefix.
+
+    ``mirror_endpoint`` is accepted for call-site symmetry with the other
+    boot-path helpers but is not forwarded: the token step declares no
+    ``network``, so there is no profile round-trip whose /etc/hosts pin
+    would need re-writing. Switching the profile is a *stage's* job now
+    (see ``run_stage``), and this step is not part of a stage.
     """
     step = _github_token_step(cfg)
     if step is None:
         return
     tmux.ensure_session(incus, container, start_dir=repo_dir)
     info(f"Injecting GH_TOKEN into {container}")
-    _apply_step(cfg, incus, container, step, repo_dir, mirror_endpoint=mirror_endpoint)
+    _apply_step(cfg, incus, container, step, repo_dir)
 
 
 def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
@@ -221,56 +226,375 @@ def run_autostart(
     repo_dir: str,
     *,
     mirror_endpoint: tuple[str, int] | None = None,
-) -> None:
-    """Run autostart steps inside ``container`` for ``trigger``.
+    override: Literal["wait", "no_wait"] | None = None,
+    already_detached: bool = False,
+    on_progress: Callable[[str, str, str], None] | None = None,
+) -> AutostartPlan:
+    """Run this trigger's blocking stages and return the plan.
+
+    The returned plan's ``detached`` list is what the caller hands to the
+    supervisor; it is empty unless a stage is marked ``detach: true`` (or
+    ``--no-wait`` was passed), so every existing caller keeps today's
+    fully-blocking behaviour and can ignore the return value.
 
     ``mirror_endpoint=(ip, port)`` is forwarded to every transient
-    ``switch_network`` call a step triggers, so the strict-mode
+    ``switch_network`` call a stage triggers, so the strict-mode
     ``jailbee-registry-mirror.incus`` row in /etc/hosts survives an
     autostart-driven ``strict → loose → strict`` round-trip.
     """
-    if trigger == AutostartTrigger.ON_CREATE:
-        steps: list[AutostartStep] = _flat_steps_only(cfg.autostart.on_create)
-    else:
-        # Append the synthetic per-agent steps (empty when no agent has
-        # autostart on) — claude sorts last so its window is the
-        # most-recently-created and `jailbee tmux` lands in it. The
-        # github-token step is NOT injected here: it's infrastructure, not a
-        # user autostart command, so it's written by ``inject_github_token``
-        # independently of --no-autostart.
-        steps = _flat_steps_only(cfg.autostart.on_start)
-        steps.extend(agent_autostart_steps(cfg))
-    if not steps:
+    # The synthetic per-agent steps (empty when no agent has autostart on)
+    # are the planner's to place — claude sorts last so its window is the
+    # most-recently-created and `jailbee tmux` lands in it. The
+    # github-token step is NOT injected here: it's infrastructure, not a
+    # user autostart command, so it's written by ``inject_github_token``
+    # independently of --no-autostart.
+    agent_steps = agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
+    plan = plan_autostart(
+        cfg.autostart,
+        trigger,
+        agent_steps=agent_steps,
+        override=override,
+        already_detached=already_detached,
+    )
+    if not plan.blocking:
+        return plan
+
+    total = sum(len(s.all_chains()) for s in plan.blocking)
+    info(f"Running {len(plan.blocking)} autostart stage(s), {total} chain(s) in {container}")
+
+    # The loose-revert timer (see loose_revert.py) skips containers
+    # carrying this flag, so a stage that swaps the network profile
+    # mid-autostart doesn't race the auto-revert path. Cleared in
+    # ``finally`` so a stage failure still releases the lock — but only
+    # when nothing is left to run: with detached stages pending, the
+    # supervisor owns the flag from here and re-stamps it with its own pid.
+    incus.config_set(container, "user.jailbee.autostart_in_progress", "1")
+    try:
+        run_stages(
+            cfg,
+            incus,
+            container,
+            plan.blocking,
+            repo_dir,
+            mirror_endpoint=mirror_endpoint,
+            on_progress=on_progress,
+        )
+    finally:
+        if not plan.detached:
+            incus.config_unset(container, "user.jailbee.autostart_in_progress")
+
+    success("Autostart complete" if not plan.detached else "Autostart: handing off to background")
+    return plan
+
+
+def run_stages(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    stages: list[AutostartStage],
+    repo_dir: str,
+    *,
+    mirror_endpoint: tuple[str, int] | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
+    cas_restore: bool = False,
+) -> None:
+    """Run ``stages`` in order. A stage starts only when the previous one ends."""
+    for stage in stages:
+        run_stage(
+            cfg,
+            incus,
+            container,
+            stage,
+            repo_dir,
+            mirror_endpoint=mirror_endpoint,
+            on_progress=on_progress,
+            cas_restore=cas_restore,
+        )
+
+
+def run_stage(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    stage: AutostartStage,
+    repo_dir: str,
+    *,
+    mirror_endpoint: tuple[str, int] | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
+    cas_restore: bool = False,
+) -> None:
+    """Run one stage: switch once, mount once, run the chains, undo.
+
+    This is the only function that touches container-wide state during an
+    autostart run. Chains are started together and driven by polling, so no
+    profile swap or mount change can happen underneath a running step.
+
+    ``cas_restore`` picks how the entry network mode is put back:
+
+    * ``False`` — the foreground path, and what the synchronous executor
+      always did: restore unconditionally, warning if the switch fails.
+    * ``True`` — compare-and-swap. A *detached* stage may finish long after
+      the user ran `jailbee net` by hand, so the mode is re-read and the
+      restore skipped unless it is still the one this stage set. The
+      detached supervisor passes ``True``; nothing in the blocking path
+      needs it, because nobody can race a stage the CLI is blocking on.
+    """
+    from jailbee.lifecycle import current_network_mode, switch_network
+
+    entry_mode = current_network_mode(cfg, incus, container)
+    switched_to: str | None = None
+    if stage.network is not None and entry_mode is not None and entry_mode != stage.network:
+        switch_network(cfg, incus, container, stage.network, mirror_endpoint=mirror_endpoint)
+        switched_to = stage.network
+
+    mounted: list[str] = []
+    info(f"  → stage: {stage.stage} [dim](net: {stage.network or entry_mode or 'unknown'})[/dim]")
+    try:
+        for m in stage.mounts:
+            add_optional_mount(cfg, incus, container, m)
+            mounted.append(m)
+        _run_chains(cfg, incus, container, stage, repo_dir, on_progress=on_progress)
+    finally:
+        for m in reversed(mounted):
+            try:
+                remove_optional_mount(cfg, incus, container, m)
+            except Exception as e:
+                # Log-and-continue: a missing/already-removed device shouldn't
+                # mask the underlying step failure or block subsequent cleanup.
+                warn(f"Failed to unmount '{m}' from {container}: {e}")
+        if switched_to is not None and entry_mode is not None:
+            now_mode = current_network_mode(cfg, incus, container) if cas_restore else switched_to
+            if now_mode == switched_to:
+                try:
+                    switch_network(
+                        cfg, incus, container, entry_mode, mirror_endpoint=mirror_endpoint
+                    )
+                except Exception as e:
+                    warn(f"Failed to restore network to '{entry_mode}' on {container}: {e}")
+            else:
+                info(
+                    f"    ↳ leaving network as '{now_mode}' — changed since "
+                    f"stage '{stage.stage}' started"
+                )
+
+
+def _run_chains(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    stage: AutostartStage,
+    repo_dir: str,
+    *,
+    on_progress: Callable[[str, str, str], None] | None = None,
+) -> None:
+    """Run every chain in ``stage``, picking a driver on the chain count.
+
+    A stage with a single chain has nothing to overlap, so it keeps the
+    blocking ``tmux.run_step`` call the flat executor always used (see
+    ``_apply_step``). That is the path every legacy config takes, and
+    `tests/test_autostart.py` pins its every observable: ``run_step``'s
+    kwargs, the per-step mount round-trip, the elapsed log line and the
+    ``TmuxStepError`` mapping.
+
+    Two or more chains cannot share one ``tmux wait-for`` channel, so they
+    are launched together and driven by sentinel polling instead, with
+    their timeouts tracked host-side.
+    """
+    chains = stage.all_chains()
+    if not chains:
         return
 
     tmux.ensure_session(incus, container, start_dir=repo_dir)
-    info(f"Running {len(steps)} autostart step(s) in {container}")
+    if len(chains) <= 1:
+        _run_chain_serially(
+            cfg, incus, container, stage, chains[0], repo_dir, on_progress=on_progress
+        )
+    else:
+        _run_chains_in_parallel(
+            cfg, incus, container, stage, chains, repo_dir, on_progress=on_progress
+        )
 
-    # The loose-revert timer (see loose_revert.py) skips containers
-    # carrying this flag, so steps that swap the network profile
-    # mid-autostart don't race the auto-revert path. Cleared in
-    # ``finally`` so a step failure still releases the lock.
-    incus.config_set(container, "user.jailbee.autostart_in_progress", "1")
-    try:
-        for step in steps:
-            try:
-                _apply_step(
-                    cfg,
-                    incus,
-                    container,
-                    step,
-                    repo_dir,
-                    mirror_endpoint=mirror_endpoint,
+
+def _run_chain_serially(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    stage: AutostartStage,
+    chain: AutostartChain,
+    repo_dir: str,
+    *,
+    on_progress: Callable[[str, str, str], None] | None = None,
+) -> None:
+    """Run one chain's steps one at a time, blocking on each."""
+    for step in chain.steps:
+        if on_progress is not None:
+            on_progress(stage.stage, step.name, "start")
+        try:
+            _apply_step(cfg, incus, container, step, repo_dir)
+        except Exception as e:
+            if on_progress is not None:
+                on_progress(stage.stage, step.name, "fail")
+            if step.continue_on_error:
+                warn(f"Step '{step.name}' failed (continue_on_error): {e}")
+                continue
+            raise
+        if on_progress is not None:
+            on_progress(stage.stage, step.name, "ok")
+
+
+def _run_chains_in_parallel(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    stage: AutostartStage,
+    chains: list[AutostartChain],
+    repo_dir: str,
+    *,
+    on_progress: Callable[[str, str, str], None] | None = None,
+) -> None:
+    """Drive every chain in ``stage`` concurrently until all are done.
+
+    One step per chain is in flight at a time. A chain whose step fails
+    stops advancing; sibling chains are *not* killed — a half-finished
+    install leaves worse state than a finished one — but no further steps
+    are launched in them either, and the stage fails once the in-flight
+    ones have exited.
+    """
+    by_name = {c.name: c for c in chains}
+    cursors = {c.name: 0 for c in chains}
+    in_flight: dict[str, tmux.StepHandle] = {}
+    step_by_name: dict[str, AutostartStep] = {}
+    chain_by_step: dict[str, str] = {}
+    failure: AutostartStepError | None = None
+    started: dict[str, float] = {}
+
+    def record_failure(
+        name: str,
+        *,
+        reason: str,
+        exit_code: int | None = None,
+        original: BaseException | None = None,
+    ) -> None:
+        """Remember the first failure; the stage raises it once it is quiet."""
+        nonlocal failure
+        if failure is None:
+            failure = AutostartStepError(
+                container=container,
+                step_name=name,
+                reason=reason,
+                exit_code=exit_code,
+                original=original,
+            )
+
+    def launch_next(chain: AutostartChain) -> None:
+        i = cursors[chain.name]
+        if i >= len(chain.steps):
+            return
+        step = chain.steps[i]
+        cursors[chain.name] = i + 1
+        timeout = step.timeout if step.timeout is not None else cfg.autostart.step_timeout
+        env = {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir}
+        cwd = repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}"
+        step_by_name[step.name] = step
+        chain_by_step[step.name] = chain.name
+        started[step.name] = time.monotonic()
+        if on_progress is not None:
+            on_progress(stage.stage, step.name, "start")
+        # Per-step mounts are legacy (flat form only) but still honoured.
+        for m in step.mounts:
+            add_optional_mount(cfg, incus, container, m)
+        try:
+            handle = tmux.launch_step(
+                incus,
+                container,
+                name=step.name,
+                command=step.run,
+                env=env,
+                cwd=cwd,
+                background=step.background,
+                timeout=timeout,
+            )
+        except TmuxStepError as e:
+            # `launch_step` raises only for a background step that died
+            # inside its probe window. Report it like any other failed step
+            # so the error type and `continue_on_error` hold here too.
+            _finish_step(cfg, incus, container, step, -1, stage, on_progress, started)
+            if step.continue_on_error:
+                warn(f"Step '{step.name}' failed (continue_on_error): {e}")
+                launch_next(chain)
+            else:
+                record_failure(step.name, reason=e.reason, exit_code=e.exit_code, original=e)
+            return
+        if step.background:
+            # Fire-and-forget: the chain advances immediately.
+            _finish_step(cfg, incus, container, step, 0, stage, on_progress, started)
+            launch_next(chain)
+            return
+        in_flight[step.name] = handle
+
+    for chain in chains:
+        launch_next(chain)
+
+    while in_flight:
+        done = tmux.poll_steps(incus, container, list(in_flight.values()))
+        for name, rc in done.items():
+            in_flight.pop(name)
+            step = step_by_name[name]
+            _finish_step(cfg, incus, container, step, rc, stage, on_progress, started)
+            if rc != 0 and not step.continue_on_error:
+                record_failure(name, reason="exit", exit_code=rc)
+                continue
+            if rc != 0:
+                warn(f"Step '{name}' failed (continue_on_error): exit {rc}")
+            if failure is None:
+                launch_next(by_name[chain_by_step[name]])
+
+        now = time.monotonic()
+        for name, handle in list(in_flight.items()):
+            # Every handle here carries a real deadline: a background step
+            # never enters `in_flight` (it is fire-and-forget above), and
+            # a zero deadline is exactly the "already expired" case.
+            if now >= handle.deadline:
+                tmux.interrupt_step(incus, container, handle)
+                in_flight.pop(name)
+                _finish_step(
+                    cfg, incus, container, step_by_name[name], -1, stage, on_progress, started
                 )
-            except Exception as e:
-                if step.continue_on_error:
-                    warn(f"Step '{step.name}' failed (continue_on_error): {e}")
-                    continue
-                raise
-    finally:
-        incus.config_unset(container, "user.jailbee.autostart_in_progress")
+                record_failure(name, reason="timeout")
 
-    success("Autostart complete")
+        if in_flight:
+            time.sleep(_POLL_INTERVAL_SEC)
+
+    if failure is not None:
+        raise failure
+
+
+def _finish_step(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    step: AutostartStep,
+    rc: int,
+    stage: AutostartStage,
+    on_progress: Callable[[str, str, str], None] | None,
+    started: dict[str, float],
+) -> None:
+    """Report one finished step and undo its own (legacy) mounts.
+
+    A step's `mounts` only ever appear in the flat form — the stage form
+    bans them — but they are still honoured there, so they are attached
+    around the individual step exactly as `_apply_step` does it, including
+    the warn-and-continue cleanup.
+    """
+    for m in reversed(step.mounts):
+        try:
+            remove_optional_mount(cfg, incus, container, m)
+        except Exception as e:
+            warn(f"Failed to unmount '{m}' from {container}: {e}")
+    elapsed = time.monotonic() - started.get(step.name, time.monotonic())
+    info(f"    ↳ {step.name}: {elapsed:.1f}s (exit {rc})")
+    if on_progress is not None:
+        on_progress(stage.stage, step.name, "ok" if rc == 0 else "fail")
 
 
 def _apply_step(
@@ -281,20 +605,32 @@ def _apply_step(
     repo_dir: str,
     *,
     mirror_endpoint: tuple[str, int] | None = None,
+    manage_network: bool = False,
 ) -> None:
-    from jailbee.lifecycle import (
-        current_network_mode,
-        switch_network,
-    )
+    """Run one step to completion, blocking on its tmux window.
+
+    The serial driver's unit of work. What a step owns itself is handled
+    here: its legacy per-step ``mounts``, its elapsed log line and the
+    mapping of ``TmuxStepError`` onto ``AutostartStepError``.
+
+    ``manage_network`` is off for every step that belongs to a stage: the
+    profile is then the *stage's* to switch and restore (see ``run_stage``),
+    and a second swap here would fight it. It is on for the one caller that
+    runs a step outside any stage — ``agents._ensure_one``, whose
+    install/update commands may need ``loose`` to reach the registry before
+    an autostart stage exists. ``mirror_endpoint`` is forwarded to those
+    swaps so the strict-mode mirror row in /etc/hosts survives the
+    round-trip; it is unused when ``manage_network`` is off.
+    """
+    from jailbee.lifecycle import current_network_mode, switch_network
 
     mounted: list[str] = []
     prev_network: str | None = None
-    current = current_network_mode(cfg, incus, container)
-    if step.network is not None and current is not None and current != step.network:
-        prev_network = current
-        switch_network(cfg, incus, container, step.network, mirror_endpoint=mirror_endpoint)
-    effective_network = step.network if step.network is not None else current
-    info(f"  → step: {step.name} [dim](net: {effective_network or 'unknown'})[/dim]")
+    if manage_network and step.network is not None:
+        current = current_network_mode(cfg, incus, container)
+        if current is not None and current != step.network:
+            prev_network = current
+            switch_network(cfg, incus, container, step.network, mirror_endpoint=mirror_endpoint)
 
     t0 = time.monotonic()
     try:
