@@ -513,3 +513,25 @@ def test_launch_step_background_raises_when_the_step_dies_immediately(mocker):
             background=True, timeout=300,
         )
     assert e.value.reason == "died_early"
+
+
+def test_launch_step_background_returns_a_handle_when_the_step_survives_the_probe(mocker):
+    """The other half of `launch_step`'s background branch: when the probe
+    times out (still alive) rather than returning, `launch_step` must not
+    raise — it hands back a fire-and-forget handle with an empty sentinel
+    (`poll_steps` relies on that emptiness, alongside `background=True`, to
+    skip it) and the window it created carries the early-death EXIT trap."""
+    incus = mocker.Mock()
+    # kill-window OK, new-window OK, probe wait-for times out (= still alive)
+    incus.exec.side_effect = ["", "", IncusError("exit 124: timeout")]
+    handle = tmux.launch_step(
+        incus, "c1", name="srv", command="sleep 9", env={}, cwd="/r",
+        background=True, timeout=300,
+    )
+    assert handle.name == "srv"
+    assert handle.window == "srv"
+    assert handle.background is True
+    assert handle.sentinel == ""
+    new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
+    assert "trap" in new_window_args
+    assert "tmux wait-for -S" in new_window_args
