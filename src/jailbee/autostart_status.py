@@ -91,6 +91,22 @@ def autostart_row(cfg: Config, name: str) -> BackgroundJob | None:
     return row
 
 
+def is_live(row: BackgroundJob) -> bool:
+    """Whether a worker is still running this row's stages.
+
+    The feature's one definition of "live", so `status` and the two guards can
+    never disagree about the same row: `status` resolves an unterminated step
+    by it, `live_run` refuses/warns by it. `background.clearable` negated —
+    which also counts a row whose phase reached a terminal one as done, even
+    in the moment before its pid disappears. That is what a reader wants
+    either way: the run is over, so a step it never finished was interrupted,
+    and there is nothing left to guard against.
+    """
+    from jailbee import background
+
+    return not background.clearable(row.phase, row.pid)
+
+
 def live_run(cfg: Config, name: str) -> BackgroundJob | None:
     """The container's autostart job row while a worker is still running it.
 
@@ -98,10 +114,8 @@ def live_run(cfg: Config, name: str) -> BackgroundJob | None:
     now running this container's stages — no row, another kind of job, or a
     worker that is gone all answer "nothing in flight".
     """
-    from jailbee import background
-
     row = autostart_row(cfg, name)
-    if row is None or background.clearable(row.phase, row.pid):
+    if row is None or not is_live(row):
         return None
     return row
 

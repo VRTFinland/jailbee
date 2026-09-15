@@ -3627,7 +3627,11 @@ def stop(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    _refuse_while_autostart_runs(cfg, name)
+    if not force:
+        # `--force` is the "get it down now" lever, so it skips this guard the
+        # way it skips the clean shutdown — a user who has reached for it has
+        # already decided what the container's in-flight work is worth.
+        _refuse_while_autostart_runs(cfg, name)
     # No force fallback here: this container holds the user's work, so a
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
@@ -8969,7 +8973,7 @@ def autostart_status_cmd(
     by the log alone: an interrupted run leaves such a step dangling forever,
     so it reads as ``running`` only while the worker is alive.
     """
-    from jailbee import autostart_progress, autostart_status, background
+    from jailbee import autostart_progress, autostart_status
     from jailbee.lifecycle import short_name
     from jailbee.tui import console
 
@@ -8980,7 +8984,7 @@ def autostart_status_cmd(
         return
 
     short = short_name(cfg, row.container_name)
-    live = background.worker_alive(row.pid)
+    live = autostart_status.is_live(row)
     views = autostart_status.step_views(
         autostart_progress.read(_autostart_progress_path(row)), live=live
     )
@@ -9004,13 +9008,18 @@ def autostart_cancel_cmd(
 ) -> None:
     """Stop the worker running a container's detached autostart stages.
 
-    SIGTERM to that worker, and no further promises: steps it already started
-    inside the container keep running, and a stage's own unmount / network
-    restore happens only if the worker reaches it. The loose-network hold does
-    lift by itself — `user.jailbee.autostart_in_progress` holds the worker's
-    pid, and `loose_revert` reads a pid that no longer exists as "not held".
-    The job row survives, so `jailbee autostart status` still shows where the
-    run stopped until `jailbee job clear` drops it.
+    SIGTERM to that worker, which `autostart.run_detached` unwinds cleanly
+    (`autostart._cancel_on_sigterm`): the current stage's optional mounts come
+    off, its network mode is restored — compare-and-swap, so a mode you chose
+    meanwhile stands — and `user.jailbee.autostart_in_progress` is cleared.
+    Stages that had not started are skipped.
+
+    Two things survive it. Steps already in flight are interrupted only in a
+    stage running several chains at once; a single-chain stage's tmux window
+    has no handle to interrupt and keeps running inside the container
+    (`jailbee tmux` shows it). And the job row stays, marked failed with the
+    cancellation as its reason, so `jailbee autostart status` still shows
+    where the run stopped until `jailbee job clear` drops it.
     """
     from jailbee import autostart_status, background
     from jailbee.lifecycle import short_name
@@ -9031,7 +9040,10 @@ def autostart_cancel_cmd(
         raise typer.Exit(1)
 
     autostart_status.signal_worker(row.pid)
-    success(f"Asked the autostart worker for '{short}' to stop (SIGTERM to pid {row.pid}).")
+    success(
+        f"Asked the autostart worker for '{short}' to stop (SIGTERM to pid {row.pid}) — "
+        "it unwinds the stage it is on before exiting."
+    )
     info(f"  Where it stopped:  jailbee autostart status {short}")
     info(f"  Drop the record:   jailbee job clear {short}")
 

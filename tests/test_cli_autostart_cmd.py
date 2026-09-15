@@ -69,8 +69,9 @@ def _out(result) -> str:
 def test_status_groups_the_steps_by_stage_under_a_phase_and_pid_header(tmp_path, mocker) -> None:
     """The header names the running stage and its pid; the rows name the steps.
 
-    Mutation: drop the pid (or the phase) from the header, or stop rendering
-    the second stage's rows, and this fails.
+    Mutation: drop the pid or the phase from the header (the whole header line
+    is asserted, so neither survives), or stop naming a stage once per group,
+    and this fails.
     """
     _setup(tmp_path, mocker)
     progress = tmp_path / "p.json"
@@ -89,12 +90,12 @@ def test_status_groups_the_steps_by_stage_under_a_phase_and_pid_header(tmp_path,
 
     out = _out(result)
     assert result.exit_code == 0, out
-    assert "services" in out
+    assert f"Autostart for 'feat-a': autostart:services (pid {os.getpid()})" in out
     assert "uv-sync" in out
     assert "npm-ci" in out
     assert "docker-up" in out
-    assert str(os.getpid()) in out
-    # Grouped: the stage is named once, on the first of its steps.
+    # Grouped: the stage is named once, on the first of its steps. ("services"
+    # is in the header too, so "deps" is the one that counts here.)
     assert out.count("deps") == 1
 
 
@@ -146,8 +147,10 @@ def test_status_calls_an_unterminated_step_interrupted_when_the_worker_is_gone(
 def test_status_reports_a_finished_run_step_by_step(tmp_path, mocker) -> None:
     """Every step terminal: each keeps the result it recorded, live or not.
 
-    Mutation: map `fail` to anything but a failure — or let liveness override
-    a terminal state — and this fails.
+    Mutation: map `fail` to anything but `failed` — or let liveness override a
+    terminal state — and this fails. The row's phase is deliberately *not*
+    `failed` here: `job_label` renders the phase into the header verbatim, so
+    a terminal phase would let the assertion pass off the header alone.
     """
     _setup(tmp_path, mocker)
     progress = tmp_path / "p.json"
@@ -158,7 +161,7 @@ def test_status_reports_a_finished_run_step_by_step(tmp_path, mocker) -> None:
         ("deps", "npm-ci", "start"),
         ("deps", "npm-ci", "fail"),
     )
-    _insert_job(DEAD_PID, "failed", str(tmp_path / "x.log"))
+    _insert_job(DEAD_PID, "deps", str(tmp_path / "x.log"))
     mocker.patch("jailbee.background.worker_alive", return_value=False)
     _point_at(mocker, progress)
 
@@ -280,6 +283,22 @@ def test_stop_refuses_while_a_supervisor_is_live(tmp_path, mocker) -> None:
     assert result.exit_code == 1
     assert "jailbee autostart cancel" in out
     incus.stop.assert_not_called()
+
+
+def test_stop_force_skips_the_guard(tmp_path, mocker) -> None:
+    """`--force` is the lever for getting a container down now; the guard is
+    advice for the clean path, not a lock.
+
+    Mutation: guard both paths and this fails.
+    """
+    _, incus = _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+
+    result = runner.invoke(app, ["stop", "--force", "feat-a"])
+
+    out = _out(result)
+    assert result.exit_code == 0, out
+    incus.stop.assert_called_once_with("myrepo-feat-a", force=True)
 
 
 def test_stop_proceeds_when_the_autostart_worker_is_gone(tmp_path, mocker) -> None:

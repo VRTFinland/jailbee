@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import os
 import shlex
+import signal
 import time
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Literal
 
 from jailbee import tmux
@@ -32,7 +34,8 @@ from jailbee.tmux import TmuxStepError
 from jailbee.tui import info, success, warn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+    from types import FrameType
 
     from jailbee.background import AutostartJob
 
@@ -93,6 +96,63 @@ class AutostartStepError(RuntimeError):
             f"Autostart step '{self.step_name}' failed in '{self.container}': {cause}.\n"
             f"  Inspect the failed window:  jailbee tmux {self.container}"
         )
+
+
+class AutostartCancelled(Exception):
+    """A detached autostart run was asked to stop — `jailbee autostart cancel`.
+
+    Deliberately an ordinary `Exception` rather than `SystemExit`: on its way
+    out it must be caught by the worker's `except Exception`, which marks the
+    job row failed carrying this message, so a cancelled run never looks
+    in-flight afterwards. It still passes through
+    `_run_chains_in_parallel`'s `except BaseException` first, which interrupts
+    the steps in flight before the stage unwinds.
+    """
+
+    def __init__(self, *, container: str, signum: int) -> None:
+        self.container = container
+        self.signum = signum
+        super().__init__(f"Autostart run for '{container}' cancelled (signal {signum}).")
+
+
+@contextmanager
+def _cancel_on_sigterm(container: str) -> Iterator[None]:
+    """Turn SIGTERM into :class:`AutostartCancelled` for the duration of a run.
+
+    `jailbee autostart cancel` signals the supervisor, and SIGTERM's default
+    action terminates the process without unwinding: `run_stage`'s ``finally``
+    (unmount, compare-and-swap network restore) and `run_detached`'s (clearing
+    ``user.jailbee.autostart_in_progress``) would both be skipped, leaving
+    optional mounts attached and the container on the stage's network mode.
+    Raising instead makes cancellation take the same route a failing stage
+    already takes.
+
+    Installed here rather than in `cli._autostart_worker` so it covers both
+    processes that ever run detached stages — the spawned supervisor and the
+    background worker finishing its own continuation in-process.
+
+    The previous handler is restored on the way out, because on the in-process
+    path the worker has more to do afterwards (it marks its row and exits) and
+    must not keep a handler that raises into unrelated code.
+
+    A handler can only be installed from the main thread. Nothing calls this
+    off one today; should something start to, `signal.signal` raises
+    ``ValueError`` and the run continues with SIGTERM's default handling —
+    losing clean cancellation is not a reason to fail the run itself.
+    """
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        raise AutostartCancelled(container=container, signum=signum)
+
+    try:
+        previous = signal.signal(signal.SIGTERM, handler)
+    except ValueError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def has_graphical_session() -> bool:
@@ -314,59 +374,68 @@ def run_detached(
     foreground left the literal ``"1"``, which `loose_revert` reads as "held
     forever") and clears it in ``finally``. A crash that skips the ``finally``
     is still safe — the pid in the key stops existing.
+
+    Cancellable for its whole length: SIGTERM — what `jailbee autostart
+    cancel` sends — raises :class:`AutostartCancelled` instead of killing the
+    process outright, so the stage's mounts come off, its network mode is put
+    back, the flag is cleared and the caller can mark the run cancelled. See
+    :func:`_cancel_on_sigterm`.
     """
     from jailbee.autostart_plan import TRIGGER_ORDER
 
-    incus.config_set(spec.container_name, "user.jailbee.autostart_in_progress", str(os.getpid()))
-    try:
-        # Inside the `try`, deliberately: a job file carrying a `from_trigger`
-        # this build does not know raises here, and that run must still reach
-        # the `finally` rather than exit with the flag left stamped.
-        #
-        # The foreground ran this trigger's blocking stages and stopped at the
-        # boundary; everything from here, in this trigger and every later one,
-        # is ours. `already_detached=True` is what makes the planner return the
-        # whole remaining list rather than re-splitting it.
-        start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
-        for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
-            agent_steps = (
-                agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
-            )
-            plan = plan_autostart(
-                cfg.autostart,
-                trigger,
-                agent_steps=agent_steps,
-                # The override the foreground split on: `_boundary` branches
-                # on it, so recomputing without it can disagree with what was
-                # actually deferred. Inert for a later trigger, where
-                # `already_detached` short-circuits the boundary to 0.
-                override=spec.override,
-                # The trigger we resumed into keeps its own split (its blocking
-                # half already ran); every later trigger is detached in full.
-                already_detached=i > 0,
-            )
-            # `plan.detached` alone, deliberately: under `already_detached`
-            # the planner's boundary is 0 on every branch, so `plan.blocking`
-            # is provably empty. Adding it "for safety" would silently absorb
-            # a future planner change instead of failing loudly on it.
-            for stage in plan.detached:
-                if on_phase is not None:
-                    on_phase(stage.stage)
-                run_stages(
-                    cfg,
-                    incus,
-                    spec.container_name,
-                    [stage],
-                    spec.repo_dir,
-                    mirror_endpoint=spec.mirror_endpoint,
-                    on_progress=on_progress,
-                    # Compare-and-swap, unlike the foreground path: a detached
-                    # stage can finish long after the user ran `jailbee net` by
-                    # hand, and a blind restore would undo their choice.
-                    cas_restore=True,
+    with _cancel_on_sigterm(spec.container_name):
+        incus.config_set(
+            spec.container_name, "user.jailbee.autostart_in_progress", str(os.getpid())
+        )
+        try:
+            # Inside the `try`, deliberately: a job file carrying a `from_trigger`
+            # this build does not know raises here, and that run must still reach
+            # the `finally` rather than exit with the flag left stamped.
+            #
+            # The foreground ran this trigger's blocking stages and stopped at the
+            # boundary; everything from here, in this trigger and every later one,
+            # is ours. `already_detached=True` is what makes the planner return the
+            # whole remaining list rather than re-splitting it.
+            start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
+            for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
+                agent_steps = (
+                    agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
                 )
-    finally:
-        incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
+                plan = plan_autostart(
+                    cfg.autostart,
+                    trigger,
+                    agent_steps=agent_steps,
+                    # The override the foreground split on: `_boundary` branches
+                    # on it, so recomputing without it can disagree with what was
+                    # actually deferred. Inert for a later trigger, where
+                    # `already_detached` short-circuits the boundary to 0.
+                    override=spec.override,
+                    # The trigger we resumed into keeps its own split (its blocking
+                    # half already ran); every later trigger is detached in full.
+                    already_detached=i > 0,
+                )
+                # `plan.detached` alone, deliberately: under `already_detached`
+                # the planner's boundary is 0 on every branch, so `plan.blocking`
+                # is provably empty. Adding it "for safety" would silently absorb
+                # a future planner change instead of failing loudly on it.
+                for stage in plan.detached:
+                    if on_phase is not None:
+                        on_phase(stage.stage)
+                    run_stages(
+                        cfg,
+                        incus,
+                        spec.container_name,
+                        [stage],
+                        spec.repo_dir,
+                        mirror_endpoint=spec.mirror_endpoint,
+                        on_progress=on_progress,
+                        # Compare-and-swap, unlike the foreground path: a detached
+                        # stage can finish long after the user ran `jailbee net` by
+                        # hand, and a blind restore would undo their choice.
+                        cas_restore=True,
+                    )
+        finally:
+            incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
 
 
 def run_stages(
@@ -513,6 +582,12 @@ def _run_chain_serially(
             on_progress(stage.stage, step.name, "start")
         try:
             _apply_step(cfg, incus, container, step, repo_dir)
+        except AutostartCancelled:
+            # A cancellation is not a step failure, and `continue_on_error`
+            # must never swallow one: leave the step's progress entry
+            # dangling (`jailbee autostart status` reads that as interrupted,
+            # which is what happened) and let it out.
+            raise
         except Exception as e:
             if on_progress is not None:
                 on_progress(stage.stage, step.name, "fail")

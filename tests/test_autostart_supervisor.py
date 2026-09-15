@@ -297,6 +297,151 @@ def test_run_detached_reports_each_stage_through_on_phase(tmp_path, mocker, make
     assert seen == ["a", "b"]
 
 
+# ---- cancellation (`jailbee autostart cancel` → SIGTERM)
+
+
+def test_run_detached_installs_a_cancel_handler_only_for_the_run(tmp_path, mocker, make_cfg):
+    """SIGTERM's default action kills the process without unwinding, so the
+    supervisor has to own the signal — and give it back afterwards, since the
+    in-process continuation path has work of its own to finish."""
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    during: list[object] = []
+    mocker.patch(
+        "jailbee.autostart.run_stages",
+        side_effect=lambda *a, **kw: during.append(signal.getsignal(signal.SIGTERM)),
+    )
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    before = signal.getsignal(signal.SIGTERM)
+
+    autostart_mod.run_detached(
+        _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
+    )
+
+    installed = during[0]
+    assert installed is not before
+    # Driven directly rather than signalling the test process — same call the
+    # interpreter would make.
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        installed(signal.SIGTERM, None)  # type: ignore[operator]  # it is the handler we installed
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_a_cancelled_run_unwinds_the_stage_it_was_on(tmp_path, mocker, make_cfg):
+    """The whole point of catching the signal: the steps in flight are
+    interrupted, the stage's mounts come off, its network mode is put back and
+    the in-progress flag is cleared — none of which a killed process does."""
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+    from jailbee.tmux import StepHandle
+
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.current_network_mode",
+        side_effect=["strict", "loose"],  # entry mode, then the CAS re-read
+    )
+    switch = mocker.patch("jailbee.lifecycle.switch_network")
+    mocker.patch("jailbee.autostart.add_optional_mount")
+    unmount = mocker.patch("jailbee.autostart.remove_optional_mount")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch(
+        "jailbee.tmux.launch_step",
+        side_effect=lambda _i, _c, *, name, **kw: StepHandle(
+            name=name, window=name, sentinel=f"/tmp/{name}", background=False, deadline=1e9
+        ),
+    )
+    interrupt = mocker.patch("jailbee.tmux.interrupt_step")
+
+    def cancel_while_the_steps_are_in_flight(*_a, **_kw):
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)  # type: ignore[operator]  # the supervisor's own handler
+
+    mocker.patch("jailbee.tmux.poll_steps", side_effect=cancel_while_the_steps_are_in_flight)
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "detach": True,
+                    "network": "loose",
+                    "mounts": ["cache"],
+                    # Two chains: the parallel driver is the one that holds
+                    # step handles and can interrupt them.
+                    "chains": [
+                        {"name": "a", "steps": [{"name": "a1", "run": "true"}]},
+                        {"name": "b", "steps": [{"name": "b1", "run": "true"}]},
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        autostart_mod.run_detached(
+            _cfg_with(make_cfg, tmp_path, block), incus, _spec(tmp_path, block)
+        )
+
+    assert {c.args[2].name for c in interrupt.call_args_list} == {"a1", "b1"}
+    assert unmount.call_args.args[2:] == ("c1", "cache")
+    assert [c.args[3] for c in switch.call_args_list] == ["loose", "strict"]
+    incus.config_unset.assert_called_once_with("c1", FLAG)
+
+
+def test_a_cancellation_is_not_swallowed_by_continue_on_error(tmp_path, mocker, make_cfg):
+    """The serial driver turns a failing step into a warning when the step
+    says `continue_on_error`. A cancellation is not a failing step, and must
+    not be absorbed into the next one."""
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.ensure_session")
+    ran: list[str] = []
+
+    def cancel_the_first_step(_i, _c, *, name, **kw):
+        ran.append(name)
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)  # type: ignore[operator]  # the supervisor's own handler
+
+    mocker.patch("jailbee.tmux.run_step", side_effect=cancel_the_first_step)
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "detach": True,
+                    "steps": [
+                        {"name": "s1", "run": "true", "continue_on_error": True},
+                        {"name": "s2", "run": "true"},
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        autostart_mod.run_detached(
+            _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
+        )
+
+    assert ran == ["s1"]
+
+
 # ---- the `_autostart-worker` command and the job row
 
 
@@ -397,6 +542,39 @@ def test_worker_marks_the_row_failed_and_keeps_it_when_a_stage_raises(tmp_path, 
     row = _jobs()["myrepo-c1"]
     assert row.phase == bg.PHASE_FAILED
     assert row.error_msg == "boom"
+
+
+def test_worker_marks_a_cancelled_run_failed_with_the_reason(tmp_path, mocker, make_cfg):
+    """A cancelled run must not leave a row that still reads as in flight —
+    which is why `AutostartCancelled` is an ordinary `Exception` and lands in
+    the worker's `except Exception` like any other failure."""
+    import signal
+
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.db.models import JOB_AUTOSTART
+
+    _worker_cfg(tmp_path, mocker, make_cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+
+    def cancel(*_a, **_kw):
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)  # type: ignore[operator]  # the supervisor's own handler
+
+    mocker.patch("jailbee.autostart.run_stages", side_effect=cancel)
+    _insert_job("myrepo-c1", "myrepo", os.getpid(), bg.PHASE_STARTING, JOB_AUTOSTART)
+
+    block = Autostart.model_validate({"on_start": [_stage("a", detach=True)]})
+    job = _write_job(tmp_path, block)
+    result = CliRunner().invoke(app, ["_autostart-worker", "--job", str(job)])
+
+    assert result.exit_code == 1
+    row = _jobs()["myrepo-c1"]
+    assert row.phase == bg.PHASE_FAILED
+    assert row.error_msg is not None
+    assert "cancelled" in row.error_msg
 
 
 def test_worker_runs_the_job_files_autostart_not_the_configs(tmp_path, mocker, make_cfg):
